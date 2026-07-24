@@ -1,0 +1,80 @@
+# ============================================================================
+# KodaX-Fabric .gitignore
+# Tech stack: Node.js / TypeScript (KodaX ecosystem)
+# ============================================================================
+
+# ---- KodaX managed ----
+.agent/
+
+# ---- Dependencies ----
+node_modules/
+.pnp
+.pnp.js
+
+# ---- Build outputs ----
+dist/
+build/
+out/
+.next/
+.nuxt/
+.cache/
+.parcel-cache/
+*.tsbuildinfo
+
+# ---- Testing & coverage ----
+coverage/
+.nyc_output/
+
+# ---- Environment & secrets ----
+.env
+.env.local
+.env.*.local
+!.env.example
+*.pem
+*.key
+*.cert
+
+# ---- Logs ----
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ---- Package manager lock files (uncomment the ones you do NOT use) ----
+# package-lock.json
+# yarn.lock
+# pnpm-lock.yaml
+
+# ---- Editor / IDE ----
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+!.vscode/tasks.json
+!.vscode/launch.json
+.idea/
+*.swp
+*.swo
+*~
+.history/
+
+# ---- OS files ----
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+# Linux
+*~
+
+# ---- Misc ----
+.DS_Store
+.tmp/
+tmp/
+*.tgz
+.eslintcache
