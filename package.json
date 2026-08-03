@@ -1,0 +1,20 @@
+{
+  "name": "tokenhub",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Internal LLM gateway: shared official keys, full audit, no billing",
+  "scripts": {
+    "dev": "pnpm -r --parallel --filter @tokenhub/server --filter @tokenhub/web dev",
+    "dev:server": "pnpm --filter @tokenhub/server dev",
+    "dev:web": "pnpm --filter @tokenhub/web dev",
+    "build": "pnpm -r --filter @tokenhub/server --filter @tokenhub/web build",
+    "db:generate": "pnpm --filter @tokenhub/server db:generate",
+    "db:migrate": "pnpm --filter @tokenhub/server db:migrate",
+    "db:seed": "pnpm --filter @tokenhub/server db:seed",
+    "db:setup": "pnpm db:migrate && pnpm db:seed"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "packageManager": "pnpm@9.15.0"
+}
