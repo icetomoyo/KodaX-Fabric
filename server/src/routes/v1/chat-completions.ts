@@ -30,7 +30,10 @@ import {
   type RelayUpstreamAttemptKind,
   type RelayUpstreamAttemptResult,
 } from "../../lib/relay/upstream.js";
-import { requireRelayApiKey } from "../../middleware/api-key.js";
+import {
+  requireAnyRelayApiKey,
+  requireRelayApiKey,
+} from "../../middleware/api-key.js";
 
 const chatCompletionSchema = z
   .object({
@@ -283,10 +286,21 @@ function noRouteError() {
 export async function v1RelayRoutes(app: FastifyInstance) {
   app.get(
     "/v1/models",
-    { onRequest: requireRelayApiKey },
+    { onRequest: requireAnyRelayApiKey },
     async (req) => {
       const principal = req.relayPrincipal!;
-      const models = await listAccessibleRelayModels(principal.employeeId);
+      const models = await listAccessibleRelayModels(
+        principal.employeeId,
+        principal.protocol,
+      );
+      if (principal.protocol === "anthropic_messages") {
+        return {
+          data: models.map((model) => ({
+            id: model.id,
+            display_name: model.id,
+          })),
+        };
+      }
       return {
         object: "list",
         data: models.map((model) => ({
@@ -319,6 +333,7 @@ export async function v1RelayRoutes(app: FastifyInstance) {
       let auditWritten = false;
 
       reply.header("x-tokenhub-request-id", requestId);
+      reply.header("x-request-id", requestId);
 
       const finalizeAudit = async (
         input: Omit<
@@ -401,7 +416,11 @@ export async function v1RelayRoutes(app: FastifyInstance) {
           return reply.code(429).send(payload);
         }
 
-        const resolution = await resolveRelayCandidates(principal.employeeId, body.model);
+        const resolution = await resolveRelayCandidates(
+          principal.employeeId,
+          body.model,
+          principal.protocol,
+        );
         const candidates = resolution.candidates;
         if (candidates.length === 0) {
           const cooling = resolution.unavailableReason === "cooling";
@@ -484,9 +503,11 @@ export async function v1RelayRoutes(app: FastifyInstance) {
           if (!body.stream) {
             let raw: Buffer;
             try {
-              raw = await readBoundedBody(response, env.AUDIT_BODY_MAX_BYTES);
+              raw = await readBoundedBody(response, env.RELAY_RESPONSE_MAX_BYTES);
             } catch (error) {
-              const willRetry = hasNext && !req.signal.aborted;
+              const willRetry = !(error instanceof RelayResponseTooLargeError) &&
+                hasNext &&
+                !req.signal.aborted;
               retryTrace.push(
                 traceItem(
                   index + 1,

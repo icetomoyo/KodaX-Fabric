@@ -44,9 +44,12 @@ function onLogout() {
 
 <style scoped>
 .shell {
-  min-height: 100vh;
+  height: 100vh;
+  overflow: hidden;
 }
 .aside {
+  height: 100%;
+  overflow-y: auto;
   background: #111827;
   color: #fff;
 }
@@ -65,12 +68,25 @@ function onLogout() {
   background: #1f2937;
   color: #fff;
 }
+.shell > :deep(.el-container) {
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
 .header {
   display: flex;
+  flex-shrink: 0;
   align-items: center;
   justify-content: space-between;
   background: #fff;
   border-bottom: 1px solid #e5e7eb;
+}
+.shell :deep(.el-main) {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  overflow: auto;
 }
 .account-link {
   color: inherit;

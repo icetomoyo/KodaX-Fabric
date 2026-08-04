@@ -1,9 +1,10 @@
 <template>
   <div class="credentials-page">
-    <section class="page-card">
+    <section class="page-card credentials-shell">
       <div class="page-head">
         <div>
           <h2 class="page-title">上游渠道</h2>
+          <p class="page-subtitle">选择左侧渠道查看详情，或新增上游凭证</p>
         </div>
         <div class="head-actions">
           <el-button :loading="loading" @click="refreshAll">刷新</el-button>
@@ -11,172 +12,264 @@
         </div>
       </div>
 
-      <div class="stats-grid">
-        <div class="stat-card">
-          <span class="stat-label">渠道总数</span>
-          <strong>{{ stats.total }}</strong>
-        </div>
-        <div class="stat-card success">
-          <span class="stat-label">启用中</span>
-          <strong>{{ stats.active }}</strong>
-        </div>
-        <div class="stat-card warning">
-          <span class="stat-label">待测试</span>
-          <strong>{{ stats.untested }}</strong>
-        </div>
-        <div class="stat-card danger">
-          <span class="stat-label">最近测试失败</span>
-          <strong>{{ stats.failed }}</strong>
-        </div>
-      </div>
+      <div v-loading="loading" class="split-layout">
+        <aside class="channel-list-pane">
+          <div class="pane-label">
+            <span>渠道列表</span>
+            <span class="pane-count">{{ rows.length }}</span>
+          </div>
 
-      <div class="toolbar">
-        <el-input
-          v-model="filters.keyword"
-          clearable
-          placeholder="搜索渠道名称、平台或 Key 末四位"
-          class="keyword-input"
-        />
-        <el-select v-model="filters.providerCode" clearable placeholder="全部平台" class="filter-select">
-          <el-option
-            v-for="provider in providerOptions"
-            :key="provider.value"
-            :label="provider.label"
-            :value="provider.value"
-          />
-        </el-select>
-        <el-select v-model="filters.status" clearable placeholder="全部状态" class="filter-select">
-          <el-option label="启用" value="active" />
-          <el-option label="停用" value="disabled" />
-          <el-option label="自动停用" value="auto_disabled" />
-          <el-option label="冷却中" value="cooling" />
-        </el-select>
-      </div>
+          <el-empty
+            v-if="!loading && !rows.length"
+            description="暂无上游渠道"
+            :image-size="72"
+          >
+            <el-button type="primary" @click="openCreate">新增渠道</el-button>
+          </el-empty>
 
-      <el-empty
-        v-if="!loading && !filteredRows.length"
-        :description="rows.length ? '没有符合条件的渠道' : '暂无上游渠道'"
-      >
-        <el-button v-if="!rows.length" type="primary" @click="openCreate">新增渠道</el-button>
-      </el-empty>
-
-      <el-table v-else v-loading="loading" :data="filteredRows" stripe class="credential-table">
-        <el-table-column label="渠道" min-width="190">
-          <template #default="{ row }">
-            <div class="credential-name">{{ row.label }}</div>
-            <div class="secret-mask">•••• •••• {{ row.secretSuffix }}</div>
-          </template>
-        </el-table-column>
-
-        <el-table-column label="平台" min-width="180">
-          <template #default="{ row }">
-            <div class="provider-cell">
-              <span class="provider-dot" :style="providerDotStyle(row.providerCode)" />
-              <div>
-                <div class="provider-name">{{ row.providerName }}</div>
-                <div class="cell-secondary">{{ productTypeText(row.productType) }}</div>
-              </div>
-            </div>
-          </template>
-        </el-table-column>
-
-        <el-table-column label="API 地址" min-width="220">
-          <template #default="{ row }">
-            <el-tooltip :content="effectiveBaseUrl(row)" placement="top">
-              <span class="endpoint-text">{{ effectiveBaseUrl(row) }}</span>
-            </el-tooltip>
-          </template>
-        </el-table-column>
-
-        <el-table-column label="调度" width="120">
-          <template #default="{ row }">
-            <div class="metric-line"><span>优先级</span><b>{{ row.priority }}</b></div>
-            <div class="metric-line"><span>权重</span><b>{{ row.weight }}</b></div>
-          </template>
-        </el-table-column>
-
-        <el-table-column label="健康检查" min-width="230">
-          <template #default="{ row }">
-            <template v-if="lastTest(row)">
-              <div class="test-result">
-                <el-tag :type="lastTest(row)?.ok ? 'success' : 'danger'" size="small" effect="light">
-                  {{ lastTest(row)?.ok ? "连接正常" : "测试失败" }}
+          <div v-else class="channel-list">
+            <button
+              v-for="row in rows"
+              :key="row.id"
+              type="button"
+              class="channel-card"
+              :class="{ selected: selectedId === row.id }"
+              @click="selectChannel(row.id)"
+            >
+              <div class="channel-card-top">
+                <span class="provider-logo sm" :style="providerLogoStyle(row.providerCode)">
+                  {{ providerShortName(row.providerCode) }}
+                </span>
+                <div class="channel-card-copy">
+                  <strong class="channel-card-title">{{ row.label }}</strong>
+                  <span class="channel-card-meta">{{ row.providerName }} · {{ productTypeText(row.productType) }}</span>
+                </div>
+                <el-tag :type="statusTagType(row.status)" size="small" effect="light">
+                  {{ statusText(row.status) }}
                 </el-tag>
-                <span v-if="lastTest(row)?.latencyMs !== undefined" class="latency">
-                  {{ lastTest(row)?.latencyMs }}ms
+              </div>
+              <div class="channel-card-bottom">
+                <span class="secret-mask">•••• {{ row.secretSuffix }}</span>
+                <span class="health-chip" :class="healthChipClass(row)">
+                  {{ healthSummary(row) }}
                 </span>
               </div>
-              <div class="cell-secondary">{{ formatDateTime(lastTest(row)?.testedAt) }}</div>
-              <el-popover
-                v-if="discoveredModels(row).length"
-                placement="bottom-start"
-                :width="360"
-                trigger="click"
-              >
-                <template #reference>
-                  <el-button link type="primary" class="model-button">
-                    已发现 {{ discoveredModels(row).length }} 个模型
-                  </el-button>
-                </template>
-                <div class="model-popover-title">上游模型</div>
-                <div class="model-tags">
-                  <el-tag v-for="model in discoveredModels(row)" :key="model" size="small">
-                    {{ model }}
-                  </el-tag>
+            </button>
+          </div>
+        </aside>
+
+        <main class="channel-detail-pane">
+          <template v-if="selected">
+            <div class="detail-header">
+              <div class="detail-identity">
+                <span class="provider-logo" :style="providerLogoStyle(selected.providerCode)">
+                  {{ providerShortName(selected.providerCode) }}
+                </span>
+                <div>
+                  <h3 class="detail-title">{{ selected.label }}</h3>
+                  <div class="detail-subtitle">
+                    {{ selected.providerName }} · {{ productTypeText(selected.productType) }}
+                    <span class="dot-sep">·</span>
+                    <span class="secret-mask inline">•••• {{ selected.secretSuffix }}</span>
+                  </div>
                 </div>
-              </el-popover>
-            </template>
-            <span v-else class="cell-secondary">尚未测试</span>
-          </template>
-        </el-table-column>
+              </div>
+              <div class="detail-actions">
+                <el-button
+                  :loading="testingId === selected.id"
+                  @click="testCredential(selected)"
+                >
+                  测试连接
+                </el-button>
+                <el-button @click="openEdit(selected)">编辑</el-button>
+                <el-button
+                  v-if="selected.status === 'active'"
+                  type="danger"
+                  plain
+                  @click="setStatus(selected.id, 'disabled')"
+                >
+                  停用
+                </el-button>
+                <el-button
+                  v-else
+                  type="success"
+                  plain
+                  @click="setStatus(selected.id, 'active')"
+                >
+                  启用
+                </el-button>
+                <el-button
+                  v-if="canManageGrants(selected)"
+                  @click="openGrants(selected)"
+                >
+                  员工授权
+                </el-button>
+                <el-button
+                  type="danger"
+                  :loading="deletingId === selected.id"
+                  @click="removeCredential(selected)"
+                >
+                  删除
+                </el-button>
+              </div>
+            </div>
 
-        <el-table-column label="调用统计" width="120">
-          <template #default="{ row }">
-            <div class="metric-line"><span>成功</span><b>{{ row.successCount }}</b></div>
-            <div class="metric-line"><span>失败</span><b>{{ row.errorCount }}</b></div>
-          </template>
-        </el-table-column>
+            <div class="detail-status-row">
+              <el-tag :type="statusTagType(selected.status)" effect="light">
+                {{ statusText(selected.status) }}
+              </el-tag>
+              <el-tag
+                v-if="lastTest(selected)"
+                :type="lastTest(selected)?.ok ? 'success' : 'danger'"
+                effect="plain"
+              >
+                {{ lastTest(selected)?.ok ? "最近测试通过" : "最近测试失败" }}
+              </el-tag>
+              <el-tag v-else type="info" effect="plain">尚未测试</el-tag>
+              <el-tag
+                v-if="selected.status === 'cooling' && selected.coolUntil"
+                type="warning"
+                effect="plain"
+              >
+                冷却至 {{ formatDateTime(selected.coolUntil) }}
+              </el-tag>
+            </div>
 
-        <el-table-column label="状态" width="105">
-          <template #default="{ row }">
-            <el-tag :type="statusTagType(row.status)" effect="light">
-              {{ statusText(row.status) }}
-            </el-tag>
-          </template>
-        </el-table-column>
+            <div class="detail-sections">
+              <section class="detail-section">
+                <h4 class="section-heading">基本信息</h4>
+                <dl class="info-grid">
+                  <div class="info-item full">
+                    <dt>API 地址</dt>
+                    <dd class="mono wrap">{{ effectiveBaseUrl(selected) }}</dd>
+                  </div>
+                  <div class="info-item full">
+                    <dt>支持协议</dt>
+                    <dd>
+                      <div class="protocol-tags">
+                        <el-tag
+                          v-for="protocol in credentialProtocols(selected)"
+                          :key="protocol"
+                          size="small"
+                          effect="plain"
+                        >
+                          {{ relayProtocolLabel(protocol, true) }}
+                        </el-tag>
+                      </div>
+                    </dd>
+                  </div>
+                  <div class="info-item">
+                    <dt>最近使用</dt>
+                    <dd>{{ formatDateTime(selected.lastUsedAt) }}</dd>
+                  </div>
+                  <div class="info-item">
+                    <dt>冷却至</dt>
+                    <dd>
+                      <template v-if="selected.coolUntil">
+                        {{ formatDateTime(selected.coolUntil) }}
+                        <span v-if="isCoolingActive(selected)" class="cooling-hint">（冷却中）</span>
+                      </template>
+                      <template v-else>—</template>
+                    </dd>
+                  </div>
+                </dl>
+              </section>
 
-        <el-table-column label="操作" width="224" fixed="right">
-          <template #default="{ row }">
-            <el-button
-              link
-              type="primary"
-              :loading="testingId === row.id"
-              @click="testCredential(row)"
-            >
-              测试
-            </el-button>
-            <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
-            <el-button
-              v-if="row.status === 'active'"
-              link
-              type="danger"
-              @click="setStatus(row.id, 'disabled')"
-            >
-              停用
-            </el-button>
-            <el-button v-else link type="success" @click="setStatus(row.id, 'active')">
-              启用
-            </el-button>
-            <el-button
-              v-if="row.productType === 'coding_plan' || row.shareMode === 'grant_only'"
-              link
-              @click="openGrants(row)"
-            >
-              授权
-            </el-button>
+              <section class="detail-section">
+                <h4 class="section-heading">调度参数</h4>
+                <div class="metric-cards">
+                  <div class="metric-card">
+                    <span class="metric-label">优先级</span>
+                    <strong>{{ selected.priority }}</strong>
+                  </div>
+                  <div class="metric-card">
+                    <span class="metric-label">权重</span>
+                    <strong>{{ selected.weight }}</strong>
+                  </div>
+                  <div class="metric-card">
+                    <span class="metric-label">成功调用</span>
+                    <strong class="ok">{{ selected.successCount }}</strong>
+                  </div>
+                  <div class="metric-card">
+                    <span class="metric-label">失败调用</span>
+                    <strong class="bad">{{ selected.errorCount }}</strong>
+                  </div>
+                </div>
+              </section>
+
+              <section class="detail-section">
+                <h4 class="section-heading">健康检查</h4>
+                <template v-if="lastTest(selected)">
+                  <dl class="info-grid">
+                    <div class="info-item">
+                      <dt>结果</dt>
+                      <dd>
+                        <el-tag
+                          :type="lastTest(selected)?.ok ? 'success' : 'danger'"
+                          size="small"
+                          effect="light"
+                        >
+                          {{ lastTest(selected)?.ok ? "连接正常" : "测试失败" }}
+                        </el-tag>
+                      </dd>
+                    </div>
+                    <div class="info-item">
+                      <dt>延迟</dt>
+                      <dd>{{ lastTest(selected)?.latencyMs ?? "—" }} ms</dd>
+                    </div>
+                    <div class="info-item">
+                      <dt>HTTP 状态</dt>
+                      <dd>{{ lastTest(selected)?.httpStatus ?? "—" }}</dd>
+                    </div>
+                    <div class="info-item">
+                      <dt>测试时间</dt>
+                      <dd>{{ formatDateTime(lastTest(selected)?.testedAt) }}</dd>
+                    </div>
+                    <div class="info-item full">
+                      <dt>消息</dt>
+                      <dd>{{ lastTest(selected)?.message || "—" }}</dd>
+                    </div>
+                    <div v-if="selected.lastError" class="info-item full">
+                      <dt>最近错误</dt>
+                      <dd class="error-text">{{ selected.lastError }}</dd>
+                    </div>
+                  </dl>
+                  <div v-if="discoveredModels(selected).length" class="models-block">
+                    <div class="models-heading">
+                      已发现 {{ discoveredModels(selected).length }} 个上游模型
+                    </div>
+                    <div class="model-tags">
+                      <el-tag
+                        v-for="model in discoveredModels(selected)"
+                        :key="model"
+                        size="small"
+                      >
+                        {{ model }}
+                      </el-tag>
+                    </div>
+                  </div>
+                </template>
+                <p v-else class="empty-hint">尚未做过连通性测试，可点击右上角「测试连接」。</p>
+              </section>
+
+              <section v-if="canManageGrants(selected)" class="detail-section">
+                <h4 class="section-heading">访问控制</h4>
+                <p class="empty-hint">该渠道需显式授权员工后才可使用。</p>
+                <el-button type="primary" plain @click="openGrants(selected)">管理员工授权</el-button>
+              </section>
+            </div>
           </template>
-        </el-table-column>
-      </el-table>
+
+          <el-empty
+            v-else-if="!loading"
+            class="detail-empty"
+            :description="rows.length ? '请从左侧选择一个渠道' : '暂无上游渠道'"
+            :image-size="96"
+          >
+            <el-button v-if="!rows.length" type="primary" @click="openCreate">新增渠道</el-button>
+          </el-empty>
+        </main>
+      </div>
     </section>
 
     <el-dialog
@@ -246,6 +339,39 @@
           </el-form-item>
         </div>
 
+        <el-form-item label="支持的客户端协议" required class="protocol-form-item">
+          <el-select
+            v-model="form.supportedProtocols"
+            multiple
+            collapse-tags
+            collapse-tags-tooltip
+            placeholder="至少选择一种协议"
+            class="protocol-multi-select"
+          >
+            <el-option
+              v-for="option in relayProtocolOptions"
+              :key="option.value"
+              :label="option.label"
+              :value="option.value"
+            >
+              <div class="protocol-option">
+                <span>{{ option.label }}</span>
+                <small>{{ option.endpoint }}</small>
+              </div>
+            </el-option>
+          </el-select>
+          <div class="form-help">
+            按该上游 Key 的真实兼容能力选择，可多选；至少保留一种协议。
+          </div>
+        </el-form-item>
+
+        <div v-if="form.supportedProtocols.length" class="protocol-guides">
+          <div v-for="protocol in form.supportedProtocols" :key="protocol" class="protocol-guide-row">
+            <strong>{{ relayProtocolLabel(protocol) }}</strong>
+            <span>{{ relayProtocolOption(protocol).description }}</span>
+          </div>
+        </div>
+
         <el-collapse class="advanced-collapse">
           <el-collapse-item title="调度" name="advanced">
             <div class="number-row">
@@ -308,10 +434,16 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from "vue";
-import { ElMessage } from "element-plus";
+import { computed, onMounted, reactive, ref, watch } from "vue";
+import { ElMessage, ElMessageBox } from "element-plus";
 import { http } from "@/api/http";
 import { formatDateTime } from "@/lib/date-time";
+import {
+  relayProtocolLabel,
+  relayProtocolOption,
+  relayProtocolOptions,
+  type RelayProtocol,
+} from "@/views/relay-protocol";
 
 type CredentialStatus = "active" | "disabled" | "auto_disabled" | "cooling";
 
@@ -330,9 +462,12 @@ type CredentialRow = {
   productLineId: number;
   label: string;
   secretSuffix: string;
+  supportedProtocols: RelayProtocol[];
   weight: number;
   priority: number;
   status: CredentialStatus;
+  coolUntil: string | null;
+  lastUsedAt: string | null;
   successCount: number;
   errorCount: number;
   lastError: string | null;
@@ -362,6 +497,7 @@ type ProviderTemplate = {
   name: string;
   shortName: string;
   baseUrls: ProviderBaseUrl[];
+  defaultProtocols: RelayProtocol[];
   defaultLabel: string;
   color: string;
 };
@@ -376,17 +512,13 @@ const grants = ref<GrantRow[]>([]);
 const loading = ref(false);
 const saving = ref(false);
 const testingId = ref<number | null>(null);
+const deletingId = ref<number | null>(null);
 const showForm = ref(false);
 const showGrants = ref(false);
 const editingRow = ref<CredentialRow | null>(null);
 const grantEmployeeId = ref<number>();
 const grantCredentialId = ref(0);
-
-const filters = reactive({
-  keyword: "",
-  providerCode: "",
-  status: "" as CredentialStatus | "",
-});
+const selectedId = ref<number | null>(null);
 
 const form = reactive({
   id: 0,
@@ -394,6 +526,7 @@ const form = reactive({
   baseUrl: "",
   label: "",
   secret: "",
+  supportedProtocols: ["openai_chat"] as RelayProtocol[],
   priority: 0,
   weight: 100,
   testAfterCreate: true,
@@ -403,30 +536,27 @@ const selectedTemplate = computed(() =>
   templates.value.find((item) => item.code === form.providerCode),
 );
 
-const providerOptions = computed(() => {
-  const options = new Map<string, string>();
-  for (const template of templates.value) options.set(template.code, template.name);
-  for (const row of rows.value) options.set(row.providerCode, row.providerName);
-  return [...options].map(([value, label]) => ({ value, label }));
-});
+const selected = computed(
+  () => rows.value.find((row) => row.id === selectedId.value) ?? null,
+);
 
-const filteredRows = computed(() => {
-  const keyword = filters.keyword.trim().toLowerCase();
-  return rows.value.filter((row) => {
-    if (filters.providerCode && row.providerCode !== filters.providerCode) return false;
-    if (filters.status && row.status !== filters.status) return false;
-    if (!keyword) return true;
-    return [row.label, row.providerName, row.providerCode, row.secretSuffix]
-      .some((value) => value.toLowerCase().includes(keyword));
-  });
-});
+watch(
+  rows,
+  (list) => {
+    if (!list.length) {
+      selectedId.value = null;
+      return;
+    }
+    if (selectedId.value == null || !list.some((row) => row.id === selectedId.value)) {
+      selectedId.value = list[0].id;
+    }
+  },
+  { deep: false },
+);
 
-const stats = computed(() => ({
-  total: rows.value.length,
-  active: rows.value.filter((row) => row.status === "active").length,
-  untested: rows.value.filter((row) => !lastTest(row)).length,
-  failed: rows.value.filter((row) => lastTest(row)?.ok === false).length,
-}));
+function selectChannel(id: number) {
+  selectedId.value = id;
+}
 
 function getErrorMessage(error: unknown, fallback: string): string {
   const responseMessage = (error as { response?: { data?: { message?: unknown } } })
@@ -438,6 +568,10 @@ function effectiveBaseUrl(row: CredentialRow): string {
   return row.baseUrlOverride || row.defaultBaseUrl;
 }
 
+function credentialProtocols(row: CredentialRow): RelayProtocol[] {
+  return row.supportedProtocols?.length ? row.supportedProtocols : ["openai_chat"];
+}
+
 function lastTest(row: CredentialRow): TestResult | undefined {
   return row.meta?.lastTest;
 }
@@ -446,9 +580,32 @@ function discoveredModels(row: CredentialRow): string[] {
   return row.meta?.discoveredModels ?? lastTest(row)?.models ?? [];
 }
 
+function canManageGrants(row: CredentialRow): boolean {
+  return row.productType === "coding_plan" || row.shareMode === "grant_only";
+}
+
+function isCoolingActive(row: CredentialRow): boolean {
+  if (!row.coolUntil) return false;
+  const until = new Date(row.coolUntil).getTime();
+  return !Number.isNaN(until) && until > Date.now();
+}
+
+function providerColor(code: string): string {
+  return templates.value.find((item) => item.code === code)?.color ?? "#64748b";
+}
+
+function providerShortName(code: string): string {
+  return templates.value.find((item) => item.code === code)?.shortName
+    ?? code.slice(0, 4).toUpperCase();
+}
+
+function providerLogoStyle(code: string): Record<string, string> {
+  return { background: providerColor(code) };
+}
+
 function providerDotStyle(code: string): Record<string, string> {
   return {
-    background: templates.value.find((item) => item.code === code)?.color ?? "#64748b",
+    background: providerColor(code),
   };
 }
 
@@ -472,6 +629,19 @@ function statusTagType(status: CredentialStatus): "success" | "info" | "danger" 
     auto_disabled: "danger" as const,
     cooling: "warning" as const,
   }[status];
+}
+
+function healthSummary(row: CredentialRow): string {
+  const test = lastTest(row);
+  if (!test) return "未测试";
+  if (test.ok) return test.latencyMs != null ? `${test.latencyMs}ms` : "正常";
+  return "失败";
+}
+
+function healthChipClass(row: CredentialRow): string {
+  const test = lastTest(row);
+  if (!test) return "muted";
+  return test.ok ? "ok" : "bad";
 }
 
 async function loadCredentials() {
@@ -505,6 +675,7 @@ function resetForm() {
   form.baseUrl = templates.value[0]?.baseUrls[0]?.url ?? "";
   form.label = templates.value[0]?.defaultLabel ?? "";
   form.secret = "";
+  form.supportedProtocols = [...(templates.value[0]?.defaultProtocols ?? ["openai_chat"])];
   form.priority = 0;
   form.weight = 100;
   form.testAfterCreate = true;
@@ -521,6 +692,7 @@ function selectTemplate(template: ProviderTemplate) {
   const shouldReplaceLabel = !form.label || form.label === previousTemplate?.defaultLabel;
   form.providerCode = template.code;
   form.baseUrl = template.baseUrls[0]?.url ?? "";
+  form.supportedProtocols = [...template.defaultProtocols];
   if (shouldReplaceLabel) form.label = template.defaultLabel;
 }
 
@@ -531,6 +703,7 @@ function openEdit(row: CredentialRow) {
   form.baseUrl = effectiveBaseUrl(row);
   form.label = row.label;
   form.secret = "";
+  form.supportedProtocols = [...credentialProtocols(row)];
   form.priority = row.priority;
   form.weight = row.weight;
   form.testAfterCreate = false;
@@ -546,27 +719,36 @@ async function save() {
     ElMessage.warning("请填写 API Key");
     return;
   }
+  if (!form.supportedProtocols.length) {
+    ElMessage.warning("请至少选择一种支持协议");
+    return;
+  }
   saving.value = true;
   try {
     if (form.id) {
       await http.patch(`/api/admin/credentials/${form.id}`, {
         label: form.label.trim(),
         secret: form.secret.trim() || undefined,
+        supportedProtocols: [...form.supportedProtocols],
         priority: form.priority,
         weight: form.weight,
       });
       ElMessage.success("渠道已更新");
+      showForm.value = false;
+      await refreshAll();
     } else {
       const { data } = await http.post("/api/admin/credentials/quick-create", {
         providerCode: form.providerCode,
         baseUrl: form.baseUrl,
         label: form.label.trim(),
         secret: form.secret.trim(),
+        supportedProtocols: [...form.supportedProtocols],
         priority: form.priority,
         weight: form.weight,
         testAfterCreate: form.testAfterCreate,
       });
       const test = data.data?.test as TestResult | null;
+      const createdId = data.data?.credential?.id as number | undefined;
       if (!test) {
         ElMessage.success("渠道已保存");
       } else if (test.ok) {
@@ -574,9 +756,10 @@ async function save() {
       } else {
         ElMessage.warning(`渠道已保存，但连接测试未通过：${test.message}`);
       }
+      showForm.value = false;
+      await refreshAll();
+      if (createdId) selectedId.value = createdId;
     }
-    showForm.value = false;
-    await refreshAll();
   } catch (error) {
     ElMessage.error(getErrorMessage(error, "保存失败"));
   } finally {
@@ -605,6 +788,35 @@ async function setStatus(id: number, status: CredentialStatus) {
     await loadCredentials();
   } catch (error) {
     ElMessage.error(getErrorMessage(error, "状态更新失败"));
+  }
+}
+
+async function removeCredential(row: CredentialRow) {
+  try {
+    await ElMessageBox.confirm(
+      `确认删除渠道「${row.label}」？密钥末四位 ${row.secretSuffix}。删除后不可恢复，历史调用日志仍会保留记录。`,
+      "删除上游渠道",
+      {
+        type: "warning",
+        confirmButtonText: "删除",
+        cancelButtonText: "取消",
+        confirmButtonClass: "el-button--danger",
+      },
+    );
+  } catch {
+    return;
+  }
+
+  deletingId.value = row.id;
+  try {
+    await http.delete(`/api/admin/credentials/${row.id}`);
+    ElMessage.success("渠道已删除");
+    if (selectedId.value === row.id) selectedId.value = null;
+    await loadCredentials();
+  } catch (error) {
+    ElMessage.error(getErrorMessage(error, "删除失败"));
+  } finally {
+    deletingId.value = null;
   }
 }
 
@@ -649,19 +861,42 @@ onMounted(refreshAll);
 
 <style scoped>
 .credentials-page {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
   min-width: 0;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+.credentials-shell {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
 }
 
 .page-head {
   display: flex;
+  flex-shrink: 0;
   align-items: flex-start;
   justify-content: space-between;
   gap: 20px;
+  margin-bottom: 16px;
 }
 
 .page-title {
   margin: 0;
   font-size: 22px;
+}
+
+.page-subtitle {
+  margin: 6px 0 0;
+  color: #94a3b8;
+  font-size: 13px;
 }
 
 .head-actions {
@@ -670,86 +905,365 @@ onMounted(refreshAll);
   gap: 8px;
 }
 
-.stats-grid {
+.split-layout {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 12px;
-  margin: 18px 0;
+  grid-template-columns: minmax(260px, 320px) minmax(0, 1fr);
+  gap: 16px;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
 }
 
-.stat-card {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  min-height: 70px;
-  padding: 14px 16px;
+.channel-list-pane,
+.channel-detail-pane {
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
   border: 1px solid #e5e7eb;
-  border-radius: 10px;
+  border-radius: 12px;
   background: #f8fafc;
 }
 
-.stat-card strong {
+.channel-list-pane {
+  display: flex;
+  flex-direction: column;
+  padding: 12px;
+  overflow: hidden;
+}
+
+.pane-label {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+  padding: 0 4px;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.pane-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: #e2e8f0;
+  color: #475569;
+  font-size: 12px;
+}
+
+.channel-list {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.channel-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+  padding: 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #fff;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+}
+
+.channel-card:hover {
+  border-color: #93c5fd;
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.06);
+}
+
+.channel-card.selected {
+  border-color: #3b82f6;
+  background: #eff6ff;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.12);
+}
+
+.channel-card-top {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.channel-card-copy {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  gap: 2px;
+}
+
+.channel-card-title {
+  overflow: hidden;
   color: #0f172a;
-  font-size: 25px;
+  font-size: 14px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.stat-card.success {
-  border-color: #bbf7d0;
-  background: #f0fdf4;
+.channel-card-meta {
+  color: #94a3b8;
+  font-size: 12px;
 }
 
-.stat-card.warning {
-  border-color: #fde68a;
-  background: #fffbeb;
+.channel-card-bottom {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
 }
 
-.stat-card.danger {
-  border-color: #fecaca;
-  background: #fef2f2;
+.health-chip {
+  flex: 0 0 auto;
+  color: #64748b;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
 }
 
-.stat-label {
+.health-chip.ok {
+  color: #15803d;
+}
+
+.health-chip.bad {
+  color: #b91c1c;
+}
+
+.health-chip.muted {
+  color: #94a3b8;
+}
+
+.channel-detail-pane {
+  display: flex;
+  flex-direction: column;
+  padding: 18px 20px;
+  background: #fff;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.detail-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+
+.detail-identity {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.detail-title {
+  margin: 0;
+  color: #0f172a;
+  font-size: 20px;
+  font-weight: 650;
+}
+
+.detail-subtitle {
+  margin-top: 4px;
   color: #64748b;
   font-size: 13px;
 }
 
-.toolbar {
+.dot-sep {
+  margin: 0 4px;
+  color: #cbd5e1;
+}
+
+.detail-actions {
   display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 14px;
-  margin-bottom: 14px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.detail-status-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 18px;
+}
+
+.detail-sections {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.detail-section {
+  padding: 14px 16px;
+  border: 1px solid #eef2f7;
   border-radius: 10px;
   background: #f8fafc;
 }
 
-.keyword-input {
-  width: 300px;
+.section-heading {
+  margin: 0 0 12px;
+  color: #334155;
+  font-size: 13px;
+  font-weight: 650;
 }
 
-.filter-select {
-  width: 170px;
+.info-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 16px;
+  margin: 0;
 }
 
-.credential-name,
-.provider-name {
+.info-item {
+  min-width: 0;
+}
+
+.info-item.full {
+  grid-column: 1 / -1;
+}
+
+.info-item dt {
+  margin-bottom: 4px;
+  color: #94a3b8;
+  font-size: 12px;
+}
+
+.info-item dd {
+  margin: 0;
   color: #0f172a;
+  font-size: 13px;
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+}
+
+.wrap {
+  white-space: normal;
+  word-break: break-all;
+}
+
+.error-text {
+  color: #b91c1c;
+}
+
+.cooling-hint {
+  margin-left: 6px;
+  color: #d97706;
+  font-size: 12px;
+}
+
+.metric-cards {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.metric-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px;
+  border-radius: 8px;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+}
+
+.metric-label {
+  color: #94a3b8;
+  font-size: 12px;
+}
+
+.metric-card strong {
+  color: #0f172a;
+  font-size: 20px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+.metric-card strong.ok {
+  color: #15803d;
+}
+
+.metric-card strong.bad {
+  color: #b91c1c;
+}
+
+.models-block {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid #e2e8f0;
+}
+
+.models-heading {
+  margin-bottom: 10px;
+  color: #334155;
+  font-size: 12px;
   font-weight: 600;
 }
 
-.secret-mask,
+.model-tags,
+.protocol-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.model-tags {
+  max-height: 180px;
+  overflow: auto;
+}
+
+.empty-hint {
+  margin: 0 0 12px;
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.detail-empty {
+  margin: auto;
+}
+
+.secret-mask {
+  color: #94a3b8;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  letter-spacing: 0.03em;
+}
+
+.secret-mask.inline {
+  color: #64748b;
+}
+
 .cell-secondary {
   margin-top: 3px;
   color: #94a3b8;
   font-size: 12px;
 }
 
-.secret-mask {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  letter-spacing: 0.03em;
-}
-
-.provider-cell,
+.provider-dot,
 .editing-context {
   display: flex;
   align-items: center;
@@ -760,66 +1274,35 @@ onMounted(refreshAll);
   width: 10px;
   height: 10px;
   flex: 0 0 auto;
+  display: block;
   border-radius: 50%;
   box-shadow: 0 0 0 4px rgba(148, 163, 184, 0.14);
 }
 
-.endpoint-text {
-  display: block;
-  max-width: 100%;
-  overflow: hidden;
-  color: #475569;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 12px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.editing-context {
+  padding: 12px 14px;
+  border-radius: 9px;
+  background: #f8fafc;
 }
 
-.metric-line {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  color: #64748b;
-  font-size: 12px;
-}
-
-.metric-line + .metric-line {
-  margin-top: 4px;
-}
-
-.metric-line b {
-  color: #334155;
-}
-
-.test-result {
-  display: flex;
+.provider-logo {
+  display: inline-flex;
   align-items: center;
-  gap: 8px;
-}
-
-.latency {
-  color: #64748b;
+  justify-content: center;
+  width: 46px;
+  height: 46px;
+  flex: 0 0 auto;
+  border-radius: 12px;
+  color: #fff;
   font-size: 12px;
+  font-weight: 700;
 }
 
-.model-button {
-  height: auto;
-  padding: 3px 0 0;
-  font-size: 12px;
-}
-
-.model-popover-title {
-  margin-bottom: 10px;
-  color: #0f172a;
-  font-weight: 600;
-}
-
-.model-tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  max-height: 240px;
-  overflow: auto;
+.provider-logo.sm {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  font-size: 11px;
 }
 
 .section-label {
@@ -868,19 +1351,6 @@ onMounted(refreshAll);
   box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.12);
 }
 
-.provider-logo {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 46px;
-  height: 46px;
-  flex: 0 0 auto;
-  border-radius: 12px;
-  color: #fff;
-  font-size: 12px;
-  font-weight: 700;
-}
-
 .provider-card-copy {
   display: flex;
   flex-direction: column;
@@ -894,6 +1364,56 @@ onMounted(refreshAll);
 
 .credential-form {
   margin-top: 4px;
+}
+
+.protocol-form-item :deep(.el-form-item__content) {
+  display: block;
+}
+
+.protocol-multi-select {
+  width: 100%;
+}
+
+.protocol-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  width: 100%;
+}
+
+.protocol-option small {
+  color: #94a3b8;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.form-help {
+  margin-top: 6px;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.protocol-guides {
+  display: grid;
+  gap: 7px;
+  padding: 10px 12px;
+  margin: -4px 0 12px;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.protocol-guide-row {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.protocol-guide-row strong {
+  flex: 0 0 auto;
+  color: #334155;
 }
 
 .form-row,
@@ -919,23 +1439,24 @@ onMounted(refreshAll);
   font-size: 13px;
 }
 
-.editing-context {
-  padding: 12px 14px;
-  border-radius: 9px;
-  background: #f8fafc;
-}
-
-@media (max-width: 1000px) {
-  .stats-grid {
+@media (max-width: 1100px) {
+  .metric-cards {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+}
 
-  .toolbar {
-    flex-wrap: wrap;
+@media (max-width: 900px) {
+  .split-layout {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(0, 38%) minmax(0, 1fr);
   }
 
-  .keyword-input {
-    width: 100%;
+  .detail-header {
+    flex-direction: column;
+  }
+
+  .detail-actions {
+    justify-content: flex-start;
   }
 }
 
@@ -947,17 +1468,20 @@ onMounted(refreshAll);
     flex-direction: column;
   }
 
-  .provider-grid {
+  .provider-grid,
+  .info-grid,
+  .metric-cards {
     grid-template-columns: 1fr;
   }
 
-  .stats-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .head-actions,
-  .filter-select {
+  .head-actions {
     width: 100%;
+  }
+
+  .protocol-guide-row {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 2px;
   }
 }
 </style>

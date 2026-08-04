@@ -9,6 +9,7 @@ import {
   usageCountersDaily,
 } from "../../db/schema/index.js";
 import type { EffectiveRelayQuota } from "./quota.js";
+import type { RelayProtocol } from "./protocol.js";
 import type {
   RelayCandidate,
   RelayPrincipal,
@@ -18,9 +19,30 @@ import type {
 
 type RelayAuditStatus = "success" | "upstream_error" | "client_error" | "cancelled";
 
+const AUDIT_REDACTION = "[REDACTED]";
+const SENSITIVE_BODY_KEYS = new Set([
+  "authorization",
+  "proxyauthorization",
+  "xapikey",
+  "apikey",
+  "authorizationtoken",
+  "accesstoken",
+  "refreshtoken",
+  "clientsecret",
+  "password",
+  "passwd",
+  "secret",
+  "cookie",
+  "setcookie",
+  "credential",
+  "credentials",
+  "privatekey",
+]);
+
 export type RelayAuditInput = {
   requestId: string;
   principal: RelayPrincipal;
+  protocol?: RelayProtocol;
   clientModel: string;
   candidate?: RelayCandidate | null;
   isStream: boolean;
@@ -47,7 +69,43 @@ const AUDIT_HEADER_ALLOWLIST = new Set([
   "content-length",
   "user-agent",
   "x-request-id",
+  "anthropic-version",
+  "anthropic-beta",
+  "openai-beta",
 ]);
+
+function normalizedSensitiveKey(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+/**
+ * Redact credentials embedded in native tool/MCP request bodies without
+ * changing the object that is forwarded upstream.
+ */
+export function sanitizeRelayAuditBody(value: unknown): unknown {
+  const seen = new WeakSet<object>();
+
+  const visit = (current: unknown): unknown => {
+    if (current === null || typeof current !== "object") return current;
+    if (seen.has(current)) return "[CIRCULAR]";
+    seen.add(current);
+
+    if (Array.isArray(current)) return current.map((item) => visit(item));
+
+    const result: Record<string, unknown> = {};
+    for (const [key, item] of Object.entries(current as Record<string, unknown>)) {
+      const normalized = normalizedSensitiveKey(key);
+      if (normalized === "headers" || SENSITIVE_BODY_KEYS.has(normalized)) {
+        result[key] = AUDIT_REDACTION;
+      } else {
+        result[key] = visit(item);
+      }
+    }
+    return result;
+  };
+
+  return visit(value);
+}
 
 function safeJsonSize(value: unknown): number {
   try {
@@ -116,14 +174,24 @@ export function emptyRelayUsage(): RelayUsage {
 export function parseRelayUsage(value: unknown): RelayUsage {
   if (!value || typeof value !== "object" || Array.isArray(value)) return emptyRelayUsage();
   const raw = value as Record<string, unknown>;
-  const numberValue = (key: string): number | null => {
-    const candidate = raw[key];
-    return typeof candidate === "number" && Number.isFinite(candidate)
-      ? Math.max(0, Math.trunc(candidate))
-      : null;
+  const numberValue = (...keys: string[]): number | null => {
+    for (const key of keys) {
+      const candidate = raw[key];
+      if (typeof candidate === "number" && Number.isFinite(candidate)) {
+        return Math.max(0, Math.trunc(candidate));
+      }
+    }
+    return null;
   };
-  const promptTokens = numberValue("prompt_tokens");
-  const completionTokens = numberValue("completion_tokens");
+  const basePromptTokens = numberValue("prompt_tokens", "input_tokens");
+  const cacheCreationTokens = numberValue("cache_creation_input_tokens");
+  const cacheReadTokens = numberValue("cache_read_input_tokens");
+  const hasAnthropicInputBreakdown =
+    cacheCreationTokens !== null || cacheReadTokens !== null;
+  const promptTokens = hasAnthropicInputBreakdown
+    ? (basePromptTokens ?? 0) + (cacheCreationTokens ?? 0) + (cacheReadTokens ?? 0)
+    : basePromptTokens;
+  const completionTokens = numberValue("completion_tokens", "output_tokens");
   const suppliedTotal = numberValue("total_tokens");
   const totalTokens = suppliedTotal ??
     (promptTokens !== null && completionTokens !== null
@@ -133,8 +201,8 @@ export function parseRelayUsage(value: unknown): RelayUsage {
 }
 
 export async function writeRelayAudit(input: RelayAuditInput): Promise<void> {
-  const request = prepareAuditValue(input.requestBody);
-  const response = prepareAuditValue(input.responseBody);
+  const request = prepareAuditValue(sanitizeRelayAuditBody(input.requestBody));
+  const response = prepareAuditValue(sanitizeRelayAuditBody(input.responseBody));
   // Defend at the persistence boundary as well as at request extraction. This
   // prevents a future caller from accidentally storing either employee or
   // upstream Authorization credentials.
@@ -161,6 +229,7 @@ export async function writeRelayAudit(input: RelayAuditInput): Promise<void> {
         requestId: input.requestId,
         employeeId: input.principal.employeeId,
         employeeApiKeyId: input.principal.employeeApiKeyId,
+        protocol: input.protocol ?? input.principal.protocol,
         clientModel: input.clientModel.slice(0, 128),
         upstreamModel: input.candidate?.upstreamModel,
         providerCode: input.candidate?.providerCode,

@@ -16,6 +16,11 @@ import {
 export const employeeRoleEnum = pgEnum("employee_role", ["employee", "admin", "auditor"]);
 export const employeeStatusEnum = pgEnum("employee_status", ["active", "disabled"]);
 export const apiKeyStatusEnum = pgEnum("api_key_status", ["active", "revoked"]);
+export const relayProtocolEnum = pgEnum("relay_protocol", [
+  "openai_chat",
+  "openai_responses",
+  "anthropic_messages",
+]);
 export const productTypeEnum = pgEnum("product_type", ["api", "coding_plan"]);
 export const shareModeEnum = pgEnum("share_mode", ["public_pool", "grant_only", "disabled"]);
 export const credentialStatusEnum = pgEnum("credential_status", [
@@ -65,6 +70,7 @@ export const employeeApiKeys = pgTable(
     keyPrefix: varchar("key_prefix", { length: 32 }).notNull(),
     keyHash: varchar("key_hash", { length: 128 }).notNull(),
     keyEncrypted: text("key_encrypted"),
+    protocol: relayProtocolEnum("protocol").notNull().default("openai_chat"),
     status: apiKeyStatusEnum("status").notNull().default("active"),
     lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
     expiresAt: timestamp("expires_at", { withTimezone: true }),
@@ -123,6 +129,10 @@ export const upstreamCredentials = pgTable(
     label: varchar("label", { length: 200 }).notNull(),
     secretEncrypted: text("secret_encrypted").notNull(),
     secretSuffix: varchar("secret_suffix", { length: 8 }).notNull(),
+    supportedProtocols: relayProtocolEnum("supported_protocols")
+      .array()
+      .notNull()
+      .default(["openai_chat"]),
     weight: integer("weight").notNull().default(100),
     priority: integer("priority").notNull().default(0),
     status: credentialStatusEnum("status").notNull().default("active"),
@@ -229,6 +239,7 @@ export const requestAudits = pgTable(
       .notNull()
       .references(() => employees.id),
     employeeApiKeyId: bigint("employee_api_key_id", { mode: "number" }),
+    protocol: relayProtocolEnum("protocol").notNull().default("openai_chat"),
     clientModel: varchar("client_model", { length: 128 }).notNull(),
     upstreamModel: varchar("upstream_model", { length: 128 }),
     providerCode: varchar("provider_code", { length: 64 }),

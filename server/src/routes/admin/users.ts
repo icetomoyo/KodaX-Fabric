@@ -11,6 +11,11 @@ import {
 import { hashPassword, validateNewPassword, verifyPassword } from "../../lib/password.js";
 import { writeOpsAudit } from "../../lib/ops-audit.js";
 import {
+  DEFAULT_RELAY_PROTOCOL,
+  RELAY_PROTOCOLS,
+  type RelayProtocol,
+} from "../../lib/relay/protocol.js";
+import {
   requirePasswordChanged,
   requireRoles,
   requireSession,
@@ -39,6 +44,7 @@ const userIdSchema = z.object({ id: z.coerce.number().int().positive() });
 const adminApiKeySchema = z.object({
   createNew: z.boolean().default(false),
   name: z.string().trim().min(1).max(100).default("admin-managed"),
+  protocol: z.enum(RELAY_PROTOCOLS).default(DEFAULT_RELAY_PROTOCOL),
 });
 
 const activeApiKeyFilter = (employeeId: number) =>
@@ -48,7 +54,7 @@ const activeApiKeyFilter = (employeeId: number) =>
     or(isNull(employeeApiKeys.expiresAt), gt(employeeApiKeys.expiresAt, new Date())),
   );
 
-async function findAdminCopyableApiKey(employeeId: number) {
+async function findAdminCopyableApiKey(employeeId: number, protocol?: RelayProtocol) {
   const [row] = await db
     .select({
       id: employeeApiKeys.id,
@@ -56,9 +62,16 @@ async function findAdminCopyableApiKey(employeeId: number) {
       keyPrefix: employeeApiKeys.keyPrefix,
       keyHash: employeeApiKeys.keyHash,
       keyEncrypted: employeeApiKeys.keyEncrypted,
+      protocol: employeeApiKeys.protocol,
     })
     .from(employeeApiKeys)
-    .where(and(activeApiKeyFilter(employeeId), isNotNull(employeeApiKeys.keyEncrypted)))
+    .where(
+      and(
+        activeApiKeyFilter(employeeId),
+        isNotNull(employeeApiKeys.keyEncrypted),
+        protocol ? eq(employeeApiKeys.protocol, protocol) : undefined,
+      ),
+    )
     .orderBy(desc(employeeApiKeys.id))
     .limit(1);
 
@@ -71,6 +84,7 @@ async function findAdminCopyableApiKey(employeeId: number) {
         id: row.id,
         name: row.name,
         keyPrefix: row.keyPrefix,
+        protocol: row.protocol,
         key: decryptEmployeeApiKey(row.keyEncrypted!, row.keyHash),
       },
     };
@@ -176,7 +190,7 @@ export async function adminUserRoutes(app: FastifyInstance) {
         action: "employee_api_key.reveal",
         targetType: "employee_api_key",
         targetId: String(managedKey.data.id),
-        detail: { employeeId: target.id },
+        detail: { employeeId: target.id, protocol: managedKey.data.protocol },
         ip: req.ip,
       });
 
@@ -220,7 +234,7 @@ export async function adminUserRoutes(app: FastifyInstance) {
     if (!target) return;
 
     if (!body.data.createNew) {
-      const managedKey = await findAdminCopyableApiKey(target.id);
+      const managedKey = await findAdminCopyableApiKey(target.id, body.data.protocol);
       if (managedKey.status === "invalid") {
         req.log.error(
           { employeeId: target.id, employeeApiKeyId: managedKey.keyId },
@@ -234,7 +248,7 @@ export async function adminUserRoutes(app: FastifyInstance) {
           action: "employee_api_key.reveal",
           targetType: "employee_api_key",
           targetId: String(managedKey.data.id),
-          detail: { employeeId: target.id },
+          detail: { employeeId: target.id, protocol: managedKey.data.protocol },
           ip: req.ip,
         });
 
@@ -265,11 +279,13 @@ export async function adminUserRoutes(app: FastifyInstance) {
           keyPrefix: prefix,
           keyHash: hash,
           keyEncrypted,
+          protocol: body.data.protocol,
         })
         .returning({
           id: employeeApiKeys.id,
           name: employeeApiKeys.name,
           keyPrefix: employeeApiKeys.keyPrefix,
+          protocol: employeeApiKeys.protocol,
         });
 
       await tx.insert(opsAuditLogs).values({
@@ -277,7 +293,7 @@ export async function adminUserRoutes(app: FastifyInstance) {
         action: "employee_api_key.create_for_employee",
         targetType: "employee_api_key",
         targetId: String(created.id),
-        detail: { employeeId: target.id },
+        detail: { employeeId: target.id, protocol: created.protocol },
         ip: req.ip,
       });
 

@@ -19,6 +19,7 @@ export const OPS_AUDIT_ACTION_LABELS: Record<string, string> = {
   "credential.quick_create": "新增上游渠道",
   "credential.create": "新增上游渠道",
   "credential.update": "更新上游渠道",
+  "credential.delete": "删除上游渠道",
   "credential.test": "测试上游渠道",
   "credential.grant": "授权上游渠道",
   "credential.ungrant": "移除渠道授权",

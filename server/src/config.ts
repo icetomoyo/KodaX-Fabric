@@ -18,6 +18,11 @@ const envSchema = z.object({
   RELAY_UPSTREAM_TIMEOUT_MS: z.coerce.number().int().min(1_000).default(300_000),
   RELAY_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(10).default(3),
   RELAY_COOLDOWN_SECONDS: z.coerce.number().int().min(1).max(3_600).default(60),
+  RELAY_RESPONSE_MAX_BYTES: z.coerce
+    .number()
+    .int()
+    .min(1_024)
+    .default(100 * 1024 * 1024),
   AUDIT_BODY_MAX_BYTES: z.coerce
     .number()
     .int()

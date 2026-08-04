@@ -55,7 +55,7 @@
               type="primary"
               :loading="copyingKeyUserId === row.id"
               :disabled="copyingKeyUserId !== null && copyingKeyUserId !== row.id"
-              @click="copyEmployeeApiKey(row)"
+              @click="openApiKeyDialog(row)"
             >
               复制 Key
             </el-button>
@@ -147,6 +147,53 @@
     </el-dialog>
 
     <el-dialog
+      v-model="showApiKey"
+      :title="`复制员工 Key · ${apiKeyUser?.name || ''}`"
+      width="560px"
+      destroy-on-close
+    >
+      <el-alert
+        title="请选择这个 Key 唯一允许使用的客户端协议。"
+        type="info"
+        :closable="false"
+        show-icon
+        class="protocol-alert"
+      />
+      <el-form label-position="top">
+        <el-form-item label="客户端协议" required>
+          <el-select v-model="apiKeyForm.protocol" style="width: 100%">
+            <el-option
+              v-for="option in relayProtocolOptions"
+              :key="option.value"
+              :label="option.label"
+              :value="option.value"
+            />
+          </el-select>
+        </el-form-item>
+      </el-form>
+
+      <div class="protocol-guide">
+        <strong>{{ selectedApiKeyProtocol.label }}</strong>
+        <span>{{ selectedApiKeyProtocol.description }}</span>
+        <code>{{ selectedApiKeyProtocol.endpoint }}</code>
+        <code v-for="line in selectedApiKeyProtocol.authHeaders" :key="line">{{ line }}</code>
+      </div>
+      <p class="key-dialog-tip">
+        如果该员工尚无此协议的可复制 Key，系统会新建一个并复制到剪贴板；以后仍可按同一协议复制。
+      </p>
+      <p v-if="apiKeyUser && apiKeyAvailabilityHint(apiKeyUser)" class="key-warning">
+        {{ apiKeyAvailabilityHint(apiKeyUser) }}。
+      </p>
+
+      <template #footer>
+        <el-button @click="showApiKey = false">取消</el-button>
+        <el-button type="primary" :loading="copyingKeyUserId !== null" @click="copyEmployeeApiKey">
+          获取并复制
+        </el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog
       v-model="showResetPassword"
       :title="`重置密码 · ${resetUser?.name || ''}`"
       width="480px"
@@ -192,11 +239,18 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref } from "vue";
-import { ElMessage, ElMessageBox } from "element-plus";
+import { computed, onMounted, reactive, ref } from "vue";
+import { ElMessage } from "element-plus";
 import { http } from "@/api/http";
 import { formatDateTime } from "@/lib/date-time";
 import { useAuthStore } from "@/stores/auth";
+import {
+  isRelayProtocol,
+  relayProtocolLabel,
+  relayProtocolOption,
+  relayProtocolOptions,
+  type RelayProtocol,
+} from "@/views/relay-protocol";
 
 type UserRow = {
   id: number;
@@ -215,6 +269,7 @@ const q = ref("");
 const showCreate = ref(false);
 const showImport = ref(false);
 const showEdit = ref(false);
+const showApiKey = ref(false);
 const showResetPassword = ref(false);
 const saving = ref(false);
 const importing = ref(false);
@@ -222,6 +277,7 @@ const updating = ref(false);
 const resetting = ref(false);
 const copyingKeyUserId = ref<number | null>(null);
 const editUser = ref<UserRow | null>(null);
+const apiKeyUser = ref<UserRow | null>(null);
 const resetUser = ref<UserRow | null>(null);
 const importText = ref("");
 const form = reactive({
@@ -242,6 +298,11 @@ const editForm = reactive({
   role: "employee" as UserRow["role"],
   status: "active" as UserRow["status"],
 });
+const apiKeyForm = reactive({
+  protocol: "openai_chat" as RelayProtocol,
+});
+
+const selectedApiKeyProtocol = computed(() => relayProtocolOption(apiKeyForm.protocol));
 
 const roleLabels: Record<UserRow["role"], string> = {
   employee: "员工",
@@ -322,7 +383,7 @@ function apiKeyAvailabilityHint(row: UserRow) {
 
 type ApiKeyResponse = {
   success?: boolean;
-  data?: { key?: unknown };
+  data?: { key?: unknown; protocol?: unknown; created?: unknown };
   message?: string;
 };
 
@@ -337,7 +398,7 @@ type ApiRequestError = {
   };
 };
 
-function extractApiKey(payload: unknown) {
+function extractApiKey(payload: unknown, expectedProtocol: RelayProtocol) {
   const response = payload as ApiKeyResponse;
   if (response.success !== true) {
     throw new Error(response.message || "获取 Key 失败");
@@ -345,20 +406,17 @@ function extractApiKey(payload: unknown) {
   if (typeof response.data?.key !== "string" || !response.data.key) {
     throw new Error("接口未返回有效的 Key");
   }
-  return response.data.key;
-}
-
-function keyCreationReason(error: unknown) {
-  const response = (error as ApiRequestError)?.response;
-  if (response?.status !== 404) return null;
-
-  if (response.data?.code === "key_not_recoverable") {
-    return "现有活跃 Key 的明文无法恢复";
+  if (!isRelayProtocol(response.data.protocol)) {
+    throw new Error("接口未返回有效的 Key 协议");
   }
-  if (response.data?.code === "api_key_not_found") {
-    return "该员工当前没有活跃 Key";
+  if (response.data.protocol !== expectedProtocol) {
+    throw new Error("接口返回的 Key 协议与所选协议不一致");
   }
-  return null;
+  return {
+    key: response.data.key,
+    protocol: response.data.protocol,
+    created: response.data.created === true,
+  };
 }
 
 function requestErrorMessage(error: unknown, fallback: string) {
@@ -366,50 +424,33 @@ function requestErrorMessage(error: unknown, fallback: string) {
   return requestError.response?.data?.message || requestError.message || fallback;
 }
 
-function isMessageBoxCancel(error: unknown) {
-  return error === "cancel" || error === "close";
+function openApiKeyDialog(row: UserRow) {
+  if (copyingKeyUserId.value !== null) return;
+  apiKeyUser.value = row;
+  apiKeyForm.protocol = "openai_chat";
+  showApiKey.value = true;
 }
 
-async function copyEmployeeApiKey(row: UserRow) {
-  if (copyingKeyUserId.value !== null) return;
+async function copyEmployeeApiKey() {
+  const row = apiKeyUser.value;
+  if (!row || copyingKeyUserId.value !== null) return;
 
   copyingKeyUserId.value = row.id;
   let apiKey = "";
   let created = false;
 
   try {
-    try {
-      apiKey = extractApiKey(
-        (await http.post(`/api/admin/users/${row.id}/api-key/reveal`)).data,
-      );
-    } catch (error: unknown) {
-      const creationReason = keyCreationReason(error);
-      if (!creationReason) throw error;
-
-      const availabilityHint = apiKeyAvailabilityHint(row);
-      try {
-        await ElMessageBox.confirm(
-          `${creationReason}。是否为“${row.name}”生成一个专用 Key 并复制？` +
-            "新 Key 将加密托管，管理员以后仍可在此复制；请勿通过聊天或日志传播。" +
-            (availabilityHint ? ` ${availabilityHint}。` : ""),
-          "生成员工专用 Key",
-          {
-            type: "warning",
-            confirmButtonText: "生成并复制",
-            cancelButtonText: "取消",
-            distinguishCancelAndClose: true,
-          },
-        );
-      } catch (error: unknown) {
-        if (isMessageBoxCancel(error)) return;
-        throw error;
-      }
-
-      apiKey = extractApiKey(
-        (await http.post(`/api/admin/users/${row.id}/api-key`)).data,
-      );
-      created = true;
-    }
+    const keyResult = extractApiKey(
+      (
+        await http.post(`/api/admin/users/${row.id}/api-key`, {
+          protocol: apiKeyForm.protocol,
+          createNew: false,
+        })
+      ).data,
+      apiKeyForm.protocol,
+    );
+    apiKey = keyResult.key;
+    created = keyResult.created;
 
     try {
       await navigator.clipboard.writeText(apiKey);
@@ -425,15 +466,17 @@ async function copyEmployeeApiKey(row: UserRow) {
     }
 
     const availabilityHint = apiKeyAvailabilityHint(row);
+    const protocolName = relayProtocolLabel(apiKeyForm.protocol, true);
     ElMessage({
       type: "success",
       message:
         (created
-          ? "专用 Key 已生成并复制，以后仍可在此复制；请勿通过聊天或日志传播"
-          : "Key 已复制") + (availabilityHint ? `。${availabilityHint}` : ""),
+          ? `${protocolName} Key 已生成并复制，以后仍可在此复制；请勿通过聊天或日志传播`
+          : `${protocolName} Key 已复制`) + (availabilityHint ? `。${availabilityHint}` : ""),
       duration: created || availabilityHint ? 6000 : 3000,
       showClose: created || Boolean(availabilityHint),
     });
+    showApiKey.value = false;
   } catch (error: unknown) {
     ElMessage.error(requestErrorMessage(error, "获取 Key 失败"));
   } finally {
@@ -535,5 +578,42 @@ onMounted(load);
 
 .self-edit-tip {
   margin: -8px 0 0 90px;
+}
+
+.protocol-alert {
+  margin-bottom: 16px;
+}
+
+.protocol-guide {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: #f8fafc;
+  color: #475569;
+  font-size: 13px;
+}
+
+.protocol-guide strong {
+  color: #0f172a;
+}
+
+.protocol-guide code {
+  overflow-wrap: anywhere;
+  color: #334155;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.key-dialog-tip,
+.key-warning {
+  margin: 12px 0 0;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.key-warning {
+  color: #b45309;
 }
 </style>

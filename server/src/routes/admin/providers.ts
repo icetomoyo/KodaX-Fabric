@@ -59,6 +59,7 @@ export async function adminProviderRoutes(app: FastifyInstance) {
           code: z.string().min(1).max(64).regex(/^[a-z0-9_]+$/i, "code 仅允许字母数字下划线"),
           name: z.string().min(1).max(100),
           defaultBaseUrl: z.string().min(1),
+          authStyle: z.enum(["bearer", "x-api-key"]).default("bearer"),
           status: z.enum(["active", "disabled"]).default("active"),
           withApiLine: z.boolean().default(true),
         })
@@ -75,6 +76,7 @@ export async function adminProviderRoutes(app: FastifyInstance) {
             code: body.data.code,
             name: body.data.name,
             defaultBaseUrl: body.data.defaultBaseUrl,
+            authStyle: body.data.authStyle,
             status: body.data.status,
           })
           .returning();
@@ -218,6 +220,7 @@ export async function adminProviderRoutes(app: FastifyInstance) {
         .object({
           name: z.string().min(1).max(100).optional(),
           defaultBaseUrl: z.string().url().or(z.string().min(1)).optional(),
+          authStyle: z.enum(["bearer", "x-api-key"]).optional(),
           status: z.enum(["active", "disabled"]).optional(),
         })
         .safeParse(req.body);

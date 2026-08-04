@@ -14,6 +14,20 @@ const {
   hashApiKey,
 } = await import("../src/lib/api-key.js");
 const { decryptSecret, encryptSecret } = await import("../src/lib/crypto-secret.js");
+const { relayProtocolEnum } = await import("../src/db/schema/index.js");
+const {
+  DEFAULT_RELAY_PROTOCOL,
+  RELAY_PROTOCOLS,
+  isRelayProtocol,
+} = await import("../src/lib/relay/protocol.js");
+
+test("relay protocol runtime values stay aligned with the database enum", () => {
+  assert.deepEqual(relayProtocolEnum.enumValues, [...RELAY_PROTOCOLS]);
+  assert.equal(DEFAULT_RELAY_PROTOCOL, "openai_chat");
+  assert.equal(isRelayProtocol("openai_responses"), true);
+  assert.equal(isRelayProtocol("anthropic_messages"), true);
+  assert.equal(isRelayProtocol("unknown"), false);
+});
 
 test("employee API keys round-trip through purpose-scoped encryption", () => {
   const generated = generateApiKey();

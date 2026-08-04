@@ -53,6 +53,13 @@
           </el-tooltip>
         </template>
       </el-table-column>
+      <el-table-column label="客户端协议" width="154">
+        <template #default="{ row }">
+          <el-tag size="small" effect="plain">
+            {{ relayProtocolLabel(row.protocol, true) }}
+          </el-tag>
+        </template>
+      </el-table-column>
       <el-table-column label="模型" min-width="180">
         <template #default="{ row }">
           <el-tooltip :content="modelTooltip(row)" placement="top" :show-after="400">
@@ -142,6 +149,9 @@
           <el-descriptions-item label="员工">
             {{ detail.meta.employeeName }} / {{ detail.meta.employeePhone }}
           </el-descriptions-item>
+          <el-descriptions-item label="客户端协议">
+            {{ relayProtocolLabel(detail.meta.protocol) }}
+          </el-descriptions-item>
           <el-descriptions-item label="模型">
             {{ modelTooltip(detail.meta) }}
           </el-descriptions-item>
@@ -206,6 +216,7 @@ import { computed, onMounted, reactive, ref } from "vue";
 import { ElMessage } from "element-plus";
 import { http } from "@/api/http";
 import { formatDateTime } from "@/lib/date-time";
+import { relayProtocolLabel, type RelayProtocol } from "@/views/relay-protocol";
 
 type LogStatus = "success" | "upstream_error" | "client_error" | "cancelled";
 type ProductType = "api" | "coding_plan";
@@ -216,6 +227,7 @@ interface LogRow {
   employeeId: number;
   employeeName: string;
   employeePhone: string;
+  protocol: RelayProtocol;
   clientModel: string;
   upstreamModel: string | null;
   providerCode: string | null;

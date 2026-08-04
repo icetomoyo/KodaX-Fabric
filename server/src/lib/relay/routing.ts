@@ -7,6 +7,10 @@ import {
   providers,
   upstreamCredentials,
 } from "../../db/schema/index.js";
+import {
+  DEFAULT_RELAY_PROTOCOL,
+  type RelayProtocol,
+} from "./protocol.js";
 import type { RelayCandidate } from "./types.js";
 
 type AvailableCredential = {
@@ -25,6 +29,7 @@ type AvailableCredential = {
   retryPolicy: unknown;
   providerCode: string;
   authStyle: string;
+  supportedProtocols: RelayProtocol[];
   baseUrl: string;
 };
 
@@ -51,7 +56,21 @@ function discoveredModels(meta: unknown): string[] {
   return [];
 }
 
-async function loadAccessibleCredentials(employeeId: number): Promise<AvailableCredential[]> {
+export function credentialSupportsProtocol(
+  credential: { supportedProtocols?: readonly RelayProtocol[] | null },
+  protocol: RelayProtocol = DEFAULT_RELAY_PROTOCOL,
+): boolean {
+  const configured = credential.supportedProtocols;
+  // Before the protocol column existed every credential was Chat Completions.
+  // Keep that behavior for partially migrated fixtures and defensive callers.
+  if (!configured || configured.length === 0) return protocol === DEFAULT_RELAY_PROTOCOL;
+  return configured.includes(protocol);
+}
+
+async function loadAccessibleCredentials(
+  employeeId: number,
+  protocol: RelayProtocol = DEFAULT_RELAY_PROTOCOL,
+): Promise<AvailableCredential[]> {
   const now = new Date();
   // Cooling is a temporary state. Restore expired entries in persistent state
   // so admin views and subsequent scheduling agree that the credential is
@@ -84,6 +103,7 @@ async function loadAccessibleCredentials(employeeId: number): Promise<AvailableC
         retryPolicy: productLines.retryPolicy,
         providerCode: providers.code,
         authStyle: providers.authStyle,
+        supportedProtocols: upstreamCredentials.supportedProtocols,
         defaultBaseUrl: providers.defaultBaseUrl,
         baseUrlOverride: productLines.baseUrlOverride,
       })
@@ -122,8 +142,10 @@ async function loadAccessibleCredentials(employeeId: number): Promise<AvailableC
       retryPolicy: row.retryPolicy,
       providerCode: row.providerCode,
       authStyle: row.authStyle,
+      supportedProtocols: row.supportedProtocols ?? [DEFAULT_RELAY_PROTOCOL],
       baseUrl: (row.baseUrlOverride || row.defaultBaseUrl).replace(/\/+$/, ""),
-    }));
+    }))
+    .filter((credential) => credentialSupportsProtocol(credential, protocol));
 }
 
 function coolingRetryAfter(credentials: AvailableCredential[]): number | null {
@@ -223,9 +245,10 @@ export function orderRelayCandidates(
 export async function resolveRelayCandidates(
   employeeId: number,
   clientModel: string,
+  upstreamProtocol: RelayProtocol = DEFAULT_RELAY_PROTOCOL,
 ): Promise<RelayCandidateResolution> {
   const [credentials, routes] = await Promise.all([
-    loadAccessibleCredentials(employeeId),
+    loadAccessibleCredentials(employeeId, upstreamProtocol),
     db
       .select({
         routeId: modelRoutes.id,
@@ -266,6 +289,8 @@ export async function resolveRelayCandidates(
           upstreamModel: route.upstreamModel,
           providerCode: credential.providerCode,
           authStyle: credential.authStyle,
+          supportedProtocols: credential.supportedProtocols,
+          upstreamProtocol,
           productLineId: credential.productLineId,
           productType: credential.productType,
           retryPolicy: credential.retryPolicy,
@@ -291,6 +316,8 @@ export async function resolveRelayCandidates(
         upstreamModel: clientModel,
         providerCode: credential.providerCode,
         authStyle: credential.authStyle,
+        supportedProtocols: credential.supportedProtocols,
+        upstreamProtocol,
         productLineId: credential.productLineId,
         productType: credential.productType,
         retryPolicy: credential.retryPolicy,
@@ -335,14 +362,16 @@ export async function resolveRelayCandidates(
 export async function getRelayCandidates(
   employeeId: number,
   clientModel: string,
+  upstreamProtocol: RelayProtocol = DEFAULT_RELAY_PROTOCOL,
 ): Promise<RelayCandidate[]> {
-  return (await resolveRelayCandidates(employeeId, clientModel)).candidates;
+  return (await resolveRelayCandidates(employeeId, clientModel, upstreamProtocol)).candidates;
 }
 
 export async function listAccessibleRelayModels(
   employeeId: number,
+  upstreamProtocol: RelayProtocol = DEFAULT_RELAY_PROTOCOL,
 ): Promise<Array<{ id: string; ownedBy: string }>> {
-  const credentials = (await loadAccessibleCredentials(employeeId)).filter(
+  const credentials = (await loadAccessibleCredentials(employeeId, upstreamProtocol)).filter(
     (credential) =>
       credential.credentialStatus === "active" && credential.credentialWeight > 0,
   );

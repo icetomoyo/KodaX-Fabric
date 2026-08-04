@@ -1,6 +1,9 @@
+import type { RelayProtocol } from "./protocol.js";
+
 export type RelayPrincipal = {
   employeeId: number;
   employeeApiKeyId: number;
+  protocol: RelayProtocol;
   employeeName: string;
   employeePhone: string;
   employeeDept: string | null;
@@ -14,6 +17,8 @@ export type RelayCandidate = {
   upstreamModel: string;
   providerCode: string;
   authStyle: string;
+  supportedProtocols: RelayProtocol[];
+  upstreamProtocol: RelayProtocol;
   productLineId: number;
   productType: "api" | "coding_plan";
   retryPolicy: unknown;

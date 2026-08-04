@@ -3,6 +3,10 @@ import { env } from "../../config.js";
 import { db } from "../../db/client.js";
 import { upstreamCredentials } from "../../db/schema/index.js";
 import { decryptSecret } from "../crypto-secret.js";
+import {
+  DEFAULT_RELAY_PROTOCOL,
+  type RelayProtocol,
+} from "./protocol.js";
 import type { RelayCandidate } from "./types.js";
 
 export type RelayUpstreamAttemptKind =
@@ -39,6 +43,30 @@ export type SendRelayUpstreamChatInput = {
   cooldownSeconds?: number;
 };
 
+export type RelayUpstreamOperation =
+  | "models"
+  | "chat_completions"
+  | "responses"
+  | "responses_compact"
+  | "messages"
+  | "messages_count_tokens";
+
+export type RelayForwardHeaders = Record<string, string | string[] | undefined>;
+
+export type SendRelayUpstreamInput = {
+  candidate: RelayCandidate;
+  operation: RelayUpstreamOperation;
+  protocol?: RelayProtocol;
+  body?: Record<string, unknown>;
+  query?: Record<string, string>;
+  forwardHeaders?: RelayForwardHeaders | Headers;
+  requestId?: string;
+  signal?: AbortSignal;
+  timeoutMs?: number;
+  cooldownSeconds?: number;
+  method?: "GET" | "POST";
+};
+
 type RequestLifetime = {
   signal: AbortSignal;
   didTimeout: () => boolean;
@@ -46,13 +74,57 @@ type RequestLifetime = {
   abort: (reason?: unknown) => void;
 };
 
-/** Append the OpenAI-compatible path without discarding a base URL path such as `/v1`. */
-export function buildRelayUpstreamChatUrl(baseUrl: string): URL {
+const OPERATION_PATHS: Record<
+  RelayProtocol,
+  Partial<Record<RelayUpstreamOperation, string>>
+> = {
+  openai_chat: {
+    models: "models",
+    chat_completions: "chat/completions",
+  },
+  openai_responses: {
+    models: "models",
+    responses: "responses",
+    responses_compact: "responses/compact",
+  },
+  anthropic_messages: {
+    models: "v1/models",
+    messages: "v1/messages",
+    messages_count_tokens: "v1/messages/count_tokens",
+  },
+};
+
+/** Append a protocol operation without discarding a configured base URL path. */
+export function buildRelayUpstreamUrl(
+  baseUrl: string,
+  protocol: RelayProtocol,
+  operation: RelayUpstreamOperation,
+): URL {
+  let operationPath = OPERATION_PATHS[protocol][operation];
+  if (!operationPath) {
+    throw new Error(`协议 ${protocol} 不支持上游操作 ${operation}`);
+  }
+
   const base = new URL(baseUrl);
   base.search = "";
   base.hash = "";
   if (!base.pathname.endsWith("/")) base.pathname += "/";
-  return new URL("chat/completions", base);
+
+  // Anthropic deployments conventionally configure the origin, while some
+  // compatible gateways provide a base URL ending in `/v1`. Avoid `/v1/v1`.
+  if (
+    protocol === "anthropic_messages" &&
+    /\/v1\/$/.test(base.pathname) &&
+    operationPath.startsWith("v1/")
+  ) {
+    operationPath = operationPath.slice(3);
+  }
+  return new URL(operationPath, base);
+}
+
+/** Backward-compatible Chat Completions endpoint builder. */
+export function buildRelayUpstreamChatUrl(baseUrl: string): URL {
+  return buildRelayUpstreamUrl(baseUrl, DEFAULT_RELAY_PROTOCOL, "chat_completions");
 }
 
 function createRequestLifetime(timeoutMs: number, externalSignal?: AbortSignal): RequestLifetime {
@@ -277,12 +349,93 @@ function safeRequestId(value: string | undefined): string | null {
   return /^[\x21-\x7e]+$/.test(value) ? value : null;
 }
 
+function isForwardedProtocolHeader(protocol: RelayProtocol, name: string): boolean {
+  if (protocol === "anthropic_messages") {
+    // Anthropic explicitly treats capability headers as an open list. New
+    // Claude Code releases may add anthropic-* headers without a gateway update.
+    return name.startsWith("anthropic-");
+  }
+  return name === "openai-beta";
+}
+
+function forwardedHeaderEntries(
+  source: RelayForwardHeaders | Headers | undefined,
+): Array<[string, string | string[] | undefined]> {
+  if (!source) return [];
+  if (source instanceof Headers) {
+    const entries: Array<[string, string]> = [];
+    source.forEach((value, name) => entries.push([name, value]));
+    return entries;
+  }
+  return Object.entries(source);
+}
+
+export function sanitizeRelayUpstreamForwardHeaders(
+  protocol: RelayProtocol,
+  source?: RelayForwardHeaders | Headers,
+): Record<string, string> {
+  const result: Record<string, string> = {};
+  for (const [rawName, rawValue] of forwardedHeaderEntries(source)) {
+    const name = rawName.toLowerCase();
+    if (!isForwardedProtocolHeader(protocol, name) || rawValue === undefined) continue;
+    const value = Array.isArray(rawValue) ? rawValue.join(", ") : rawValue;
+    if (!value || value.length > 8_192 || /[\r\n]/.test(value)) continue;
+    result[name] = value;
+  }
+  return result;
+}
+
+export type BuildRelayUpstreamHeadersInput = {
+  protocol: RelayProtocol;
+  authStyle: string;
+  secret: string;
+  forwardHeaders?: RelayForwardHeaders | Headers;
+  requestId?: string;
+};
+
+export function buildRelayUpstreamHeaders(
+  input: BuildRelayUpstreamHeadersInput,
+): Headers {
+  const headers = new Headers({
+    Accept: "application/json",
+    "Content-Type": "application/json",
+    "User-Agent": "TokenHub/0.1 relay",
+  });
+
+  const authStyle = input.authStyle.trim().toLowerCase();
+  if (authStyle === "bearer") {
+    headers.set("Authorization", `Bearer ${input.secret}`);
+  } else if (
+    authStyle === "x-api-key" ||
+    authStyle === "x_api_key" ||
+    authStyle === "api-key" ||
+    authStyle === "anthropic"
+  ) {
+    headers.set("X-Api-Key", input.secret);
+  } else {
+    throw new Error(`不支持的上游鉴权方式：${input.authStyle}`);
+  }
+
+  for (const [name, value] of Object.entries(
+    sanitizeRelayUpstreamForwardHeaders(input.protocol, input.forwardHeaders),
+  )) {
+    headers.set(name, value);
+  }
+  if (input.protocol === "anthropic_messages" && !headers.has("anthropic-version")) {
+    headers.set("anthropic-version", "2023-06-01");
+  }
+
+  const requestId = safeRequestId(input.requestId);
+  if (requestId) headers.set("X-Request-ID", requestId);
+  return headers;
+}
+
 /**
  * Execute one upstream attempt. The caller owns retry ordering and response-body handling.
  * HTTP responses are deliberately left unread so JSON and SSE can be forwarded byte-for-byte.
  */
-export async function sendRelayUpstreamChat(
-  input: SendRelayUpstreamChatInput,
+export async function sendRelayUpstream(
+  input: SendRelayUpstreamInput,
 ): Promise<RelayUpstreamAttemptResult> {
   const startedAt = Date.now();
   const timeoutMs = Math.max(1, Math.trunc(input.timeoutMs ?? env.RELAY_UPSTREAM_TIMEOUT_MS));
@@ -301,19 +454,43 @@ export async function sendRelayUpstreamChat(
     abort: lifetime.abort,
   });
 
-  let secret: string;
   let url: URL;
-  let serializedBody: string;
+  let headers: Headers;
+  let serializedBody: string | undefined;
+  const protocol = input.protocol ?? input.candidate.upstreamProtocol ?? DEFAULT_RELAY_PROTOCOL;
+  const supportedProtocols = input.candidate.supportedProtocols?.length
+    ? input.candidate.supportedProtocols
+    : [DEFAULT_RELAY_PROTOCOL];
+  const method = input.method ?? (input.operation === "models" ? "GET" : "POST");
   try {
-    if (input.candidate.authStyle.toLowerCase() !== "bearer") {
-      throw new Error(`不支持的上游鉴权方式：${input.candidate.authStyle}`);
+    if (!supportedProtocols.includes(protocol)) {
+      throw new Error(`上游凭证不支持协议：${protocol}`);
     }
-    secret = decryptSecret(input.candidate.secretEncrypted);
-    url = buildRelayUpstreamChatUrl(input.candidate.baseUrl);
-    serializedBody = JSON.stringify({
-      ...input.body,
-      model: input.candidate.upstreamModel,
+    const secret = decryptSecret(input.candidate.secretEncrypted);
+    url = buildRelayUpstreamUrl(input.candidate.baseUrl, protocol, input.operation);
+    for (const [name, value] of Object.entries(input.query ?? {})) {
+      if (
+        !/^[a-z0-9_.-]{1,64}$/i.test(name) ||
+        value.length > 1_024 ||
+        /[\r\n]/.test(value)
+      ) {
+        throw new Error(`无效的上游查询参数：${name}`);
+      }
+      url.searchParams.set(name, value);
+    }
+    headers = buildRelayUpstreamHeaders({
+      protocol,
+      authStyle: input.candidate.authStyle,
+      secret,
+      forwardHeaders: input.forwardHeaders,
+      requestId: input.requestId,
     });
+    if (method !== "GET") {
+      serializedBody = JSON.stringify({
+        ...(input.body ?? {}),
+        model: input.candidate.upstreamModel,
+      });
+    }
   } catch (error) {
     lifetime.cleanup();
     return result({
@@ -326,19 +503,10 @@ export async function sendRelayUpstreamChat(
     });
   }
 
-  const headers = new Headers({
-    Accept: "application/json",
-    Authorization: `Bearer ${secret}`,
-    "Content-Type": "application/json",
-    "User-Agent": "TokenHub/0.1 relay",
-  });
-  const requestId = safeRequestId(input.requestId);
-  if (requestId) headers.set("X-Request-ID", requestId);
-
   let response: Response;
   try {
     response = await fetch(url, {
-      method: "POST",
+      method,
       headers,
       body: serializedBody,
       redirect: "manual",
@@ -409,5 +577,16 @@ export async function sendRelayUpstreamChat(
     status: response.status,
     errorCode: classification.errorCode,
     errorMessage: classification.errorMessage,
+  });
+}
+
+/** Preserve the original Chat Completions API for existing routes and callers. */
+export function sendRelayUpstreamChat(
+  input: SendRelayUpstreamChatInput,
+): Promise<RelayUpstreamAttemptResult> {
+  return sendRelayUpstream({
+    ...input,
+    protocol: DEFAULT_RELAY_PROTOCOL,
+    operation: "chat_completions",
   });
 }

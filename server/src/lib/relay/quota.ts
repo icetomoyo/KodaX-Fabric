@@ -107,7 +107,9 @@ async function acquireRpm(employeeId: number, limit: number) {
 async function acquireConcurrency(employeeId: number, limit: number): Promise<() => Promise<void>> {
   const key = `tokenhub:relay:concurrency:v2:${employeeId}`;
   const leaseId = randomUUID();
-  const ttlMs = env.RELAY_UPSTREAM_TIMEOUT_MS + 60_000;
+  // Attempts are sequential and each may consume the full upstream timeout.
+  // Keep the concurrency slot alive for the entire retry budget.
+  const ttlMs = env.RELAY_UPSTREAM_TIMEOUT_MS * env.RELAY_MAX_ATTEMPTS + 60_000;
   const acquireScript = `
     local redis_time = redis.call("TIME")
     local now_ms = redis_time[1] * 1000 + math.floor(redis_time[2] / 1000)

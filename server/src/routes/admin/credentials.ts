@@ -18,6 +18,15 @@ import {
   resolveTemplateBaseUrlOption,
 } from "../../lib/provider-templates.js";
 import {
+  DEFAULT_RELAY_PROTOCOL,
+  RELAY_PROTOCOLS,
+  type RelayProtocol,
+} from "../../lib/relay/protocol.js";
+import {
+  buildRelayUpstreamHeaders,
+  buildRelayUpstreamUrl,
+} from "../../lib/relay/upstream.js";
+import {
   requirePasswordChanged,
   requireRoles,
   requireSession,
@@ -32,6 +41,14 @@ type CredentialTestResult = {
   models: string[];
   message: string;
 };
+
+const supportedProtocolsSchema = z
+  .array(z.enum(RELAY_PROTOCOLS))
+  .min(1)
+  .max(RELAY_PROTOCOLS.length)
+  .refine((values) => new Set(values).size === values.length, {
+    message: "支持协议不能重复",
+  });
 
 function parseModels(payload: unknown): string[] {
   if (!payload || typeof payload !== "object") return [];
@@ -75,7 +92,9 @@ async function testCredentialConnection(credentialId: number): Promise<Credentia
       id: upstreamCredentials.id,
       secretEncrypted: upstreamCredentials.secretEncrypted,
       meta: upstreamCredentials.meta,
+      supportedProtocols: upstreamCredentials.supportedProtocols,
       providerCode: providers.code,
+      authStyle: providers.authStyle,
       defaultBaseUrl: providers.defaultBaseUrl,
       baseUrlOverride: productLines.baseUrlOverride,
     })
@@ -100,13 +119,21 @@ async function testCredentialConnection(credentialId: number): Promise<Credentia
   let result: CredentialTestResult;
 
   try {
-    const response = await fetch(new URL("models", `${baseUrl}/`), {
+    const protocol: RelayProtocol = credential.supportedProtocols.includes(
+      "anthropic_messages",
+    )
+      ? "anthropic_messages"
+      : credential.supportedProtocols.includes("openai_responses")
+        ? "openai_responses"
+        : DEFAULT_RELAY_PROTOCOL;
+    const secret = decryptSecret(credential.secretEncrypted);
+    const response = await fetch(buildRelayUpstreamUrl(baseUrl, protocol, "models"), {
       method: "GET",
-      headers: {
-        Accept: "application/json",
-        Authorization: `Bearer ${decryptSecret(credential.secretEncrypted)}`,
-        "User-Agent": "TokenHub/0.1 credential-check",
-      },
+      headers: buildRelayUpstreamHeaders({
+        protocol,
+        authStyle: credential.authStyle,
+        secret,
+      }),
       redirect: "manual",
       signal: AbortSignal.timeout(12_000),
     });
@@ -210,6 +237,7 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
           baseUrl: z.string().url().optional(),
           label: z.string().trim().min(1).max(200),
           secret: z.string().trim().min(4),
+          supportedProtocols: supportedProtocolsSchema.default([DEFAULT_RELAY_PROTOCOL]),
           weight: z.number().int().min(0).max(10000).default(100),
           priority: z.number().int().min(-1000).max(1000).default(0),
           testAfterCreate: z.boolean().default(true),
@@ -250,7 +278,7 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
               code: template.code,
               name: template.name,
               defaultBaseUrl: template.baseUrls[0].url,
-              authStyle: "bearer",
+              authStyle: template.authStyle,
               openaiCompatLevel: "full",
               status: "active",
             })
@@ -292,6 +320,7 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
             label: body.data.label,
             secretEncrypted: encryptSecret(body.data.secret),
             secretSuffix: secretSuffix(body.data.secret),
+            supportedProtocols: body.data.supportedProtocols,
             weight: body.data.weight,
             priority: body.data.priority,
             meta: {
@@ -304,6 +333,7 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
             id: upstreamCredentials.id,
             label: upstreamCredentials.label,
             secretSuffix: upstreamCredentials.secretSuffix,
+            supportedProtocols: upstreamCredentials.supportedProtocols,
             status: upstreamCredentials.status,
           });
 
@@ -344,6 +374,7 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
         detail: {
           providerCode: body.data.providerCode,
           productLineId: created.productLine.id,
+          supportedProtocols: body.data.supportedProtocols,
           testOk: test?.ok ?? null,
         },
         ip: req.ip,
@@ -373,6 +404,7 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
         productLineId: upstreamCredentials.productLineId,
         label: upstreamCredentials.label,
         secretSuffix: upstreamCredentials.secretSuffix,
+        supportedProtocols: upstreamCredentials.supportedProtocols,
         weight: upstreamCredentials.weight,
         priority: upstreamCredentials.priority,
         status: upstreamCredentials.status,
@@ -418,6 +450,7 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
           productLineId: z.number().int().positive(),
           label: z.string().min(1).max(200),
           secret: z.string().min(4),
+          supportedProtocols: supportedProtocolsSchema.default([DEFAULT_RELAY_PROTOCOL]),
           weight: z.number().int().min(0).max(10000).default(100),
           priority: z.number().int().default(0),
           meta: z.record(z.unknown()).optional(),
@@ -444,6 +477,7 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
           label: body.data.label,
           secretEncrypted: encryptSecret(body.data.secret),
           secretSuffix: secretSuffix(body.data.secret),
+          supportedProtocols: body.data.supportedProtocols,
           weight: body.data.weight,
           priority: body.data.priority,
           meta: body.data.meta,
@@ -453,6 +487,7 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
           id: upstreamCredentials.id,
           label: upstreamCredentials.label,
           secretSuffix: upstreamCredentials.secretSuffix,
+          supportedProtocols: upstreamCredentials.supportedProtocols,
           productLineId: upstreamCredentials.productLineId,
           status: upstreamCredentials.status,
         });
@@ -462,7 +497,11 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
         action: "credential.create",
         targetType: "upstream_credential",
         targetId: String(row.id),
-        detail: { label: row.label, productLineId: row.productLineId },
+        detail: {
+          label: row.label,
+          productLineId: row.productLineId,
+          supportedProtocols: row.supportedProtocols,
+        },
         ip: req.ip,
       });
 
@@ -479,6 +518,7 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
         .object({
           label: z.string().min(1).max(200).optional(),
           secret: z.string().min(4).optional(),
+          supportedProtocols: supportedProtocolsSchema.optional(),
           weight: z.number().int().min(0).max(10000).optional(),
           priority: z.number().int().optional(),
           status: z
@@ -497,6 +537,9 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
       if (body.data.label !== undefined) patch.label = body.data.label;
       if (body.data.weight !== undefined) patch.weight = body.data.weight;
       if (body.data.priority !== undefined) patch.priority = body.data.priority;
+      if (body.data.supportedProtocols !== undefined) {
+        patch.supportedProtocols = body.data.supportedProtocols;
+      }
       if (body.data.status !== undefined) {
         patch.status = body.data.status;
         if (body.data.status === "active") {
@@ -522,6 +565,7 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
           label: upstreamCredentials.label,
           status: upstreamCredentials.status,
           secretSuffix: upstreamCredentials.secretSuffix,
+          supportedProtocols: upstreamCredentials.supportedProtocols,
         });
 
       if (!row) {
@@ -541,6 +585,54 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
       });
 
       return { success: true, data: row };
+    },
+  );
+
+  app.delete(
+    "/api/admin/credentials/:id",
+    { preHandler: [requireRoles("admin")] },
+    async (req, reply) => {
+      const params = z.object({ id: z.coerce.number().int().positive() }).safeParse(req.params);
+      if (!params.success) {
+        return reply.code(400).send({ success: false, message: "参数无效" });
+      }
+
+      const deleted = await db.transaction(async (tx) => {
+        await tx
+          .delete(credentialEmployeeGrants)
+          .where(eq(credentialEmployeeGrants.credentialId, params.data.id));
+
+        const [row] = await tx
+          .delete(upstreamCredentials)
+          .where(eq(upstreamCredentials.id, params.data.id))
+          .returning({
+            id: upstreamCredentials.id,
+            label: upstreamCredentials.label,
+            secretSuffix: upstreamCredentials.secretSuffix,
+            productLineId: upstreamCredentials.productLineId,
+          });
+
+        return row ?? null;
+      });
+
+      if (!deleted) {
+        return reply.code(404).send({ success: false, message: "凭证不存在" });
+      }
+
+      await writeOpsAudit({
+        actorEmployeeId: req.employeeId,
+        action: "credential.delete",
+        targetType: "upstream_credential",
+        targetId: String(deleted.id),
+        detail: {
+          label: deleted.label,
+          secretSuffix: deleted.secretSuffix,
+          productLineId: deleted.productLineId,
+        },
+        ip: req.ip,
+      });
+
+      return { success: true, data: { id: deleted.id } };
     },
   );
 

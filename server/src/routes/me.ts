@@ -11,6 +11,10 @@ import {
 } from "../db/schema/index.js";
 import { encryptEmployeeApiKey, generateApiKey } from "../lib/api-key.js";
 import { writeOpsAudit } from "../lib/ops-audit.js";
+import {
+  DEFAULT_RELAY_PROTOCOL,
+  RELAY_PROTOCOLS,
+} from "../lib/relay/protocol.js";
 import { requirePasswordChanged, requireSession } from "../middleware/auth.js";
 
 export async function meRoutes(app: FastifyInstance) {
@@ -23,6 +27,7 @@ export async function meRoutes(app: FastifyInstance) {
         id: employeeApiKeys.id,
         name: employeeApiKeys.name,
         keyPrefix: employeeApiKeys.keyPrefix,
+        protocol: employeeApiKeys.protocol,
         status: employeeApiKeys.status,
         lastUsedAt: employeeApiKeys.lastUsedAt,
         createdAt: employeeApiKeys.createdAt,
@@ -38,7 +43,10 @@ export async function meRoutes(app: FastifyInstance) {
     reply.header("Cache-Control", "no-store");
     reply.header("Pragma", "no-cache");
     const body = z
-      .object({ name: z.string().min(1).max(100).default("default") })
+      .object({
+        name: z.string().min(1).max(100).default("default"),
+        protocol: z.enum(RELAY_PROTOCOLS).default(DEFAULT_RELAY_PROTOCOL),
+      })
       .safeParse(req.body ?? {});
     if (!body.success) {
       return reply.code(400).send({ success: false, message: "参数无效" });
@@ -55,11 +63,13 @@ export async function meRoutes(app: FastifyInstance) {
           keyPrefix: prefix,
           keyHash: hash,
           keyEncrypted,
+          protocol: body.data.protocol,
         })
         .returning({
           id: employeeApiKeys.id,
           name: employeeApiKeys.name,
           keyPrefix: employeeApiKeys.keyPrefix,
+          protocol: employeeApiKeys.protocol,
           status: employeeApiKeys.status,
           createdAt: employeeApiKeys.createdAt,
         });
@@ -69,6 +79,7 @@ export async function meRoutes(app: FastifyInstance) {
         action: "api_key.create",
         targetType: "employee_api_key",
         targetId: String(created.id),
+        detail: { protocol: created.protocol },
         ip: req.ip,
       });
 
@@ -180,6 +191,7 @@ export async function meRoutes(app: FastifyInstance) {
       .select({
         id: requestAudits.id,
         requestId: requestAudits.requestId,
+        protocol: requestAudits.protocol,
         clientModel: requestAudits.clientModel,
         providerCode: requestAudits.providerCode,
         productType: requestAudits.productType,

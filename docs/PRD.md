@@ -162,13 +162,13 @@
 | F-02 | 认证 | 首次/重置后强制改密 | 未改密无法访问业务 API/页面 |
 | F-03 | 用户 | 管理员创建/批量导入/停用启用 | 手机号唯一；禁止自注册 |
 | F-04 | 角色路由 | 管理员仅管理端；员工仅员工端 | 互访 URL 被重定向 |
-| F-05 | API Key | 员工生成/列表/吊销；管理员可复制员工 Key | 哈希鉴权；托管副本加密存储；每次管理员读取均审计且禁止缓存 |
+| F-05 | API Key | 员工生成/列表/吊销；管理员可按协议复制员工 Key | 每个 Key 绑定唯一传输协议；哈希鉴权；托管副本加密存储；每次管理员读取均审计且禁止缓存 |
 | F-06 | 健康检查 | Postgres / Redis 连通性 | `/health` 可观测 |
 | F-07 | 数据模型 | 渠道三维：Provider × ProductLine × Credential | 支持 API/Coding 与多厂商 |
 | F-08 | 初始化 | 提供主流官方供应商模板与默认配额策略 | 空库不预置业务渠道或演示凭证 |
 | F-09 | 审计表 | request_audits + request_audit_bodies | 可存全文；永久保留策略 |
 | F-10 | 用量 | 人日汇总计数器结构 | 为看板与软上限准备 |
-| F-11 | 代理入口 | OpenAI 兼容模型目录与 Chat Completions | `/v1/models`、`/v1/chat/completions` 可调用 |
+| F-11 | 代理入口 | 原生 Chat Completions、Responses 与 Anthropic Messages | `/v1/models`、`/v1/chat/completions`、`/v1/responses`、`/v1/messages` 可调用 |
 
 #### P1 — 一期核心闭环（紧随骨架）
 
@@ -221,7 +221,7 @@
 | 管理 | `/api/admin/*` | 管理员/审计员 JWT + 已改密 |
 | 模型代理 | `/v1/*` | 员工 API Key |
 
-一期 `/v1` 以 `POST /v1/chat/completions` 为主，其他能力按采购模型按需开放。
+`/v1` 原生支持 Chat Completions、Responses（含 `/responses/compact`）与 Anthropic Messages。协议绑定 Key 只能调用对应入口，不进行跨协议转换。
 
 ---
 
@@ -232,8 +232,9 @@
 ```text
 Provider（供应商）
   └─ ProductLine（产品线：api | coding_plan）
-        └─ UpstreamCredential（具体 Key/套餐凭证）
+        └─ UpstreamCredential（具体 Key/套餐凭证，可同时声明多个原生协议）
 ModelRoute：client_model → product_line + upstream_model
+EmployeeApiKey：员工内部 Key → 唯一传输协议
 ```
 
 ### 7.2 共享策略默认值
@@ -245,10 +246,11 @@ ModelRoute：client_model → product_line + upstream_model
 
 ### 7.3 调度算法（借鉴 New API 思路，简化实现）
 
-1. 根据 `model` 查 `model_routes` 得候选产品线  
-2. 过滤：启用中、员工有权（公共池或授权）、凭证未冷却/未自动禁用  
-3. 按 **priority 降序**；同优先级 **weight 加权随机**（或轮询）  
-4. 失败按状态码决定是否换凭证重试  
+1. 根据员工 Key 确定唯一传输协议
+2. 根据 `model` 查 `model_routes` 得候选产品线
+3. 过滤：渠道声明支持该协议、启用中、员工有权（公共池或授权）、凭证未冷却/未自动禁用
+4. 按 **priority 降序**；同优先级 **weight 加权随机**（或轮询）
+5. 失败按状态码决定是否换凭证重试
 
 ### 7.4 错误处理建议
 
@@ -277,7 +279,7 @@ ModelRoute：client_model → product_line + upstream_model
 ### 8.1 必须记录的信息
 
 **元数据（request_audits）**  
-员工、API Key id、时间、client/upstream 模型、provider、product_type、凭证 id/末四位、流式与否、状态、HTTP 状态、错误码、token 用量、usage 原始 JSON、耗时、重试轨迹、IP、UA、路径等。
+员工、API Key id、传输协议、时间、client/upstream 模型、provider、product_type、凭证 id/末四位、流式与否、状态、HTTP 状态、错误码、token 用量、usage 原始 JSON、耗时、重试轨迹、IP、UA、路径等。
 
 **正文（request_audit_bodies）**  
 完整 request body（含 messages 等）、完整 response（流式需拼接）、可选脱敏后的 headers；过大可外置。
@@ -416,11 +418,12 @@ ModelRoute：client_model → product_line + upstream_model
 
 **M2 代理闭环**
 
-- 员工 API Key 鉴权；`GET /v1/models` 与 `POST /v1/chat/completions` 已启用
+- 员工 API Key 鉴权且每个 Key 绑定唯一协议；`GET /v1/models`、`POST /v1/chat/completions`、`POST /v1/responses`、`POST /v1/responses/compact`、`POST /v1/messages` 与 `POST /v1/messages/count_tokens` 已启用
 - 管理员可在员工列表复制员工 API Key；旧版仅哈希 Key 会引导生成新的托管 Key，读取响应禁止缓存并写入操作审计
 - 显式模型路由与已发现模型自动路由；按授权、状态、优先级和权重筛选凭证
 - 默认最多三次候选尝试且不重复 Key：`401/403` 自动停用、`429` 冷却、`5xx`/网络错误切换，参数 `400` 不重试
-- 非流式 JSON 与 SSE 字节流转发；首字节后不重试，客户端断开会取消上游
+- Chat、Responses、Messages 均按原生请求/响应格式直通；非流式 JSON 与 SSE 字节流转发，首字节后不重试，客户端断开会取消上游
+- Responses 以 `response.completed/failed/incomplete/error`、Messages 以 `message_stop/error` 判定流终态；工具调用与增量参数保持原生事件
 - Redis RPM/并发租约、日软硬配额与当地日期用量累计
 - 请求/响应正文、流式拼装结果、usage、重试轨迹与成功/错误/取消终态写入审计；Authorization 不入库
 
@@ -428,7 +431,7 @@ ModelRoute：client_model → product_line + upstream_model
 
 - 概览：今日请求/Token/失败、Top 员工、按供应商、最近错误  
 - 员工管理：新建 / 批量导入 / 启停  
-- 上游渠道：选择平台、录入加密 API Key、连接测试、模型发现、启停及权重/优先级
+- 上游渠道：选择平台、录入加密 API Key、选择一个或多个原生协议、连接测试、模型发现、启停及权重/优先级
 - 供应商、产品线和模型路由作为内部结构，由上游渠道自动配置，不提供独立管理页面
 - 调用日志：检索、详情、按需加载全文（写操作审计）  
 - 日志查阅授权：范围 all/dept/employees、正文权限、撤销  
@@ -438,6 +441,7 @@ ModelRoute：client_model → product_line + upstream_model
 **M2 验证记录（2026-08-04）**
 
 - 本地隔离 Mock：`401 → 换 Key`、`400 不重试`、`429 → 冷却并换 Key`、`500 → 首字节前切换 SSE` 均通过
+- 本地原生协议 Mock：Responses JSON/SSE/compact、Messages JSON/SSE、模型隔离、协议绑定 Key、Bearer/x-api-key、版本/Beta 头透传、usage 与审计均通过
 - DeepSeek：非流式与流式真实调用均为 HTTP 200，流式包含 `[DONE]`，usage 与审计一致
 - GLM：模型目录连通；Chat Completions 返回供应商业务码 `1113`（余额不足或无可用资源包），待渠道充值后复测
 

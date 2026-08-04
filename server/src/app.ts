@@ -14,6 +14,7 @@ import { adminGrantRoutes } from "./routes/admin/grants.js";
 import { adminQuotaRoutes } from "./routes/admin/quota.js";
 import { adminOpsAuditRoutes } from "./routes/admin/ops-audit.js";
 import { v1RelayRoutes } from "./routes/v1/chat-completions.js";
+import { v1NativeProtocolRoutes } from "./routes/v1/native-protocols.js";
 
 export async function buildApp() {
   const app = Fastify({
@@ -40,6 +41,7 @@ export async function buildApp() {
   await app.register(adminQuotaRoutes);
   await app.register(adminOpsAuditRoutes);
   await app.register(v1RelayRoutes);
+  await app.register(v1NativeProtocolRoutes);
 
   return app;
 }

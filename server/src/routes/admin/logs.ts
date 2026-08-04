@@ -96,6 +96,7 @@ export async function adminLogRoutes(app: FastifyInstance) {
         employeeId: requestAudits.employeeId,
         employeeName: employees.name,
         employeePhone: employees.phone,
+        protocol: requestAudits.protocol,
         clientModel: requestAudits.clientModel,
         upstreamModel: requestAudits.upstreamModel,
         providerCode: requestAudits.providerCode,

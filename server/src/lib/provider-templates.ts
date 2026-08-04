@@ -1,4 +1,10 @@
-export type ProviderTemplateCode = "glm" | "kimi" | "deepseek" | "minimax";
+import type { RelayProtocol } from "./relay/protocol.js";
+
+export type ProviderTemplateCode =
+  | "glm"
+  | "kimi"
+  | "deepseek"
+  | "minimax";
 
 export type ProviderBaseUrlOption = {
   label: string;
@@ -14,6 +20,8 @@ export type ProviderTemplate = {
   shortName: string;
   description: string;
   baseUrls: ProviderBaseUrlOption[];
+  authStyle: "bearer" | "x-api-key";
+  defaultProtocols: RelayProtocol[];
   defaultLabel: string;
   color: string;
 };
@@ -28,6 +36,8 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
     name: "智谱 GLM",
     shortName: "GLM",
     description: "智谱开放平台 API，Bearer 鉴权，兼容 Chat Completions。",
+    authStyle: "bearer",
+    defaultProtocols: ["openai_chat"],
     baseUrls: [
       {
         label: "中国区",
@@ -44,17 +54,26 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
     code: "kimi",
     name: "Kimi / Moonshot",
     shortName: "Kimi",
-    description: "Kimi 开放平台 API，兼容 OpenAI Chat Completions。",
+    description: "Kimi Code 编程 API 与 Moonshot 开放平台 API，兼容 OpenAI Chat Completions。",
+    authStyle: "bearer",
+    defaultProtocols: ["openai_chat"],
     baseUrls: [
       {
-        label: "中国区",
+        label: "Kimi Code",
+        url: "https://api.kimi.com/coding/v1",
+        host: "api.kimi.com",
+        productLineCode: "kimi_code",
+        productLineName: "API（Kimi Code 编程）",
+      },
+      {
+        label: "Moonshot 中国区",
         url: "https://api.moonshot.cn/v1",
         host: "api.moonshot.cn",
         productLineCode: "api",
         productLineName: "API（中国区）",
       },
       {
-        label: "国际区",
+        label: "Moonshot 国际区",
         url: "https://api.moonshot.ai/v1",
         host: "api.moonshot.ai",
         productLineCode: "api_intl",
@@ -69,6 +88,8 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
     name: "DeepSeek",
     shortName: "DS",
     description: "DeepSeek 官方 API，兼容 OpenAI SDK 与 Chat Completions。",
+    authStyle: "bearer",
+    defaultProtocols: ["openai_chat"],
     baseUrls: [
       {
         label: "官方",
@@ -86,6 +107,8 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
     name: "MiniMax",
     shortName: "MiniMax",
     description: "MiniMax OpenAI-compatible API，支持国内与国际端点。",
+    authStyle: "bearer",
+    defaultProtocols: ["openai_chat"],
     baseUrls: [
       {
         label: "中国区",
