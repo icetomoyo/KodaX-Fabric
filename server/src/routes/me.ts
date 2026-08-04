@@ -9,7 +9,11 @@ import {
   requestAudits,
   usageCountersDaily,
 } from "../db/schema/index.js";
-import { encryptEmployeeApiKey, generateApiKey } from "../lib/api-key.js";
+import {
+  decryptEmployeeApiKey,
+  encryptEmployeeApiKey,
+  generateApiKey,
+} from "../lib/api-key.js";
 import { writeOpsAudit } from "../lib/ops-audit.js";
 import {
   DEFAULT_RELAY_PROTOCOL,
@@ -91,27 +95,101 @@ export async function meRoutes(app: FastifyInstance) {
       data: {
         ...row,
         key: raw,
-        notice: "请立即保存，明文仅展示一次",
       },
     };
   });
 
-  app.post("/api/me/api-keys/:id/revoke", async (req, reply) => {
-    const params = z.object({ id: z.coerce.number() }).safeParse(req.params);
+  // Intranet deployment: employees may re-copy their own keys anytime.
+  app.post("/api/me/api-keys/:id/reveal", async (req, reply) => {
+    reply.header("Cache-Control", "no-store");
+    reply.header("Pragma", "no-cache");
+    const params = z.object({ id: z.coerce.number().int().positive() }).safeParse(req.params);
     if (!params.success) {
       return reply.code(400).send({ success: false, message: "参数无效" });
     }
 
     const [row] = await db
-      .update(employeeApiKeys)
-      .set({ status: "revoked" })
+      .select({
+        id: employeeApiKeys.id,
+        name: employeeApiKeys.name,
+        keyPrefix: employeeApiKeys.keyPrefix,
+        keyHash: employeeApiKeys.keyHash,
+        keyEncrypted: employeeApiKeys.keyEncrypted,
+        protocol: employeeApiKeys.protocol,
+        status: employeeApiKeys.status,
+      })
+      .from(employeeApiKeys)
       .where(
         and(
           eq(employeeApiKeys.id, params.data.id),
           eq(employeeApiKeys.employeeId, req.employeeId!),
         ),
       )
-      .returning({ id: employeeApiKeys.id });
+      .limit(1);
+
+    if (!row) {
+      return reply.code(404).send({ success: false, message: "密钥不存在" });
+    }
+    if (row.status !== "active") {
+      return reply.code(400).send({ success: false, message: "已吊销的 Key 无法复制" });
+    }
+    if (!row.keyEncrypted) {
+      return reply.code(404).send({
+        success: false,
+        code: "key_not_recoverable",
+        message: "该 Key 为旧版存储，无法再次复制，请新建",
+      });
+    }
+
+    let key: string;
+    try {
+      key = decryptEmployeeApiKey(row.keyEncrypted, row.keyHash);
+    } catch {
+      req.log.error({ employeeApiKeyId: row.id }, "employee API key integrity check failed");
+      return reply.code(500).send({ success: false, message: "密钥读取失败" });
+    }
+
+    await writeOpsAudit({
+      actorEmployeeId: req.employeeId,
+      action: "api_key.reveal",
+      targetType: "employee_api_key",
+      targetId: String(row.id),
+      detail: { protocol: row.protocol },
+      ip: req.ip,
+    });
+
+    return {
+      success: true,
+      data: {
+        id: row.id,
+        name: row.name,
+        keyPrefix: row.keyPrefix,
+        protocol: row.protocol,
+        key,
+      },
+    };
+  });
+
+  app.delete("/api/me/api-keys/:id", async (req, reply) => {
+    const params = z.object({ id: z.coerce.number().int().positive() }).safeParse(req.params);
+    if (!params.success) {
+      return reply.code(400).send({ success: false, message: "参数无效" });
+    }
+
+    const [row] = await db
+      .delete(employeeApiKeys)
+      .where(
+        and(
+          eq(employeeApiKeys.id, params.data.id),
+          eq(employeeApiKeys.employeeId, req.employeeId!),
+        ),
+      )
+      .returning({
+        id: employeeApiKeys.id,
+        name: employeeApiKeys.name,
+        keyPrefix: employeeApiKeys.keyPrefix,
+        protocol: employeeApiKeys.protocol,
+      });
 
     if (!row) {
       return reply.code(404).send({ success: false, message: "密钥不存在" });
@@ -119,9 +197,14 @@ export async function meRoutes(app: FastifyInstance) {
 
     await writeOpsAudit({
       actorEmployeeId: req.employeeId,
-      action: "api_key.revoke",
+      action: "api_key.delete",
       targetType: "employee_api_key",
       targetId: String(row.id),
+      detail: {
+        name: row.name,
+        keyPrefix: row.keyPrefix,
+        protocol: row.protocol,
+      },
       ip: req.ip,
     });
 

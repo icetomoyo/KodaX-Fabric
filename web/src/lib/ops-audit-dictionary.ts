@@ -4,6 +4,8 @@ export const OPS_AUDIT_ACTION_LABELS: Record<string, string> = {
   "auth.login": "登录系统",
   "auth.change_password": "修改密码",
   "api_key.create": "创建个人 API Key",
+  "api_key.reveal": "复制个人 API Key",
+  "api_key.delete": "删除个人 API Key",
   "api_key.revoke": "吊销个人 API Key",
   "employee_api_key.reveal": "复制员工 API Key",
   "employee_api_key.create_for_employee": "为员工生成 API Key",
