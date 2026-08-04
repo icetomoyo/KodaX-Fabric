@@ -1,15 +1,17 @@
 import type { FastifyInstance } from "fastify";
-import { and, asc, desc, eq, gte, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, ne, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../../db/client.js";
 import {
   credentialEmployeeGrants,
   employees,
+  opsAuditLogs,
   productLines,
   providers,
   requestAudits,
   upstreamCredentials,
 } from "../../db/schema/index.js";
+import { inspectCredentialSecretDuplicates } from "../../lib/credential-bulk.js";
 import { decryptSecret, encryptSecret, secretSuffix } from "../../lib/crypto-secret.js";
 import { writeOpsAudit } from "../../lib/ops-audit.js";
 import {
@@ -17,7 +19,6 @@ import {
   isAllowedTemplateHost,
   PROVIDER_TEMPLATES,
   resolveTemplateBaseUrlOption,
-  type ProviderBaseUrlOption,
 } from "../../lib/provider-templates.js";
 import {
   DEFAULT_RELAY_PROTOCOL,
@@ -45,6 +46,12 @@ type CredentialTestResult = {
   protocol: RelayProtocol;
 };
 
+type BulkProductLineContext = {
+  productLine: typeof productLines.$inferSelect;
+  provider: typeof providers.$inferSelect;
+  baseUrl: string;
+};
+
 const RECENT_WINDOW_MS = 24 * 60 * 60 * 1_000;
 
 const supportedProtocolsSchema = z
@@ -54,6 +61,80 @@ const supportedProtocolsSchema = z
   .refine((values) => new Set(values).size === values.length, {
     message: "支持协议不能重复",
   });
+
+const upstreamSecretSchema = z
+  .string()
+  .trim()
+  .min(8, "上游 Key 至少需要 8 个字符")
+  .max(4096, "上游 Key 最多允许 4096 个字符");
+
+const bulkCredentialDefaultsSchema = z.object({
+  supportedProtocols: supportedProtocolsSchema.optional(),
+  weight: z.number().int().min(0).max(10000).optional(),
+  priority: z.number().int().min(-1000).max(1000).optional(),
+});
+
+const optionalCredentialLabelSchema = z.preprocess(
+  (value) => typeof value === "string" && value.trim() === "" ? undefined : value,
+  z.string().trim().min(1).max(200).optional(),
+);
+
+const bulkCredentialCreateSchema = z
+  .object({
+    productLineId: z.number().int().positive().optional(),
+    providerCode: z.string().trim().min(1).max(64).optional(),
+    baseUrl: z.string().url().optional(),
+    keys: z
+      .array(
+        z.object({
+          label: optionalCredentialLabelSchema,
+          secret: upstreamSecretSchema,
+        }),
+      )
+      .min(1)
+      .max(200),
+    defaults: bulkCredentialDefaultsSchema.optional(),
+    // Also accept the originally proposed flat form for API compatibility.
+    supportedProtocols: supportedProtocolsSchema.optional(),
+    weight: z.number().int().min(0).max(10000).optional(),
+    priority: z.number().int().min(-1000).max(1000).optional(),
+  })
+  .superRefine((value, context) => {
+    const locatesById = value.productLineId !== undefined;
+    const hasProviderLocator = value.providerCode !== undefined || value.baseUrl !== undefined;
+
+    if (locatesById === hasProviderLocator) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "必须且只能通过 productLineId 或 providerCode + baseUrl 定位渠道",
+        path: ["productLineId"],
+      });
+    }
+    if (hasProviderLocator && (!value.providerCode || !value.baseUrl)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "providerCode 和 baseUrl 必须同时提供",
+        path: value.providerCode ? ["baseUrl"] : ["providerCode"],
+      });
+    }
+  });
+
+const bulkCredentialIdsSchema = z
+  .array(z.number().int().positive())
+  .min(1)
+  .max(200)
+  .refine((ids) => new Set(ids).size === ids.length, {
+    message: "凭证 ID 不能重复",
+  });
+
+const bulkCredentialStatusSchema = z.object({
+  ids: bulkCredentialIdsSchema,
+  status: z.enum(["active", "disabled"]),
+});
+
+const bulkCredentialDeleteSchema = z.object({
+  ids: bulkCredentialIdsSchema,
+});
 
 function parseModels(payload: unknown): string[] {
   if (!payload || typeof payload !== "object") return [];
@@ -89,47 +170,6 @@ function errorSummary(status: number, raw: string): string {
   }
   const suffix = detail ? `：${detail.slice(0, 500)}` : "";
   return `上游返回 HTTP ${status}${suffix}`;
-}
-
-type EnsureProductLineProvider = {
-  id: number;
-  defaultBaseUrl: string;
-};
-
-/** Find or create the product line that corresponds to a template base URL option. */
-async function ensureProductLineForBaseUrlOption(
-  provider: EnsureProductLineProvider,
-  baseUrlOption: ProviderBaseUrlOption,
-) {
-  let [productLine] = await db
-    .select()
-    .from(productLines)
-    .where(
-      and(
-        eq(productLines.providerId, provider.id),
-        eq(productLines.code, baseUrlOption.productLineCode),
-      ),
-    )
-    .limit(1);
-
-  if (!productLine) {
-    [productLine] = await db
-      .insert(productLines)
-      .values({
-        providerId: provider.id,
-        code: baseUrlOption.productLineCode,
-        name: baseUrlOption.productLineName,
-        productType: "api",
-        baseUrlOverride:
-          baseUrlOption.url === provider.defaultBaseUrl ? null : baseUrlOption.url,
-        shareMode: "public_pool",
-        allowAutoRoute: true,
-        status: "active",
-      })
-      .returning();
-  }
-
-  return productLine;
 }
 
 function metaWithoutStaleTest(meta: unknown): Record<string, unknown> {
@@ -310,7 +350,7 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
           providerCode: z.enum(["glm", "kimi", "deepseek", "minimax"]),
           baseUrl: z.string().url().optional(),
           label: z.string().trim().min(1).max(200),
-          secret: z.string().trim().min(4),
+          secret: upstreamSecretSchema,
           supportedProtocols: supportedProtocolsSchema.default([DEFAULT_RELAY_PROTOCOL]),
           weight: z.number().int().min(0).max(10000).default(100),
           priority: z.number().int().min(-1000).max(1000).default(0),
@@ -387,6 +427,38 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
             .returning();
         }
 
+        await tx.execute(
+          sql`select pg_advisory_xact_lock(${productLine.id})`,
+        );
+        const existingRows = await tx
+          .select({
+            id: upstreamCredentials.id,
+            secretEncrypted: upstreamCredentials.secretEncrypted,
+          })
+          .from(upstreamCredentials)
+          .where(eq(upstreamCredentials.productLineId, productLine.id));
+        const existingSecrets: string[] = [];
+        const unreadableCredentialIds: number[] = [];
+        for (const existing of existingRows) {
+          try {
+            existingSecrets.push(decryptSecret(existing.secretEncrypted));
+          } catch {
+            unreadableCredentialIds.push(existing.id);
+          }
+        }
+        if (unreadableCredentialIds.length) {
+          return {
+            kind: "existing_secret_unreadable",
+            credentialIds: unreadableCredentialIds,
+          } as const;
+        }
+        if (
+          inspectCredentialSecretDuplicates([body.data.secret], existingSecrets)
+            .existingDuplicateIndexes.length
+        ) {
+          return { kind: "existing_duplicate" } as const;
+        }
+
         const [credential] = await tx
           .insert(upstreamCredentials)
           .values({
@@ -412,6 +484,7 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
           });
 
         return {
+          kind: "created",
           credential,
           provider: { id: provider.id, code: provider.code, name: provider.name },
           productLine: {
@@ -420,8 +493,22 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
             name: productLine.name,
           },
           baseUrl: productLine.baseUrlOverride || provider.defaultBaseUrl,
-        };
+        } as const;
       });
+
+      if (created.kind === "existing_secret_unreadable") {
+        return reply.code(409).send({
+          success: false,
+          message: "渠道中存在无法解密的旧 Key，无法安全完成重复检查",
+          credentialIds: created.credentialIds,
+        });
+      }
+      if (created.kind === "existing_duplicate") {
+        return reply.code(409).send({
+          success: false,
+          message: "渠道中已存在相同 Key",
+        });
+      }
 
       let test: CredentialTestResult | null = null;
       if (body.data.testAfterCreate) {
@@ -458,8 +545,302 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
       return {
         success: true,
         data: {
-          ...created,
+          credential: created.credential,
+          provider: created.provider,
+          productLine: created.productLine,
+          baseUrl: created.baseUrl,
           test,
+        },
+      };
+    },
+  );
+
+  app.post(
+    "/api/admin/credentials/bulk-create",
+    { preHandler: [requireRoles("admin")] },
+    async (req, reply) => {
+      const body = bulkCredentialCreateSchema.safeParse(req.body);
+      if (!body.success) {
+        return reply.code(400).send({
+          success: false,
+          message: "批量创建参数无效",
+          errors: body.error.flatten(),
+        });
+      }
+
+      const requestedSecrets = body.data.keys.map((item) => item.secret);
+      const batchDuplicates = inspectCredentialSecretDuplicates(requestedSecrets);
+      if (batchDuplicates.batchDuplicateIndexes.length) {
+        return reply.code(409).send({
+          success: false,
+          message: `批量导入中存在重复 Key（第 ${batchDuplicates.batchDuplicateIndexes.join("、")} 项）`,
+          duplicateIndexes: batchDuplicates.batchDuplicateIndexes,
+        });
+      }
+
+      const supportedProtocols =
+        body.data.defaults?.supportedProtocols
+        ?? body.data.supportedProtocols
+        ?? [DEFAULT_RELAY_PROTOCOL];
+      const weight = body.data.defaults?.weight ?? body.data.weight ?? 100;
+      const priority = body.data.defaults?.priority ?? body.data.priority ?? 0;
+
+      const template = body.data.providerCode
+        ? getProviderTemplate(body.data.providerCode)
+        : undefined;
+      const baseUrlOption = template && body.data.baseUrl
+        ? resolveTemplateBaseUrlOption(template, body.data.baseUrl)
+        : undefined;
+
+      if (body.data.productLineId === undefined && !template) {
+        return reply.code(400).send({ success: false, message: "暂不支持该供应商" });
+      }
+      if (body.data.productLineId === undefined && !baseUrlOption) {
+        return reply.code(400).send({
+          success: false,
+          message: "Base URL 必须选择该供应商的官方地址",
+        });
+      }
+
+      const created = await db.transaction(async (tx) => {
+        let context: BulkProductLineContext | null = null;
+
+        if (body.data.productLineId !== undefined) {
+          const [located] = await tx
+            .select({ productLine: productLines, provider: providers })
+            .from(productLines)
+            .innerJoin(providers, eq(productLines.providerId, providers.id))
+            .where(eq(productLines.id, body.data.productLineId))
+            .limit(1);
+
+          if (!located) return { kind: "product_line_not_found" } as const;
+          context = {
+            ...located,
+            baseUrl: located.productLine.baseUrlOverride || located.provider.defaultBaseUrl,
+          };
+        } else {
+          // The guards above make these values available in this locator branch.
+          if (!template || !baseUrlOption) {
+            throw new Error("渠道定位参数无效");
+          }
+
+          let [provider] = await tx
+            .select()
+            .from(providers)
+            .where(eq(providers.code, template.code))
+            .limit(1);
+
+          if (!provider) {
+            [provider] = await tx
+              .insert(providers)
+              .values({
+                code: template.code,
+                name: template.name,
+                defaultBaseUrl: template.baseUrls[0].url,
+                authStyle: template.authStyle,
+                openaiCompatLevel: "full",
+                status: "active",
+              })
+              .onConflictDoNothing({ target: providers.code })
+              .returning();
+
+            if (!provider) {
+              [provider] = await tx
+                .select()
+                .from(providers)
+                .where(eq(providers.code, template.code))
+                .limit(1);
+            }
+          }
+          if (!provider) throw new Error("供应商创建失败");
+
+          let [productLine] = await tx
+            .select()
+            .from(productLines)
+            .where(
+              and(
+                eq(productLines.providerId, provider.id),
+                eq(productLines.code, baseUrlOption.productLineCode),
+              ),
+            )
+            .limit(1);
+
+          if (!productLine) {
+            [productLine] = await tx
+              .insert(productLines)
+              .values({
+                providerId: provider.id,
+                code: baseUrlOption.productLineCode,
+                name: baseUrlOption.productLineName,
+                productType: "api",
+                baseUrlOverride:
+                  baseUrlOption.url === provider.defaultBaseUrl ? null : baseUrlOption.url,
+                shareMode: "public_pool",
+                allowAutoRoute: true,
+                status: "active",
+              })
+              .onConflictDoNothing({
+                target: [productLines.providerId, productLines.code],
+              })
+              .returning();
+
+            if (!productLine) {
+              [productLine] = await tx
+                .select()
+                .from(productLines)
+                .where(
+                  and(
+                    eq(productLines.providerId, provider.id),
+                    eq(productLines.code, baseUrlOption.productLineCode),
+                  ),
+                )
+                .limit(1);
+            }
+          }
+          if (!productLine) throw new Error("渠道创建失败");
+
+          context = {
+            provider,
+            productLine,
+            baseUrl: productLine.baseUrlOverride || provider.defaultBaseUrl,
+          };
+        }
+
+        // Serialize imports for the same channel so concurrent batches cannot
+        // both pass duplicate inspection before either inserts its rows.
+        await tx.execute(
+          sql`select pg_advisory_xact_lock(${context.productLine.id})`,
+        );
+
+        const existingRows = await tx
+          .select({
+            id: upstreamCredentials.id,
+            secretEncrypted: upstreamCredentials.secretEncrypted,
+          })
+          .from(upstreamCredentials)
+          .where(eq(upstreamCredentials.productLineId, context.productLine.id));
+
+        const existingSecrets: string[] = [];
+        const unreadableCredentialIds: number[] = [];
+        for (const credential of existingRows) {
+          try {
+            existingSecrets.push(decryptSecret(credential.secretEncrypted));
+          } catch {
+            unreadableCredentialIds.push(credential.id);
+          }
+        }
+        if (unreadableCredentialIds.length) {
+          return {
+            kind: "existing_secret_unreadable",
+            credentialIds: unreadableCredentialIds,
+          } as const;
+        }
+
+        const duplicates = inspectCredentialSecretDuplicates(
+          requestedSecrets,
+          existingSecrets,
+        );
+        if (duplicates.existingDuplicateIndexes.length) {
+          return {
+            kind: "existing_duplicates",
+            duplicateIndexes: duplicates.existingDuplicateIndexes,
+          } as const;
+        }
+
+        const finalCredentialCount = existingRows.length + body.data.keys.length;
+        const labelWidth = String(finalCredentialCount).length;
+        const providerTemplate = getProviderTemplate(context.provider.code);
+        const credentials = await tx
+          .insert(upstreamCredentials)
+          .values(
+            body.data.keys.map((item, index) => ({
+              productLineId: context.productLine.id,
+              label:
+                item.label
+                ?? `${context.productLine.name} Key ${String(existingRows.length + index + 1).padStart(labelWidth, "0")}`,
+              secretEncrypted: encryptSecret(item.secret),
+              secretSuffix: secretSuffix(item.secret),
+              supportedProtocols,
+              weight,
+              priority,
+              meta: {
+                createdBy: "bulk_create",
+                ...(providerTemplate ? { providerTemplate: providerTemplate.code } : {}),
+              },
+              status: "active" as const,
+            })),
+          )
+          .returning({
+            id: upstreamCredentials.id,
+            productLineId: upstreamCredentials.productLineId,
+            label: upstreamCredentials.label,
+            secretSuffix: upstreamCredentials.secretSuffix,
+            supportedProtocols: upstreamCredentials.supportedProtocols,
+            weight: upstreamCredentials.weight,
+            priority: upstreamCredentials.priority,
+            status: upstreamCredentials.status,
+            createdAt: upstreamCredentials.createdAt,
+          });
+
+        await tx.insert(opsAuditLogs).values({
+          actorEmployeeId: req.employeeId ?? null,
+          action: "credential.bulk_create",
+          targetType: "product_line",
+          targetId: String(context.productLine.id),
+          detail: {
+            providerCode: context.provider.code,
+            productLineId: context.productLine.id,
+            credentialIds: credentials.map((item) => item.id),
+            labels: credentials.map((item) => item.label),
+            secretSuffixes: credentials.map((item) => item.secretSuffix),
+            count: credentials.length,
+            supportedProtocols,
+            weight,
+            priority,
+          },
+          ip: req.ip,
+        });
+
+        return { kind: "created", context, credentials } as const;
+      });
+
+      if (created.kind === "product_line_not_found") {
+        return reply.code(404).send({ success: false, message: "渠道不存在" });
+      }
+      if (created.kind === "existing_secret_unreadable") {
+        return reply.code(409).send({
+          success: false,
+          message: "渠道中存在无法解密的旧 Key，无法安全完成重复检查",
+          credentialIds: created.credentialIds,
+        });
+      }
+      if (created.kind === "existing_duplicates") {
+        return reply.code(409).send({
+          success: false,
+          message: `渠道中已存在相同 Key（第 ${created.duplicateIndexes.join("、")} 项）`,
+          duplicateIndexes: created.duplicateIndexes,
+        });
+      }
+
+      return {
+        success: true,
+        data: {
+          provider: {
+            id: created.context.provider.id,
+            code: created.context.provider.code,
+            name: created.context.provider.name,
+          },
+          productLine: {
+            id: created.context.productLine.id,
+            code: created.context.productLine.code,
+            name: created.context.productLine.name,
+            productType: created.context.productLine.productType,
+            shareMode: created.context.productLine.shareMode,
+            status: created.context.productLine.status,
+            baseUrl: created.context.baseUrl,
+          },
+          credentials: created.credentials,
+          defaults: { supportedProtocols, weight, priority },
         },
       };
     },
@@ -493,10 +874,13 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
         createdAt: upstreamCredentials.createdAt,
         updatedAt: upstreamCredentials.updatedAt,
         productLineCode: productLines.code,
+        productLineName: productLines.name,
+        productLineStatus: productLines.status,
         productType: productLines.productType,
         shareMode: productLines.shareMode,
         providerCode: providers.code,
         providerName: providers.name,
+        providerStatus: providers.status,
         defaultBaseUrl: providers.defaultBaseUrl,
         baseUrlOverride: productLines.baseUrlOverride,
       })
@@ -555,6 +939,180 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
     };
   });
 
+  app.patch(
+    "/api/admin/credentials/bulk-status",
+    { preHandler: [requireRoles("admin")] },
+    async (req, reply) => {
+      const body = bulkCredentialStatusSchema.safeParse(req.body);
+      if (!body.success) {
+        return reply.code(400).send({
+          success: false,
+          message: "批量状态参数无效",
+          errors: body.error.flatten(),
+        });
+      }
+
+      const result = await db.transaction(async (tx) => {
+        const existing = await tx
+          .select({
+            id: upstreamCredentials.id,
+            label: upstreamCredentials.label,
+            productLineId: upstreamCredentials.productLineId,
+            status: upstreamCredentials.status,
+          })
+          .from(upstreamCredentials)
+          .where(inArray(upstreamCredentials.id, body.data.ids))
+          .for("update");
+
+        const existingIds = new Set(existing.map((item) => item.id));
+        const missingIds = body.data.ids.filter((id) => !existingIds.has(id));
+        if (missingIds.length) {
+          return { kind: "missing", missingIds } as const;
+        }
+
+        const updated = await tx
+          .update(upstreamCredentials)
+          .set({
+            status: body.data.status,
+            ...(body.data.status === "active"
+              ? { coolUntil: null, lastError: null }
+              : {}),
+            updatedAt: new Date(),
+          })
+          .where(inArray(upstreamCredentials.id, body.data.ids))
+          .returning({
+            id: upstreamCredentials.id,
+            productLineId: upstreamCredentials.productLineId,
+            label: upstreamCredentials.label,
+            status: upstreamCredentials.status,
+            coolUntil: upstreamCredentials.coolUntil,
+            lastError: upstreamCredentials.lastError,
+            updatedAt: upstreamCredentials.updatedAt,
+          });
+
+        const updatedById = new Map(updated.map((item) => [item.id, item]));
+        const changes = existing.map((item) => ({
+          id: item.id,
+          productLineId: item.productLineId,
+          previousStatus: item.status,
+          status: body.data.status,
+        }));
+        await tx.insert(opsAuditLogs).values({
+          actorEmployeeId: req.employeeId ?? null,
+          action: "credential.bulk_status",
+          targetType: "upstream_credential_batch",
+          detail: {
+            status: body.data.status,
+            count: updated.length,
+            changes,
+          },
+          ip: req.ip,
+        });
+
+        return {
+          kind: "updated",
+          credentials: body.data.ids
+            .map((id) => updatedById.get(id))
+            .filter((item): item is (typeof updated)[number] => Boolean(item)),
+          previous: existing,
+        } as const;
+      });
+
+      if (result.kind === "missing") {
+        return reply.code(404).send({
+          success: false,
+          message: "部分凭证不存在，未修改任何凭证",
+          missingIds: result.missingIds,
+        });
+      }
+
+      return {
+        success: true,
+        data: {
+          count: result.credentials.length,
+          credentials: result.credentials,
+        },
+      };
+    },
+  );
+
+  app.post(
+    "/api/admin/credentials/bulk-delete",
+    { preHandler: [requireRoles("admin")] },
+    async (req, reply) => {
+      const body = bulkCredentialDeleteSchema.safeParse(req.body);
+      if (!body.success) {
+        return reply.code(400).send({
+          success: false,
+          message: "批量删除参数无效",
+          errors: body.error.flatten(),
+        });
+      }
+
+      const result = await db.transaction(async (tx) => {
+        const existing = await tx
+          .select({
+            id: upstreamCredentials.id,
+            label: upstreamCredentials.label,
+            secretSuffix: upstreamCredentials.secretSuffix,
+            productLineId: upstreamCredentials.productLineId,
+          })
+          .from(upstreamCredentials)
+          .where(inArray(upstreamCredentials.id, body.data.ids))
+          .for("update");
+
+        const existingIds = new Set(existing.map((item) => item.id));
+        const missingIds = body.data.ids.filter((id) => !existingIds.has(id));
+        if (missingIds.length) {
+          return { kind: "missing", missingIds } as const;
+        }
+
+        await tx
+          .delete(credentialEmployeeGrants)
+          .where(inArray(credentialEmployeeGrants.credentialId, body.data.ids));
+
+        const deleted = await tx
+          .delete(upstreamCredentials)
+          .where(inArray(upstreamCredentials.id, body.data.ids))
+          .returning({ id: upstreamCredentials.id });
+
+        await tx.insert(opsAuditLogs).values({
+          actorEmployeeId: req.employeeId ?? null,
+          action: "credential.bulk_delete",
+          targetType: "upstream_credential_batch",
+          detail: {
+            count: deleted.length,
+            credentials: existing.map((item) => ({
+              id: item.id,
+              label: item.label,
+              secretSuffix: item.secretSuffix,
+              productLineId: item.productLineId,
+            })),
+          },
+          ip: req.ip,
+        });
+
+        return { kind: "deleted", credentials: existing, deleted } as const;
+      });
+
+      if (result.kind === "missing") {
+        return reply.code(404).send({
+          success: false,
+          message: "部分凭证不存在，未删除任何凭证",
+          missingIds: result.missingIds,
+        });
+      }
+
+      return {
+        success: true,
+        data: {
+          count: result.deleted.length,
+          ids: body.data.ids,
+        },
+      };
+    },
+  );
+
   app.post(
     "/api/admin/credentials",
     { preHandler: [requireRoles("admin")] },
@@ -563,7 +1121,7 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
         .object({
           productLineId: z.number().int().positive(),
           label: z.string().min(1).max(200),
-          secret: z.string().min(4),
+          secret: upstreamSecretSchema,
           supportedProtocols: supportedProtocolsSchema.default([DEFAULT_RELAY_PROTOCOL]),
           weight: z.number().int().min(0).max(10000).default(100),
           priority: z.number().int().default(0),
@@ -575,51 +1133,102 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
         return reply.code(400).send({ success: false, message: "参数无效" });
       }
 
-      const [pl] = await db
-        .select({ id: productLines.id })
-        .from(productLines)
-        .where(eq(productLines.id, body.data.productLineId))
-        .limit(1);
-      if (!pl) {
-        return reply.code(400).send({ success: false, message: "产品线不存在" });
-      }
+      const result = await db.transaction(async (tx) => {
+        const [productLine] = await tx
+          .select({ id: productLines.id })
+          .from(productLines)
+          .where(eq(productLines.id, body.data.productLineId))
+          .limit(1);
+        if (!productLine) return { kind: "product_line_not_found" } as const;
 
-      const [row] = await db
-        .insert(upstreamCredentials)
-        .values({
-          productLineId: body.data.productLineId,
-          label: body.data.label,
-          secretEncrypted: encryptSecret(body.data.secret),
-          secretSuffix: secretSuffix(body.data.secret),
-          supportedProtocols: body.data.supportedProtocols,
-          weight: body.data.weight,
-          priority: body.data.priority,
-          meta: body.data.meta,
-          status: "active",
-        })
-        .returning({
-          id: upstreamCredentials.id,
-          label: upstreamCredentials.label,
-          secretSuffix: upstreamCredentials.secretSuffix,
-          supportedProtocols: upstreamCredentials.supportedProtocols,
-          productLineId: upstreamCredentials.productLineId,
-          status: upstreamCredentials.status,
+        await tx.execute(
+          sql`select pg_advisory_xact_lock(${productLine.id})`,
+        );
+        const existingRows = await tx
+          .select({
+            id: upstreamCredentials.id,
+            secretEncrypted: upstreamCredentials.secretEncrypted,
+          })
+          .from(upstreamCredentials)
+          .where(eq(upstreamCredentials.productLineId, productLine.id));
+        const existingSecrets: string[] = [];
+        const unreadableCredentialIds: number[] = [];
+        for (const existing of existingRows) {
+          try {
+            existingSecrets.push(decryptSecret(existing.secretEncrypted));
+          } catch {
+            unreadableCredentialIds.push(existing.id);
+          }
+        }
+        if (unreadableCredentialIds.length) {
+          return {
+            kind: "existing_secret_unreadable",
+            credentialIds: unreadableCredentialIds,
+          } as const;
+        }
+        if (
+          inspectCredentialSecretDuplicates([body.data.secret], existingSecrets)
+            .existingDuplicateIndexes.length
+        ) {
+          return { kind: "existing_duplicate" } as const;
+        }
+
+        const [row] = await tx
+          .insert(upstreamCredentials)
+          .values({
+            productLineId: body.data.productLineId,
+            label: body.data.label,
+            secretEncrypted: encryptSecret(body.data.secret),
+            secretSuffix: secretSuffix(body.data.secret),
+            supportedProtocols: body.data.supportedProtocols,
+            weight: body.data.weight,
+            priority: body.data.priority,
+            meta: body.data.meta,
+            status: "active",
+          })
+          .returning({
+            id: upstreamCredentials.id,
+            label: upstreamCredentials.label,
+            secretSuffix: upstreamCredentials.secretSuffix,
+            supportedProtocols: upstreamCredentials.supportedProtocols,
+            productLineId: upstreamCredentials.productLineId,
+            status: upstreamCredentials.status,
+          });
+
+        await tx.insert(opsAuditLogs).values({
+          actorEmployeeId: req.employeeId ?? null,
+          action: "credential.create",
+          targetType: "upstream_credential",
+          targetId: String(row.id),
+          detail: {
+            label: row.label,
+            productLineId: row.productLineId,
+            supportedProtocols: row.supportedProtocols,
+          },
+          ip: req.ip,
         });
 
-      await writeOpsAudit({
-        actorEmployeeId: req.employeeId,
-        action: "credential.create",
-        targetType: "upstream_credential",
-        targetId: String(row.id),
-        detail: {
-          label: row.label,
-          productLineId: row.productLineId,
-          supportedProtocols: row.supportedProtocols,
-        },
-        ip: req.ip,
+        return { kind: "created", row } as const;
       });
 
-      return { success: true, data: row };
+      if (result.kind === "product_line_not_found") {
+        return reply.code(400).send({ success: false, message: "产品线不存在" });
+      }
+      if (result.kind === "existing_secret_unreadable") {
+        return reply.code(409).send({
+          success: false,
+          message: "渠道中存在无法解密的旧 Key，无法安全完成重复检查",
+          credentialIds: result.credentialIds,
+        });
+      }
+      if (result.kind === "existing_duplicate") {
+        return reply.code(409).send({
+          success: false,
+          message: "渠道中已存在相同 Key",
+        });
+      }
+
+      return { success: true, data: result.row };
     },
   );
 
@@ -631,7 +1240,7 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
       const body = z
         .object({
           label: z.string().min(1).max(200).optional(),
-          secret: z.string().min(4).optional(),
+          secret: upstreamSecretSchema.optional(),
           baseUrl: z.string().url().optional(),
           supportedProtocols: supportedProtocolsSchema.optional(),
           weight: z.number().int().min(0).max(10000).optional(),
@@ -648,113 +1257,230 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
         return reply.code(400).send({ success: false, message: "参数无效" });
       }
 
-      const [existing] = await db
-        .select({
-          id: upstreamCredentials.id,
-          productLineId: upstreamCredentials.productLineId,
-          meta: upstreamCredentials.meta,
-          providerId: providers.id,
-          providerCode: providers.code,
-          defaultBaseUrl: providers.defaultBaseUrl,
-        })
-        .from(upstreamCredentials)
-        .innerJoin(productLines, eq(upstreamCredentials.productLineId, productLines.id))
-        .innerJoin(providers, eq(productLines.providerId, providers.id))
-        .where(eq(upstreamCredentials.id, params.data.id))
-        .limit(1);
+      const result = await db.transaction(async (tx) => {
+        const [existing] = await tx
+          .select({
+            id: upstreamCredentials.id,
+            productLineId: upstreamCredentials.productLineId,
+            secretEncrypted: upstreamCredentials.secretEncrypted,
+            meta: upstreamCredentials.meta,
+            providerId: providers.id,
+            providerCode: providers.code,
+            defaultBaseUrl: providers.defaultBaseUrl,
+          })
+          .from(upstreamCredentials)
+          .innerJoin(productLines, eq(upstreamCredentials.productLineId, productLines.id))
+          .innerJoin(providers, eq(productLines.providerId, providers.id))
+          .where(eq(upstreamCredentials.id, params.data.id))
+          .limit(1)
+          .for("update");
 
-      if (!existing) {
-        return reply.code(404).send({ success: false, message: "凭证不存在" });
-      }
+        if (!existing) return { kind: "not_found" } as const;
 
-      const patch: Record<string, unknown> = { updatedAt: new Date() };
-      if (body.data.label !== undefined) patch.label = body.data.label;
-      if (body.data.weight !== undefined) patch.weight = body.data.weight;
-      if (body.data.priority !== undefined) patch.priority = body.data.priority;
-      if (body.data.supportedProtocols !== undefined) {
-        patch.supportedProtocols = body.data.supportedProtocols;
-      }
-      if (body.data.status !== undefined) {
-        patch.status = body.data.status;
-        if (body.data.status === "active") {
-          patch.coolUntil = null;
-          patch.lastError = null;
+        const patch: Record<string, unknown> = { updatedAt: new Date() };
+        if (body.data.label !== undefined) patch.label = body.data.label;
+        if (body.data.weight !== undefined) patch.weight = body.data.weight;
+        if (body.data.priority !== undefined) patch.priority = body.data.priority;
+        if (body.data.supportedProtocols !== undefined) {
+          patch.supportedProtocols = body.data.supportedProtocols;
         }
-      }
-      if (body.data.coolUntil !== undefined) {
-        patch.coolUntil = body.data.coolUntil ? new Date(body.data.coolUntil) : null;
-      }
-      if (body.data.meta !== undefined) patch.meta = body.data.meta;
-      if (body.data.secret) {
-        patch.secretEncrypted = encryptSecret(body.data.secret);
-        patch.secretSuffix = secretSuffix(body.data.secret);
-      }
-
-      let resolvedBaseUrl: string | undefined;
-      if (body.data.baseUrl !== undefined) {
-        const template = getProviderTemplate(existing.providerCode);
-        if (!template) {
-          return reply.code(400).send({
-            success: false,
-            message: "当前渠道平台不支持修改 API 地址",
-          });
-        }
-        const baseUrlOption = resolveTemplateBaseUrlOption(template, body.data.baseUrl);
-        if (!baseUrlOption) {
-          return reply.code(400).send({
-            success: false,
-            message: "Base URL 必须选择该供应商的官方地址",
-          });
-        }
-        const productLine = await ensureProductLineForBaseUrlOption(
-          {
-            id: existing.providerId,
-            defaultBaseUrl: existing.defaultBaseUrl,
-          },
-          baseUrlOption,
-        );
-        resolvedBaseUrl = baseUrlOption.url;
-        if (productLine.id !== existing.productLineId) {
-          patch.productLineId = productLine.id;
-          // Endpoint changed: previous connectivity results no longer apply.
-          if (body.data.meta === undefined) {
-            patch.meta = metaWithoutStaleTest(existing.meta);
+        if (body.data.status !== undefined) {
+          patch.status = body.data.status;
+          if (body.data.status === "active") {
+            patch.coolUntil = null;
+            patch.lastError = null;
           }
         }
-      }
+        if (body.data.coolUntil !== undefined) {
+          patch.coolUntil = body.data.coolUntil ? new Date(body.data.coolUntil) : null;
+        }
+        if (body.data.meta !== undefined) patch.meta = body.data.meta;
+        if (body.data.secret !== undefined) {
+          patch.secretEncrypted = encryptSecret(body.data.secret);
+          patch.secretSuffix = secretSuffix(body.data.secret);
+        }
 
-      const [row] = await db
-        .update(upstreamCredentials)
-        .set(patch)
-        .where(eq(upstreamCredentials.id, params.data.id))
-        .returning({
-          id: upstreamCredentials.id,
-          label: upstreamCredentials.label,
-          status: upstreamCredentials.status,
-          secretSuffix: upstreamCredentials.secretSuffix,
-          supportedProtocols: upstreamCredentials.supportedProtocols,
-          productLineId: upstreamCredentials.productLineId,
+        const requiresDuplicateCheck =
+          body.data.secret !== undefined || body.data.baseUrl !== undefined;
+        let candidateSecret = body.data.secret;
+        if (requiresDuplicateCheck && candidateSecret === undefined) {
+          try {
+            candidateSecret = decryptSecret(existing.secretEncrypted);
+          } catch {
+            return { kind: "current_secret_unreadable" } as const;
+          }
+        }
+
+        let targetProductLineId = existing.productLineId;
+        let resolvedBaseUrl: string | undefined;
+        if (body.data.baseUrl !== undefined) {
+          const template = getProviderTemplate(existing.providerCode);
+          if (!template) return { kind: "unsupported_provider" } as const;
+
+          const baseUrlOption = resolveTemplateBaseUrlOption(template, body.data.baseUrl);
+          if (!baseUrlOption) return { kind: "invalid_base_url" } as const;
+
+          let [targetProductLine] = await tx
+            .select()
+            .from(productLines)
+            .where(
+              and(
+                eq(productLines.providerId, existing.providerId),
+                eq(productLines.code, baseUrlOption.productLineCode),
+              ),
+            )
+            .limit(1);
+          if (!targetProductLine) {
+            [targetProductLine] = await tx
+              .insert(productLines)
+              .values({
+                providerId: existing.providerId,
+                code: baseUrlOption.productLineCode,
+                name: baseUrlOption.productLineName,
+                productType: "api",
+                baseUrlOverride:
+                  baseUrlOption.url === existing.defaultBaseUrl ? null : baseUrlOption.url,
+                shareMode: "public_pool",
+                allowAutoRoute: true,
+                status: "active",
+              })
+              .onConflictDoNothing({
+                target: [productLines.providerId, productLines.code],
+              })
+              .returning();
+            if (!targetProductLine) {
+              [targetProductLine] = await tx
+                .select()
+                .from(productLines)
+                .where(
+                  and(
+                    eq(productLines.providerId, existing.providerId),
+                    eq(productLines.code, baseUrlOption.productLineCode),
+                  ),
+                )
+                .limit(1);
+            }
+          }
+          if (!targetProductLine) throw new Error("渠道创建失败");
+
+          targetProductLineId = targetProductLine.id;
+          resolvedBaseUrl = baseUrlOption.url;
+          if (targetProductLineId !== existing.productLineId) {
+            patch.productLineId = targetProductLineId;
+            // Endpoint changed: previous connectivity results no longer apply.
+            if (body.data.meta === undefined) {
+              patch.meta = metaWithoutStaleTest(existing.meta);
+            }
+          }
+        }
+
+        if (requiresDuplicateCheck) {
+          if (candidateSecret === undefined) throw new Error("凭证去重参数无效");
+          await tx.execute(
+            sql`select pg_advisory_xact_lock(${targetProductLineId})`,
+          );
+          const targetCredentials = await tx
+            .select({
+              id: upstreamCredentials.id,
+              secretEncrypted: upstreamCredentials.secretEncrypted,
+            })
+            .from(upstreamCredentials)
+            .where(
+              and(
+                eq(upstreamCredentials.productLineId, targetProductLineId),
+                ne(upstreamCredentials.id, existing.id),
+              ),
+            );
+          const targetSecrets: string[] = [];
+          const unreadableCredentialIds: number[] = [];
+          for (const credential of targetCredentials) {
+            try {
+              targetSecrets.push(decryptSecret(credential.secretEncrypted));
+            } catch {
+              unreadableCredentialIds.push(credential.id);
+            }
+          }
+          if (unreadableCredentialIds.length) {
+            return {
+              kind: "existing_secret_unreadable",
+              credentialIds: unreadableCredentialIds,
+            } as const;
+          }
+          if (
+            inspectCredentialSecretDuplicates([candidateSecret], targetSecrets)
+              .existingDuplicateIndexes.length
+          ) {
+            return { kind: "existing_duplicate" } as const;
+          }
+        }
+
+        const [row] = await tx
+          .update(upstreamCredentials)
+          .set(patch)
+          .where(eq(upstreamCredentials.id, existing.id))
+          .returning({
+            id: upstreamCredentials.id,
+            label: upstreamCredentials.label,
+            status: upstreamCredentials.status,
+            secretSuffix: upstreamCredentials.secretSuffix,
+            supportedProtocols: upstreamCredentials.supportedProtocols,
+            productLineId: upstreamCredentials.productLineId,
+          });
+        if (!row) return { kind: "not_found" } as const;
+
+        await tx.insert(opsAuditLogs).values({
+          actorEmployeeId: req.employeeId ?? null,
+          action: "credential.update",
+          targetType: "upstream_credential",
+          targetId: String(row.id),
+          detail: {
+            ...body.data,
+            secret: body.data.secret ? "[updated]" : undefined,
+            baseUrl: resolvedBaseUrl ?? body.data.baseUrl,
+            productLineId: row.productLineId,
+          },
+          ip: req.ip,
         });
 
-      if (!row) {
-        return reply.code(404).send({ success: false, message: "凭证不存在" });
-      }
-
-      await writeOpsAudit({
-        actorEmployeeId: req.employeeId,
-        action: "credential.update",
-        targetType: "upstream_credential",
-        targetId: String(row.id),
-        detail: {
-          ...body.data,
-          secret: body.data.secret ? "[updated]" : undefined,
-          baseUrl: resolvedBaseUrl ?? body.data.baseUrl,
-          productLineId: row.productLineId,
-        },
-        ip: req.ip,
+        return { kind: "updated", row } as const;
       });
 
-      return { success: true, data: row };
+      if (result.kind === "not_found") {
+        return reply.code(404).send({ success: false, message: "凭证不存在" });
+      }
+      if (result.kind === "unsupported_provider") {
+        return reply.code(400).send({
+          success: false,
+          message: "当前渠道平台不支持修改 API 地址",
+        });
+      }
+      if (result.kind === "invalid_base_url") {
+        return reply.code(400).send({
+          success: false,
+          message: "Base URL 必须选择该供应商的官方地址",
+        });
+      }
+      if (result.kind === "current_secret_unreadable") {
+        return reply.code(409).send({
+          success: false,
+          message: "当前 Key 无法解密，不能安全移动到其他渠道",
+        });
+      }
+      if (result.kind === "existing_secret_unreadable") {
+        return reply.code(409).send({
+          success: false,
+          message: "目标渠道中存在无法解密的旧 Key，无法安全完成重复检查",
+          credentialIds: result.credentialIds,
+        });
+      }
+      if (result.kind === "existing_duplicate") {
+        return reply.code(409).send({
+          success: false,
+          message: "目标渠道中已存在相同 Key",
+        });
+      }
+
+      return { success: true, data: result.row };
     },
   );
 

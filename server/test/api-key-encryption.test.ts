@@ -13,7 +13,9 @@ const {
   generateApiKey,
   hashApiKey,
 } = await import("../src/lib/api-key.js");
-const { decryptSecret, encryptSecret } = await import("../src/lib/crypto-secret.js");
+const { decryptSecret, encryptSecret, secretSuffix } = await import(
+  "../src/lib/crypto-secret.js"
+);
 const { relayProtocolEnum } = await import("../src/db/schema/index.js");
 const {
   DEFAULT_RELAY_PROTOCOL,
@@ -60,4 +62,10 @@ test("unscoped decryption remains compatible with legacy upstream ciphertext", (
     "AAECAwQFBgcICQoLT/gf0r8MMahWR9wzPFAmgSrKsQQRSYRqtNPiueLU7Z0Rk8xRvDw=";
 
   assert.equal(decryptSecret(legacyCiphertext), "legacy-upstream-secret");
+});
+
+test("short upstream secrets are never exposed as their own suffix", () => {
+  assert.equal(secretSuffix("abcd"), "****");
+  assert.equal(secretSuffix("a"), "****");
+  assert.equal(secretSuffix("abcdefgh"), "efgh");
 });

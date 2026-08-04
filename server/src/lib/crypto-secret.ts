@@ -37,6 +37,6 @@ export function decryptSecret(payload: string, purpose?: string): string {
 }
 
 export function secretSuffix(plain: string): string {
-  if (plain.length <= 4) return plain;
+  if (plain.length <= 4) return "****";
   return plain.slice(-4);
 }
