@@ -1,20 +1,11 @@
 import type { FastifyInstance, FastifyReply } from "fastify";
-import { and, desc, eq, gt, isNotNull, isNull, or, sql } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../../db/client.js";
 import { employeeApiKeys, employees, opsAuditLogs } from "../../db/schema/index.js";
-import {
-  decryptEmployeeApiKey,
-  encryptEmployeeApiKey,
-  generateApiKey,
-} from "../../lib/api-key.js";
+import { decryptEmployeeApiKey } from "../../lib/api-key.js";
 import { hashPassword, validateNewPassword, verifyPassword } from "../../lib/password.js";
 import { writeOpsAudit } from "../../lib/ops-audit.js";
-import {
-  DEFAULT_RELAY_PROTOCOL,
-  RELAY_PROTOCOLS,
-  type RelayProtocol,
-} from "../../lib/relay/protocol.js";
 import {
   requirePasswordChanged,
   requireRoles,
@@ -40,58 +31,10 @@ const updateUserSchema = z
   .refine((data) => Object.keys(data).length > 0);
 
 const userIdSchema = z.object({ id: z.coerce.number().int().positive() });
-
-const adminApiKeySchema = z.object({
-  createNew: z.boolean().default(false),
-  name: z.string().trim().min(1).max(100).default("admin-managed"),
-  protocol: z.enum(RELAY_PROTOCOLS).default(DEFAULT_RELAY_PROTOCOL),
+const userKeyIdSchema = z.object({
+  id: z.coerce.number().int().positive(),
+  keyId: z.coerce.number().int().positive(),
 });
-
-const activeApiKeyFilter = (employeeId: number) =>
-  and(
-    eq(employeeApiKeys.employeeId, employeeId),
-    eq(employeeApiKeys.status, "active"),
-    or(isNull(employeeApiKeys.expiresAt), gt(employeeApiKeys.expiresAt, new Date())),
-  );
-
-async function findAdminCopyableApiKey(employeeId: number, protocol?: RelayProtocol) {
-  const [row] = await db
-    .select({
-      id: employeeApiKeys.id,
-      name: employeeApiKeys.name,
-      keyPrefix: employeeApiKeys.keyPrefix,
-      keyHash: employeeApiKeys.keyHash,
-      keyEncrypted: employeeApiKeys.keyEncrypted,
-      protocol: employeeApiKeys.protocol,
-    })
-    .from(employeeApiKeys)
-    .where(
-      and(
-        activeApiKeyFilter(employeeId),
-        isNotNull(employeeApiKeys.keyEncrypted),
-        protocol ? eq(employeeApiKeys.protocol, protocol) : undefined,
-      ),
-    )
-    .orderBy(desc(employeeApiKeys.id))
-    .limit(1);
-
-  if (!row) return { status: "not_found" as const };
-
-  try {
-    return {
-      status: "found" as const,
-      data: {
-        id: row.id,
-        name: row.name,
-        keyPrefix: row.keyPrefix,
-        protocol: row.protocol,
-        key: decryptEmployeeApiKey(row.keyEncrypted!, row.keyHash),
-      },
-    };
-  } catch {
-    return { status: "invalid" as const, keyId: row.id };
-  }
-}
 
 function disableSecretCaching(reply: FastifyReply) {
   reply.header("Cache-Control", "no-store");
@@ -102,7 +45,7 @@ function sendApiKeyUnavailable(reply: FastifyReply) {
   return reply.code(500).send({
     success: false,
     code: "api_key_unavailable",
-    message: "API Key 暂时无法读取，请稍后重试或联系管理员",
+    message: "API Key 暂时无法读取，请稍后重试",
   });
 }
 
@@ -152,6 +95,13 @@ export async function adminUserRoutes(app: FastifyInstance) {
         mustChangePassword: employees.mustChangePassword,
         lastLoginAt: employees.lastLoginAt,
         createdAt: employees.createdAt,
+        activeApiKeyCount: sql<number>`(
+          select count(*)::int
+          from ${employeeApiKeys}
+          where ${employeeApiKeys.employeeId} = ${employees.id}
+            and ${employeeApiKeys.status} = 'active'
+            and (${employeeApiKeys.expiresAt} is null or ${employeeApiKeys.expiresAt} > now())
+        )`,
       })
       .from(employees)
       .where(
@@ -166,8 +116,8 @@ export async function adminUserRoutes(app: FastifyInstance) {
     return { success: true, data: rows };
   });
 
-  app.post("/api/admin/users/:id/api-key/reveal", async (req, reply) => {
-    disableSecretCaching(reply);
+  // Read-only: list keys the employee created. Admin never creates keys for them.
+  app.get("/api/admin/users/:id/api-keys", async (req, reply) => {
     const params = userIdSchema.safeParse(req.params);
     if (!params.success) {
       return reply.code(400).send({ success: false, message: "参数无效" });
@@ -176,137 +126,99 @@ export async function adminUserRoutes(app: FastifyInstance) {
     const target = await requireEmployeeTarget(params.data.id, reply);
     if (!target) return;
 
-    const managedKey = await findAdminCopyableApiKey(target.id);
-    if (managedKey.status === "invalid") {
-      req.log.error(
-        { employeeId: target.id, employeeApiKeyId: managedKey.keyId },
-        "employee API key integrity check failed",
-      );
-      return sendApiKeyUnavailable(reply);
-    }
-    if (managedKey.status === "found") {
-      await writeOpsAudit({
-        actorEmployeeId: req.employeeId,
-        action: "employee_api_key.reveal",
-        targetType: "employee_api_key",
-        targetId: String(managedKey.data.id),
-        detail: { employeeId: target.id, protocol: managedKey.data.protocol },
-        ip: req.ip,
-      });
-
-      return {
-        success: true,
-        data: managedKey.data,
-      };
-    }
-
-    const [activeKey] = await db
-      .select({ id: employeeApiKeys.id })
+    const rows = await db
+      .select({
+        id: employeeApiKeys.id,
+        name: employeeApiKeys.name,
+        keyPrefix: employeeApiKeys.keyPrefix,
+        protocol: employeeApiKeys.protocol,
+        status: employeeApiKeys.status,
+        lastUsedAt: employeeApiKeys.lastUsedAt,
+        createdAt: employeeApiKeys.createdAt,
+        copyable: sql<boolean>`(${employeeApiKeys.keyEncrypted} is not null)`,
+      })
       .from(employeeApiKeys)
-      .where(activeApiKeyFilter(target.id))
-      .orderBy(desc(employeeApiKeys.id))
-      .limit(1);
+      .where(eq(employeeApiKeys.employeeId, target.id))
+      .orderBy(desc(employeeApiKeys.id));
 
-    if (activeKey) {
-      return reply.code(404).send({
-        success: false,
-        code: "key_not_recoverable",
-        message: "现有有效 Key 为旧版哈希存储，无法复制，请新建 Key",
-      });
-    }
-
-    return reply.code(404).send({
-      success: false,
-      code: "api_key_not_found",
-      message: "该员工没有有效 API Key",
-    });
+    return { success: true, data: rows };
   });
 
-  app.post("/api/admin/users/:id/api-key", async (req, reply) => {
+  app.post("/api/admin/users/:id/api-keys/:keyId/reveal", async (req, reply) => {
     disableSecretCaching(reply);
-    const params = userIdSchema.safeParse(req.params);
-    const body = adminApiKeySchema.safeParse(req.body ?? {});
-    if (!params.success || !body.success) {
+    const params = userKeyIdSchema.safeParse(req.params);
+    if (!params.success) {
       return reply.code(400).send({ success: false, message: "参数无效" });
     }
 
     const target = await requireEmployeeTarget(params.data.id, reply);
     if (!target) return;
 
-    if (!body.data.createNew) {
-      const managedKey = await findAdminCopyableApiKey(target.id, body.data.protocol);
-      if (managedKey.status === "invalid") {
-        req.log.error(
-          { employeeId: target.id, employeeApiKeyId: managedKey.keyId },
-          "employee API key integrity check failed",
-        );
-        return sendApiKeyUnavailable(reply);
-      }
-      if (managedKey.status === "found") {
-        await writeOpsAudit({
-          actorEmployeeId: req.employeeId,
-          action: "employee_api_key.reveal",
-          targetType: "employee_api_key",
-          targetId: String(managedKey.data.id),
-          detail: { employeeId: target.id, protocol: managedKey.data.protocol },
-          ip: req.ip,
-        });
+    const [row] = await db
+      .select({
+        id: employeeApiKeys.id,
+        name: employeeApiKeys.name,
+        keyPrefix: employeeApiKeys.keyPrefix,
+        keyHash: employeeApiKeys.keyHash,
+        keyEncrypted: employeeApiKeys.keyEncrypted,
+        protocol: employeeApiKeys.protocol,
+        status: employeeApiKeys.status,
+      })
+      .from(employeeApiKeys)
+      .where(
+        and(
+          eq(employeeApiKeys.id, params.data.keyId),
+          eq(employeeApiKeys.employeeId, target.id),
+        ),
+      )
+      .limit(1);
 
-        return {
-          success: true,
-          data: {
-            ...managedKey.data,
-            created: false,
-          },
-        };
-      }
+    if (!row) {
+      return reply.code(404).send({
+        success: false,
+        code: "api_key_not_found",
+        message: "该员工没有此 API Key",
+      });
+    }
+    if (row.status !== "active") {
+      return reply.code(400).send({ success: false, message: "已吊销的 Key 无法复制" });
+    }
+    if (!row.keyEncrypted) {
+      return reply.code(404).send({
+        success: false,
+        code: "key_not_recoverable",
+        message: "该 Key 为旧版存储，无法复制",
+      });
     }
 
-    const { raw, prefix, hash } = generateApiKey();
-    let keyEncrypted: string;
+    let key: string;
     try {
-      keyEncrypted = encryptEmployeeApiKey(raw);
-    } catch (error) {
-      req.log.error({ err: error, employeeId: target.id }, "failed to encrypt employee API key");
+      key = decryptEmployeeApiKey(row.keyEncrypted, row.keyHash);
+    } catch {
+      req.log.error(
+        { employeeId: target.id, employeeApiKeyId: row.id },
+        "employee API key integrity check failed",
+      );
       return sendApiKeyUnavailable(reply);
     }
-    const row = await db.transaction(async (tx) => {
-      const [created] = await tx
-        .insert(employeeApiKeys)
-        .values({
-          employeeId: target.id,
-          name: body.data.name,
-          keyPrefix: prefix,
-          keyHash: hash,
-          keyEncrypted,
-          protocol: body.data.protocol,
-        })
-        .returning({
-          id: employeeApiKeys.id,
-          name: employeeApiKeys.name,
-          keyPrefix: employeeApiKeys.keyPrefix,
-          protocol: employeeApiKeys.protocol,
-        });
 
-      await tx.insert(opsAuditLogs).values({
-        actorEmployeeId: req.employeeId,
-        action: "employee_api_key.create_for_employee",
-        targetType: "employee_api_key",
-        targetId: String(created.id),
-        detail: { employeeId: target.id, protocol: created.protocol },
-        ip: req.ip,
-      });
-
-      return created;
+    await writeOpsAudit({
+      actorEmployeeId: req.employeeId,
+      action: "employee_api_key.reveal",
+      targetType: "employee_api_key",
+      targetId: String(row.id),
+      detail: { employeeId: target.id, protocol: row.protocol },
+      ip: req.ip,
     });
 
     return {
       success: true,
       data: {
-        ...row,
-        key: raw,
-        created: true,
-        notice: "请妥善保管 API Key",
+        id: row.id,
+        name: row.name,
+        keyPrefix: row.keyPrefix,
+        protocol: row.protocol,
+        key,
       },
     };
   });

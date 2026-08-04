@@ -41,25 +41,26 @@
           {{ formatDateTime(row.lastLoginAt) }}
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="340">
+      <el-table-column label="API Key" width="100">
+        <template #default="{ row }">
+          <span v-if="row.role !== 'employee'" class="muted">—</span>
+          <span v-else-if="(row.activeApiKeyCount ?? 0) > 0">
+            {{ row.activeApiKeyCount }} 个
+          </span>
+          <span v-else class="muted">未创建</span>
+        </template>
+      </el-table-column>
+      <el-table-column label="操作" width="320">
         <template #default="{ row }">
           <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
-          <el-tooltip
+          <el-button
             v-if="row.role === 'employee'"
-            :content="apiKeyAvailabilityHint(row)"
-            :disabled="!apiKeyAvailabilityHint(row)"
-            placement="top"
+            link
+            type="primary"
+            @click="openApiKeys(row)"
           >
-            <el-button
-              link
-              type="primary"
-              :loading="copyingKeyUserId === row.id"
-              :disabled="copyingKeyUserId !== null && copyingKeyUserId !== row.id"
-              @click="openApiKeyDialog(row)"
-            >
-              复制 Key
-            </el-button>
-          </el-tooltip>
+            查看 Key
+          </el-button>
           <el-button
             v-if="row.id !== auth.user?.id"
             link
@@ -147,49 +148,59 @@
     </el-dialog>
 
     <el-dialog
-      v-model="showApiKey"
-      :title="`复制员工 Key · ${apiKeyUser?.name || ''}`"
-      width="560px"
+      v-model="showApiKeys"
+      :title="`员工 API Key · ${apiKeyUser?.name || ''}`"
+      width="720px"
       destroy-on-close
     >
-      <el-alert
-        title="请选择这个 Key 唯一允许使用的客户端协议。"
-        type="info"
-        :closable="false"
-        show-icon
-        class="protocol-alert"
-      />
-      <el-form label-position="top">
-        <el-form-item label="客户端协议" required>
-          <el-select v-model="apiKeyForm.protocol" style="width: 100%">
-            <el-option
-              v-for="option in relayProtocolOptions"
-              :key="option.value"
-              :label="option.label"
-              :value="option.value"
-            />
-          </el-select>
-        </el-form-item>
-      </el-form>
-
-      <div class="protocol-guide">
-        <strong>{{ selectedApiKeyProtocol.label }}</strong>
-        <span>{{ selectedApiKeyProtocol.description }}</span>
-        <code>{{ selectedApiKeyProtocol.endpoint }}</code>
-        <code v-for="line in selectedApiKeyProtocol.authHeaders" :key="line">{{ line }}</code>
-      </div>
       <p class="key-dialog-tip">
-        如果该员工尚无此协议的可复制 Key，系统会新建一个并复制到剪贴板；以后仍可按同一协议复制。
+        仅展示员工自己创建的 Key；管理员可复制，不会代为新建。
       </p>
-      <p v-if="apiKeyUser && apiKeyAvailabilityHint(apiKeyUser)" class="key-warning">
-        {{ apiKeyAvailabilityHint(apiKeyUser) }}。
-      </p>
-
+      <el-table v-loading="apiKeysLoading" :data="employeeKeys" size="small" empty-text="该员工尚未创建 API Key">
+        <el-table-column prop="name" label="名称" min-width="120" />
+        <el-table-column label="Key" min-width="140">
+          <template #default="{ row }">
+            <code class="key-mask">{{ row.keyPrefix }}••••</code>
+          </template>
+        </el-table-column>
+        <el-table-column label="协议" min-width="120">
+          <template #default="{ row }">
+            {{ relayProtocolLabel(row.protocol, true) }}
+          </template>
+        </el-table-column>
+        <el-table-column label="状态" width="90">
+          <template #default="{ row }">
+            <el-tag
+              :type="row.status === 'active' ? 'success' : 'info'"
+              size="small"
+              effect="light"
+            >
+              {{ row.status === "active" ? "正常" : row.status === "revoked" ? "已失效" : row.status }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="创建时间" min-width="160">
+          <template #default="{ row }">
+            {{ formatDateTime(row.createdAt) }}
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="90" fixed="right">
+          <template #default="{ row }">
+            <el-button
+              v-if="row.status === 'active' && row.copyable"
+              link
+              type="primary"
+              :loading="copyingKeyId === row.id"
+              @click="copyEmployeeKey(row)"
+            >
+              复制
+            </el-button>
+            <span v-else class="muted">—</span>
+          </template>
+        </el-table-column>
+      </el-table>
       <template #footer>
-        <el-button @click="showApiKey = false">取消</el-button>
-        <el-button type="primary" :loading="copyingKeyUserId !== null" @click="copyEmployeeApiKey">
-          获取并复制
-        </el-button>
+        <el-button @click="showApiKeys = false">关闭</el-button>
       </template>
     </el-dialog>
 
@@ -239,16 +250,13 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from "vue";
+import { onMounted, reactive, ref } from "vue";
 import { ElMessage } from "element-plus";
 import { http } from "@/api/http";
 import { formatDateTime } from "@/lib/date-time";
 import { useAuthStore } from "@/stores/auth";
 import {
-  isRelayProtocol,
   relayProtocolLabel,
-  relayProtocolOption,
-  relayProtocolOptions,
   type RelayProtocol,
 } from "@/views/relay-protocol";
 
@@ -261,6 +269,18 @@ type UserRow = {
   status: "active" | "disabled";
   mustChangePassword: boolean;
   lastLoginAt: string | null;
+  activeApiKeyCount?: number;
+};
+
+type EmployeeKeyRow = {
+  id: number;
+  name: string;
+  keyPrefix: string;
+  protocol: RelayProtocol;
+  status: string;
+  lastUsedAt?: string | null;
+  createdAt: string;
+  copyable: boolean;
 };
 
 const rows = ref<UserRow[]>([]);
@@ -269,15 +289,17 @@ const q = ref("");
 const showCreate = ref(false);
 const showImport = ref(false);
 const showEdit = ref(false);
-const showApiKey = ref(false);
+const showApiKeys = ref(false);
 const showResetPassword = ref(false);
 const saving = ref(false);
 const importing = ref(false);
 const updating = ref(false);
 const resetting = ref(false);
-const copyingKeyUserId = ref<number | null>(null);
+const apiKeysLoading = ref(false);
+const copyingKeyId = ref<number | null>(null);
 const editUser = ref<UserRow | null>(null);
 const apiKeyUser = ref<UserRow | null>(null);
+const employeeKeys = ref<EmployeeKeyRow[]>([]);
 const resetUser = ref<UserRow | null>(null);
 const importText = ref("");
 const form = reactive({
@@ -298,11 +320,6 @@ const editForm = reactive({
   role: "employee" as UserRow["role"],
   status: "active" as UserRow["status"],
 });
-const apiKeyForm = reactive({
-  protocol: "openai_chat" as RelayProtocol,
-});
-
-const selectedApiKeyProtocol = computed(() => relayProtocolOption(apiKeyForm.protocol));
 
 const roleLabels: Record<UserRow["role"], string> = {
   employee: "员工",
@@ -370,118 +387,49 @@ function statusLabel(status: UserRow["status"]) {
   return statusLabels[status];
 }
 
-function apiKeyAvailabilityHint(row: UserRow) {
-  const hints: string[] = [];
-  if (row.status === "disabled") {
-    hints.push("账号已停用，Key 在启用账号前暂不可用");
-  }
-  if (row.mustChangePassword) {
-    hints.push("员工尚待改密，Key 在完成改密前暂不可用");
-  }
-  return hints.join("；");
-}
-
-type ApiKeyResponse = {
-  success?: boolean;
-  data?: { key?: unknown; protocol?: unknown; created?: unknown };
-  message?: string;
-};
-
-type ApiRequestError = {
-  message?: string;
-  response?: {
-    status?: number;
-    data?: {
-      code?: string;
-      message?: string;
-    };
-  };
-};
-
-function extractApiKey(payload: unknown, expectedProtocol: RelayProtocol) {
-  const response = payload as ApiKeyResponse;
-  if (response.success !== true) {
-    throw new Error(response.message || "获取 Key 失败");
-  }
-  if (typeof response.data?.key !== "string" || !response.data.key) {
-    throw new Error("接口未返回有效的 Key");
-  }
-  if (!isRelayProtocol(response.data.protocol)) {
-    throw new Error("接口未返回有效的 Key 协议");
-  }
-  if (response.data.protocol !== expectedProtocol) {
-    throw new Error("接口返回的 Key 协议与所选协议不一致");
-  }
-  return {
-    key: response.data.key,
-    protocol: response.data.protocol,
-    created: response.data.created === true,
-  };
-}
-
 function requestErrorMessage(error: unknown, fallback: string) {
-  const requestError = error as ApiRequestError;
+  const requestError = error as {
+    message?: string;
+    response?: { data?: { message?: string } };
+  };
   return requestError.response?.data?.message || requestError.message || fallback;
 }
 
-function openApiKeyDialog(row: UserRow) {
-  if (copyingKeyUserId.value !== null) return;
+async function openApiKeys(row: UserRow) {
   apiKeyUser.value = row;
-  apiKeyForm.protocol = "openai_chat";
-  showApiKey.value = true;
+  employeeKeys.value = [];
+  showApiKeys.value = true;
+  apiKeysLoading.value = true;
+  try {
+    const { data } = await http.get(`/api/admin/users/${row.id}/api-keys`);
+    if (data.success) employeeKeys.value = data.data;
+  } catch (error) {
+    ElMessage.error(requestErrorMessage(error, "加载员工 Key 失败"));
+  } finally {
+    apiKeysLoading.value = false;
+  }
 }
 
-async function copyEmployeeApiKey() {
-  const row = apiKeyUser.value;
-  if (!row || copyingKeyUserId.value !== null) return;
-
-  copyingKeyUserId.value = row.id;
-  let apiKey = "";
-  let created = false;
-
+async function copyEmployeeKey(row: EmployeeKeyRow) {
+  if (!apiKeyUser.value) return;
+  copyingKeyId.value = row.id;
   try {
-    const keyResult = extractApiKey(
-      (
-        await http.post(`/api/admin/users/${row.id}/api-key`, {
-          protocol: apiKeyForm.protocol,
-          createNew: false,
-        })
-      ).data,
-      apiKeyForm.protocol,
+    const { data } = await http.post(
+      `/api/admin/users/${apiKeyUser.value.id}/api-keys/${row.id}/reveal`,
     );
-    apiKey = keyResult.key;
-    created = keyResult.created;
-
-    try {
-      await navigator.clipboard.writeText(apiKey);
-    } catch {
-      ElMessage.error(
-        created
-          ? "专用 Key 已生成，但复制失败；请检查剪贴板权限后再次点击复制"
-          : "复制失败，请检查剪贴板权限后重试",
-      );
-      return;
-    } finally {
-      apiKey = "";
+    if (!data.success || typeof data.data?.key !== "string") {
+      throw new Error(data.message || "读取 Key 失败");
     }
-
-    const availabilityHint = apiKeyAvailabilityHint(row);
-    const protocolName = relayProtocolLabel(apiKeyForm.protocol, true);
-    ElMessage({
-      type: "success",
-      message:
-        (created
-          ? `${protocolName} Key 已生成并复制，以后仍可在此复制；请勿通过聊天或日志传播`
-          : `${protocolName} Key 已复制`) + (availabilityHint ? `。${availabilityHint}` : ""),
-      duration: created || availabilityHint ? 6000 : 3000,
-      showClose: created || Boolean(availabilityHint),
-    });
-    showApiKey.value = false;
-  } catch (error: unknown) {
-    ElMessage.error(requestErrorMessage(error, "获取 Key 失败"));
+    try {
+      await navigator.clipboard.writeText(data.data.key);
+    } catch {
+      throw new Error("复制失败，请检查剪贴板权限");
+    }
+    ElMessage.success("已复制");
+  } catch (error) {
+    ElMessage.error(requestErrorMessage(error, "复制失败"));
   } finally {
-    apiKey = "";
-    copyingKeyUserId.value = null;
+    copyingKeyId.value = null;
   }
 }
 
@@ -580,40 +528,21 @@ onMounted(load);
   margin: -8px 0 0 90px;
 }
 
-.protocol-alert {
-  margin-bottom: 16px;
-}
-
-.protocol-guide {
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
-  padding: 12px 14px;
-  border-radius: 8px;
-  background: #f8fafc;
-  color: #475569;
+.muted {
+  color: #94a3b8;
   font-size: 13px;
 }
 
-.protocol-guide strong {
-  color: #0f172a;
-}
-
-.protocol-guide code {
-  overflow-wrap: anywhere;
-  color: #334155;
+.key-mask {
+  color: #475569;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
 }
 
-.key-dialog-tip,
-.key-warning {
-  margin: 12px 0 0;
+.key-dialog-tip {
+  margin: 0 0 12px;
   color: #64748b;
   font-size: 12px;
   line-height: 1.6;
-}
-
-.key-warning {
-  color: #b45309;
 }
 </style>
