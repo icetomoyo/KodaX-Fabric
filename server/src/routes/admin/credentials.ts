@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import { and, asc, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../../db/client.js";
 import {
@@ -7,6 +7,7 @@ import {
   employees,
   productLines,
   providers,
+  requestAudits,
   upstreamCredentials,
 } from "../../db/schema/index.js";
 import { decryptSecret, encryptSecret, secretSuffix } from "../../lib/crypto-secret.js";
@@ -16,6 +17,7 @@ import {
   isAllowedTemplateHost,
   PROVIDER_TEMPLATES,
   resolveTemplateBaseUrlOption,
+  type ProviderBaseUrlOption,
 } from "../../lib/provider-templates.js";
 import {
   DEFAULT_RELAY_PROTOCOL,
@@ -40,7 +42,10 @@ type CredentialTestResult = {
   modelCount: number;
   models: string[];
   message: string;
+  protocol: RelayProtocol;
 };
+
+const RECENT_WINDOW_MS = 24 * 60 * 60 * 1_000;
 
 const supportedProtocolsSchema = z
   .array(z.enum(RELAY_PROTOCOLS))
@@ -86,7 +91,80 @@ function errorSummary(status: number, raw: string): string {
   return `上游返回 HTTP ${status}${suffix}`;
 }
 
-async function testCredentialConnection(credentialId: number): Promise<CredentialTestResult> {
+type EnsureProductLineProvider = {
+  id: number;
+  defaultBaseUrl: string;
+};
+
+/** Find or create the product line that corresponds to a template base URL option. */
+async function ensureProductLineForBaseUrlOption(
+  provider: EnsureProductLineProvider,
+  baseUrlOption: ProviderBaseUrlOption,
+) {
+  let [productLine] = await db
+    .select()
+    .from(productLines)
+    .where(
+      and(
+        eq(productLines.providerId, provider.id),
+        eq(productLines.code, baseUrlOption.productLineCode),
+      ),
+    )
+    .limit(1);
+
+  if (!productLine) {
+    [productLine] = await db
+      .insert(productLines)
+      .values({
+        providerId: provider.id,
+        code: baseUrlOption.productLineCode,
+        name: baseUrlOption.productLineName,
+        productType: "api",
+        baseUrlOverride:
+          baseUrlOption.url === provider.defaultBaseUrl ? null : baseUrlOption.url,
+        shareMode: "public_pool",
+        allowAutoRoute: true,
+        status: "active",
+      })
+      .returning();
+  }
+
+  return productLine;
+}
+
+function metaWithoutStaleTest(meta: unknown): Record<string, unknown> {
+  const previous = meta && typeof meta === "object" ? { ...(meta as Record<string, unknown>) } : {};
+  delete previous.lastTest;
+  delete previous.discoveredModels;
+  return previous;
+}
+
+function resolveTestProtocol(
+  supportedProtocols: RelayProtocol[] | null | undefined,
+  preferred?: RelayProtocol,
+): RelayProtocol {
+  const supported = supportedProtocols?.length
+    ? supportedProtocols
+    : [DEFAULT_RELAY_PROTOCOL];
+
+  if (preferred) {
+    if (!supported.includes(preferred)) {
+      throw new Error("该渠道未声明支持所选协议");
+    }
+    return preferred;
+  }
+
+  if (supported.includes("anthropic_messages")) return "anthropic_messages";
+  if (supported.includes("openai_responses")) return "openai_responses";
+  return supported.includes(DEFAULT_RELAY_PROTOCOL)
+    ? DEFAULT_RELAY_PROTOCOL
+    : supported[0];
+}
+
+async function testCredentialConnection(
+  credentialId: number,
+  preferredProtocol?: RelayProtocol,
+): Promise<CredentialTestResult> {
   const [credential] = await db
     .select({
       id: upstreamCredentials.id,
@@ -114,18 +192,12 @@ async function testCredentialConnection(credentialId: number): Promise<Credentia
     throw new Error("当前仅支持对已确认供应商的官方 HTTPS 地址进行连通性测试");
   }
 
+  const protocol = resolveTestProtocol(credential.supportedProtocols, preferredProtocol);
   const testedAt = new Date().toISOString();
   const startedAt = Date.now();
   let result: CredentialTestResult;
 
   try {
-    const protocol: RelayProtocol = credential.supportedProtocols.includes(
-      "anthropic_messages",
-    )
-      ? "anthropic_messages"
-      : credential.supportedProtocols.includes("openai_responses")
-        ? "openai_responses"
-        : DEFAULT_RELAY_PROTOCOL;
     const secret = decryptSecret(credential.secretEncrypted);
     const response = await fetch(buildRelayUpstreamUrl(baseUrl, protocol, "models"), {
       method: "GET",
@@ -152,10 +224,11 @@ async function testCredentialConnection(credentialId: number): Promise<Credentia
       httpStatus: response.status,
       modelCount: models.length,
       models,
+      protocol,
       message: response.ok
         ? models.length
-          ? `连接成功，发现 ${models.length} 个模型`
-          : "连接成功，上游未返回可识别的模型列表"
+          ? `连接成功（${protocol}），发现 ${models.length} 个模型`
+          : `连接成功（${protocol}），上游未返回可识别的模型列表`
         : errorSummary(response.status, raw),
     };
   } catch (error) {
@@ -171,6 +244,7 @@ async function testCredentialConnection(credentialId: number): Promise<Credentia
       httpStatus: null,
       modelCount: 0,
       models: [],
+      protocol,
       message,
     };
   }
@@ -361,6 +435,7 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
             httpStatus: null,
             modelCount: 0,
             models: [],
+            protocol: resolveTestProtocol(body.data.supportedProtocols),
             message: error instanceof Error ? error.message : "连接测试失败",
           };
         }
@@ -438,7 +513,46 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
       )
       .orderBy(desc(upstreamCredentials.id));
 
-    return { success: true, data: rows };
+    const credentialIds = rows.map((row) => row.id);
+    const recentSince = new Date(Date.now() - RECENT_WINDOW_MS);
+    const recentRows = credentialIds.length
+      ? await db
+        .select({
+          credentialId: requestAudits.credentialId,
+          recentSuccessCount: sql<number>`coalesce(sum(case when ${requestAudits.status} = 'success' then 1 else 0 end), 0)::int`,
+          recentErrorCount: sql<number>`coalesce(sum(case when ${requestAudits.status} <> 'success' then 1 else 0 end), 0)::int`,
+        })
+        .from(requestAudits)
+        .where(
+          and(
+            inArray(requestAudits.credentialId, credentialIds),
+            gte(requestAudits.createdAt, recentSince),
+          ),
+        )
+        .groupBy(requestAudits.credentialId)
+      : [];
+
+    const recentById = new Map(
+      recentRows
+        .filter((row): row is typeof row & { credentialId: number } => row.credentialId != null)
+        .map((row) => [
+          row.credentialId,
+          {
+            recentSuccessCount: Number(row.recentSuccessCount) || 0,
+            recentErrorCount: Number(row.recentErrorCount) || 0,
+          },
+        ]),
+    );
+
+    return {
+      success: true,
+      data: rows.map((row) => ({
+        ...row,
+        recentWindowHours: 24,
+        recentSuccessCount: recentById.get(row.id)?.recentSuccessCount ?? 0,
+        recentErrorCount: recentById.get(row.id)?.recentErrorCount ?? 0,
+      })),
+    };
   });
 
   app.post(
@@ -518,6 +632,7 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
         .object({
           label: z.string().min(1).max(200).optional(),
           secret: z.string().min(4).optional(),
+          baseUrl: z.string().url().optional(),
           supportedProtocols: supportedProtocolsSchema.optional(),
           weight: z.number().int().min(0).max(10000).optional(),
           priority: z.number().int().optional(),
@@ -531,6 +646,25 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
 
       if (!params.success || !body.success) {
         return reply.code(400).send({ success: false, message: "参数无效" });
+      }
+
+      const [existing] = await db
+        .select({
+          id: upstreamCredentials.id,
+          productLineId: upstreamCredentials.productLineId,
+          meta: upstreamCredentials.meta,
+          providerId: providers.id,
+          providerCode: providers.code,
+          defaultBaseUrl: providers.defaultBaseUrl,
+        })
+        .from(upstreamCredentials)
+        .innerJoin(productLines, eq(upstreamCredentials.productLineId, productLines.id))
+        .innerJoin(providers, eq(productLines.providerId, providers.id))
+        .where(eq(upstreamCredentials.id, params.data.id))
+        .limit(1);
+
+      if (!existing) {
+        return reply.code(404).send({ success: false, message: "凭证不存在" });
       }
 
       const patch: Record<string, unknown> = { updatedAt: new Date() };
@@ -556,6 +690,39 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
         patch.secretSuffix = secretSuffix(body.data.secret);
       }
 
+      let resolvedBaseUrl: string | undefined;
+      if (body.data.baseUrl !== undefined) {
+        const template = getProviderTemplate(existing.providerCode);
+        if (!template) {
+          return reply.code(400).send({
+            success: false,
+            message: "当前渠道平台不支持修改 API 地址",
+          });
+        }
+        const baseUrlOption = resolveTemplateBaseUrlOption(template, body.data.baseUrl);
+        if (!baseUrlOption) {
+          return reply.code(400).send({
+            success: false,
+            message: "Base URL 必须选择该供应商的官方地址",
+          });
+        }
+        const productLine = await ensureProductLineForBaseUrlOption(
+          {
+            id: existing.providerId,
+            defaultBaseUrl: existing.defaultBaseUrl,
+          },
+          baseUrlOption,
+        );
+        resolvedBaseUrl = baseUrlOption.url;
+        if (productLine.id !== existing.productLineId) {
+          patch.productLineId = productLine.id;
+          // Endpoint changed: previous connectivity results no longer apply.
+          if (body.data.meta === undefined) {
+            patch.meta = metaWithoutStaleTest(existing.meta);
+          }
+        }
+      }
+
       const [row] = await db
         .update(upstreamCredentials)
         .set(patch)
@@ -566,6 +733,7 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
           status: upstreamCredentials.status,
           secretSuffix: upstreamCredentials.secretSuffix,
           supportedProtocols: upstreamCredentials.supportedProtocols,
+          productLineId: upstreamCredentials.productLineId,
         });
 
       if (!row) {
@@ -580,6 +748,8 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
         detail: {
           ...body.data,
           secret: body.data.secret ? "[updated]" : undefined,
+          baseUrl: resolvedBaseUrl ?? body.data.baseUrl,
+          productLineId: row.productLineId,
         },
         ip: req.ip,
       });
@@ -641,12 +811,17 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
     { preHandler: [requireRoles("admin")] },
     async (req, reply) => {
       const params = z.object({ id: z.coerce.number().int().positive() }).safeParse(req.params);
-      if (!params.success) {
+      const body = z
+        .object({
+          protocol: z.enum(RELAY_PROTOCOLS).optional(),
+        })
+        .safeParse(req.body ?? {});
+      if (!params.success || !body.success) {
         return reply.code(400).send({ success: false, message: "参数无效" });
       }
 
       try {
-        const result = await testCredentialConnection(params.data.id);
+        const result = await testCredentialConnection(params.data.id, body.data.protocol);
         await writeOpsAudit({
           actorEmployeeId: req.employeeId,
           action: "credential.test",
@@ -657,6 +832,7 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
             httpStatus: result.httpStatus,
             latencyMs: result.latencyMs,
             modelCount: result.modelCount,
+            protocol: result.protocol,
           },
           ip: req.ip,
         });
@@ -669,33 +845,29 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
     },
   );
 
-  // Coding plan style grants
-  app.get(
-    "/api/admin/credentials/:id/grants",
-    { preHandler: [requireRoles("admin")] },
-    async (req, reply) => {
-      const params = z.object({ id: z.coerce.number() }).safeParse(req.params);
-      if (!params.success) {
-        return reply.code(400).send({ success: false, message: "参数无效" });
-      }
+  // Coding plan style grants — read allowed for auditor; write remains admin-only.
+  app.get("/api/admin/credentials/:id/grants", async (req, reply) => {
+    const params = z.object({ id: z.coerce.number() }).safeParse(req.params);
+    if (!params.success) {
+      return reply.code(400).send({ success: false, message: "参数无效" });
+    }
 
-      const rows = await db
-        .select({
-          id: credentialEmployeeGrants.id,
-          employeeId: credentialEmployeeGrants.employeeId,
-          employeeName: employees.name,
-          employeePhone: employees.phone,
-          grantedBy: credentialEmployeeGrants.grantedBy,
-          createdAt: credentialEmployeeGrants.createdAt,
-        })
-        .from(credentialEmployeeGrants)
-        .innerJoin(employees, eq(credentialEmployeeGrants.employeeId, employees.id))
-        .where(eq(credentialEmployeeGrants.credentialId, params.data.id))
-        .orderBy(asc(credentialEmployeeGrants.id));
+    const rows = await db
+      .select({
+        id: credentialEmployeeGrants.id,
+        employeeId: credentialEmployeeGrants.employeeId,
+        employeeName: employees.name,
+        employeePhone: employees.phone,
+        grantedBy: credentialEmployeeGrants.grantedBy,
+        createdAt: credentialEmployeeGrants.createdAt,
+      })
+      .from(credentialEmployeeGrants)
+      .innerJoin(employees, eq(credentialEmployeeGrants.employeeId, employees.id))
+      .where(eq(credentialEmployeeGrants.credentialId, params.data.id))
+      .orderBy(asc(credentialEmployeeGrants.id));
 
-      return { success: true, data: rows };
-    },
-  );
+    return { success: true, data: rows };
+  });
 
   app.post(
     "/api/admin/credentials/:id/grants",

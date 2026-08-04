@@ -5,7 +5,7 @@
       <el-menu :default-active="route.path" router>
         <el-menu-item index="/admin">概览</el-menu-item>
         <el-menu-item v-if="auth.isAdmin" index="/admin/users">员工管理</el-menu-item>
-        <el-menu-item v-if="auth.isAdmin" index="/admin/credentials">上游渠道</el-menu-item>
+        <el-menu-item index="/admin/credentials">上游渠道</el-menu-item>
         <el-menu-item index="/admin/logs">调用日志</el-menu-item>
         <el-menu-item v-if="auth.isAdmin" index="/admin/log-grants">日志授权</el-menu-item>
         <el-menu-item v-if="auth.isAdmin" index="/admin/quota">配额策略</el-menu-item>

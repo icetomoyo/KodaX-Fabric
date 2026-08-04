@@ -8,7 +8,7 @@
         </div>
         <div class="head-actions">
           <el-button :loading="loading" @click="refreshAll">刷新</el-button>
-          <el-button type="primary" @click="openCreate">新增渠道</el-button>
+          <el-button v-if="canWrite" type="primary" @click="openCreate">新增渠道</el-button>
         </div>
       </div>
 
@@ -24,7 +24,7 @@
             description="暂无上游渠道"
             :image-size="72"
           >
-            <el-button type="primary" @click="openCreate">新增渠道</el-button>
+            <el-button v-if="canWrite" type="primary" @click="openCreate">新增渠道</el-button>
           </el-empty>
 
           <div v-else class="channel-list">
@@ -42,7 +42,7 @@
                 </span>
                 <div class="channel-card-copy">
                   <strong class="channel-card-title">{{ row.label }}</strong>
-                  <span class="channel-card-meta">{{ row.providerName }} · {{ productTypeText(row.productType) }}</span>
+                  <span class="channel-card-meta">{{ row.providerName }}</span>
                 </div>
                 <el-tag :type="statusTagType(row.status)" size="small" effect="light">
                   {{ statusText(row.status) }}
@@ -66,21 +66,20 @@
                   {{ providerShortName(selected.providerCode) }}
                 </span>
                 <div>
-                  <h3 class="detail-title">{{ selected.label }}</h3>
+                  <div class="detail-title-row">
+                    <h3 class="detail-title">{{ selected.label }}</h3>
+                    <el-tag :type="statusTagType(selected.status)" effect="light" size="small">
+                      {{ statusText(selected.status) }}
+                    </el-tag>
+                  </div>
                   <div class="detail-subtitle">
-                    {{ selected.providerName }} · {{ productTypeText(selected.productType) }}
+                    {{ selected.providerName }}
                     <span class="dot-sep">·</span>
                     <span class="secret-mask inline">•••• {{ selected.secretSuffix }}</span>
                   </div>
                 </div>
               </div>
-              <div class="detail-actions">
-                <el-button
-                  :loading="testingId === selected.id"
-                  @click="testCredential(selected)"
-                >
-                  测试连接
-                </el-button>
+              <div v-if="canWrite" class="detail-actions">
                 <el-button @click="openEdit(selected)">编辑</el-button>
                 <el-button
                   v-if="selected.status === 'active'"
@@ -99,12 +98,6 @@
                   启用
                 </el-button>
                 <el-button
-                  v-if="canManageGrants(selected)"
-                  @click="openGrants(selected)"
-                >
-                  员工授权
-                </el-button>
-                <el-button
                   type="danger"
                   :loading="deletingId === selected.id"
                   @click="removeCredential(selected)"
@@ -112,27 +105,9 @@
                   删除
                 </el-button>
               </div>
-            </div>
-
-            <div class="detail-status-row">
-              <el-tag :type="statusTagType(selected.status)" effect="light">
-                {{ statusText(selected.status) }}
-              </el-tag>
-              <el-tag
-                v-if="lastTest(selected)"
-                :type="lastTest(selected)?.ok ? 'success' : 'danger'"
-                effect="plain"
-              >
-                {{ lastTest(selected)?.ok ? "最近测试通过" : "最近测试失败" }}
-              </el-tag>
-              <el-tag v-else type="info" effect="plain">尚未测试</el-tag>
-              <el-tag
-                v-if="selected.status === 'cooling' && selected.coolUntil"
-                type="warning"
-                effect="plain"
-              >
-                冷却至 {{ formatDateTime(selected.coolUntil) }}
-              </el-tag>
+              <div v-else class="detail-actions">
+                <el-tag type="info" effect="plain" size="small">只读查看</el-tag>
+              </div>
             </div>
 
             <div class="detail-sections">
@@ -176,7 +151,7 @@
               </section>
 
               <section class="detail-section">
-                <h4 class="section-heading">调度参数</h4>
+                <h4 class="section-heading">调度与调用</h4>
                 <div class="metric-cards">
                   <div class="metric-card">
                     <span class="metric-label">优先级</span>
@@ -187,18 +162,51 @@
                     <strong>{{ selected.weight }}</strong>
                   </div>
                   <div class="metric-card">
-                    <span class="metric-label">成功调用</span>
-                    <strong class="ok">{{ selected.successCount }}</strong>
+                    <span class="metric-label">近 {{ selected.recentWindowHours || 24 }}h 成功</span>
+                    <strong class="ok">{{ selected.recentSuccessCount ?? 0 }}</strong>
                   </div>
                   <div class="metric-card">
-                    <span class="metric-label">失败调用</span>
-                    <strong class="bad">{{ selected.errorCount }}</strong>
+                    <span class="metric-label">近 {{ selected.recentWindowHours || 24 }}h 失败</span>
+                    <strong class="bad">{{ selected.recentErrorCount ?? 0 }}</strong>
+                  </div>
+                  <div class="metric-card">
+                    <span class="metric-label">累计成功</span>
+                    <strong class="ok muted-strong">{{ selected.successCount }}</strong>
+                  </div>
+                  <div class="metric-card">
+                    <span class="metric-label">累计失败</span>
+                    <strong class="bad muted-strong">{{ selected.errorCount }}</strong>
                   </div>
                 </div>
               </section>
 
               <section class="detail-section">
-                <h4 class="section-heading">健康检查</h4>
+                <div class="section-heading-row">
+                  <h4 class="section-heading">健康检查</h4>
+                  <div v-if="canWrite" class="test-controls">
+                    <el-select
+                      v-model="testProtocol"
+                      size="small"
+                      class="test-protocol-select"
+                      placeholder="测试协议"
+                    >
+                      <el-option
+                        v-for="protocol in credentialProtocols(selected)"
+                        :key="protocol"
+                        :label="relayProtocolLabel(protocol, true)"
+                        :value="protocol"
+                      />
+                    </el-select>
+                    <el-button
+                      type="primary"
+                      size="small"
+                      :loading="testingId === selected.id"
+                      @click="testCredential(selected)"
+                    >
+                      测试连接
+                    </el-button>
+                  </div>
+                </div>
                 <template v-if="lastTest(selected)">
                   <dl class="info-grid">
                     <div class="info-item">
@@ -211,6 +219,16 @@
                         >
                           {{ lastTest(selected)?.ok ? "连接正常" : "测试失败" }}
                         </el-tag>
+                      </dd>
+                    </div>
+                    <div class="info-item">
+                      <dt>测试协议</dt>
+                      <dd>
+                        {{
+                          lastTest(selected)?.protocol
+                            ? relayProtocolLabel(lastTest(selected)!.protocol!, true)
+                            : "—"
+                        }}
                       </dd>
                     </div>
                     <div class="info-item">
@@ -249,13 +267,51 @@
                     </div>
                   </div>
                 </template>
-                <p v-else class="empty-hint">尚未做过连通性测试，可点击右上角「测试连接」。</p>
+                <p v-else class="empty-hint">
+                  {{ canWrite ? "尚未做过连通性测试，可选择协议后点击「测试连接」。" : "尚未做过连通性测试。" }}
+                </p>
               </section>
 
               <section v-if="canManageGrants(selected)" class="detail-section">
-                <h4 class="section-heading">访问控制</h4>
+                <h4 class="section-heading">员工授权</h4>
                 <p class="empty-hint">该渠道需显式授权员工后才可使用。</p>
-                <el-button type="primary" plain @click="openGrants(selected)">管理员工授权</el-button>
+                <el-form v-if="canWrite" inline @submit.prevent class="grant-form">
+                  <el-form-item label="员工">
+                    <el-select
+                      v-model="grantEmployeeId"
+                      filterable
+                      clearable
+                      style="width: 260px"
+                      placeholder="选择员工"
+                    >
+                      <el-option
+                        v-for="user in users"
+                        :key="user.id"
+                        :label="`${user.name} (${user.phone})`"
+                        :value="user.id"
+                      />
+                    </el-select>
+                  </el-form-item>
+                  <el-form-item>
+                    <el-button type="primary" :loading="grantLoading" @click="addGrant">
+                      添加授权
+                    </el-button>
+                  </el-form-item>
+                </el-form>
+                <el-table v-loading="grantsLoading" :data="grants" size="small" empty-text="暂无授权员工">
+                  <el-table-column prop="employeeName" label="姓名" />
+                  <el-table-column prop="employeePhone" label="手机" />
+                  <el-table-column label="授权时间" min-width="180">
+                    <template #default="{ row }">
+                      {{ formatDateTime(row.createdAt) }}
+                    </template>
+                  </el-table-column>
+                  <el-table-column v-if="canWrite" label="操作" width="90">
+                    <template #default="{ row }">
+                      <el-button link type="danger" @click="removeGrant(row.id)">移除</el-button>
+                    </template>
+                  </el-table-column>
+                </el-table>
               </section>
             </div>
           </template>
@@ -266,7 +322,7 @@
             :description="rows.length ? '请从左侧选择一个渠道' : '暂无上游渠道'"
             :image-size="96"
           >
-            <el-button v-if="!rows.length" type="primary" @click="openCreate">新增渠道</el-button>
+            <el-button v-if="!rows.length && canWrite" type="primary" @click="openCreate">新增渠道</el-button>
           </el-empty>
         </main>
       </div>
@@ -298,32 +354,31 @@
             </span>
           </button>
         </div>
-
-        <el-form label-position="top" class="credential-form">
-          <el-form-item label="API 地址">
-            <el-select v-model="form.baseUrl" style="width: 100%">
-              <el-option
-                v-for="option in selectedTemplate?.baseUrls ?? []"
-                :key="option.url"
-                :label="`${option.label} · ${option.url}`"
-                :value="option.url"
-              />
-            </el-select>
-          </el-form-item>
-        </el-form>
       </template>
 
       <div v-else class="editing-context">
         <span class="provider-dot" :style="providerDotStyle(editingRow?.providerCode || '')" />
         <div>
           <strong>{{ editingRow?.providerName }}</strong>
-          <div class="cell-secondary">{{ editingRow ? effectiveBaseUrl(editingRow) : "" }}</div>
+          <div class="cell-secondary">平台不可更改；可调整下方官方 API 地址</div>
         </div>
       </div>
 
       <el-divider />
 
       <el-form label-position="top" class="credential-form">
+        <el-form-item label="API 地址" required>
+          <el-select v-model="form.baseUrl" style="width: 100%" placeholder="选择官方 API 地址">
+            <el-option
+              v-for="option in editBaseUrlOptions"
+              :key="option.url"
+              :label="`${option.label} · ${option.url}`"
+              :value="option.url"
+            />
+          </el-select>
+          <div class="form-help">仅可选该平台已确认的官方 HTTPS 地址。</div>
+        </el-form-item>
+
         <div class="form-row">
           <el-form-item label="渠道名称" required>
             <el-input v-model="form.label" maxlength="200" show-word-limit placeholder="如：GLM 生产主账号" />
@@ -399,45 +454,16 @@
       </template>
     </el-dialog>
 
-    <el-dialog v-model="showGrants" title="渠道员工授权" width="640px">
-      <el-form inline @submit.prevent>
-        <el-form-item label="员工">
-          <el-select v-model="grantEmployeeId" filterable style="width: 280px" placeholder="选择员工">
-            <el-option
-              v-for="user in users"
-              :key="user.id"
-              :label="`${user.name} (${user.phone})`"
-              :value="user.id"
-            />
-          </el-select>
-        </el-form-item>
-        <el-form-item>
-          <el-button type="primary" @click="addGrant">添加授权</el-button>
-        </el-form-item>
-      </el-form>
-      <el-table :data="grants" size="small">
-        <el-table-column prop="employeeName" label="姓名" />
-        <el-table-column prop="employeePhone" label="手机" />
-        <el-table-column label="授权时间" min-width="210">
-          <template #default="{ row }">
-            {{ formatDateTime(row.createdAt) }}
-          </template>
-        </el-table-column>
-        <el-table-column label="操作" width="100">
-          <template #default="{ row }">
-            <el-button link type="danger" @click="removeGrant(row.id)">移除</el-button>
-          </template>
-        </el-table-column>
-      </el-table>
-    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from "vue";
+import { useRoute, useRouter } from "vue-router";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { http } from "@/api/http";
 import { formatDateTime } from "@/lib/date-time";
+import { useAuthStore } from "@/stores/auth";
 import {
   relayProtocolLabel,
   relayProtocolOption,
@@ -455,6 +481,7 @@ type TestResult = {
   modelCount: number;
   models: string[];
   message: string;
+  protocol?: RelayProtocol;
 };
 
 type CredentialRow = {
@@ -470,6 +497,9 @@ type CredentialRow = {
   lastUsedAt: string | null;
   successCount: number;
   errorCount: number;
+  recentWindowHours?: number;
+  recentSuccessCount?: number;
+  recentErrorCount?: number;
   lastError: string | null;
   providerCode: string;
   providerName: string;
@@ -505,6 +535,11 @@ type ProviderTemplate = {
 type UserOption = { id: number; name: string; phone: string };
 type GrantRow = { id: number; employeeName: string; employeePhone: string; createdAt: string };
 
+const route = useRoute();
+const router = useRouter();
+const auth = useAuthStore();
+const canWrite = computed(() => auth.isAdmin);
+
 const rows = ref<CredentialRow[]>([]);
 const templates = ref<ProviderTemplate[]>([]);
 const users = ref<UserOption[]>([]);
@@ -513,12 +548,14 @@ const loading = ref(false);
 const saving = ref(false);
 const testingId = ref<number | null>(null);
 const deletingId = ref<number | null>(null);
+const grantsLoading = ref(false);
+const grantLoading = ref(false);
 const showForm = ref(false);
-const showGrants = ref(false);
 const editingRow = ref<CredentialRow | null>(null);
 const grantEmployeeId = ref<number>();
-const grantCredentialId = ref(0);
 const selectedId = ref<number | null>(null);
+const testProtocol = ref<RelayProtocol>("openai_chat");
+const syncingQuery = ref(false);
 
 const form = reactive({
   id: 0,
@@ -536,9 +573,44 @@ const selectedTemplate = computed(() =>
   templates.value.find((item) => item.code === form.providerCode),
 );
 
+const editBaseUrlOptions = computed(() => {
+  const options = [...(selectedTemplate.value?.baseUrls ?? [])];
+  if (form.baseUrl && !options.some((item) => item.url === form.baseUrl)) {
+    options.unshift({
+      label: "当前地址",
+      url: form.baseUrl,
+      productLineCode: "",
+      productLineName: "",
+    });
+  }
+  return options;
+});
+
 const selected = computed(
   () => rows.value.find((row) => row.id === selectedId.value) ?? null,
 );
+
+function parseQueryId(value: unknown): number | null {
+  const raw = Array.isArray(value) ? value[0] : value;
+  if (raw == null || raw === "") return null;
+  const id = Number(raw);
+  return Number.isInteger(id) && id > 0 ? id : null;
+}
+
+function syncSelectedToQuery(id: number | null) {
+  const current = parseQueryId(route.query.id);
+  if (current === id) return;
+  syncingQuery.value = true;
+  const query = { ...route.query };
+  if (id == null) delete query.id;
+  else query.id = String(id);
+  router
+    .replace({ query })
+    .catch(() => undefined)
+    .finally(() => {
+      syncingQuery.value = false;
+    });
+}
 
 watch(
   rows,
@@ -547,11 +619,48 @@ watch(
       selectedId.value = null;
       return;
     }
+    const fromQuery = parseQueryId(route.query.id);
+    if (fromQuery != null && list.some((row) => row.id === fromQuery)) {
+      selectedId.value = fromQuery;
+      return;
+    }
     if (selectedId.value == null || !list.some((row) => row.id === selectedId.value)) {
       selectedId.value = list[0].id;
     }
   },
   { deep: false },
+);
+
+watch(selectedId, (id) => {
+  syncSelectedToQuery(id);
+  if (id == null) {
+    grants.value = [];
+    return;
+  }
+  const row = rows.value.find((item) => item.id === id);
+  if (row && canManageGrants(row)) {
+    void loadGrants(id);
+  } else {
+    grants.value = [];
+  }
+  if (row) {
+    const protocols = credentialProtocols(row);
+    if (!protocols.includes(testProtocol.value)) {
+      testProtocol.value = protocols[0] ?? "openai_chat";
+    }
+  }
+});
+
+watch(
+  () => route.query.id,
+  (value) => {
+    if (syncingQuery.value) return;
+    const fromQuery = parseQueryId(value);
+    if (fromQuery == null) return;
+    if (rows.value.some((row) => row.id === fromQuery)) {
+      selectedId.value = fromQuery;
+    }
+  },
 );
 
 function selectChannel(id: number) {
@@ -609,10 +718,6 @@ function providerDotStyle(code: string): Record<string, string> {
   };
 }
 
-function productTypeText(type: CredentialRow["productType"]): string {
-  return type === "coding_plan" ? "Coding Plan" : "API";
-}
-
 function statusText(status: CredentialStatus): string {
   return {
     active: "启用",
@@ -650,18 +755,45 @@ async function loadCredentials() {
 }
 
 async function loadMeta() {
-  const [templateResponse, userResponse] = await Promise.all([
-    http.get("/api/admin/credential-templates"),
-    http.get("/api/admin/users", { params: { limit: 200 } }),
-  ]);
+  const templateResponse = await http.get("/api/admin/credential-templates");
   if (templateResponse.data.success) templates.value = templateResponse.data.data;
-  if (userResponse.data.success) users.value = userResponse.data.data;
+
+  if (canWrite.value) {
+    try {
+      const userResponse = await http.get("/api/admin/users", { params: { limit: 200 } });
+      if (userResponse.data.success) users.value = userResponse.data.data;
+    } catch {
+      users.value = [];
+    }
+  } else {
+    users.value = [];
+  }
+}
+
+async function loadGrants(credentialId: number) {
+  grantsLoading.value = true;
+  try {
+    const { data } = await http.get(`/api/admin/credentials/${credentialId}/grants`);
+    if (data.success && selectedId.value === credentialId) {
+      grants.value = data.data;
+    }
+  } catch (error) {
+    if (selectedId.value === credentialId) {
+      grants.value = [];
+      ElMessage.error(getErrorMessage(error, "加载授权失败"));
+    }
+  } finally {
+    grantsLoading.value = false;
+  }
 }
 
 async function refreshAll() {
   loading.value = true;
   try {
     await Promise.all([loadCredentials(), loadMeta()]);
+    if (selectedId.value && selected.value && canManageGrants(selected.value)) {
+      await loadGrants(selectedId.value);
+    }
   } catch (error) {
     ElMessage.error(getErrorMessage(error, "加载上游渠道失败"));
   } finally {
@@ -700,7 +832,7 @@ function openEdit(row: CredentialRow) {
   editingRow.value = row;
   form.id = row.id;
   form.providerCode = (templates.value.find((item) => item.code === row.providerCode)?.code ?? "glm");
-  form.baseUrl = effectiveBaseUrl(row);
+  form.baseUrl = matchTemplateBaseUrl(row.providerCode, effectiveBaseUrl(row));
   form.label = row.label;
   form.secret = "";
   form.supportedProtocols = [...credentialProtocols(row)];
@@ -710,6 +842,16 @@ function openEdit(row: CredentialRow) {
   showForm.value = true;
 }
 
+function matchTemplateBaseUrl(providerCode: string, currentUrl: string): string {
+  const template = templates.value.find((item) => item.code === providerCode);
+  if (!template) return currentUrl;
+  const normalized = currentUrl.replace(/\/+$/, "");
+  const matched = template.baseUrls.find(
+    (item) => item.url.replace(/\/+$/, "") === normalized,
+  );
+  return matched?.url ?? currentUrl;
+}
+
 async function save() {
   if (!form.label.trim()) {
     ElMessage.warning("请填写渠道名称");
@@ -717,6 +859,10 @@ async function save() {
   }
   if (!form.id && !form.secret.trim()) {
     ElMessage.warning("请填写 API Key");
+    return;
+  }
+  if (!form.baseUrl.trim()) {
+    ElMessage.warning("请选择 API 地址");
     return;
   }
   if (!form.supportedProtocols.length) {
@@ -729,6 +875,7 @@ async function save() {
       await http.patch(`/api/admin/credentials/${form.id}`, {
         label: form.label.trim(),
         secret: form.secret.trim() || undefined,
+        baseUrl: form.baseUrl,
         supportedProtocols: [...form.supportedProtocols],
         priority: form.priority,
         weight: form.weight,
@@ -768,9 +915,14 @@ async function save() {
 }
 
 async function testCredential(row: CredentialRow) {
+  if (!canWrite.value) return;
+  const protocols = credentialProtocols(row);
+  const protocol = protocols.includes(testProtocol.value)
+    ? testProtocol.value
+    : protocols[0] ?? "openai_chat";
   testingId.value = row.id;
   try {
-    const { data } = await http.post(`/api/admin/credentials/${row.id}/test`);
+    const { data } = await http.post(`/api/admin/credentials/${row.id}/test`, { protocol });
     const result = data.data as TestResult;
     result.ok ? ElMessage.success(result.message) : ElMessage.warning(result.message);
     await loadCredentials();
@@ -820,37 +972,33 @@ async function removeCredential(row: CredentialRow) {
   }
 }
 
-async function openGrants(row: CredentialRow) {
-  grantCredentialId.value = row.id;
-  grantEmployeeId.value = undefined;
-  const { data } = await http.get(`/api/admin/credentials/${row.id}/grants`);
-  if (data.success) grants.value = data.data;
-  showGrants.value = true;
-}
-
 async function addGrant() {
+  if (!canWrite.value || !selectedId.value) return;
   if (!grantEmployeeId.value) {
     ElMessage.warning("请选择员工");
     return;
   }
+  grantLoading.value = true;
   try {
-    await http.post(`/api/admin/credentials/${grantCredentialId.value}/grants`, {
+    await http.post(`/api/admin/credentials/${selectedId.value}/grants`, {
       employeeId: grantEmployeeId.value,
     });
     ElMessage.success("已授权");
-    const { data } = await http.get(`/api/admin/credentials/${grantCredentialId.value}/grants`);
-    if (data.success) grants.value = data.data;
+    grantEmployeeId.value = undefined;
+    await loadGrants(selectedId.value);
   } catch (error) {
     ElMessage.error(getErrorMessage(error, "授权失败"));
+  } finally {
+    grantLoading.value = false;
   }
 }
 
 async function removeGrant(grantId: number) {
+  if (!canWrite.value || !selectedId.value) return;
   try {
-    await http.delete(`/api/admin/credentials/${grantCredentialId.value}/grants/${grantId}`);
+    await http.delete(`/api/admin/credentials/${selectedId.value}/grants/${grantId}`);
     ElMessage.success("已移除授权");
-    const { data } = await http.get(`/api/admin/credentials/${grantCredentialId.value}/grants`);
-    if (data.success) grants.value = data.data;
+    await loadGrants(selectedId.value);
   } catch (error) {
     ElMessage.error(getErrorMessage(error, "移除授权失败"));
   }
@@ -1073,6 +1221,13 @@ onMounted(refreshAll);
   min-width: 0;
 }
 
+.detail-title-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .detail-title {
   margin: 0;
   color: #0f172a;
@@ -1098,17 +1253,11 @@ onMounted(refreshAll);
   gap: 8px;
 }
 
-.detail-status-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-bottom: 18px;
-}
-
 .detail-sections {
   display: flex;
   flex-direction: column;
   gap: 18px;
+  margin-top: 4px;
 }
 
 .detail-section {
@@ -1123,6 +1272,38 @@ onMounted(refreshAll);
   color: #334155;
   font-size: 13px;
   font-weight: 650;
+}
+
+.section-heading-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.section-heading-row .section-heading {
+  margin: 0;
+}
+
+.test-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.test-protocol-select {
+  width: 160px;
+}
+
+.grant-form {
+  margin-bottom: 10px;
+}
+
+.metric-card strong.muted-strong {
+  font-size: 16px;
+  opacity: 0.85;
 }
 
 .info-grid {
@@ -1176,7 +1357,7 @@ onMounted(refreshAll);
 
 .metric-cards {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
 }
 

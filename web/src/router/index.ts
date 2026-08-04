@@ -64,18 +64,18 @@ export const router = createRouter({
         {
           path: "providers",
           redirect: "/admin/credentials",
-          meta: { roles: ["admin"] },
+          meta: { roles: ["admin", "auditor"] },
         },
         {
           path: "credentials",
           name: "admin-credentials",
           component: () => import("@/views/admin/CredentialsView.vue"),
-          meta: { roles: ["admin"] },
+          meta: { roles: ["admin", "auditor"] },
         },
         {
           path: "model-routes",
           redirect: "/admin/credentials",
-          meta: { roles: ["admin"] },
+          meta: { roles: ["admin", "auditor"] },
         },
         {
           path: "logs",
