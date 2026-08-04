@@ -116,7 +116,7 @@ export async function adminLogRoutes(app: FastifyInstance) {
       .from(requestAudits)
       .innerJoin(employees, eq(requestAudits.employeeId, employees.id))
       .where(whereExpr)
-      .orderBy(desc(requestAudits.id))
+      .orderBy(desc(requestAudits.createdAt), desc(requestAudits.id))
       .limit(query.limit)
       .offset(query.offset);
 

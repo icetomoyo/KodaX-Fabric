@@ -13,7 +13,7 @@ import { adminLogRoutes } from "./routes/admin/logs.js";
 import { adminGrantRoutes } from "./routes/admin/grants.js";
 import { adminQuotaRoutes } from "./routes/admin/quota.js";
 import { adminOpsAuditRoutes } from "./routes/admin/ops-audit.js";
-import { v1StubRoutes } from "./routes/v1/stub.js";
+import { v1RelayRoutes } from "./routes/v1/chat-completions.js";
 
 export async function buildApp() {
   const app = Fastify({
@@ -39,8 +39,7 @@ export async function buildApp() {
   await app.register(adminGrantRoutes);
   await app.register(adminQuotaRoutes);
   await app.register(adminOpsAuditRoutes);
-  await app.register(v1StubRoutes);
+  await app.register(v1RelayRoutes);
 
   return app;
 }
-

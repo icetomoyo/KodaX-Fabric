@@ -1,9 +1,16 @@
 <template>
   <div class="page-card">
-    <h2 class="page-title">供应商 / 产品线</h2>
-    <p class="muted">官方供应商与 API / Coding Plan 产品线。API 默认可公共共享；Coding Plan 默认授权制。</p>
+    <div class="head">
+      <h2 class="page-title" style="margin: 0">供应商 / 产品线</h2>
+      <el-button v-if="auth.isAdmin" type="primary" @click="openCreateProvider">新增供应商</el-button>
+    </div>
+    <p class="muted">
+      不预置演示供应商。请按实际采购录入；产品线区分 API / Coding Plan，共享模式可编辑。
+    </p>
 
-    <el-table :data="providers" row-key="id" default-expand-all>
+    <el-empty v-if="!providers.length" description="暂无供应商，请先新增" />
+
+    <el-table v-else :data="providers" row-key="id" default-expand-all>
       <el-table-column type="expand">
         <template #default="{ row }">
           <el-table :data="row.productLines" size="small" style="margin: 0 24px 12px">
@@ -35,16 +42,24 @@
       </el-table-column>
     </el-table>
 
-    <el-dialog v-model="showProvider" title="编辑供应商" width="520px">
+    <el-dialog v-model="showProvider" :title="providerForm.id ? '编辑供应商' : '新增供应商'" width="520px">
       <el-form label-width="110px">
-        <el-form-item label="名称"><el-input v-model="providerForm.name" /></el-form-item>
-        <el-form-item label="Base URL"><el-input v-model="providerForm.defaultBaseUrl" /></el-form-item>
+        <el-form-item v-if="!providerForm.id" label="Code" required>
+          <el-input v-model="providerForm.code" placeholder="如 zhipu_cn、deepseek" />
+        </el-form-item>
+        <el-form-item label="名称" required><el-input v-model="providerForm.name" /></el-form-item>
+        <el-form-item label="Base URL" required><el-input v-model="providerForm.defaultBaseUrl" /></el-form-item>
         <el-form-item label="状态">
           <el-select v-model="providerForm.status" style="width: 100%">
             <el-option label="active" value="active" />
             <el-option label="disabled" value="disabled" />
           </el-select>
         </el-form-item>
+        <template v-if="!providerForm.id">
+          <el-form-item label="默认产品线">
+            <el-checkbox v-model="providerForm.withApiLine">创建 api 产品线（公共池）</el-checkbox>
+          </el-form-item>
+        </template>
       </el-form>
       <template #footer>
         <el-button @click="showProvider = false">取消</el-button>
@@ -94,7 +109,14 @@ const providers = ref<Array<Record<string, any>>>([]);
 const showProvider = ref(false);
 const showLine = ref(false);
 const saving = ref(false);
-const providerForm = reactive({ id: 0, name: "", defaultBaseUrl: "", status: "active" });
+const providerForm = reactive({
+  id: 0,
+  code: "",
+  name: "",
+  defaultBaseUrl: "",
+  status: "active",
+  withApiLine: true,
+});
 const lineForm = reactive({
   id: 0,
   name: "",
@@ -109,8 +131,19 @@ async function load() {
   if (data.success) providers.value = data.data;
 }
 
+function openCreateProvider() {
+  providerForm.id = 0;
+  providerForm.code = "";
+  providerForm.name = "";
+  providerForm.defaultBaseUrl = "";
+  providerForm.status = "active";
+  providerForm.withApiLine = true;
+  showProvider.value = true;
+}
+
 function editProvider(row: any) {
   providerForm.id = row.id;
+  providerForm.code = row.code;
   providerForm.name = row.name;
   providerForm.defaultBaseUrl = row.defaultBaseUrl;
   providerForm.status = row.status;
@@ -130,11 +163,25 @@ function editLine(pl: any) {
 async function saveProvider() {
   saving.value = true;
   try {
-    await http.patch(`/api/admin/providers/${providerForm.id}`, {
-      name: providerForm.name,
-      defaultBaseUrl: providerForm.defaultBaseUrl,
-      status: providerForm.status,
-    });
+    if (providerForm.id) {
+      await http.patch(`/api/admin/providers/${providerForm.id}`, {
+        name: providerForm.name,
+        defaultBaseUrl: providerForm.defaultBaseUrl,
+        status: providerForm.status,
+      });
+    } else {
+      if (!providerForm.code.trim() || !providerForm.name.trim() || !providerForm.defaultBaseUrl.trim()) {
+        ElMessage.warning("请填写 Code、名称与 Base URL");
+        return;
+      }
+      await http.post("/api/admin/providers", {
+        code: providerForm.code.trim(),
+        name: providerForm.name.trim(),
+        defaultBaseUrl: providerForm.defaultBaseUrl.trim(),
+        status: providerForm.status,
+        withApiLine: providerForm.withApiLine,
+      });
+    }
     ElMessage.success("已保存");
     showProvider.value = false;
     await load();
@@ -167,3 +214,12 @@ async function saveLine() {
 
 onMounted(load);
 </script>
+
+<style scoped>
+.head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+</style>

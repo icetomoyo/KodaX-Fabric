@@ -5,15 +5,14 @@
       <el-row :gutter="16">
         <el-col :span="4"><el-statistic title="员工总数" :value="data?.employees?.total ?? 0" /></el-col>
         <el-col :span="4"><el-statistic title="启用员工" :value="data?.employees?.active ?? 0" /></el-col>
-        <el-col :span="4"><el-statistic title="活跃凭证" :value="data?.credentials?.active ?? 0" /></el-col>
-        <el-col :span="4"><el-statistic title="自动禁用凭证" :value="data?.credentials?.autoDisabled ?? 0" /></el-col>
-        <el-col :span="4"><el-statistic title="启用模型路由" :value="data?.modelRoutesEnabled ?? 0" /></el-col>
+        <el-col :span="4"><el-statistic title="渠道总数" :value="data?.credentials?.total ?? 0" /></el-col>
+        <el-col :span="4"><el-statistic title="启用渠道" :value="data?.credentials?.active ?? 0" /></el-col>
+        <el-col :span="4"><el-statistic title="异常渠道" :value="data?.credentials?.autoDisabled ?? 0" /></el-col>
         <el-col :span="4"><el-statistic title="今日请求" :value="data?.today?.requests ?? 0" /></el-col>
       </el-row>
       <el-row :gutter="16" style="margin-top: 16px">
-        <el-col :span="8"><el-statistic title="今日 Tokens" :value="data?.today?.tokens ?? 0" /></el-col>
-        <el-col :span="8"><el-statistic title="今日失败" :value="data?.today?.errors ?? 0" /></el-col>
-        <el-col :span="8"><el-statistic title="供应商数" :value="data?.providers ?? 0" /></el-col>
+        <el-col :span="12"><el-statistic title="今日 Tokens" :value="data?.today?.tokens ?? 0" /></el-col>
+        <el-col :span="12"><el-statistic title="今日失败" :value="data?.today?.errors ?? 0" /></el-col>
       </el-row>
     </div>
 
@@ -31,9 +30,9 @@
       </el-col>
       <el-col :span="12">
         <div class="page-card">
-          <h3 class="page-title">今日按供应商</h3>
+          <h3 class="page-title">今日按接入平台</h3>
           <el-table :data="data?.byProviderToday ?? []" size="small" empty-text="暂无数据">
-            <el-table-column prop="providerCode" label="供应商" />
+            <el-table-column prop="providerCode" label="平台" />
             <el-table-column prop="requests" label="请求" />
             <el-table-column prop="tokens" label="Tokens" />
           </el-table>
@@ -43,11 +42,15 @@
 
     <div class="page-card" style="margin-top: 16px">
       <h3 class="page-title">最近失败请求</h3>
-      <el-table :data="data?.recentErrors ?? []" size="small" empty-text="暂无失败">
-        <el-table-column prop="createdAt" label="时间" width="170" />
+      <el-table :data="data?.recentErrors ?? []" size="small" empty-text="暂无失败记录">
+        <el-table-column label="时间" width="210">
+          <template #default="{ row }">
+            {{ formatDateTime(row.createdAt) }}
+          </template>
+        </el-table-column>
         <el-table-column prop="employeeName" label="员工" width="100" />
         <el-table-column prop="clientModel" label="模型" width="120" />
-        <el-table-column prop="providerCode" label="供应商" width="100" />
+        <el-table-column prop="providerCode" label="上游平台" width="100" />
         <el-table-column prop="status" label="状态" width="110" />
         <el-table-column prop="errorCode" label="错误码" width="120" />
         <el-table-column prop="errorMessage" label="错误信息" show-overflow-tooltip />
@@ -59,12 +62,11 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
 import { http } from "@/api/http";
+import { formatDateTime } from "@/lib/date-time";
 
 const data = ref<{
   employees?: { total: number; active: number };
   credentials?: { total: number; active: number; autoDisabled: number };
-  providers?: number;
-  modelRoutesEnabled?: number;
   today?: { requests: number; tokens: number; errors: number };
   topUsersToday?: Array<Record<string, unknown>>;
   byProviderToday?: Array<Record<string, unknown>>;

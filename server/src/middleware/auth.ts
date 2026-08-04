@@ -1,4 +1,7 @@
 import type { FastifyReply, FastifyRequest } from "fastify";
+import { eq } from "drizzle-orm";
+import { db } from "../db/client.js";
+import { employees } from "../db/schema/index.js";
 import { verifySession, type SessionClaims } from "../lib/jwt.js";
 
 function extractBearer(req: FastifyRequest): string | null {
@@ -13,13 +16,43 @@ export async function requireSession(req: FastifyRequest, reply: FastifyReply) {
   if (!token) {
     return reply.code(401).send({ success: false, message: "未登录" });
   }
+  let session: SessionClaims;
   try {
-    const session = await verifySession(token);
-    req.session = session;
-    req.employeeId = Number(session.sub);
+    session = await verifySession(token);
   } catch {
     return reply.code(401).send({ success: false, message: "登录已失效" });
   }
+
+  const employeeId = Number(session.sub);
+  if (!Number.isSafeInteger(employeeId) || employeeId <= 0) {
+    return reply.code(401).send({ success: false, message: "登录已失效" });
+  }
+
+  const [user] = await db
+    .select({
+      id: employees.id,
+      name: employees.name,
+      phone: employees.phone,
+      role: employees.role,
+      status: employees.status,
+      mustChangePassword: employees.mustChangePassword,
+    })
+    .from(employees)
+    .where(eq(employees.id, employeeId))
+    .limit(1);
+
+  if (!user || user.status !== "active") {
+    return reply.code(401).send({ success: false, message: "用户不可用" });
+  }
+
+  req.session = {
+    sub: String(user.id),
+    name: user.name,
+    phone: user.phone,
+    role: user.role,
+    mustChangePassword: user.mustChangePassword,
+  };
+  req.employeeId = user.id;
 }
 
 export async function requirePasswordChanged(req: FastifyRequest, reply: FastifyReply) {

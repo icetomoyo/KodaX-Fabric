@@ -4,24 +4,30 @@
       <h2 class="page-title" style="margin: 0">API Key</h2>
       <el-button type="primary" @click="createKey" :loading="creating">生成新 Key</el-button>
     </div>
-    <p class="muted">Key 明文仅在创建时展示一次，请妥善保存。网关调用使用此 Key，不是登录密码。</p>
 
-    <el-alert
-      v-if="freshKey"
-      type="success"
-      :closable="false"
-      show-icon
-      style="margin-bottom: 16px"
-      title="请立即复制保存"
-      :description="freshKey"
-    />
+    <div v-if="freshKey" class="fresh-key">
+      <el-input :model-value="freshKey" readonly>
+        <template #append>
+          <el-button @click="copyFreshKey">复制</el-button>
+        </template>
+      </el-input>
+      <el-button @click="freshKey = ''">隐藏</el-button>
+    </div>
 
     <el-table :data="keys" stripe>
       <el-table-column prop="name" label="名称" width="140" />
       <el-table-column prop="keyPrefix" label="前缀" width="140" />
       <el-table-column prop="status" label="状态" width="100" />
-      <el-table-column prop="createdAt" label="创建时间" />
-      <el-table-column prop="lastUsedAt" label="最近使用" />
+      <el-table-column label="创建时间" min-width="210">
+        <template #default="{ row }">
+          {{ formatDateTime(row.createdAt) }}
+        </template>
+      </el-table-column>
+      <el-table-column label="最近使用" min-width="210">
+        <template #default="{ row }">
+          {{ formatDateTime(row.lastUsedAt) }}
+        </template>
+      </el-table-column>
       <el-table-column label="操作" width="120">
         <template #default="{ row }">
           <el-button
@@ -42,6 +48,7 @@
 import { onMounted, ref } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { http } from "@/api/http";
+import { formatDateTime } from "@/lib/date-time";
 
 type KeyRow = {
   id: number;
@@ -83,6 +90,15 @@ async function revoke(id: number) {
   await load();
 }
 
+async function copyFreshKey() {
+  try {
+    await navigator.clipboard.writeText(freshKey.value);
+    ElMessage.success("已复制");
+  } catch {
+    ElMessage.error("复制失败");
+  }
+}
+
 onMounted(load);
 </script>
 
@@ -92,5 +108,10 @@ onMounted(load);
   align-items: center;
   justify-content: space-between;
   margin-bottom: 8px;
+}
+.fresh-key {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
 }
 </style>

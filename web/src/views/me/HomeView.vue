@@ -23,7 +23,7 @@
         Authorization: Bearer &lt;你的 API Key&gt;
       </el-descriptions-item>
       <el-descriptions-item label="接口">
-        POST /v1/chat/completions（代理实现下一阶段）
+        GET /v1/models；POST /v1/chat/completions（已启用，支持非流式与流式）
       </el-descriptions-item>
     </el-descriptions>
   </div>

@@ -64,6 +64,7 @@ export const employeeApiKeys = pgTable(
     name: varchar("name", { length: 100 }).notNull().default("default"),
     keyPrefix: varchar("key_prefix", { length: 32 }).notNull(),
     keyHash: varchar("key_hash", { length: 128 }).notNull(),
+    keyEncrypted: text("key_encrypted"),
     status: apiKeyStatusEnum("status").notNull().default("active"),
     lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
     expiresAt: timestamp("expires_at", { withTimezone: true }),

@@ -98,7 +98,7 @@ export async function authRoutes(app: FastifyInstance) {
       const body = z
         .object({
           oldPassword: z.string().min(1),
-          newPassword: z.string().min(8),
+          newPassword: z.string().min(8).max(128),
         })
         .safeParse(req.body);
 

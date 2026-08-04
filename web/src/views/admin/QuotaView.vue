@@ -5,7 +5,6 @@
         <h2 class="page-title" style="margin: 0">配额策略</h2>
         <el-button type="primary" @click="openPolicyCreate">新建策略</el-button>
       </div>
-      <p class="muted">不计费。软上限仅告警标记；硬上限可拦截。RPM / 并发用于防刷。</p>
       <el-table :data="policies" stripe>
         <el-table-column prop="name" label="名称" width="120" />
         <el-table-column prop="isDefault" label="默认" width="70">
@@ -53,8 +52,7 @@
           <el-input-number v-model="policyForm.softTpmDay" :min="0" :step="100000" />
         </el-form-item>
         <el-form-item label="日Token硬限">
-          <el-input-number v-model="policyForm.hardTpmDay" :min="0" :step="100000" />
-          <span class="muted" style="margin-left: 8px">空=不硬拦（需手动清空逻辑）</span>
+          <el-input-number v-model="policyForm.hardTpmDay" :min="0" :step="100000" placeholder="不限" />
         </el-form-item>
         <el-form-item label="RPM">
           <el-input-number v-model="policyForm.rpm" :min="1" />
@@ -66,7 +64,7 @@
           <el-input-number v-model="policyForm.softReqDay" :min="0" />
         </el-form-item>
         <el-form-item label="日请求硬限">
-          <el-input-number v-model="policyForm.hardReqDay" :min="0" />
+          <el-input-number v-model="policyForm.hardReqDay" :min="0" placeholder="不限" />
         </el-form-item>
         <el-form-item label="设为默认">
           <el-switch v-model="policyForm.isDefault" />
@@ -99,7 +97,7 @@
           <el-input-number v-model="overrideForm.softTpmDay" :min="0" />
         </el-form-item>
         <el-form-item label="日Token硬限">
-          <el-input-number v-model="overrideForm.hardTpmDay" :min="0" />
+          <el-input-number v-model="overrideForm.hardTpmDay" :min="0" placeholder="不限" />
         </el-form-item>
         <el-form-item label="RPM">
           <el-input-number v-model="overrideForm.rpm" :min="1" />

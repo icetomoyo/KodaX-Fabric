@@ -63,8 +63,8 @@ export const router = createRouter({
         },
         {
           path: "providers",
-          name: "admin-providers",
-          component: () => import("@/views/admin/ProvidersView.vue"),
+          redirect: "/admin/credentials",
+          meta: { roles: ["admin"] },
         },
         {
           path: "credentials",
@@ -74,8 +74,7 @@ export const router = createRouter({
         },
         {
           path: "model-routes",
-          name: "admin-model-routes",
-          component: () => import("@/views/admin/ModelRoutesView.vue"),
+          redirect: "/admin/credentials",
           meta: { roles: ["admin"] },
         },
         {
@@ -100,6 +99,11 @@ export const router = createRouter({
           name: "admin-ops-audit",
           component: () => import("@/views/admin/OpsAuditView.vue"),
           meta: { roles: ["admin"] },
+        },
+        {
+          path: "profile",
+          name: "admin-profile",
+          component: () => import("@/views/admin/ProfileView.vue"),
         },
       ],
     },

@@ -11,6 +11,7 @@
     "db:generate": "pnpm --filter @tokenhub/server db:generate",
     "db:migrate": "pnpm --filter @tokenhub/server db:migrate",
     "db:seed": "pnpm --filter @tokenhub/server db:seed",
+    "db:cleanup-demo": "pnpm --filter @tokenhub/server db:cleanup-demo",
     "db:setup": "pnpm db:migrate && pnpm db:seed"
   },
   "engines": {

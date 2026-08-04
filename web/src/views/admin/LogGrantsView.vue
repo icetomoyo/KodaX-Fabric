@@ -4,7 +4,6 @@
       <h2 class="page-title" style="margin: 0">日志查阅授权</h2>
       <el-button type="primary" @click="openCreate">新建授权</el-button>
     </div>
-    <p class="muted">将指定范围内的调用日志（可选全文）授权给审计员或其他员工查看。</p>
 
     <el-table :data="rows" stripe>
       <el-table-column prop="id" label="ID" width="70" />
@@ -20,8 +19,16 @@
         <template #default="{ row }">{{ row.canReadBody ? "是" : "否" }}</template>
       </el-table-column>
       <el-table-column prop="status" label="状态" width="90" />
-      <el-table-column prop="expiresAt" label="过期时间" width="170" />
-      <el-table-column prop="createdAt" label="创建时间" width="170" />
+      <el-table-column label="过期时间" width="210">
+        <template #default="{ row }">
+          {{ formatDateTime(row.expiresAt) }}
+        </template>
+      </el-table-column>
+      <el-table-column label="创建时间" width="210">
+        <template #default="{ row }">
+          {{ formatDateTime(row.createdAt) }}
+        </template>
+      </el-table-column>
       <el-table-column label="操作" width="120" fixed="right">
         <template #default="{ row }">
           <el-button
@@ -51,9 +58,9 @@
         </el-form-item>
         <el-form-item label="范围类型">
           <el-select v-model="form.scopeType" style="width: 100%">
-            <el-option label="全员 all" value="all" />
-            <el-option label="部门 dept" value="dept" />
-            <el-option label="指定员工 employees" value="employees" />
+            <el-option label="全员" value="all" />
+            <el-option label="部门" value="dept" />
+            <el-option label="指定员工" value="employees" />
           </el-select>
         </el-form-item>
         <el-form-item v-if="form.scopeType === 'dept'" label="部门列表">
@@ -84,6 +91,7 @@
           <el-date-picker
             v-model="form.expiresAt"
             type="datetime"
+            format="YYYY-MM-DD HH:mm:ss"
             value-format="YYYY-MM-DDTHH:mm:ss.SSSZ"
             style="width: 100%"
             clearable
@@ -102,6 +110,7 @@
 import { onMounted, reactive, ref } from "vue";
 import { ElMessage } from "element-plus";
 import { http } from "@/api/http";
+import { formatDateTime } from "@/lib/date-time";
 
 const rows = ref<any[]>([]);
 const users = ref<any[]>([]);

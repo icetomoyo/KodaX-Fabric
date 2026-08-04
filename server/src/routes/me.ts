@@ -1,14 +1,15 @@
 import type { FastifyInstance } from "fastify";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { z } from "zod";
-import { db } from "../db/client.js";
+import { db, sql as querySql } from "../db/client.js";
 import {
   employeeApiKeys,
+  opsAuditLogs,
   requestAuditBodies,
   requestAudits,
   usageCountersDaily,
 } from "../db/schema/index.js";
-import { generateApiKey } from "../lib/api-key.js";
+import { encryptEmployeeApiKey, generateApiKey } from "../lib/api-key.js";
 import { writeOpsAudit } from "../lib/ops-audit.js";
 import { requirePasswordChanged, requireSession } from "../middleware/auth.js";
 
@@ -34,6 +35,8 @@ export async function meRoutes(app: FastifyInstance) {
   });
 
   app.post("/api/me/api-keys", async (req, reply) => {
+    reply.header("Cache-Control", "no-store");
+    reply.header("Pragma", "no-cache");
     const body = z
       .object({ name: z.string().min(1).max(100).default("default") })
       .safeParse(req.body ?? {});
@@ -42,28 +45,34 @@ export async function meRoutes(app: FastifyInstance) {
     }
 
     const { raw, prefix, hash } = generateApiKey();
-    const [row] = await db
-      .insert(employeeApiKeys)
-      .values({
-        employeeId: req.employeeId!,
-        name: body.data.name,
-        keyPrefix: prefix,
-        keyHash: hash,
-      })
-      .returning({
-        id: employeeApiKeys.id,
-        name: employeeApiKeys.name,
-        keyPrefix: employeeApiKeys.keyPrefix,
-        status: employeeApiKeys.status,
-        createdAt: employeeApiKeys.createdAt,
+    const keyEncrypted = encryptEmployeeApiKey(raw);
+    const row = await db.transaction(async (tx) => {
+      const [created] = await tx
+        .insert(employeeApiKeys)
+        .values({
+          employeeId: req.employeeId!,
+          name: body.data.name,
+          keyPrefix: prefix,
+          keyHash: hash,
+          keyEncrypted,
+        })
+        .returning({
+          id: employeeApiKeys.id,
+          name: employeeApiKeys.name,
+          keyPrefix: employeeApiKeys.keyPrefix,
+          status: employeeApiKeys.status,
+          createdAt: employeeApiKeys.createdAt,
+        });
+
+      await tx.insert(opsAuditLogs).values({
+        actorEmployeeId: req.employeeId,
+        action: "api_key.create",
+        targetType: "employee_api_key",
+        targetId: String(created.id),
+        ip: req.ip,
       });
 
-    await writeOpsAudit({
-      actorEmployeeId: req.employeeId,
-      action: "api_key.create",
-      targetType: "employee_api_key",
-      targetId: String(row.id),
-      ip: req.ip,
+      return created;
     });
 
     return {
@@ -109,7 +118,9 @@ export async function meRoutes(app: FastifyInstance) {
   });
 
   app.get("/api/me/usage", async (req) => {
-    const today = new Date().toISOString().slice(0, 10);
+    const [{ today }] = await querySql<{ today: string }[]>`
+      select current_date::text as today
+    `;
     const [day] = await db
       .select()
       .from(usageCountersDaily)

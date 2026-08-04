@@ -89,12 +89,89 @@ docker compose exec -T postgres psql -U app -d postgres -c "CREATE DATABASE toke
 | 角色 | 路径 | 能力 |
 |---|---|---|
 | 员工 | `/me/*` | 改密、API Key、自己的用量与日志 |
-| 管理员 | `/admin/*` only | 概览、员工、供应商/产品线、凭证池、模型路由、调用日志、日志授权、配额、操作审计（不进入员工端） |
-| 审计员 | `/admin/*` only | 概览、供应商只读、调用日志（授权范围内，不进入员工端） |
+| 管理员 | `/admin/*` only | 概览、员工、上游渠道、调用日志、日志授权、配额、操作审计（不进入员工端） |
+| 审计员 | `/admin/*` only | 概览、调用日志（授权范围内，不进入员工端） |
 
-管理后台菜单：概览 · 员工管理 · 供应商/产品线 · 上游凭证池 · 模型路由 · 调用日志 · 日志授权 · 配额策略 · 操作审计。
+管理后台菜单：概览 · 员工管理 · 上游渠道 · 调用日志 · 日志授权 · 配额策略 · 操作审计 · 个人中心。供应商、产品线和模型路由保留为内部数据结构，不再暴露独立页面。
 
-模型调用走 `POST /v1/chat/completions`（员工 API Key），网页 Chat 非一期范围。
+模型代理已启用，调用走 `/v1/models` 与 `/v1/chat/completions`（员工 API Key）；网页 Chat 非一期范围。
+
+## 模型代理使用
+
+员工首次登录并完成改密后，在 Web 的「API Key」页面（`/me/keys`）生成调用 Key。员工端仅在创建响应中展示明文；系统同时保留加密托管副本，管理员可在「员工管理」中复制，且每次读取都会写入操作审计。以下示例中的值仅为占位符，不是真实 Key：
+
+```sh
+export TOKENHUB_API_KEY="th_replace_with_your_employee_key"
+export TOKENHUB_BASE_URL="http://127.0.0.1:3100/v1"
+```
+
+生产或内网部署时，将 `TOKENHUB_BASE_URL` 替换为实际 TokenHub 地址。所有 `/v1` 请求都使用员工 API Key：
+
+```text
+Authorization: Bearer <员工 API Key>
+```
+
+### 查询可用模型
+
+`/v1/models` 只返回当前员工有权使用且存在可用渠道的模型：
+
+```sh
+curl -sS "${TOKENHUB_BASE_URL}/models" \
+  -H "Authorization: Bearer ${TOKENHUB_API_KEY}"
+```
+
+下面调用中的 `YOUR_MODEL_ID` 需替换为模型列表返回的 `id`。
+
+### 非流式 Chat Completions
+
+```sh
+curl -sS "${TOKENHUB_BASE_URL}/chat/completions" \
+  -H "Authorization: Bearer ${TOKENHUB_API_KEY}" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "YOUR_MODEL_ID",
+    "messages": [
+      { "role": "user", "content": "请用一句话介绍 TokenHub。" }
+    ],
+    "stream": false
+  }'
+```
+
+### 流式 Chat Completions
+
+`curl -N` 会关闭输出缓冲，便于实时查看 SSE 数据：
+
+```sh
+curl -N "${TOKENHUB_BASE_URL}/chat/completions" \
+  -H "Authorization: Bearer ${TOKENHUB_API_KEY}" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "YOUR_MODEL_ID",
+    "messages": [
+      { "role": "user", "content": "分三点说明统一模型网关的价值。" }
+    ],
+    "stream": true
+  }'
+```
+
+### CC Switch 配置
+
+在 CC Switch 中新增 OpenAI Compatible（或 OpenAI Chat Completions）供应商，并填写：
+
+| 配置项 | 值 |
+|---|---|
+| Base URL | `http://127.0.0.1:3100/v1`，部署后替换为实际地址 |
+| API Key | 员工在 TokenHub 生成的 `th_...` Key |
+| Model | 从 `GET /v1/models` 返回结果中选择 |
+
+如果 CC Switch 分别要求 Host 和接口路径，Host 填 TokenHub 服务地址，Chat Completions 路径填 `/v1/chat/completions`。不要把上游供应商 Key 配入 CC Switch。
+
+### 调度、限流与审计
+
+- TokenHub 按模型、授权范围、渠道优先级与权重选择上游凭证；同一请求重试时不会重复使用同一凭证。
+- 上游 `401/403` 会自动停用对应凭证，`429` 会进入短暂冷却，`5xx` 或网络错误可切换凭证重试；请求参数导致的 `400` 不重试。
+- 员工调用受 RPM、并发和日配额约束；超出硬限制时返回 OpenAI 风格错误，RPM 超限响应会带 `Retry-After`。
+- 成功、上游错误、限流和取消等调用都会写入员工级审计与用量记录；请求头中的员工 API Key 不会写入审计正文。
 
 ## 常用命令
 
@@ -102,9 +179,15 @@ docker compose exec -T postgres psql -U app -d postgres -c "CREATE DATABASE toke
 pnpm dev:server      # 仅 API
 pnpm dev:web         # 仅前端
 pnpm db:migrate      # 执行迁移
-pnpm db:seed         # 种子数据
+pnpm db:seed         # 仅种子管理员 + 最小系统配置（无演示供应商/凭证）
+pnpm db:cleanup-demo # 清理非用户演示数据（保留 employees / api keys）
 pnpm --filter @tokenhub/server db:generate  # 改 schema 后生成迁移
+pnpm --filter @tokenhub/server test             # Relay 纯单元测试
+pnpm --filter @tokenhub/server test:relay:mock  # 本地 PG/Redis + Mock 上游集成测试
 ```
+
+`test:relay:live` 会真实调用已配置的上游并产生少量 Token，仅在明确需要时运行；可用 `TOKENHUB_SMOKE_MODELS=model-a,model-b` 限定模型。
+
 
 ## 设计摘要
 

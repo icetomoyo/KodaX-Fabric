@@ -2,16 +2,15 @@
   <div class="wrap">
     <div class="card">
       <h1>修改密码</h1>
-      <p class="muted">首次登录或管理员重置后，必须修改密码后才能继续使用</p>
       <el-form label-position="top" @submit.prevent="onSubmit">
         <el-form-item label="原密码">
-          <el-input v-model="oldPassword" type="password" show-password />
+          <el-input v-model="oldPassword" type="password" show-password autocomplete="current-password" />
         </el-form-item>
         <el-form-item label="新密码">
-          <el-input v-model="newPassword" type="password" show-password />
+          <el-input v-model="newPassword" type="password" show-password autocomplete="new-password" :maxlength="128" />
         </el-form-item>
         <el-form-item label="确认新密码">
-          <el-input v-model="confirm" type="password" show-password />
+          <el-input v-model="confirm" type="password" show-password autocomplete="new-password" :maxlength="128" />
         </el-form-item>
         <el-button type="primary" native-type="submit" :loading="loading" style="width: 100%">
           确认修改
@@ -72,10 +71,7 @@ async function onSubmit() {
   box-shadow: 0 10px 40px rgba(15, 23, 42, 0.08);
 }
 h1 {
-  margin: 0 0 4px;
-  font-size: 22px;
-}
-.muted {
   margin: 0 0 20px;
+  font-size: 22px;
 }
 </style>

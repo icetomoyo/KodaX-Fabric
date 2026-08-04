@@ -1,8 +1,19 @@
 import type { FastifyInstance } from "fastify";
-import { and, desc, eq, gte, lte, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../../db/client.js";
-import { employees, opsAuditLogs } from "../../db/schema/index.js";
+import {
+  employeeApiKeys,
+  employees,
+  logAccessGrants,
+  modelRoutes,
+  opsAuditLogs,
+  productLines,
+  providers,
+  quotaPolicies,
+  requestAudits,
+  upstreamCredentials,
+} from "../../db/schema/index.js";
 import {
   requirePasswordChanged,
   requireRoles,
@@ -61,11 +72,164 @@ export async function adminOpsAuditRoutes(app: FastifyInstance) {
       .limit(query.limit)
       .offset(query.offset);
 
+    const targetIds = (targetType: string) => [
+      ...new Set(
+        items
+          .filter((item) => item.targetType === targetType && item.targetId)
+          .map((item) => item.targetId!),
+      ),
+    ];
+    const numericTargetIds = (targetType: string) =>
+      targetIds(targetType)
+        .map(Number)
+        .filter((id) => Number.isSafeInteger(id) && id > 0);
+
+    const employeeIds = numericTargetIds("employee");
+    const employeeApiKeyIds = numericTargetIds("employee_api_key");
+    const providerIds = numericTargetIds("provider");
+    const productLineIds = numericTargetIds("product_line");
+    const credentialIds = numericTargetIds("upstream_credential");
+    const modelRouteIds = numericTargetIds("model_route");
+    const quotaPolicyIds = numericTargetIds("quota_policy");
+    const logGrantIds = numericTargetIds("log_access_grant");
+    const requestIds = targetIds("request_audit");
+
+    const [
+      employeeTargets,
+      employeeApiKeyTargets,
+      providerTargets,
+      productLineTargets,
+      credentialTargets,
+      modelRouteTargets,
+      quotaPolicyTargets,
+      logGrantTargets,
+      requestTargets,
+    ] = await Promise.all([
+      employeeIds.length
+        ? db
+            .select({ id: employees.id, name: employees.name, phone: employees.phone })
+            .from(employees)
+            .where(inArray(employees.id, employeeIds))
+        : [],
+      employeeApiKeyIds.length
+        ? db
+            .select({
+              id: employeeApiKeys.id,
+              name: employeeApiKeys.name,
+              employeeName: employees.name,
+            })
+            .from(employeeApiKeys)
+            .innerJoin(employees, eq(employeeApiKeys.employeeId, employees.id))
+            .where(inArray(employeeApiKeys.id, employeeApiKeyIds))
+        : [],
+      providerIds.length
+        ? db
+            .select({ id: providers.id, name: providers.name })
+            .from(providers)
+            .where(inArray(providers.id, providerIds))
+        : [],
+      productLineIds.length
+        ? db
+            .select({ id: productLines.id, name: productLines.name, providerName: providers.name })
+            .from(productLines)
+            .innerJoin(providers, eq(productLines.providerId, providers.id))
+            .where(inArray(productLines.id, productLineIds))
+        : [],
+      credentialIds.length
+        ? db
+            .select({
+              id: upstreamCredentials.id,
+              label: upstreamCredentials.label,
+              secretSuffix: upstreamCredentials.secretSuffix,
+              providerName: providers.name,
+            })
+            .from(upstreamCredentials)
+            .innerJoin(productLines, eq(upstreamCredentials.productLineId, productLines.id))
+            .innerJoin(providers, eq(productLines.providerId, providers.id))
+            .where(inArray(upstreamCredentials.id, credentialIds))
+        : [],
+      modelRouteIds.length
+        ? db
+            .select({
+              id: modelRoutes.id,
+              clientModel: modelRoutes.clientModel,
+              upstreamModel: modelRoutes.upstreamModel,
+            })
+            .from(modelRoutes)
+            .where(inArray(modelRoutes.id, modelRouteIds))
+        : [],
+      quotaPolicyIds.length
+        ? db
+            .select({ id: quotaPolicies.id, name: quotaPolicies.name })
+            .from(quotaPolicies)
+            .where(inArray(quotaPolicies.id, quotaPolicyIds))
+        : [],
+      logGrantIds.length
+        ? db
+            .select({ id: logAccessGrants.id, employeeName: employees.name })
+            .from(logAccessGrants)
+            .innerJoin(employees, eq(logAccessGrants.granteeEmployeeId, employees.id))
+            .where(inArray(logAccessGrants.id, logGrantIds))
+        : [],
+      requestIds.length
+        ? db
+            .select({
+              requestId: requestAudits.requestId,
+              clientModel: requestAudits.clientModel,
+              employeeName: employees.name,
+            })
+            .from(requestAudits)
+            .innerJoin(employees, eq(requestAudits.employeeId, employees.id))
+            .where(inArray(requestAudits.requestId, requestIds))
+        : [],
+    ]);
+
+    const targetNames = new Map<string, string>();
+    const setTargetName = (targetType: string, targetId: number | string, name: string) => {
+      targetNames.set(`${targetType}:${targetId}`, name);
+    };
+
+    for (const row of employeeTargets) {
+      setTargetName("employee", row.id, `${row.name}（${row.phone}）`);
+    }
+    for (const row of employeeApiKeyTargets) {
+      setTargetName("employee_api_key", row.id, `${row.employeeName} / ${row.name}`);
+    }
+    for (const row of providerTargets) setTargetName("provider", row.id, row.name);
+    for (const row of productLineTargets) {
+      setTargetName("product_line", row.id, `${row.providerName} / ${row.name}`);
+    }
+    for (const row of credentialTargets) {
+      setTargetName(
+        "upstream_credential",
+        row.id,
+        `${row.providerName} / ${row.label}（••••${row.secretSuffix}）`,
+      );
+    }
+    for (const row of modelRouteTargets) {
+      setTargetName("model_route", row.id, `${row.clientModel} → ${row.upstreamModel}`);
+    }
+    for (const row of quotaPolicyTargets) setTargetName("quota_policy", row.id, row.name);
+    for (const row of logGrantTargets) {
+      setTargetName("log_access_grant", row.id, `${row.employeeName}的日志授权`);
+    }
+    for (const row of requestTargets) {
+      setTargetName("request_audit", row.requestId, `${row.employeeName} / ${row.clientModel}`);
+    }
+
+    const enrichedItems = items.map((item) => ({
+      ...item,
+      targetName:
+        item.targetType && item.targetId
+          ? targetNames.get(`${item.targetType}:${item.targetId}`) ?? null
+          : null,
+    }));
+
     return {
       success: true,
       data: {
         total: countRow?.n ?? 0,
-        items,
+        items: enrichedItems,
       },
     };
   });
