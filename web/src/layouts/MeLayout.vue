@@ -10,11 +10,25 @@
     </el-aside>
     <el-container>
       <el-header class="header">
-        <div>
-          <strong>{{ auth.user?.name }}</strong>
-          <span class="muted"> · {{ auth.user?.phone }} · {{ roleLabel }}</span>
+        <div class="header-left">
+          <div class="account">
+            <strong>{{ auth.user?.name }}</strong>
+            <span class="muted"> · {{ auth.user?.phone }} · 员工工作台</span>
+          </div>
+          <el-tag v-if="canReturnAdmin" size="small" effect="plain" type="success">
+            员工视角
+          </el-tag>
         </div>
-        <el-button link type="primary" @click="onLogout">退出</el-button>
+        <div class="header-right">
+          <el-button
+            v-if="canReturnAdmin"
+            class="portal-switch"
+            @click="goAdminConsole"
+          >
+            返回管理后台
+          </el-button>
+          <el-button link type="primary" @click="onLogout">退出</el-button>
+        </div>
       </el-header>
       <el-main>
         <router-view />
@@ -26,20 +40,18 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import { useRoute, useRouter } from "vue-router";
+import { canUseAdminConsole } from "@/lib/home";
 import { useAuthStore } from "@/stores/auth";
 
 const route = useRoute();
 const router = useRouter();
 const auth = useAuthStore();
 
-const roleLabel = computed(() => {
-  const map: Record<string, string> = {
-    admin: "管理员",
-    auditor: "审计员",
-    employee: "员工",
-  };
-  return map[auth.user?.role ?? ""] ?? "";
-});
+const canReturnAdmin = computed(() => canUseAdminConsole(auth.user));
+
+function goAdminConsole() {
+  router.push("/admin");
+}
 
 function onLogout() {
   auth.logout();
@@ -49,9 +61,12 @@ function onLogout() {
 
 <style scoped>
 .shell {
-  min-height: 100vh;
+  height: 100vh;
+  overflow: hidden;
 }
 .aside {
+  height: 100%;
+  overflow-y: auto;
   background: #0f172a;
   color: #fff;
 }
@@ -71,11 +86,54 @@ function onLogout() {
   background: #1e293b;
   color: #fff;
 }
+.shell > :deep(.el-container) {
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
 .header {
   display: flex;
+  flex-shrink: 0;
   align-items: center;
   justify-content: space-between;
+  gap: 16px;
   background: #fff;
   border-bottom: 1px solid #e5e7eb;
+}
+.header-left,
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.header-right {
+  flex-shrink: 0;
+}
+.account {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.shell :deep(.el-main) {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  overflow: auto;
+}
+.muted {
+  color: #6b7280;
+  font-size: 13px;
+}
+.portal-switch {
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+  color: #15803d;
+}
+.portal-switch:hover {
+  border-color: #86efac;
+  background: #dcfce7;
+  color: #166534;
 }
 </style>

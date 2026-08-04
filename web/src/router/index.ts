@@ -26,7 +26,8 @@ export const router = createRouter({
     {
       path: "/me",
       component: () => import("@/layouts/MeLayout.vue"),
-      meta: { roles: ["employee"] },
+      // Admins/auditors are also employees and may enter the self-service workspace.
+      meta: { roles: ["employee", "admin", "auditor"] },
       children: [
         {
           path: "",
@@ -131,12 +132,6 @@ router.beforeEach((to) => {
 
   if (!auth.user?.mustChangePassword && to.name === "change-password") {
     return home;
-  }
-
-  if (auth.user && (auth.user.role === "admin" || auth.user.role === "auditor")) {
-    if (to.path === "/me" || to.path.startsWith("/me/")) {
-      return "/admin";
-    }
   }
 
   const need = to.matched

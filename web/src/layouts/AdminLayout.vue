@@ -15,11 +15,19 @@
     </el-aside>
     <el-container>
       <el-header class="header">
-        <router-link to="/admin/profile" class="account-link">
-          <strong>{{ auth.user?.name }}</strong>
-          <span class="muted"> · 管理后台</span>
-        </router-link>
-        <el-button link type="primary" @click="onLogout">退出</el-button>
+        <div class="header-left">
+          <router-link to="/admin/profile" class="account-link">
+            <strong>{{ auth.user?.name }}</strong>
+            <span class="muted"> · 管理后台</span>
+          </router-link>
+          <el-tag size="small" effect="plain" type="warning">{{ portalLabel }}</el-tag>
+        </div>
+        <div class="header-right">
+          <el-button class="portal-switch" @click="goEmployeeWorkspace">
+            切换到员工端
+          </el-button>
+          <el-button link type="primary" @click="onLogout">退出</el-button>
+        </div>
       </el-header>
       <el-main>
         <router-view />
@@ -29,12 +37,21 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useAuthStore } from "@/stores/auth";
 
 const route = useRoute();
 const router = useRouter();
 const auth = useAuthStore();
+
+const portalLabel = computed(() =>
+  auth.user?.role === "auditor" ? "审计员视角" : "管理员视角",
+);
+
+function goEmployeeWorkspace() {
+  router.push("/me");
+}
 
 function onLogout() {
   auth.logout();
@@ -78,8 +95,19 @@ function onLogout() {
   flex-shrink: 0;
   align-items: center;
   justify-content: space-between;
+  gap: 16px;
   background: #fff;
   border-bottom: 1px solid #e5e7eb;
+}
+.header-left,
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.header-right {
+  flex-shrink: 0;
 }
 .shell :deep(.el-main) {
   display: flex;
@@ -91,5 +119,16 @@ function onLogout() {
 .account-link {
   color: inherit;
   text-decoration: none;
+  white-space: nowrap;
+}
+.portal-switch {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+.portal-switch:hover {
+  border-color: #93c5fd;
+  background: #dbeafe;
+  color: #1e40af;
 }
 </style>
