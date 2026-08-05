@@ -50,17 +50,9 @@
           <span v-else class="muted">未创建</span>
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="320">
+      <el-table-column label="操作" width="250">
         <template #default="{ row }">
           <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
-          <el-button
-            v-if="row.role === 'employee'"
-            link
-            type="primary"
-            @click="openApiKeys(row)"
-          >
-            查看 Key
-          </el-button>
           <el-button
             v-if="row.id !== auth.user?.id"
             link
@@ -148,66 +140,6 @@
     </el-dialog>
 
     <el-dialog
-      v-model="showApiKeys"
-      :title="`员工 API Key · ${apiKeyUser?.name || ''}`"
-      width="920px"
-      destroy-on-close
-    >
-      <p class="key-dialog-tip">
-        仅展示员工自己创建的 Key 及其上游渠道；管理员可审计复制，不会代为新建。
-      </p>
-      <el-table v-loading="apiKeysLoading" :data="employeeKeys" size="small" empty-text="该员工尚未创建 API Key">
-        <el-table-column prop="name" label="名称" min-width="120" />
-        <el-table-column label="Key" min-width="140">
-          <template #default="{ row }">
-            <code class="key-mask">{{ row.keyPrefix }}••••</code>
-          </template>
-        </el-table-column>
-        <el-table-column label="协议" min-width="120">
-          <template #default="{ row }">
-            {{ relayProtocolLabel(row.protocol, true) }}
-          </template>
-        </el-table-column>
-        <el-table-column label="上游渠道" min-width="180">
-          <template #default="{ row }">
-            {{ keyChannelLabel(row) }}
-          </template>
-        </el-table-column>
-        <el-table-column label="状态" width="90">
-          <template #default="{ row }">
-            <el-tag
-              :type="row.status === 'active' ? 'success' : 'info'"
-              size="small"
-              effect="light"
-            >
-              {{ row.status === "active" ? "正常" : row.status === "revoked" ? "已失效" : row.status }}
-            </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="创建时间" min-width="160">
-          <template #default="{ row }">
-            {{ formatDateTime(row.createdAt) }}
-          </template>
-        </el-table-column>
-        <el-table-column label="操作" width="90" fixed="right">
-          <template #default="{ row }">
-            <el-button
-              link
-              type="primary"
-              :loading="copyingKeyId === row.id"
-              @click="copyEmployeeKey(row)"
-            >
-              复制
-            </el-button>
-          </template>
-        </el-table-column>
-      </el-table>
-      <template #footer>
-        <el-button @click="showApiKeys = false">关闭</el-button>
-      </template>
-    </el-dialog>
-
-    <el-dialog
       v-model="showResetPassword"
       :title="`重置密码 · ${resetUser?.name || ''}`"
       width="480px"
@@ -258,10 +190,6 @@ import { ElMessage } from "element-plus";
 import { http } from "@/api/http";
 import { formatDateTime } from "@/lib/date-time";
 import { useAuthStore } from "@/stores/auth";
-import {
-  relayProtocolLabel,
-  type RelayProtocol,
-} from "@/views/relay-protocol";
 
 type UserRow = {
   id: number;
@@ -275,37 +203,18 @@ type UserRow = {
   activeApiKeyCount?: number;
 };
 
-type EmployeeKeyRow = {
-  id: number;
-  name: string;
-  keyPrefix: string;
-  protocol: RelayProtocol;
-  productLineId: number;
-  productLineName: string;
-  providerCode: string;
-  providerName: string;
-  status: string;
-  lastUsedAt?: string | null;
-  createdAt: string;
-};
-
 const rows = ref<UserRow[]>([]);
 const auth = useAuthStore();
 const q = ref("");
 const showCreate = ref(false);
 const showImport = ref(false);
 const showEdit = ref(false);
-const showApiKeys = ref(false);
 const showResetPassword = ref(false);
 const saving = ref(false);
 const importing = ref(false);
 const updating = ref(false);
 const resetting = ref(false);
-const apiKeysLoading = ref(false);
-const copyingKeyId = ref<number | null>(null);
 const editUser = ref<UserRow | null>(null);
-const apiKeyUser = ref<UserRow | null>(null);
-const employeeKeys = ref<EmployeeKeyRow[]>([]);
 const resetUser = ref<UserRow | null>(null);
 const importText = ref("");
 const form = reactive({
@@ -391,61 +300,6 @@ function roleLabel(role: UserRow["role"]) {
 
 function statusLabel(status: UserRow["status"]) {
   return statusLabels[status];
-}
-
-function requestErrorMessage(error: unknown, fallback: string) {
-  const requestError = error as {
-    message?: string;
-    response?: { data?: { message?: string } };
-  };
-  return requestError.response?.data?.message || requestError.message || fallback;
-}
-
-function keyChannelLabel(row: EmployeeKeyRow): string {
-  const company = row.providerName.trim();
-  const model = row.productLineName.trim();
-  if (!company) return model;
-  if (!model) return company;
-  if (company === model || model.startsWith(`${company}/`)) return model;
-  return `${company}/${model}`;
-}
-
-async function openApiKeys(row: UserRow) {
-  apiKeyUser.value = row;
-  employeeKeys.value = [];
-  showApiKeys.value = true;
-  apiKeysLoading.value = true;
-  try {
-    const { data } = await http.get(`/api/admin/users/${row.id}/api-keys`);
-    if (data.success) employeeKeys.value = data.data;
-  } catch (error) {
-    ElMessage.error(requestErrorMessage(error, "加载员工 Key 失败"));
-  } finally {
-    apiKeysLoading.value = false;
-  }
-}
-
-async function copyEmployeeKey(row: EmployeeKeyRow) {
-  if (!apiKeyUser.value) return;
-  copyingKeyId.value = row.id;
-  try {
-    const { data } = await http.post(
-      `/api/admin/users/${apiKeyUser.value.id}/api-keys/${row.id}/reveal`,
-    );
-    if (!data.success || typeof data.data?.key !== "string") {
-      throw new Error(data.message || "读取 Key 失败");
-    }
-    try {
-      await navigator.clipboard.writeText(data.data.key);
-    } catch {
-      throw new Error("复制失败，请检查剪贴板权限");
-    }
-    ElMessage.success(`已复制 · ${keyChannelLabel(row)}`);
-  } catch (error) {
-    ElMessage.error(requestErrorMessage(error, "复制失败"));
-  } finally {
-    copyingKeyId.value = null;
-  }
 }
 
 function openEdit(row: UserRow) {
@@ -548,16 +402,4 @@ onMounted(load);
   font-size: 13px;
 }
 
-.key-mask {
-  color: #475569;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 12px;
-}
-
-.key-dialog-tip {
-  margin: 0 0 12px;
-  color: #64748b;
-  font-size: 12px;
-  line-height: 1.6;
-}
 </style>

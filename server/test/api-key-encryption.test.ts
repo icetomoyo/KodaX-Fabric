@@ -6,13 +6,12 @@ process.env.REDIS_URL ??= "redis://127.0.0.1:6379/15";
 process.env.JWT_SECRET ??= "unit-test-jwt-secret";
 process.env.CREDENTIAL_ENCRYPT_KEY = "unit-test-credential-secret";
 
+const apiKeyModule = await import("../src/lib/api-key.js");
 const {
   EMPLOYEE_API_KEY_ENCRYPTION_PURPOSE,
-  decryptEmployeeApiKey,
   encryptEmployeeApiKey,
   generateApiKey,
-  hashApiKey,
-} = await import("../src/lib/api-key.js");
+} = apiKeyModule;
 const { decryptSecret, encryptSecret, secretSuffix } = await import(
   "../src/lib/crypto-secret.js"
 );
@@ -33,30 +32,19 @@ test("relay protocol runtime values stay aligned with the database enum", () => 
   assert.equal(isRelayProtocol("unknown"), false);
 });
 
-test("employee API keys round-trip through purpose-scoped encryption", () => {
+test("employee API keys are stored with purpose-scoped encryption", () => {
   const generated = generateApiKey();
   const encrypted = encryptEmployeeApiKey(generated.raw);
 
   assert.notEqual(encrypted, generated.raw);
-  assert.equal(decryptEmployeeApiKey(encrypted, generated.hash), generated.raw);
+  assert.equal(decryptSecret(encrypted, EMPLOYEE_API_KEY_ENCRYPTION_PURPOSE), generated.raw);
+  assert.equal("decryptEmployeeApiKey" in apiKeyModule, false);
 });
 
 test("purpose-scoped ciphertext cannot be decrypted under a different purpose", () => {
   const encrypted = encryptSecret("scoped secret", EMPLOYEE_API_KEY_ENCRYPTION_PURPOSE);
 
   assert.throws(() => decryptSecret(encrypted, "different-purpose:v1"));
-});
-
-test("employee API key decryption enforces hash and generated-key format binding", () => {
-  const generated = generateApiKey();
-  const encrypted = encryptEmployeeApiKey(generated.raw);
-  const otherKey = generateApiKey();
-
-  assert.throws(() => decryptEmployeeApiKey(encrypted, otherKey.hash));
-
-  const malformed = "th_not-a-generated-token";
-  const malformedEncrypted = encryptSecret(malformed, EMPLOYEE_API_KEY_ENCRYPTION_PURPOSE);
-  assert.throws(() => decryptEmployeeApiKey(malformedEncrypted, hashApiKey(malformed)));
 });
 
 test("upstream credentials round-trip through unscoped encryption", () => {

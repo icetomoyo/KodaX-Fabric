@@ -677,25 +677,32 @@ async function assertCreateValidationAndBinding(): Promise<void> {
   assert.equal(revealResponse.statusCode, 404, "employee reveal endpoint is still reachable");
 }
 
-async function assertAdminRevealMetadataAndAudit(): Promise<void> {
+async function assertAdminCannotAccessEmployeeApiKeys(): Promise<void> {
   assert(createdBoundKeyId, "bound API Key fixture missing");
   const employee = requiredUser("employee");
   const admin = requiredUser("admin");
+
+  const usersResponse = await app!.inject({
+    method: "GET",
+    url: `/api/admin/users?q=${encodeURIComponent(employee.phone)}`,
+    headers: authHeaders(admin),
+  });
+  assert.equal(usersResponse.statusCode, 200);
+  const usersBody = jsonBody<{
+    success: boolean;
+    data: Array<{ id: number; activeApiKeyCount: number }>;
+  }>(usersResponse);
+  const listedEmployee = usersBody.data.find((user) => user.id === employee.id);
+  assert(listedEmployee, "employee was absent from the admin user list");
+  assert(listedEmployee.activeApiKeyCount > 0, "active API Key count was removed from user list");
 
   const listResponse = await app!.inject({
     method: "GET",
     url: `/api/admin/users/${employee.id}/api-keys`,
     headers: authHeaders(admin),
   });
-  assert.equal(listResponse.statusCode, 200);
-  const listBody = jsonBody<{ success: boolean; data: ApiKeyListItem[] }>(listResponse);
-  const listed = listBody.data.find((key) => key.id === createdBoundKeyId);
-  assert(listed, "created API Key was absent from the admin list");
-  assert.equal(listed.productLineId, requiredProductLine("grant"));
-  assert.equal(listed.productLineCode, `grant_${marker}`);
-  assert.equal(listed.productLineName, `grant ${marker}`);
-  assert.equal(listed.providerCode, `provider_${marker}`);
-  assertNoSecretFields(listBody);
+  assert.equal(listResponse.statusCode, 404, "admin employee Key list endpoint is reachable");
+  assert.equal(listResponse.body.includes(createdPlaintextKey), false);
 
   const before = await db
     .select({ id: opsAuditLogs.id })
@@ -713,20 +720,8 @@ async function assertAdminRevealMetadataAndAudit(): Promise<void> {
     url: `/api/admin/users/${employee.id}/api-keys/${createdBoundKeyId}/reveal`,
     headers: authHeaders(admin),
   });
-  assert.equal(response.statusCode, 200);
-  assert.match(String(response.headers["cache-control"] ?? ""), /(?:^|,)\s*no-store\s*(?:,|$)/i);
-  assert.match(String(response.headers.pragma ?? ""), /no-cache/i);
-  const body = jsonBody<{
-    success: boolean;
-    data: ApiKeyListItem & { key: string; providerId: number };
-  }>(response);
-  assert.equal(body.success, true);
-  assert.equal(body.data.key, createdPlaintextKey);
-  assert.equal(body.data.productLineId, requiredProductLine("grant"));
-  assert.equal(body.data.productLineCode, `grant_${marker}`);
-  assert.equal(body.data.productLineName, `grant ${marker}`);
-  assert.equal(body.data.providerCode, `provider_${marker}`);
-  assert.equal(body.data.providerName, `Provider ${marker}`);
+  assert.equal(response.statusCode, 404, "admin employee Key reveal endpoint is reachable");
+  assert.equal(response.body.includes(createdPlaintextKey), false);
 
   const rows = await db
     .select({
@@ -740,15 +735,7 @@ async function assertAdminRevealMetadataAndAudit(): Promise<void> {
         eq(opsAuditLogs.targetId, String(createdBoundKeyId)),
       ),
     );
-  assert.equal(rows.length, 1, "admin reveal did not create exactly one audit record");
-  assert.equal(rows[0].actorEmployeeId, admin.id);
-  assert(isRecord(rows[0].detail));
-  assert.equal(rows[0].detail.employeeId, employee.id);
-  assert.equal(rows[0].detail.productLineId, requiredProductLine("grant"));
-  assert.equal(rows[0].detail.productLineCode, `grant_${marker}`);
-  assert.equal(rows[0].detail.providerCode, `provider_${marker}`);
-  assert.equal(rows[0].detail.protocol, "openai_chat");
-  assert.equal(JSON.stringify(rows[0].detail).includes(createdPlaintextKey), false);
+  assert.equal(rows.length, 0, "blocked admin Key access unexpectedly wrote a reveal audit");
 }
 
 function databaseErrorInfo(error: unknown): {
@@ -981,7 +968,7 @@ async function main(): Promise<{ database: string }> {
   await assertStrictMeRoleBoundary();
   await assertUpstreamChannelMetadata();
   await assertCreateValidationAndBinding();
-  await assertAdminRevealMetadataAndAudit();
+  await assertAdminCannotAccessEmployeeApiKeys();
   await assertDatabaseInvariants();
   await assertRoleTransitionRevocation();
 
@@ -1046,7 +1033,7 @@ console.log(
         upstreamChannelVisibilityAndRedaction: true,
         credentialStatusAndWeightFiltering: true,
         boundKeyCreationAndOneTimeEmployeePlaintext: true,
-        adminRevealMetadataNoStoreAndAudit: true,
+        adminEmployeeApiKeyEndpointsUnavailable: true,
         databaseNotNullAndRestrictFk: true,
         roleTransitionRevocation: true,
       },

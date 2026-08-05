@@ -1,14 +1,11 @@
-import type { FastifyInstance, FastifyReply } from "fastify";
+import type { FastifyInstance } from "fastify";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../../db/client.js";
 import {
   employeeApiKeys,
   employees,
-  productLines,
-  providers,
 } from "../../db/schema/index.js";
-import { decryptEmployeeApiKey } from "../../lib/api-key.js";
 import { hashPassword, validateNewPassword, verifyPassword } from "../../lib/password.js";
 import { writeOpsAudit } from "../../lib/ops-audit.js";
 import {
@@ -34,46 +31,6 @@ const updateUserSchema = z
     status: z.enum(["active", "disabled"]).optional(),
   })
   .refine((data) => Object.keys(data).length > 0);
-
-const userIdSchema = z.object({ id: z.coerce.number().int().positive() });
-const userKeyIdSchema = z.object({
-  id: z.coerce.number().int().positive(),
-  keyId: z.coerce.number().int().positive(),
-});
-
-function disableSecretCaching(reply: FastifyReply) {
-  reply.header("Cache-Control", "no-store");
-  reply.header("Pragma", "no-cache");
-}
-
-function sendApiKeyUnavailable(reply: FastifyReply) {
-  return reply.code(500).send({
-    success: false,
-    code: "api_key_unavailable",
-    message: "API Key 暂时无法读取，请稍后重试",
-  });
-}
-
-async function requireEmployeeTarget(
-  id: number,
-  reply: FastifyReply,
-) {
-  const [target] = await db
-    .select({ id: employees.id, role: employees.role })
-    .from(employees)
-    .where(eq(employees.id, id))
-    .limit(1);
-
-  if (!target) {
-    await reply.code(404).send({ success: false, message: "用户不存在" });
-    return null;
-  }
-  if (target.role !== "employee") {
-    await reply.code(400).send({ success: false, message: "仅员工账号支持 API Key" });
-    return null;
-  }
-  return target;
-}
 
 export async function adminUserRoutes(app: FastifyInstance) {
   app.addHook("preHandler", requireSession);
@@ -119,135 +76,6 @@ export async function adminUserRoutes(app: FastifyInstance) {
       .offset(query.offset);
 
     return { success: true, data: rows };
-  });
-
-  // Read-only: list keys the employee created. Admin never creates keys for them.
-  app.get("/api/admin/users/:id/api-keys", async (req, reply) => {
-    const params = userIdSchema.safeParse(req.params);
-    if (!params.success) {
-      return reply.code(400).send({ success: false, message: "参数无效" });
-    }
-
-    const target = await requireEmployeeTarget(params.data.id, reply);
-    if (!target) return;
-
-    const rows = await db
-      .select({
-        id: employeeApiKeys.id,
-        name: employeeApiKeys.name,
-        keyPrefix: employeeApiKeys.keyPrefix,
-        protocol: employeeApiKeys.protocol,
-        productLineId: employeeApiKeys.productLineId,
-        productLineCode: productLines.code,
-        productLineName: productLines.name,
-        providerId: providers.id,
-        providerCode: providers.code,
-        providerName: providers.name,
-        status: employeeApiKeys.status,
-        lastUsedAt: employeeApiKeys.lastUsedAt,
-        createdAt: employeeApiKeys.createdAt,
-      })
-      .from(employeeApiKeys)
-      .innerJoin(productLines, eq(employeeApiKeys.productLineId, productLines.id))
-      .innerJoin(providers, eq(productLines.providerId, providers.id))
-      .where(eq(employeeApiKeys.employeeId, target.id))
-      .orderBy(desc(employeeApiKeys.id));
-
-    return { success: true, data: rows };
-  });
-
-  app.post("/api/admin/users/:id/api-keys/:keyId/reveal", async (req, reply) => {
-    disableSecretCaching(reply);
-    const params = userKeyIdSchema.safeParse(req.params);
-    if (!params.success) {
-      return reply.code(400).send({ success: false, message: "参数无效" });
-    }
-
-    const target = await requireEmployeeTarget(params.data.id, reply);
-    if (!target) return;
-
-    const [row] = await db
-      .select({
-        id: employeeApiKeys.id,
-        name: employeeApiKeys.name,
-        keyPrefix: employeeApiKeys.keyPrefix,
-        keyHash: employeeApiKeys.keyHash,
-        keyEncrypted: employeeApiKeys.keyEncrypted,
-        protocol: employeeApiKeys.protocol,
-        productLineId: employeeApiKeys.productLineId,
-        productLineCode: productLines.code,
-        productLineName: productLines.name,
-        providerId: providers.id,
-        providerCode: providers.code,
-        providerName: providers.name,
-        status: employeeApiKeys.status,
-      })
-      .from(employeeApiKeys)
-      .innerJoin(productLines, eq(employeeApiKeys.productLineId, productLines.id))
-      .innerJoin(providers, eq(productLines.providerId, providers.id))
-      .where(
-        and(
-          eq(employeeApiKeys.id, params.data.keyId),
-          eq(employeeApiKeys.employeeId, target.id),
-        ),
-      )
-      .limit(1);
-
-    if (!row) {
-      return reply.code(404).send({
-        success: false,
-        code: "api_key_not_found",
-        message: "该员工没有此 API Key",
-      });
-    }
-    if (row.status !== "active") {
-      return reply.code(400).send({ success: false, message: "已吊销的 Key 无法复制" });
-    }
-    let key: string;
-    try {
-      key = decryptEmployeeApiKey(row.keyEncrypted, row.keyHash);
-    } catch {
-      req.log.error(
-        { employeeId: target.id, employeeApiKeyId: row.id },
-        "employee API key integrity check failed",
-      );
-      return sendApiKeyUnavailable(reply);
-    }
-
-    await writeOpsAudit({
-      actorEmployeeId: req.employeeId,
-      action: "employee_api_key.reveal",
-      targetType: "employee_api_key",
-      targetId: String(row.id),
-      detail: {
-        employeeId: target.id,
-        protocol: row.protocol,
-        productLineId: row.productLineId,
-        productLineCode: row.productLineCode,
-        productLineName: row.productLineName,
-        providerId: row.providerId,
-        providerCode: row.providerCode,
-        providerName: row.providerName,
-      },
-      ip: req.ip,
-    });
-
-    return {
-      success: true,
-      data: {
-        id: row.id,
-        name: row.name,
-        keyPrefix: row.keyPrefix,
-        protocol: row.protocol,
-        productLineId: row.productLineId,
-        productLineCode: row.productLineCode,
-        productLineName: row.productLineName,
-        providerId: row.providerId,
-        providerCode: row.providerCode,
-        providerName: row.providerName,
-        key,
-      },
-    };
   });
 
   app.post("/api/admin/users", async (req, reply) => {
