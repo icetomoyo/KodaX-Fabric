@@ -150,11 +150,11 @@
     <el-dialog
       v-model="showApiKeys"
       :title="`员工 API Key · ${apiKeyUser?.name || ''}`"
-      width="720px"
+      width="920px"
       destroy-on-close
     >
       <p class="key-dialog-tip">
-        仅展示员工自己创建的 Key；管理员可复制，不会代为新建。
+        仅展示员工自己创建的 Key 及其上游渠道；管理员可审计复制，不会代为新建。
       </p>
       <el-table v-loading="apiKeysLoading" :data="employeeKeys" size="small" empty-text="该员工尚未创建 API Key">
         <el-table-column prop="name" label="名称" min-width="120" />
@@ -166,6 +166,11 @@
         <el-table-column label="协议" min-width="120">
           <template #default="{ row }">
             {{ relayProtocolLabel(row.protocol, true) }}
+          </template>
+        </el-table-column>
+        <el-table-column label="上游渠道" min-width="180">
+          <template #default="{ row }">
+            {{ keyChannelLabel(row) }}
           </template>
         </el-table-column>
         <el-table-column label="状态" width="90">
@@ -187,7 +192,6 @@
         <el-table-column label="操作" width="90" fixed="right">
           <template #default="{ row }">
             <el-button
-              v-if="row.status === 'active' && row.copyable"
               link
               type="primary"
               :loading="copyingKeyId === row.id"
@@ -195,7 +199,6 @@
             >
               复制
             </el-button>
-            <span v-else class="muted">—</span>
           </template>
         </el-table-column>
       </el-table>
@@ -277,10 +280,13 @@ type EmployeeKeyRow = {
   name: string;
   keyPrefix: string;
   protocol: RelayProtocol;
+  productLineId: number;
+  productLineName: string;
+  providerCode: string;
+  providerName: string;
   status: string;
   lastUsedAt?: string | null;
   createdAt: string;
-  copyable: boolean;
 };
 
 const rows = ref<UserRow[]>([]);
@@ -395,6 +401,10 @@ function requestErrorMessage(error: unknown, fallback: string) {
   return requestError.response?.data?.message || requestError.message || fallback;
 }
 
+function keyChannelLabel(row: EmployeeKeyRow): string {
+  return `${row.providerName} · ${row.productLineName}`;
+}
+
 async function openApiKeys(row: UserRow) {
   apiKeyUser.value = row;
   employeeKeys.value = [];
@@ -425,7 +435,7 @@ async function copyEmployeeKey(row: EmployeeKeyRow) {
     } catch {
       throw new Error("复制失败，请检查剪贴板权限");
     }
-    ElMessage.success("已复制");
+    ElMessage.success(`已复制 · ${keyChannelLabel(row)}`);
   } catch (error) {
     ElMessage.error(requestErrorMessage(error, "复制失败"));
   } finally {

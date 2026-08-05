@@ -28,7 +28,7 @@ const [
   { buildApp },
   { db, sql },
   schema,
-  { generateApiKey },
+  { encryptEmployeeApiKey, generateApiKey },
   { encryptSecret, secretSuffix },
   { redis },
 ] = await Promise.all([
@@ -83,6 +83,7 @@ type ScenarioDefinition = {
 };
 
 type ScenarioFixture = ScenarioDefinition & {
+  employeeApiKeyRaw: string;
   clientModel: string;
   upstreamModel: string;
   providerId: number;
@@ -170,7 +171,6 @@ const plansByAuthorization = new Map<string, MockPlan>();
 const mockHandlerFailures: string[] = [];
 const fixtures = new Map<ScenarioName, ScenarioFixture>();
 
-let employeeApiKeyRaw = "";
 let tokenHubApp: FastifyInstance | null = null;
 let upstreamServer: Server | null = null;
 
@@ -371,21 +371,6 @@ async function insertFixtures(upstreamBaseUrl: string): Promise<void> {
     .returning({ id: employees.id });
   created.employeeId = employee.id;
 
-  const generatedKey = generateApiKey();
-  employeeApiKeyRaw = generatedKey.raw;
-  sensitiveValues.push(generatedKey.raw);
-  const [apiKey] = await db
-    .insert(employeeApiKeys)
-    .values({
-      employeeId: employee.id,
-      name: `M2 Mock Key ${marker}`,
-      keyPrefix: generatedKey.prefix,
-      keyHash: generatedKey.hash,
-      expiresAt: new Date(Date.now() + 15 * 60_000),
-    })
-    .returning({ id: employeeApiKeys.id });
-  created.employeeApiKeyIds.push(apiKey.id);
-
   const [quotaPolicy] = await db
     .insert(quotaPolicies)
     .values({
@@ -438,6 +423,23 @@ async function insertFixtures(upstreamBaseUrl: string): Promise<void> {
       .returning({ id: productLines.id });
     created.productLineIds.push(productLine.id);
 
+    const generatedKey = generateApiKey();
+    sensitiveValues.push(generatedKey.raw);
+    const [apiKey] = await db
+      .insert(employeeApiKeys)
+      .values({
+        employeeId: employee.id,
+        name: `M2 Mock Key ${scenarioMarker}`,
+        keyPrefix: generatedKey.prefix,
+        keyHash: generatedKey.hash,
+        keyEncrypted: encryptEmployeeApiKey(generatedKey.raw),
+        protocol: "openai_chat",
+        productLineId: productLine.id,
+        expiresAt: new Date(Date.now() + 15 * 60_000),
+      })
+      .returning({ id: employeeApiKeys.id });
+    created.employeeApiKeyIds.push(apiKey.id);
+
     const firstSecret = `mock_upstream_${randomUUID().replaceAll("-", "")}`;
     const secondSecret = `mock_upstream_${randomUUID().replaceAll("-", "")}`;
     sensitiveValues.push(firstSecret, secondSecret);
@@ -449,6 +451,7 @@ async function insertFixtures(upstreamBaseUrl: string): Promise<void> {
           label: `M2 Mock First ${scenarioMarker}`,
           secretEncrypted: encryptSecret(firstSecret),
           secretSuffix: secretSuffix(firstSecret),
+          supportedProtocols: ["openai_chat"],
           priority: 200,
           weight: 100,
           status: "active" as const,
@@ -458,6 +461,7 @@ async function insertFixtures(upstreamBaseUrl: string): Promise<void> {
           label: `M2 Mock Second ${scenarioMarker}`,
           secretEncrypted: encryptSecret(secondSecret),
           secretSuffix: secretSuffix(secondSecret),
+          supportedProtocols: ["openai_chat"],
           priority: 100,
           weight: 100,
           status: "active" as const,
@@ -509,6 +513,7 @@ async function insertFixtures(upstreamBaseUrl: string): Promise<void> {
 
     fixtures.set(definition.name, {
       ...definition,
+      employeeApiKeyRaw: generatedKey.raw,
       clientModel,
       upstreamModel,
       providerId: provider.id,
@@ -543,7 +548,7 @@ async function callRelay(baseUrl: string, fixture: ScenarioFixture): Promise<Rel
     response = await fetch(`${baseUrl}/v1/chat/completions`, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${employeeApiKeyRaw}`,
+        Authorization: `Bearer ${fixture.employeeApiKeyRaw}`,
         "Content-Type": "application/json",
         "User-Agent": "TokenHub-M2-mock-integration",
         "X-Request-ID": fixture.clientRequestHeader,

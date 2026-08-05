@@ -6,6 +6,7 @@ CREATE TYPE "public"."employee_role" AS ENUM('employee', 'admin', 'auditor');-->
 CREATE TYPE "public"."employee_status" AS ENUM('active', 'disabled');--> statement-breakpoint
 CREATE TYPE "public"."grant_scope" AS ENUM('all', 'dept', 'employees');--> statement-breakpoint
 CREATE TYPE "public"."product_type" AS ENUM('api', 'coding_plan');--> statement-breakpoint
+CREATE TYPE "public"."relay_protocol" AS ENUM('openai_chat', 'openai_responses', 'anthropic_messages');--> statement-breakpoint
 CREATE TYPE "public"."share_mode" AS ENUM('public_pool', 'grant_only', 'disabled');--> statement-breakpoint
 CREATE TYPE "public"."usage_source" AS ENUM('upstream', 'estimated', 'none');--> statement-breakpoint
 CREATE TABLE "credential_employee_grants" (
@@ -19,9 +20,12 @@ CREATE TABLE "credential_employee_grants" (
 CREATE TABLE "employee_api_keys" (
 	"id" bigint PRIMARY KEY GENERATED ALWAYS AS IDENTITY (sequence name "employee_api_keys_id_seq" INCREMENT BY 1 MINVALUE 1 MAXVALUE 9223372036854775807 START WITH 1 CACHE 1),
 	"employee_id" bigint NOT NULL,
-	"name" varchar(100) DEFAULT 'default' NOT NULL,
+	"name" varchar(100) NOT NULL,
 	"key_prefix" varchar(32) NOT NULL,
 	"key_hash" varchar(128) NOT NULL,
+	"key_encrypted" text NOT NULL,
+	"protocol" "relay_protocol" NOT NULL,
+	"product_line_id" bigint NOT NULL,
 	"status" "api_key_status" DEFAULT 'active' NOT NULL,
 	"last_used_at" timestamp with time zone,
 	"expires_at" timestamp with time zone,
@@ -149,6 +153,7 @@ CREATE TABLE "request_audits" (
 	"request_id" varchar(64) NOT NULL,
 	"employee_id" bigint NOT NULL,
 	"employee_api_key_id" bigint,
+	"protocol" "relay_protocol" DEFAULT 'openai_chat' NOT NULL,
 	"client_model" varchar(128) NOT NULL,
 	"upstream_model" varchar(128),
 	"provider_code" varchar(64),
@@ -188,6 +193,7 @@ CREATE TABLE "upstream_credentials" (
 	"label" varchar(200) NOT NULL,
 	"secret_encrypted" text NOT NULL,
 	"secret_suffix" varchar(8) NOT NULL,
+	"supported_protocols" "relay_protocol"[] DEFAULT '{"openai_chat"}' NOT NULL,
 	"weight" integer DEFAULT 100 NOT NULL,
 	"priority" integer DEFAULT 0 NOT NULL,
 	"status" "credential_status" DEFAULT 'active' NOT NULL,
@@ -217,6 +223,7 @@ CREATE TABLE "usage_counters_daily" (
 ALTER TABLE "credential_employee_grants" ADD CONSTRAINT "credential_employee_grants_credential_id_upstream_credentials_id_fk" FOREIGN KEY ("credential_id") REFERENCES "public"."upstream_credentials"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "credential_employee_grants" ADD CONSTRAINT "credential_employee_grants_employee_id_employees_id_fk" FOREIGN KEY ("employee_id") REFERENCES "public"."employees"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "employee_api_keys" ADD CONSTRAINT "employee_api_keys_employee_id_employees_id_fk" FOREIGN KEY ("employee_id") REFERENCES "public"."employees"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "employee_api_keys" ADD CONSTRAINT "employee_api_keys_product_line_id_product_lines_id_fk" FOREIGN KEY ("product_line_id") REFERENCES "public"."product_lines"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "employee_quota_overrides" ADD CONSTRAINT "employee_quota_overrides_employee_id_employees_id_fk" FOREIGN KEY ("employee_id") REFERENCES "public"."employees"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "employee_quota_overrides" ADD CONSTRAINT "employee_quota_overrides_policy_id_quota_policies_id_fk" FOREIGN KEY ("policy_id") REFERENCES "public"."quota_policies"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "log_access_grants" ADD CONSTRAINT "log_access_grants_grantee_employee_id_employees_id_fk" FOREIGN KEY ("grantee_employee_id") REFERENCES "public"."employees"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
@@ -228,6 +235,8 @@ ALTER TABLE "usage_counters_daily" ADD CONSTRAINT "usage_counters_daily_employee
 CREATE UNIQUE INDEX "credential_employee_grants_uidx" ON "credential_employee_grants" USING btree ("credential_id","employee_id");--> statement-breakpoint
 CREATE UNIQUE INDEX "employee_api_keys_hash_uidx" ON "employee_api_keys" USING btree ("key_hash");--> statement-breakpoint
 CREATE INDEX "employee_api_keys_employee_idx" ON "employee_api_keys" USING btree ("employee_id");--> statement-breakpoint
+CREATE INDEX "employee_api_keys_product_line_idx" ON "employee_api_keys" USING btree ("product_line_id");--> statement-breakpoint
+CREATE INDEX "employee_api_keys_employee_product_line_idx" ON "employee_api_keys" USING btree ("employee_id","product_line_id");--> statement-breakpoint
 CREATE UNIQUE INDEX "employees_phone_uidx" ON "employees" USING btree ("phone");--> statement-breakpoint
 CREATE INDEX "model_routes_client_idx" ON "model_routes" USING btree ("client_model","enabled");--> statement-breakpoint
 CREATE INDEX "ops_audit_logs_created_idx" ON "ops_audit_logs" USING btree ("created_at");--> statement-breakpoint

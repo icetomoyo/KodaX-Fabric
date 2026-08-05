@@ -458,9 +458,7 @@ export async function sendRelayUpstream(
   let headers: Headers;
   let serializedBody: string | undefined;
   const protocol = input.protocol ?? input.candidate.upstreamProtocol ?? DEFAULT_RELAY_PROTOCOL;
-  const supportedProtocols = input.candidate.supportedProtocols?.length
-    ? input.candidate.supportedProtocols
-    : [DEFAULT_RELAY_PROTOCOL];
+  const supportedProtocols = input.candidate.supportedProtocols ?? [];
   const method = input.method ?? (input.operation === "models" ? "GET" : "POST");
   try {
     if (!supportedProtocols.includes(protocol)) {

@@ -1,1 +1,0 @@
-ALTER TABLE "employee_api_keys" ADD COLUMN "key_encrypted" text;

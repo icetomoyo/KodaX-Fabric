@@ -2,6 +2,8 @@
 
 公司内网 LLM 统一出口：官方供应商 Key 池共享、员工级全文审计、不计费。
 
+> v0.0.1 代码开发与全新数据库隔离验证已完成；生产数据库尚未初始化，生产环境尚未部署。
+
 📄 **产品需求文档（PRD）**：[docs/PRD.md](./docs/PRD.md)
 
 - **后端**：Node.js + TypeScript + Fastify + Drizzle + Redis
@@ -24,6 +26,8 @@ docker compose ps
 | Redis 7 | `127.0.0.1:6379` |
 
 默认使用独立库名 **`tokenhub`**（需已创建，见下方）。
+
+v0.0.1 是首次正式发布基线，使用全新数据库执行唯一初始 Migration 和最小种子。开发环境数据库应重新创建后使用。
 
 ## 快速开始
 
@@ -98,7 +102,7 @@ docker compose exec -T postgres psql -U app -d postgres -c "CREATE DATABASE toke
 
 ## 模型代理使用
 
-员工首次登录并完成改密后，在 Web 的「API Key」页面（`/me/keys`）选择协议并生成调用 Key。每个员工 Key 只绑定一种协议：OpenAI Chat Completions、OpenAI Responses 或 Anthropic Messages，不能跨协议调用。员工端仅在创建响应中展示明文；系统同时保留加密托管副本，管理员可在「员工管理」中按协议复制，且每次读取都会写入操作审计。以下示例中的值仅为占位符，不是真实 Key：
+员工首次登录并完成改密后，在 Web 的「API Key」页面（`/me/keys`）依次选择上游渠道、该渠道的兼容协议并填写名称。每把员工 Key 固定绑定一个上游渠道和一种协议：OpenAI Chat Completions、OpenAI Responses 或 Anthropic Messages；模型查询、调用、重试和 Responses 亲和都不会跨出绑定渠道。员工端仅在创建成功结果中展示一次完整明文；系统同时保留加密托管副本，管理员可在「员工管理」中审计读取，且每次读取都会写入操作审计。以下示例中的值仅为占位符，不是真实 Key：
 
 ```sh
 export TOKENHUB_API_KEY="th_replace_with_your_employee_key"
@@ -114,7 +118,7 @@ x-api-key: <Anthropic Messages 员工 API Key>
 
 ### 查询可用模型
 
-`/v1/models` 只返回当前员工有权使用且存在可用渠道的模型：
+`/v1/models` 只返回当前 Key 在绑定渠道和绑定协议下真实可调用的模型：
 
 ```sh
 curl -sS "${TOKENHUB_BASE_URL}/models" \
@@ -215,9 +219,10 @@ Claude Code 的 `ANTHROPIC_BASE_URL` 应填写 TokenHub 服务地址本身（例
 
 ### 调度、限流与审计
 
-- 每个上游渠道可声明同时支持多个协议；TokenHub 先按员工 Key 协议过滤渠道，再按模型、授权范围和可用状态选择上游凭证，并在同渠道 Key 池中均衡调度。同一请求重试时不会重复使用同一凭证。
+- 每个上游渠道可声明同时支持多个协议；TokenHub 先锁定员工 Key 绑定的 ProductLine，再按协议、模型、实时授权和可用状态选择该渠道内的上游凭证。同一请求重试时不会重复使用同一凭证，也不会切换到其他渠道。
 - 管理端按供应商与产品线对渠道分组；一个渠道可集中管理多条上游 Key，并支持批量导入、测试、启停和删除。
 - 上游 `401/403` 会自动停用对应凭证，`429` 会进入短暂冷却，`5xx` 或网络错误可切换凭证重试；请求参数导致的 `400` 不重试。
+- 绑定渠道停用或授权撤销时请求返回 `bound_channel_unavailable`；模型不存在、全部冷却或无可用凭证分别返回 `model_not_found`、`model_channels_cooling`、`model_unavailable`。OpenAI 与 Anthropic 响应均保留确定性 `code`。
 - 员工调用受 RPM、并发和日配额约束；超出硬限制时按当前协议返回 OpenAI 或 Anthropic 原生错误格式，RPM 超限响应会带 `Retry-After`。
 - 成功、上游错误、限流和取消等调用都会写入员工级审计与用量记录；请求头中的员工 API Key 不会写入审计正文。
 
@@ -228,19 +233,23 @@ pnpm dev:server      # 仅 API
 pnpm dev:web         # 仅前端
 pnpm db:migrate      # 执行迁移
 pnpm db:seed         # 仅种子管理员 + 最小系统配置（无演示供应商/凭证）
-pnpm db:cleanup-demo # 清理非用户演示数据（保留 employees / api keys）
+pnpm db:cleanup-demo # 事务清理 Key、渠道和业务数据（保留员工账号与系统基线）
 pnpm --filter @tokenhub/server db:generate  # 改 schema 后生成迁移
-pnpm --filter @tokenhub/server test             # Relay 纯单元测试
+pnpm --filter @tokenhub/server test             # 服务端默认单元测试（50 项）
 pnpm --filter @tokenhub/server test:relay:mock  # 本地 PG/Redis + Mock 上游集成测试
 pnpm --filter @tokenhub/server test:relay:native:mock # Responses/Messages 原生协议集成测试
+pnpm --filter @tokenhub/server test:v001:api   # v0.0.1 Key/权限/数据库约束集成测试
+pnpm --filter @tokenhub/server test:v001:binding # v0.0.1 全协议 A/B 渠道硬绑定集成测试
 ```
 
-`test:relay:live` 会真实调用已配置的上游并产生少量 Token，仅在明确需要时运行；可用 `TOKENHUB_SMOKE_MODELS=model-a,model-b` 限定模型。
+`test:relay:*` 和 `test:v001:*` 会使用当前配置的 PostgreSQL/Redis；只能在已完成 Migration 的隔离开发或测试环境运行，不要直接指向生产数据库。
+
+`test:relay:live` 会真实调用已配置的上游并产生少量 Token，仅在明确需要时运行；必须用 `TOKENHUB_SMOKE_PRODUCT_LINE_ID=<渠道ID>` 指定硬绑定渠道，可用 `TOKENHUB_SMOKE_MODELS=model-a,model-b` 限定模型。
 
 
 ## 设计摘要
 
 - 多官方供应商 ×（API / Coding Plan）凭证池  
 - API 默认可公共共享；Coding Plan 默认授权制  
-- 全文 prompt/response 永久审计；管理员 + 授权可见  
+- 请求/响应审计（脱敏、单条容量上限与截断标记）；管理员 + 授权可见
 - 不计费；软日上限 + RPM/并发治理  

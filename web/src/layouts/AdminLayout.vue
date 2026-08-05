@@ -23,9 +23,6 @@
           <el-tag size="small" effect="plain" type="warning">{{ portalLabel }}</el-tag>
         </div>
         <div class="header-right">
-          <el-button class="portal-switch" @click="goEmployeeWorkspace">
-            切换到员工端
-          </el-button>
           <el-button link type="primary" @click="onLogout">退出</el-button>
         </div>
       </el-header>
@@ -48,10 +45,6 @@ const auth = useAuthStore();
 const portalLabel = computed(() =>
   auth.user?.role === "auditor" ? "审计员视角" : "管理员视角",
 );
-
-function goEmployeeWorkspace() {
-  router.push("/me");
-}
 
 function onLogout() {
   auth.logout();
@@ -120,15 +113,5 @@ function onLogout() {
   color: inherit;
   text-decoration: none;
   white-space: nowrap;
-}
-.portal-switch {
-  border-color: #bfdbfe;
-  background: #eff6ff;
-  color: #1d4ed8;
-}
-.portal-switch:hover {
-  border-color: #93c5fd;
-  background: #dbeafe;
-  color: #1e40af;
 }
 </style>

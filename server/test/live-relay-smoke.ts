@@ -13,13 +13,14 @@ import {
   employees,
   requestAudits,
 } from "../src/db/schema/index.js";
-import { generateApiKey } from "../src/lib/api-key.js";
+import { encryptEmployeeApiKey, generateApiKey } from "../src/lib/api-key.js";
 
 const baseUrl = process.env.TOKENHUB_SMOKE_BASE_URL ?? "http://127.0.0.1:3100";
 const smokeModels = (process.env.TOKENHUB_SMOKE_MODELS ?? "glm-4.5-air,deepseek-v4-flash")
   .split(",")
   .map((item) => item.trim())
   .filter(Boolean);
+const smokeProductLineId = Number(process.env.TOKENHUB_SMOKE_PRODUCT_LINE_ID);
 const label = `M2 live smoke ${randomUUID()}`;
 const { raw, prefix, hash } = generateApiKey();
 let createdKeyId: number | null = null;
@@ -103,6 +104,10 @@ async function callChatWithRetry(model: string, stream: boolean): Promise<SmokeR
 }
 
 async function main() {
+  assert(
+    Number.isSafeInteger(smokeProductLineId) && smokeProductLineId > 0,
+    "TOKENHUB_SMOKE_PRODUCT_LINE_ID must be a positive integer",
+  );
   const [employee] = await db
     .select({ id: employees.id })
     .from(employees)
@@ -123,6 +128,9 @@ async function main() {
       name: label,
       keyPrefix: prefix,
       keyHash: hash,
+      keyEncrypted: encryptEmployeeApiKey(raw),
+      protocol: "openai_chat",
+      productLineId: smokeProductLineId,
       expiresAt: new Date(Date.now() + 10 * 60_000),
     })
     .returning({ id: employeeApiKeys.id });

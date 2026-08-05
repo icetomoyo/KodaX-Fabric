@@ -57,11 +57,9 @@ test("employee API key decryption enforces hash and generated-key format binding
   assert.throws(() => decryptEmployeeApiKey(malformedEncrypted, hashApiKey(malformed)));
 });
 
-test("unscoped decryption remains compatible with legacy upstream ciphertext", () => {
-  const legacyCiphertext =
-    "AAECAwQFBgcICQoLT/gf0r8MMahWR9wzPFAmgSrKsQQRSYRqtNPiueLU7Z0Rk8xRvDw=";
-
-  assert.equal(decryptSecret(legacyCiphertext), "legacy-upstream-secret");
+test("upstream credentials round-trip through unscoped encryption", () => {
+  const encrypted = encryptSecret("upstream-secret");
+  assert.equal(decryptSecret(encrypted), "upstream-secret");
 });
 
 test("short upstream secrets are never exposed as their own suffix", () => {

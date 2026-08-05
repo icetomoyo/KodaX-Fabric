@@ -233,7 +233,9 @@ export async function writeRelayAudit(input: RelayAuditInput): Promise<void> {
         clientModel: input.clientModel.slice(0, 128),
         upstreamModel: input.candidate?.upstreamModel,
         providerCode: input.candidate?.providerCode,
-        productLineId: input.candidate?.productLineId,
+        // Failures can occur before a credential candidate exists. Every Key
+        // has an immutable channel, so the audit always retains that target.
+        productLineId: input.candidate?.productLineId ?? input.principal.productLineId,
         productType: input.candidate?.productType,
         credentialId: input.candidate?.credentialId,
         credentialSuffix: input.candidate?.credentialSuffix,

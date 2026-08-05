@@ -238,8 +238,9 @@ test("upstream protocol headers use credential auth and forward only safe metada
   assert.equal(headers.get("x-request-id"), "request-1");
 });
 
-test("protocol filtering defaults legacy credentials to Chat Completions", () => {
-  assert.equal(credentialSupportsProtocol({}, "openai_chat"), true);
+test("protocol filtering rejects credentials without an explicit protocol", () => {
+  assert.equal(credentialSupportsProtocol({}, "openai_chat"), false);
+  assert.equal(credentialSupportsProtocol({ supportedProtocols: [] }, "openai_chat"), false);
   assert.equal(credentialSupportsProtocol({}, "anthropic_messages"), false);
   assert.equal(
     credentialSupportsProtocol(

@@ -10,23 +10,11 @@
     </el-aside>
     <el-container>
       <el-header class="header">
-        <div class="header-left">
-          <div class="account">
-            <strong>{{ auth.user?.name }}</strong>
-            <span class="muted"> · {{ auth.user?.phone }} · 员工工作台</span>
-          </div>
-          <el-tag v-if="canReturnAdmin" size="small" effect="plain" type="success">
-            员工视角
-          </el-tag>
+        <div class="account">
+          <strong>{{ auth.user?.name }}</strong>
+          <span class="muted"> · {{ auth.user?.phone }} · 员工工作台</span>
         </div>
         <div class="header-right">
-          <el-button
-            v-if="canReturnAdmin"
-            class="portal-switch"
-            @click="goAdminConsole"
-          >
-            返回管理后台
-          </el-button>
           <el-button link type="primary" @click="onLogout">退出</el-button>
         </div>
       </el-header>
@@ -38,20 +26,12 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { canUseAdminConsole } from "@/lib/home";
 import { useAuthStore } from "@/stores/auth";
 
 const route = useRoute();
 const router = useRouter();
 const auth = useAuthStore();
-
-const canReturnAdmin = computed(() => canUseAdminConsole(auth.user));
-
-function goAdminConsole() {
-  router.push("/admin");
-}
 
 function onLogout() {
   auth.logout();
@@ -100,7 +80,6 @@ function onLogout() {
   background: #fff;
   border-bottom: 1px solid #e5e7eb;
 }
-.header-left,
 .header-right {
   display: flex;
   align-items: center;
@@ -125,15 +104,5 @@ function onLogout() {
 .muted {
   color: #6b7280;
   font-size: 13px;
-}
-.portal-switch {
-  border-color: #bbf7d0;
-  background: #f0fdf4;
-  color: #15803d;
-}
-.portal-switch:hover {
-  border-color: #86efac;
-  background: #dcfce7;
-  color: #166534;
 }
 </style>

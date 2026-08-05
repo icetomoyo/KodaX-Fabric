@@ -17,7 +17,7 @@ import {
   type RelayQuotaLease,
 } from "../../lib/relay/quota.js";
 import {
-  listAccessibleRelayModels,
+  resolveAccessibleRelayModels,
   resolveRelayCandidates,
 } from "../../lib/relay/routing.js";
 import { createSsePassthrough } from "../../lib/relay/sse.js";
@@ -275,9 +275,9 @@ function originalModel(body: unknown): string {
   return body.model.slice(0, 128) || "(invalid)";
 }
 
-function noRouteError() {
+function noRouteError(message = "当前账户没有可用于该模型的渠道") {
   return openAiError(
-    "当前账户没有可用于该模型的渠道",
+    message,
     "invalid_request_error",
     "model_not_found",
   );
@@ -287,12 +287,41 @@ export async function v1RelayRoutes(app: FastifyInstance) {
   app.get(
     "/v1/models",
     { onRequest: requireAnyRelayApiKey },
-    async (req) => {
+    async (req, reply) => {
       const principal = req.relayPrincipal!;
-      const models = await listAccessibleRelayModels(
+      const requestId = `threq_${randomUUID().replaceAll("-", "")}`;
+      reply.header("x-tokenhub-request-id", requestId);
+      if (principal.protocol === "anthropic_messages") {
+        reply.header("request-id", requestId);
+      } else {
+        reply.header("x-request-id", requestId);
+      }
+      const resolution = await resolveAccessibleRelayModels(
         principal.employeeId,
         principal.protocol,
+        principal.productLineId,
       );
+      if (resolution.unavailableReason === "bound_channel_unavailable") {
+        if (principal.protocol === "anthropic_messages") {
+          return reply.code(503).send({
+            type: "error",
+            error: {
+              type: "api_error",
+              message: "当前 Key 绑定的上游渠道不可用",
+              code: "bound_channel_unavailable",
+            },
+            request_id: requestId,
+          });
+        }
+        return reply.code(503).send(
+          openAiError(
+            "当前 Key 绑定的上游渠道不可用",
+            "service_unavailable",
+            "bound_channel_unavailable",
+          ),
+        );
+      }
+      const models = resolution.models;
       if (principal.protocol === "anthropic_messages") {
         return {
           data: models.map((model) => ({
@@ -420,33 +449,44 @@ export async function v1RelayRoutes(app: FastifyInstance) {
           principal.employeeId,
           body.model,
           principal.protocol,
+          principal.productLineId,
         );
         const candidates = resolution.candidates;
         if (candidates.length === 0) {
+          const boundUnavailable =
+            resolution.unavailableReason === "bound_channel_unavailable";
           const cooling = resolution.unavailableReason === "cooling";
           const unavailable = resolution.unavailableReason === "unavailable";
-          const httpStatus = cooling ? 429 : unavailable ? 503 : 404;
-          const errorCode = cooling
-            ? "model_channels_cooling"
-            : unavailable
-              ? "model_unavailable"
-              : "model_not_found";
-          const errorMessage = cooling
-            ? "该模型的上游渠道正在冷却，请稍后重试"
-            : unavailable
-              ? "该模型已配置，但当前没有可用的上游渠道"
-              : "当前账户没有可用于该模型的渠道";
-          const payload = cooling
-            ? openAiError(errorMessage, "rate_limit_error", errorCode)
-            : unavailable
-              ? openAiError(errorMessage, "service_unavailable", errorCode)
-              : noRouteError();
+          const httpStatus = boundUnavailable || unavailable ? 503 : cooling ? 429 : 404;
+          const errorCode = boundUnavailable
+            ? "bound_channel_unavailable"
+            : cooling
+              ? "model_channels_cooling"
+              : unavailable
+                ? "model_unavailable"
+                : "model_not_found";
+          const errorMessage = boundUnavailable
+            ? "当前 Key 绑定的上游渠道不可用"
+            : cooling
+              ? "该模型的上游渠道正在冷却，请稍后重试"
+              : unavailable
+                ? "该模型已配置，但当前没有可用的上游渠道"
+                : "当前 Key 绑定的上游渠道不支持该模型";
+          const payload = boundUnavailable
+            ? openAiError(errorMessage, "service_unavailable", errorCode)
+            : cooling
+              ? openAiError(errorMessage, "rate_limit_error", errorCode)
+              : unavailable
+                ? openAiError(errorMessage, "service_unavailable", errorCode)
+                : noRouteError(errorMessage);
           if (resolution.retryAfterSeconds !== null) {
             reply.header("retry-after", String(resolution.retryAfterSeconds));
           }
           await finalizeAudit({
             candidate: null,
-            status: cooling || unavailable ? "upstream_error" : "client_error",
+            status: boundUnavailable || cooling || unavailable
+              ? "upstream_error"
+              : "client_error",
             httpStatus,
             upstreamStatus: null,
             errorCode,

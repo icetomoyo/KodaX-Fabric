@@ -2,7 +2,12 @@ import type { FastifyInstance, FastifyReply } from "fastify";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../../db/client.js";
-import { employeeApiKeys, employees, opsAuditLogs } from "../../db/schema/index.js";
+import {
+  employeeApiKeys,
+  employees,
+  productLines,
+  providers,
+} from "../../db/schema/index.js";
 import { decryptEmployeeApiKey } from "../../lib/api-key.js";
 import { hashPassword, validateNewPassword, verifyPassword } from "../../lib/password.js";
 import { writeOpsAudit } from "../../lib/ops-audit.js";
@@ -132,12 +137,19 @@ export async function adminUserRoutes(app: FastifyInstance) {
         name: employeeApiKeys.name,
         keyPrefix: employeeApiKeys.keyPrefix,
         protocol: employeeApiKeys.protocol,
+        productLineId: employeeApiKeys.productLineId,
+        productLineCode: productLines.code,
+        productLineName: productLines.name,
+        providerId: providers.id,
+        providerCode: providers.code,
+        providerName: providers.name,
         status: employeeApiKeys.status,
         lastUsedAt: employeeApiKeys.lastUsedAt,
         createdAt: employeeApiKeys.createdAt,
-        copyable: sql<boolean>`(${employeeApiKeys.keyEncrypted} is not null)`,
       })
       .from(employeeApiKeys)
+      .innerJoin(productLines, eq(employeeApiKeys.productLineId, productLines.id))
+      .innerJoin(providers, eq(productLines.providerId, providers.id))
       .where(eq(employeeApiKeys.employeeId, target.id))
       .orderBy(desc(employeeApiKeys.id));
 
@@ -162,9 +174,17 @@ export async function adminUserRoutes(app: FastifyInstance) {
         keyHash: employeeApiKeys.keyHash,
         keyEncrypted: employeeApiKeys.keyEncrypted,
         protocol: employeeApiKeys.protocol,
+        productLineId: employeeApiKeys.productLineId,
+        productLineCode: productLines.code,
+        productLineName: productLines.name,
+        providerId: providers.id,
+        providerCode: providers.code,
+        providerName: providers.name,
         status: employeeApiKeys.status,
       })
       .from(employeeApiKeys)
+      .innerJoin(productLines, eq(employeeApiKeys.productLineId, productLines.id))
+      .innerJoin(providers, eq(productLines.providerId, providers.id))
       .where(
         and(
           eq(employeeApiKeys.id, params.data.keyId),
@@ -183,14 +203,6 @@ export async function adminUserRoutes(app: FastifyInstance) {
     if (row.status !== "active") {
       return reply.code(400).send({ success: false, message: "已吊销的 Key 无法复制" });
     }
-    if (!row.keyEncrypted) {
-      return reply.code(404).send({
-        success: false,
-        code: "key_not_recoverable",
-        message: "该 Key 为旧版存储，无法复制",
-      });
-    }
-
     let key: string;
     try {
       key = decryptEmployeeApiKey(row.keyEncrypted, row.keyHash);
@@ -207,7 +219,16 @@ export async function adminUserRoutes(app: FastifyInstance) {
       action: "employee_api_key.reveal",
       targetType: "employee_api_key",
       targetId: String(row.id),
-      detail: { employeeId: target.id, protocol: row.protocol },
+      detail: {
+        employeeId: target.id,
+        protocol: row.protocol,
+        productLineId: row.productLineId,
+        productLineCode: row.productLineCode,
+        productLineName: row.productLineName,
+        providerId: row.providerId,
+        providerCode: row.providerCode,
+        providerName: row.providerName,
+      },
       ip: req.ip,
     });
 
@@ -218,6 +239,12 @@ export async function adminUserRoutes(app: FastifyInstance) {
         name: row.name,
         keyPrefix: row.keyPrefix,
         protocol: row.protocol,
+        productLineId: row.productLineId,
+        productLineCode: row.productLineCode,
+        productLineName: row.productLineName,
+        providerId: row.providerId,
+        providerCode: row.providerCode,
+        providerName: row.providerName,
         key,
       },
     };
@@ -344,28 +371,6 @@ export async function adminUserRoutes(app: FastifyInstance) {
       return reply.code(400).send({ success: false, message: "参数无效" });
     }
 
-    const [targetUser] = await db
-      .select({
-        id: employees.id,
-        role: employees.role,
-        status: employees.status,
-      })
-      .from(employees)
-      .where(eq(employees.id, params.data.id))
-      .limit(1);
-
-    if (!targetUser) {
-      return reply.code(404).send({ success: false, message: "用户不存在" });
-    }
-
-    if (
-      params.data.id === req.employeeId &&
-      ((body.data.status !== undefined && body.data.status !== targetUser.status) ||
-        (body.data.role !== undefined && body.data.role !== targetUser.role))
-    ) {
-      return reply.code(400).send({ success: false, message: "不能修改自己的角色或状态" });
-    }
-
     const values = {
       ...body.data,
       ...(body.data.dept !== undefined ? { dept: body.data.dept || null } : {}),
@@ -373,31 +378,94 @@ export async function adminUserRoutes(app: FastifyInstance) {
     };
 
     try {
-      const [row] = await db
-        .update(employees)
-        .set(values)
-        .where(eq(employees.id, params.data.id))
-        .returning({
-          id: employees.id,
-          name: employees.name,
-          phone: employees.phone,
-          dept: employees.dept,
-          role: employees.role,
-          status: employees.status,
-          mustChangePassword: employees.mustChangePassword,
-          lastLoginAt: employees.lastLoginAt,
-        });
+      const result = await db.transaction(async (tx) => {
+        const [targetUser] = await tx
+          .select({
+            id: employees.id,
+            role: employees.role,
+            status: employees.status,
+          })
+          .from(employees)
+          .where(eq(employees.id, params.data.id))
+          .limit(1)
+          .for("update");
+
+        if (!targetUser) {
+          return { outcome: "not_found" } as const;
+        }
+
+        if (
+          params.data.id === req.employeeId &&
+          ((body.data.status !== undefined && body.data.status !== targetUser.status) ||
+            (body.data.role !== undefined && body.data.role !== targetUser.role))
+        ) {
+          return { outcome: "self_role_or_status" } as const;
+        }
+
+        const [row] = await tx
+          .update(employees)
+          .set(values)
+          .where(eq(employees.id, params.data.id))
+          .returning({
+            id: employees.id,
+            name: employees.name,
+            phone: employees.phone,
+            dept: employees.dept,
+            role: employees.role,
+            status: employees.status,
+            mustChangePassword: employees.mustChangePassword,
+            lastLoginAt: employees.lastLoginAt,
+          });
+
+        let revokedApiKeyCount = 0;
+        if (
+          targetUser.role === "employee" &&
+          body.data.role !== undefined &&
+          body.data.role !== "employee"
+        ) {
+          const revokedKeys = await tx
+            .update(employeeApiKeys)
+            .set({ status: "revoked" })
+            .where(
+              and(
+                eq(employeeApiKeys.employeeId, targetUser.id),
+                eq(employeeApiKeys.status, "active"),
+              ),
+            )
+            .returning({ id: employeeApiKeys.id });
+          revokedApiKeyCount = revokedKeys.length;
+        }
+
+        return {
+          outcome: "updated",
+          row,
+          previousRole: targetUser.role,
+          revokedApiKeyCount,
+        } as const;
+      });
+
+      if (result.outcome === "not_found") {
+        return reply.code(404).send({ success: false, message: "用户不存在" });
+      }
+      if (result.outcome === "self_role_or_status") {
+        return reply.code(400).send({ success: false, message: "不能修改自己的角色或状态" });
+      }
 
       await writeOpsAudit({
         actorEmployeeId: req.employeeId,
         action: "user.update",
         targetType: "employee",
-        targetId: String(row.id),
-        detail: { fields: Object.keys(body.data) },
+        targetId: String(result.row.id),
+        detail: {
+          fields: Object.keys(body.data),
+          previousRole: result.previousRole,
+          role: result.row.role,
+          revokedApiKeyCount: result.revokedApiKeyCount,
+        },
         ip: req.ip,
       });
 
-      return { success: true, data: row };
+      return { success: true, data: result.row };
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       if (msg.includes("employees_phone_uidx") || msg.includes("unique")) {

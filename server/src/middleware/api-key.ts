@@ -8,6 +8,7 @@ import {
   DEFAULT_RELAY_PROTOCOL,
   type RelayProtocol,
 } from "../lib/relay/protocol.js";
+import { isValidRelayProductLineId } from "../lib/relay/types.js";
 
 function relayError(
   reply: FastifyReply,
@@ -23,7 +24,7 @@ function relayError(
     reply.header("request-id", requestId);
     return reply.code(status).send({
       type: "error",
-      error: { type, message },
+      error: { type, message, code },
       request_id: requestId,
     });
   }
@@ -118,6 +119,7 @@ async function authenticateRelayApiKey(
       employeeId: employees.id,
       employeeApiKeyId: employeeApiKeys.id,
       protocol: employeeApiKeys.protocol,
+      productLineId: employeeApiKeys.productLineId,
       employeeName: employees.name,
       employeePhone: employees.phone,
       employeeDept: employees.dept,
@@ -141,11 +143,12 @@ async function authenticateRelayApiKey(
     !principal ||
     principal.employeeStatus !== "active" ||
     principal.employeeRole !== "employee" ||
-    principal.mustChangePassword
+    principal.mustChangePassword ||
+    !isValidRelayProductLineId(principal.productLineId)
   ) {
     return relayError(
       reply,
-      errorProtocol,
+      principal?.protocol ?? errorProtocol,
       401,
       "无效的 TokenHub API Key",
       "authentication_error",
@@ -157,6 +160,7 @@ async function authenticateRelayApiKey(
     employeeId: principal.employeeId,
     employeeApiKeyId: principal.employeeApiKeyId,
     protocol: principal.protocol,
+    productLineId: principal.productLineId,
     employeeName: principal.employeeName,
     employeePhone: principal.employeePhone,
     employeeDept: principal.employeeDept,
@@ -174,12 +178,19 @@ export function createRequireRelayApiKey(expectedProtocol: RelayProtocol) {
   };
 }
 
-/** Backward-compatible Chat Completions authentication hook. */
+/** Chat Completions authentication hook. */
 export const requireRelayApiKey = createRequireRelayApiKey(DEFAULT_RELAY_PROTOCOL);
 
 /** Authenticate model discovery with any protocol-bound employee Key. */
 export async function requireAnyRelayApiKey(req: FastifyRequest, reply: FastifyReply) {
+  // Model discovery accepts every Key protocol. Before a Key can be resolved,
+  // x-api-key is the only protocol signal available; after lookup,
+  // authenticateRelayApiKey uses the persisted Key protocol for post-lookup
+  // failures such as a disabled owner or corrupt binding.
+  const errorProtocol = req.headers["x-api-key"] !== undefined
+    ? "anthropic_messages"
+    : DEFAULT_RELAY_PROTOCOL;
   const extracted = extractAnyRelayApiKey(req.headers);
-  if (!extracted.ok) return sendExtractionError(reply, DEFAULT_RELAY_PROTOCOL, extracted);
-  return authenticateRelayApiKey(req, reply, extracted.key, DEFAULT_RELAY_PROTOCOL);
+  if (!extracted.ok) return sendExtractionError(reply, errorProtocol, extracted);
+  return authenticateRelayApiKey(req, reply, extracted.key, errorProtocol);
 }

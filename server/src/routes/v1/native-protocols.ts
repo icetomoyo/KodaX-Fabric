@@ -215,7 +215,7 @@ function nativeError(
   if (protocol === "anthropic_messages") {
     return {
       type: "error",
-      error: { type, message },
+      error: { type, message, code },
       request_id: requestId,
     };
   }
@@ -507,13 +507,17 @@ async function handleNativeRequest(
       principal.employeeId,
       body.model,
       config.protocol,
+      principal.productLineId,
     );
     let candidates = resolution.candidates;
     const previousResponseId = config.operation === "responses" &&
       typeof body.previous_response_id === "string"
       ? body.previous_response_id.trim()
       : "";
-    if (previousResponseId) {
+    let affinityRequired = false;
+    const boundChannelUnavailable =
+      resolution.unavailableReason === "bound_channel_unavailable";
+    if (previousResponseId && !boundChannelUnavailable) {
       const affinity = await findRelayResponseAffinity(
         principal.employeeId,
         previousResponseId,
@@ -537,50 +541,60 @@ async function handleNativeRequest(
         });
         return reply.code(409).send(payload);
       }
+      affinityRequired = true;
       candidates = candidates.filter((candidate) =>
         candidateMatchesResponseAffinity(candidate, affinity));
     }
     if (candidates.length === 0) {
-      const affinityUnavailable = Boolean(
-        previousResponseId && resolution.candidates.length > 0,
-      );
+      // Once an affinity record exists, this request must use that exact
+      // upstream credential. A cross-channel record or a credential that is
+      // no longer eligible is unavailable; it must never fall back.
+      const affinityUnavailable = affinityRequired;
+      const boundUnavailable = boundChannelUnavailable;
       const cooling = resolution.unavailableReason === "cooling";
       const unavailable = resolution.unavailableReason === "unavailable";
-      const httpStatus = affinityUnavailable ? 503 : cooling ? 429 : unavailable ? 503 : 404;
+      const httpStatus = affinityUnavailable || boundUnavailable || unavailable
+        ? 503
+        : cooling
+          ? 429
+          : 404;
       const errorCode = affinityUnavailable
         ? "response_affinity_unavailable"
-        : cooling
-        ? "model_channels_cooling"
-        : unavailable
-          ? "model_unavailable"
-          : "model_not_found";
+        : boundUnavailable
+          ? "bound_channel_unavailable"
+          : cooling
+            ? "model_channels_cooling"
+            : unavailable
+              ? "model_unavailable"
+              : "model_not_found";
       const errorMessage = affinityUnavailable
         ? "previous_response_id 对应的原生上游当前不可用"
+        : boundUnavailable
+          ? "当前 Key 绑定的上游渠道不可用"
+          : cooling
+            ? "该模型的上游渠道正在冷却，请稍后重试"
+            : unavailable
+              ? "该模型已配置，但当前没有支持此协议的可用上游渠道"
+              : "当前 Key 绑定的上游渠道不支持该模型和协议";
+      const errorType = affinityUnavailable || boundUnavailable || unavailable
+        ? "api_error"
         : cooling
-        ? "该模型的上游渠道正在冷却，请稍后重试"
-        : unavailable
-          ? "该模型已配置，但当前没有支持此协议的可用上游渠道"
-          : "当前账户没有可用于该模型和协议的渠道";
+          ? "rate_limit_error"
+          : config.protocol === "anthropic_messages"
+            ? "not_found_error"
+            : "invalid_request_error";
       const payload = sendError(
         httpStatus,
         errorMessage,
-        affinityUnavailable
-          ? "api_error"
-          : cooling
-          ? "rate_limit_error"
-          : unavailable
-            ? "api_error"
-            : config.protocol === "anthropic_messages"
-              ? "not_found_error"
-              : "invalid_request_error",
+        errorType,
         errorCode,
       );
-      if (resolution.retryAfterSeconds !== null) {
+      if (!affinityUnavailable && resolution.retryAfterSeconds !== null) {
         reply.header("retry-after", String(resolution.retryAfterSeconds));
       }
       await finalizeAudit({
         candidate: null,
-        status: affinityUnavailable || cooling || unavailable
+        status: affinityUnavailable || boundUnavailable || cooling || unavailable
           ? "upstream_error"
           : "client_error",
         httpStatus,

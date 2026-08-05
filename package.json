@@ -1,7 +1,7 @@
 {
   "name": "tokenhub",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.0.1",
   "description": "Internal LLM gateway: shared official keys, full audit, no billing",
   "scripts": {
     "dev": "pnpm -r --parallel --filter @tokenhub/server --filter @tokenhub/web dev",

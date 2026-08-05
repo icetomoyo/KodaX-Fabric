@@ -1,9 +1,14 @@
 import type { RelayProtocol } from "./protocol.js";
 
+export function isValidRelayProductLineId(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+}
+
 export type RelayPrincipal = {
   employeeId: number;
   employeeApiKeyId: number;
   protocol: RelayProtocol;
+  productLineId: number;
   employeeName: string;
   employeePhone: string;
   employeeDept: string | null;

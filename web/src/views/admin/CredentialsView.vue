@@ -829,23 +829,9 @@ function reconcileSelection() {
     return;
   }
 
-  const legacyCredentialId = parseQueryId(route.query.id);
-  const legacyCredential = legacyCredentialId == null
-    ? null
-    : rows.value.find((row) => row.id === legacyCredentialId) ?? null;
-  if (legacyCredential) {
-    selectedProductLineId.value = legacyCredential.productLineId;
-    if (detailCredentialId.value !== legacyCredential.id || !showKeyDetails.value) {
-      openKeyDetails(legacyCredential);
-    }
-    syncSelectedToQuery(legacyCredential.productLineId);
-    return;
-  }
-
   const requestedChannelId = parseQueryId(route.query.channelId);
   if (requestedChannelId != null && channels.value.some((channel) => channel.id === requestedChannelId)) {
     selectedProductLineId.value = requestedChannelId;
-    if (legacyCredentialId != null) syncSelectedToQuery(requestedChannelId);
     return;
   }
 
@@ -859,11 +845,9 @@ function reconcileSelection() {
 function syncSelectedToQuery(id: number | null) {
   if (syncingQuery.value) return;
   const current = parseQueryId(route.query.channelId);
-  const hasLegacyId = route.query.id != null;
-  if (current === id && !hasLegacyId) return;
+  if (current === id) return;
   syncingQuery.value = true;
   const query = { ...route.query };
-  delete query.id;
   if (id == null) delete query.channelId;
   else query.channelId = String(id);
   router
@@ -884,13 +868,10 @@ watch(selectedProductLineId, (id) => {
   }
 });
 
-watch(
-  [() => route.query.channelId, () => route.query.id],
-  () => {
-    if (syncingQuery.value) return;
-    reconcileSelection();
-  },
-);
+watch(() => route.query.channelId, () => {
+  if (syncingQuery.value) return;
+  reconcileSelection();
+});
 
 watch(showBulkForm, (visible) => {
   if (!visible) clearBulkSecrets();

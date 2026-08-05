@@ -5,7 +5,7 @@
 | 产品名称 | TokenHub |
 | 产品基线 | v0.0.1 |
 | 文档版本 | 1.0 |
-| 产品状态 | 核心代理闭环与管理后台已可用；员工 API Key 渠道绑定实施中 |
+| 产品状态 | v0.0.1 核心功能开发与隔离验证完成，待部署发布 |
 | 编制日期 | 2026-08-05 |
 | 适用对象 | 产品、研发、测试、运维、信息安全与合规相关人员 |
 
@@ -35,7 +35,7 @@ TokenHub 面向公司内部员工，不提供外部注册、API 转售、充值�
 
 1. **统一接入**：员工使用统一 Base URL 和内部 API Key 接入多家官方模型服务。
 2. **凭证池化**：在员工选择的上游渠道内调度多条可用凭证，提高采购利用率。
-3. **渠道隔离**：每把标准员工 Key 固定绑定一个上游渠道和一种兼容协议，模型解析、重试和亲和均不得跨渠道。
+3. **渠道隔离**：每把员工 Key 固定绑定一个上游渠道和一种兼容协议，模型解析、重试和亲和均不得跨渠道。
 4. **权限治理**：公共渠道面向员工共享，授权渠道按凭证授权范围开放。
 5. **调用审计**：记录调用主体、模型、渠道、用量、终态及经过安全处理的请求和响应正文。
 6. **不计费治理**：通过 RPM、并发和日软硬上限控制资源使用，不建立商业计费体系。
@@ -48,7 +48,7 @@ TokenHub 面向公司内部员工，不提供外部注册、API 转售、充值�
 | 共享 | 一个渠道可托管多条上游凭证，并在该渠道内按策略共享额度 |
 | 隔离 | 绑定渠道 A 的 Key 在模型查询、调用、重试和亲和场景中均不能命中渠道 B |
 | 权限 | 公共池和授权池均在每次请求时校验，不因持有 Key 获得额外权限 |
-| 审计 | 通过 API Key 鉴权后的所有终态均可追溯到员工、内部 Key、客户端模型和结果；选出候选后记录渠道、凭证和上游模型，选出候选前记录标准 Key 的绑定渠道 |
+| 审计 | 通过 API Key 鉴权后的所有终态均可追溯到员工、内部 Key、客户端模型和结果；选出候选后记录渠道、凭证和上游模型，选出候选前记录该 Key 的绑定渠道 |
 | 管控 | 支持 RPM、并发、日 Token 和日请求软硬上限 |
 | 安全 | 上游 Secret 不出现在员工接口和日志中；员工端只在创建成功时展示一次 Key 明文，管理员读取遵循独立审计规则 |
 | 部署 | 支持公司内网部署，PostgreSQL 与 Redis 使用独立实例或独立逻辑空间 |
@@ -77,7 +77,7 @@ TokenHub 面向公司内部员工，不提供外部注册、API 转售、充值�
 | 员工自助注册 | 账号仅由管理员创建或导入 |
 | 海量供应商通用中转 | 仅接入公司实际采购且经过验证的官方服务 |
 | 跨协议转换 | Key 绑定的协议与上游原生协议一致，不做 Chat、Responses、Messages 互转 |
-| 跨渠道容灾 | 标准员工 Key 的所有候选始终限定在绑定渠道内 |
+| 跨渠道容灾 | 员工 Key 的所有候选始终限定在绑定渠道内 |
 | Responses 后台任务与 Conversation 托管 | 当前只支持同步原生透传和流式透传 |
 | 网页聊天工作台 | 员工调用入口为 IDE、CLI 或脚本；网页 Playground 属于后续能力 |
 | 替代公司 SSO | 当前使用手机号和密码，SSO/OIDC 属于后续能力 |
@@ -182,7 +182,7 @@ TokenHub 面向公司内部员工，不提供外部注册、API 转售、充值�
 | 标记 | 含义 |
 |---|---|
 | ✅ 当前可用 | 仓库中已有对应实现，核心路径可运行 |
-| 🟡 v0.0.1 | 产品规则已确定，属于近期交付与验收范围 |
+| 🟡 开发中 | 产品规则已确定，尚未完成开发与验证 |
 | ⬜ 后续规划 | 不阻塞 v0.0.1，排入后续阶段 |
 
 ### 5.2 身份、用户与 Key
@@ -192,11 +192,11 @@ TokenHub 面向公司内部员工，不提供外部注册、API 转售、充值�
 | F-01 | P0 | 手机号和密码登录 | 登录失败使用统一安全文案；签发有效会话 | ✅ 当前可用 |
 | F-02 | P0 | 首次登录和重置后强制改密 | 未改密用户不能访问业务接口或模型代理 | ✅ 当前可用 |
 | F-03 | P0 | 员工单建、批量导入、编辑、启停和重置密码 | 手机号唯一；不提供自助注册 | ✅ 当前可用 |
-| F-04 | P0 | 严格角色路由与接口隔离 | admin/auditor 仅管理端，employee 仅员工端，无跨端入口 | 🟡 v0.0.1 |
+| F-04 | P0 | 严格角色路由与接口隔离 | admin/auditor 仅管理端，employee 仅员工端，无跨端入口 | ✅ 当前可用 |
 | F-05 | P0 | 员工 Key 基础生命周期 | 支持创建、列表、删除、哈希鉴权和加密托管；管理员读取受审计且禁止缓存 | ✅ 当前可用 |
-| F-06 | P0 | 员工 Key 明文边界 | 员工仅创建时看一次；员工无 reveal；角色离开 employee 时 active Key 全部 revoke | 🟡 v0.0.1 |
-| F-07 | P0 | 员工 Key 渠道绑定 | 每把标准 Key 唯一绑定 ProductLine 和协议，字段不可编辑 | 🟡 v0.0.1 |
-| F-08 | P0 | 员工可选渠道与协议接口 | 只返回当前可选渠道、兼容协议和授权范围内的凭证数量，不泄露 Secret 或 Base URL | 🟡 v0.0.1 |
+| F-06 | P0 | 员工 Key 明文边界 | 员工仅创建时看一次；员工无 reveal；角色离开 employee 时 active Key 全部 revoke | ✅ 当前可用 |
+| F-07 | P0 | 员工 Key 渠道绑定 | 每把员工 Key 唯一绑定 ProductLine 和协议，字段不可编辑 | ✅ 当前可用 |
+| F-08 | P0 | 员工可选渠道与协议接口 | 只返回当前可选渠道、兼容协议和授权范围内的凭证数量，不泄露 Secret 或 Base URL | ✅ 当前可用 |
 
 ### 5.3 上游、模型与代理
 
@@ -210,9 +210,9 @@ TokenHub 面向公司内部员工，不提供外部注册、API 转售、充值�
 | F-15 | P0 | 凭证候选调度 | 按路由优先级、凭证优先级和组合权重选择，不重复尝试同一凭证 | ✅ 当前可用 |
 | F-16 | P0 | 故障处理 | 401/403 自动停用、429 冷却、5xx/网络错误切换、400 不重试 | ✅ 当前可用 |
 | F-17 | P0 | 显式路由与模型发现 | 支持显式模型路由和 `allow_auto_route + discoveredModels` 自动发现 | ✅ 当前可用 |
-| F-18 | P0 | 绑定渠道内模型解析 | 显式路由判定、自动发现、凭证选择和错误结果均限定在绑定 ProductLine | 🟡 v0.0.1 |
-| F-19 | P0 | 绑定渠道内模型列表 | `/v1/models` 只返回该 Key 当前可调用的绑定渠道模型 | 🟡 v0.0.1 |
-| F-20 | P0 | 绑定渠道内重试与亲和 | 所有重试和 Responses `previous_response_id` 亲和不得跨渠道 | 🟡 v0.0.1 |
+| F-18 | P0 | 绑定渠道内模型解析 | 显式路由判定、自动发现、凭证选择和错误结果均限定在绑定 ProductLine | ✅ 当前可用 |
+| F-19 | P0 | 绑定渠道内模型列表 | `/v1/models` 只返回该 Key 当前可调用的绑定渠道模型 | ✅ 当前可用 |
+| F-20 | P0 | 绑定渠道内重试与亲和 | 所有重试和 Responses `previous_response_id` 亲和不得跨渠道 | ✅ 当前可用 |
 | F-21 | P1 | Responses 严格亲和 | `previous_response_id` 必须命中原凭证、ProductLine 和上游模型；记录缺失或原候选不可用时返回确定错误 | ✅ 当前可用 |
 
 ### 5.4 配额、审计与管理
@@ -236,7 +236,7 @@ TokenHub 面向公司内部员工，不提供外部注册、API 转售、充值�
 | F-40 | 产品线级重试策略 | 为 Coding Plan 等产品线配置独立尝试次数与错误策略 | ⬜ 后续规划 |
 | F-41 | 历史趋势报表 | 支持自定义日期范围和人/日/供应商趋势分析 | ⬜ 后续规划 |
 | F-42 | 大正文对象存储与归档检索 | 超大正文外置并保持业务可查 | ⬜ 后续规划 |
-| F-43 | 告警通知 | Key 失效、软上限和全池不可用通知至企微或邮件 | ⬜ 后续规划 |
+| F-43 | 告警通知 | Key 失效、软上限和绑定渠道凭证池不可用通知至企微或邮件 | ⬜ 后续规划 |
 | F-44 | SSO/OIDC | 对接公司统一身份 | ⬜ 后续规划 |
 | F-45 | 上游余额同步 | 在供应商提供稳定接口时同步余额或套餐状态 | ⬜ 后续规划 |
 | F-46 | 网页 Playground | 提供受控的内网试聊入口 | ⬜ 后续规划 |
@@ -286,16 +286,16 @@ API Key 页面遵循以下交互：
 |---|---|---|---|
 | 健康检查 | `/health` | 无 | ✅ 当前可用 |
 | 登录与改密 | `/api/auth/*` | 登录无；其余 Session/JWT | ✅ 当前可用 |
-| 员工自助 | `/api/me/*` | employee Session/JWT + 已改密 | 🟡 严格角色限制纳入 v0.0.1 |
-| 员工可选渠道 | `GET /api/me/upstream-channels` | employee Session/JWT + 已改密 | 🟡 v0.0.1 |
+| 员工自助 | `/api/me/*` | employee Session/JWT + 已改密 | ✅ 当前可用 |
+| 员工可选渠道 | `GET /api/me/upstream-channels` | employee Session/JWT + 已改密 | ✅ 当前可用 |
 | 管理接口 | `/api/admin/*` | admin/auditor Session/JWT + 已改密 + 路由级权限 | ✅ 当前可用 |
-| 模型代理 | `/v1/*` | 有效 employee API Key | ✅ 当前可用；渠道边界纳入 v0.0.1 |
+| 模型代理 | `/v1/*` | 有效 employee API Key | ✅ 当前可用；所有 Key 全链路限定绑定渠道 |
 
 ### 7.2 模型代理接口
 
 | 协议 | 接口 | 说明 |
 |---|---|---|
-| 模型列表 | `GET /v1/models` | 标准 Key 返回绑定渠道和协议下真实可调用的模型；系统兼容 Key 按全池规则返回 |
+| 模型列表 | `GET /v1/models` | 只返回当前 Key 在绑定渠道和协议下真实可调用的模型 |
 | OpenAI Chat | `POST /v1/chat/completions` | OpenAI Chat Completions 原生透传 |
 | OpenAI Responses | `POST /v1/responses` | Responses 原生 JSON/SSE 透传 |
 | OpenAI Responses | `POST /v1/responses/compact` | Responses compact 原生透传 |
@@ -314,7 +314,7 @@ API Key 页面遵循以下交互：
 | 渠道不存在、当前员工无权使用或渠道已停用 | 404 | `upstream_channel_unavailable` |
 | 提交协议不在渠道的最新兼容集合 | 400 | `channel_protocol_incompatible` |
 
-创建成功响应包含完整 Key、绑定模式、ProductLine、协议和渠道摘要；完整 Key 仅用于本次结果展示。列表接口不返回明文，员工侧不注册 reveal 路由，删除接口同时记录名称、协议、绑定模式和渠道摘要。
+创建成功响应包含完整 Key、ProductLine、协议和渠道摘要；完整 Key 仅用于本次结果展示。列表接口不返回明文，员工侧不注册 reveal 路由，删除接口同时记录名称、协议和渠道摘要。
 
 ---
 
@@ -330,7 +330,7 @@ Provider（供应商）
        └─ ModelRoute / DiscoveredModel（显式路由 / 已发现模型）
 
 EmployeeApiKey（员工内部 Key）
-  └─ binding_mode + product_line_id + protocol
+  └─ product_line_id + protocol
 ```
 
 ### 8.2 共享模式
@@ -350,20 +350,15 @@ EmployeeApiKey（员工内部 Key）
 2. `public_pool` 至少有一条符合条件的渠道凭证，或 `grant_only` 至少有一条当前员工被授权的符合条件凭证；
 3. 参与聚合的凭证有效状态为 `active` 或 `cooling`，且 `weight > 0`；
 4. `disabled` 和 `auto_disabled` 凭证不参与聚合；
-5. 兼容协议为可见凭证声明协议的并集；空协议声明按兼容规则视为 `openai_chat`；
+5. 兼容协议为可见凭证声明协议的并集；空协议集合不提供任何协议能力；
 6. 返回的 `credentialCount` 只统计当前员工可见且参与协议聚合的凭证；
 7. 员工渠道接口不读取或返回上游 Secret、上游 Base URL、未授权凭证数量和内部健康详情。
 
 渠道按 Provider 名称、ProductLine 名称和 ProductLine ID 稳定排序。只读查询按时间计算 effective credential status：冷却时间为空或已到期的 `cooling` 视为 active，尚未到期的视为 cooling；查询本身不回写凭证状态。
 
-### 8.4 Key 绑定模式
+### 8.4 Key 渠道绑定
 
-| 模式 | 产品规则 |
-|---|---|
-| `product_line` | 标准业务模式；必须关联一个 `product_line_id`，只在该渠道内运行 |
-| `legacy_unbound` | 系统兼容模式；不得关联 `product_line_id`，业务接口不能创建，按全池规则运行 |
-
-所有模式均唯一绑定一个协议。系统兼容模式的 Key 仍需出现在员工和管理员列表中，并遵循账号状态、权限、配额和协议校验。
+每把员工 Key 必须同时关联一个非空 `product_line_id` 和一个协议。数据库外键、创建接口、鉴权 principal 与 Relay 调度均以该 ProductLine 为唯一渠道边界。系统不存在未绑定渠道的员工 Key，也不存在运行时全局候选池模式。
 
 ### 8.5 绑定与授权
 
@@ -379,7 +374,7 @@ EmployeeApiKey（员工内部 Key）
 
 ### 8.6 模型解析
 
-标准 Key 的模型解析顺序如下：
+员工 Key 的模型解析顺序如下：
 
 1. 在绑定 ProductLine 内查找 `client_model` 对应的 enabled 显式路由；
 2. 存在 enabled 显式路由时，只按显式路由解析；即使路由权重为 0 或没有匹配协议的可用凭证，也不回退到自动发现；
@@ -394,17 +389,13 @@ EmployeeApiKey（员工内部 Key）
 3. 一次请求不重复尝试同一凭证，默认最多尝试 3 条候选。
 4. 401/403 将凭证标记为 `auto_disabled`；429 进入冷却；5xx 和首字节前的网络错误切换候选；400 直接返回。
 5. 流式响应首字节发出后不再切换凭证；客户端断开时取消上游请求。
-6. 标准 Key 的所有候选和重试都限定在绑定 ProductLine。
-7. Responses `previous_response_id` 必须严格匹配记录中的 credential、ProductLine 和 upstream model，不重新分配凭证；标准 Key 的记录还必须与绑定 ProductLine 一致。
+6. 所有候选和重试都限定在绑定 ProductLine。
+7. Responses `previous_response_id` 必须严格匹配记录中的 credential、ProductLine 和 upstream model，不重新分配凭证，并且记录必须与 Key 的绑定 ProductLine 一致。
 8. 亲和记录不存在时返回 `409 response_affinity_not_found`；记录对应候选当前不可用时返回 `503 response_affinity_unavailable`。
-9. `legacy_unbound` Key 使用全池模型解析、候选和重试规则；携带 `previous_response_id` 时仍执行 Responses 严格亲和。
 
 ### 8.8 模型列表一致性
 
-`GET /v1/models` 与实际调用共用同一套员工状态、Key 协议、共享模式、授权、凭证状态和模型解析规则：
-
-- `product_line` Key 只列绑定渠道当前可调用的模型，不展示其他渠道的同名模型；
-- `legacy_unbound` Key 按系统兼容的全池规则列出模型。
+`GET /v1/models` 与实际调用共用同一套员工状态、Key 协议、绑定 ProductLine、共享模式、授权、凭证状态和模型解析规则，只列绑定渠道当前可调用的模型，不展示其他渠道的同名模型。
 
 模型列表按查询时的 effective credential status 计算，属于只读操作，不回写 cooling 或其他凭证状态。
 
@@ -441,7 +432,7 @@ EmployeeApiKey（员工内部 Key）
 
 ### 9.1 调用审计内容
 
-**审计元数据**包括：员工、内部 API Key、协议、绑定模式、绑定 ProductLine、请求时间、客户端模型、上游模型、Provider、凭证标识/末四位、流式标记、终态、HTTP 状态、错误码、Token 用量、原始 usage、耗时、重试轨迹、IP、User-Agent 和请求路径。
+**审计元数据**包括：员工、内部 API Key、协议、绑定 ProductLine、请求时间、客户端模型、上游模型、Provider、凭证标识/末四位、流式标记、终态、HTTP 状态、错误码、Token 用量、原始 usage、耗时、重试轨迹、IP、User-Agent 和请求路径。
 
 **审计正文**包括：经过安全脱敏的请求体、响应体或流式拼装结果，以及可选的脱敏 Header。Authorization 和 Secret 不得入库。
 
@@ -449,7 +440,7 @@ EmployeeApiKey（员工内部 Key）
 
 ### 9.2 终态覆盖
 
-- 通过 API Key 鉴权后，成功、上游失败、参数错误、配额拒绝、全池不可用和客户端取消均记录审计；
+- 通过 API Key 鉴权后，成功、上游失败、参数错误、配额拒绝、绑定渠道凭证池不可用和客户端取消均记录审计；
 - Responses 流以 `response.completed`、`response.failed`、`response.incomplete` 或 `error` 判定终态；
 - Messages 流以 `message_stop` 或 `error` 判定终态；
 - 工具调用和增量参数保持上游原生事件结构。
@@ -475,7 +466,7 @@ EmployeeApiKey（员工内部 Key）
 - 员工 API Key 使用哈希鉴权，可逆托管副本使用独立用途域加密；
 - 员工渠道查询只使用非敏感元数据，不解密上游 Secret；
 - 管理员读取员工 Key、查看他人正文、修改凭证和授权等敏感动作写入 `ops_audit_logs`；
-- 员工 Key 创建、删除和管理员读取的审计详情包含绑定模式、ProductLine 和协议；
+- 员工 Key 创建、删除和管理员读取的审计详情包含 ProductLine 和协议；
 - 生产环境必须使用内网 HTTPS，并限制数据库、备份和加密密钥访问权限。
 
 ### 9.6 Coding Plan 合规
@@ -522,7 +513,7 @@ Coding Plan 默认使用 `grant_only`。多账号、多终端或共享套餐凭�
 | 实体 | 说明 |
 |---|---|
 | `employees` | 员工账号、角色、状态与强制改密标记 |
-| `employee_api_keys` | 内部调用 Key、协议、绑定模式、ProductLine、哈希、加密副本和状态 |
+| `employee_api_keys` | 内部调用 Key、协议、ProductLine、哈希、加密副本和状态 |
 | `providers` | 上游供应商 |
 | `product_lines` | 上游渠道、产品类型、共享模式和自动路由配置 |
 | `upstream_credentials` | 加密上游凭证、协议、状态、优先级、权重和发现模型 |
@@ -540,12 +531,11 @@ Coding Plan 默认使用 `grant_only`。多账号、多终端或共享套餐凭�
 ### 11.2 EmployeeApiKey 不变量
 
 1. `protocol` 必须是系统支持的唯一协议值。
-2. `binding_mode = product_line` 时，`product_line_id` 必填。
-3. `binding_mode = legacy_unbound` 时，`product_line_id` 必须为空。
-4. 业务创建接口只能创建 `product_line` 模式。
-5. `product_line_id` 外键使用 `RESTRICT` 或 `NO ACTION`，不能因删除渠道而产生无绑定的标准 Key。
-6. 无 ProductLine 关联的系统兼容 Key仍需在列表中可见。
-7. Key 的 owner 不再是 employee 时，active Key 必须失效。
+2. `product_line_id` 为数据库非空字段，任何写入路径都不能创建无渠道 Key。
+3. `name`、`protocol` 和 `key_encrypted` 均无数据库兜底默认值，所有写入路径必须显式提供。
+4. `product_line_id` 外键使用 `RESTRICT` 或 `NO ACTION`，被 Key 引用的 ProductLine 不能删除或置空。
+5. 鉴权必须读取数据库中的 ProductLine，不接受客户端指定或覆盖渠道。
+6. Key 的 owner 不再是 employee 时，active Key 必须失效。
 
 ---
 
@@ -576,7 +566,7 @@ Coding Plan 默认使用 `grant_only`。多账号、多终端或共享套餐凭�
 | M1 工程基础 | Monorepo、PostgreSQL/Redis、表结构、登录改密、基础页面和种子 | ✅ 完成 |
 | M2 代理闭环 | 三协议代理、模型列表、调度重试、配额、审计和用量 | ✅ 完成 |
 | M3 管理后台 | 员工、渠道凭证、测试发现、授权、日志、配额、概览和操作审计 | ✅ 完成 |
-| M4 v0.0.1 | 员工 Key 渠道绑定、严格角色边界、一次性明文和全链路渠道隔离 | 🟡 实施中 |
+| M4 v0.0.1 | 员工 Key 渠道绑定、严格角色边界、一次性明文和全链路渠道隔离 | ✅ 开发与隔离验收完成；未发布 |
 | M5 生产加固 | HTTPS、备份、告警、归档、对象存储、SSO 和持续集成 | ⬜ 待排期 |
 
 ### 13.2 当前可用能力
@@ -584,18 +574,18 @@ Coding Plan 默认使用 `grant_only`。多账号、多终端或共享套餐凭�
 **身份与管理**
 
 - 手机号登录、强制改密、员工单建/批量导入、编辑、启停和密码重置；
-- 员工 Key 创建、列表、删除、哈希鉴权、加密托管和管理员受审计读取；
+- 员工按渠道、兼容协议和名称创建 Key，支持一次性明文、绑定渠道列表、删除、哈希鉴权、加密托管和管理员受审计读取；
 - 管理端员工、渠道、日志、日志授权、配额、概览和操作审计页面。
 
 **上游与代理**
 
 - Provider、ProductLine、UpstreamCredential 三层结构；
 - 上游凭证批量录入、加密存储、连接测试、模型发现、协议、状态、优先级、权重和员工授权；
-- `GET /v1/models`、Chat Completions、Responses、Responses compact、Messages 和 Messages count_tokens；
+- 绑定渠道内的 `GET /v1/models`、Chat Completions、Responses、Responses compact、Messages 和 Messages count_tokens；
 - 显式模型路由与已发现模型自动路由；
 - JSON 与 SSE 原生透传、首字节前重试、客户端断开取消上游；
 - 401/403 自动停用、429 冷却、5xx/网络错误切换和 400 不重试；
-- Responses `previous_response_id` 凭证亲和。
+- 绑定渠道内重试与 Responses `previous_response_id` 严格凭证亲和。
 
 **治理与审计**
 
@@ -604,34 +594,33 @@ Coding Plan 默认使用 `grant_only`。多账号、多终端或共享套餐凭�
 - 员工个人日志、管理员全量日志、审计员日志授权与正文权限；
 - 当日请求/Token/失败、Top 员工、供应商分布和最近错误概览。
 
-### 13.3 v0.0.1 交付范围
+### 13.3 v0.0.1 能力范围
 
 - 员工可选渠道和兼容协议聚合接口；
 - 员工创建 Key 的渠道、协议、名称流程；
-- `product_line` 与 `legacy_unbound` 绑定模式及数据约束；
+- 员工 Key 的非空 ProductLine 与协议约束；
 - employee、admin、auditor 的页面和接口边界；
 - 员工明文仅创建时展示，管理员读取受审计并禁止缓存；
 - 用户离开 employee 角色时 revoke active Key；
 - `/v1/models` 和五个原生调用入口的绑定渠道隔离；
 - 绑定渠道内显式路由、自动发现、凭证选择、重试和 Responses 亲和；
 - 固定错误状态、错误码、审计字段和管理列表渠道信息；
-- 系统兼容 Key 的全池行为与列表可见性。
 
 ### 13.4 验证基线
 
-验证日期为 2026-08-05，代码基线为 `93c4402`。本节的“当前可用”表示核心开发路径已实现并通过所列验证，不表示已经完成 M5 生产加固。
+验证日期为 2026-08-05，代码基线为当前 v0.0.1 开发工作区。本节的“当前可用”表示核心开发路径已实现并通过所列验证，不表示已经完成部署发布或 M5 生产加固。
 
 | 验证项 | 结果 |
 |---|---|
-| 服务端默认单元测试 | 35/35 通过 |
+| 服务端默认单元测试 | 50/50 通过 |
 | Workspace 生产构建 | Server 与 Web 构建通过 |
-| 隔离 Mock | 401 换凭证、400 不重试、429 冷却换凭证、500 首字节前切换 SSE 有通过记录 |
-| 原生协议 Mock | Responses JSON/SSE/compact、Messages JSON/SSE、协议 Key、Header 透传、usage 和审计有通过记录 |
-| DeepSeek 实际调用 | 非流式与流式 HTTP 200，有 usage 与审计记录 |
-| GLM 连通性 | 模型目录可访问；Chat 返回供应商业务码 1113，需可用额度后复测 |
-| v0.0.1 渠道隔离矩阵 | 待 M4 实现完成后执行 |
+| Migration | PostgreSQL 16 全新隔离库完整执行唯一初始 `0000_yielding_mad_thinker.sql`；`product_line_id NOT NULL`、`key_encrypted NOT NULL`、`ON DELETE RESTRICT`、索引和无渠道写入 fail-closed 通过 |
+| v0.0.1 API/数据库集成 | 严格角色、渠道可见性与防泄漏、创建校验、一次性明文、绑定列表、管理员 reveal、NOT NULL/FK、角色吊销全部通过 |
+| 隔离 Mock | 401 换凭证、400 不重试、429 冷却换凭证、500 首字节前切换 SSE 全部通过 |
+| 原生协议 Mock | Responses JSON/SSE/compact、Messages JSON/SSE、协议 Key、Header 透传、usage 和审计全部通过 |
+| v0.0.1 渠道隔离矩阵 | `test:v001:binding` 通过：五个调用入口均绑定 A，401/429/500/网络错误只在 A 内重试，B 调用数为 0；`/v1/models` 隔离、跨渠道 Responses 亲和阻断和停用 A 后的审计归属均通过 |
 
-默认单元测试不覆盖数据库 Mock、真实上游、Web 路由和完整权限矩阵；这些场景需要独立集成测试、端到端测试或发布验收。
+默认单元测试不覆盖真实上游、浏览器交互和生产发布环境；这些场景仍需按部署清单执行验收。
 
 ---
 
@@ -639,7 +628,7 @@ Coding Plan 默认使用 `grant_only`。多账号、多终端或共享套餐凭�
 
 1. 未选择渠道时不能选择协议或提交；选择或切换渠道后，旧协议值被丢弃并默认选中该渠道的第一项兼容协议。
 2. public_pool、grant_only、停用渠道及各凭证状态的渠道显示和协议聚合结果正确。
-3. 创建 Key 后，绑定模式、ProductLine、协议、Key 列表和审计信息一致。
+3. 创建 Key 后，ProductLine、协议、Key 列表和审计信息一致；数据库拒绝任何无渠道 Key。
 4. 员工明文只出现一次；员工无明文读取接口；管理员每次读取均写审计且响应禁止缓存。
 5. admin/auditor 不能访问 `/me` 或创建调用 Key；employee 不能访问管理端。
 6. employee 角色退出时 active Key 全部 revoke，再次成为 employee 时不自动生效。
@@ -649,11 +638,9 @@ Coding Plan 默认使用 `grant_only`。多账号、多终端或共享套餐凭�
 10. grant 撤销、共享模式调整、渠道/凭证停用、权重归零和协议移除在后续请求中生效，且不跨渠道。
 11. 渠道、模型、冷却和凭证不可用场景返回第 8.9 节定义的状态码和错误 envelope。
 12. 员工渠道接口不解密或泄露 Secret、上游 Base URL和未授权凭证数量。
-13. 系统兼容 Key 按全池规则列模型、调用和重试，携带 `previous_response_id` 时执行 Responses 严格亲和，并在员工和管理员列表中保持可见。
-14. 不满足绑定模式与 ProductLine 数据约束的 Key 必须鉴权失败，不能按全池规则运行。
-15. 无渠道关联的兼容 Key 均为 `legacy_unbound`；所有者不是 employee 的 active Key 均为 revoked；被标准 Key 引用的 ProductLine 不能被删除或置空。
-16. 渠道列表返回后发生授权、状态或协议变化时，创建接口重新校验并返回第 7.3 节定义的错误，不创建失效绑定。
-17. Chat、Responses、Responses compact、Messages、Messages count_tokens 和 `/v1/models` 全部通过渠道隔离验收。
+13. 所有 Key 必须关联 ProductLine；被 Key 引用的 ProductLine 不能被删除或置空。
+14. 渠道列表返回后发生授权、状态或协议变化时，创建接口重新校验并返回第 7.3 节定义的错误，不创建失效绑定。
+15. Chat、Responses、Responses compact、Messages、Messages count_tokens 和 `/v1/models` 全部通过渠道隔离验收。
 
 ---
 
@@ -700,8 +687,7 @@ Coding Plan 默认使用 `grant_only`。多账号、多终端或共享套餐凭�
 | UpstreamCredential | 上游官方 API Key 或套餐访问凭证 |
 | 员工 API Key | TokenHub 签发给员工的内部调用令牌 |
 | 兼容协议 | `openai_chat`、`openai_responses` 或 `anthropic_messages` |
-| 硬绑定 | 一把标准员工 Key 的模型、凭证、重试和亲和范围固定在一个 ProductLine |
-| `legacy_unbound` | 由系统保留、按全池规则运行且业务接口不能创建的兼容绑定模式 |
+| 硬绑定 | 一把员工 Key 的模型、凭证、重试和亲和范围固定在一个 ProductLine |
 | public_pool | 对 active 员工开放渠道内符合条件凭证的共享模式 |
 | grant_only | 只向被授权员工开放指定凭证的共享模式 |
 | 软上限 | 超额后继续放行并记录标记 |

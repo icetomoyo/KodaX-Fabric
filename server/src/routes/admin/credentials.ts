@@ -183,9 +183,10 @@ function resolveTestProtocol(
   supportedProtocols: RelayProtocol[] | null | undefined,
   preferred?: RelayProtocol,
 ): RelayProtocol {
-  const supported = supportedProtocols?.length
-    ? supportedProtocols
-    : [DEFAULT_RELAY_PROTOCOL];
+  const supported = supportedProtocols ?? [];
+  if (supported.length === 0) {
+    throw new Error("该渠道未声明任何支持协议");
+  }
 
   if (preferred) {
     if (!supported.includes(preferred)) {

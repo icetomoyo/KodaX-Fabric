@@ -4,26 +4,41 @@ import { z } from "zod";
 import { db, sql as querySql } from "../db/client.js";
 import {
   employeeApiKeys,
+  employees,
   opsAuditLogs,
+  productLines,
+  providers,
   requestAuditBodies,
   requestAudits,
   usageCountersDaily,
 } from "../db/schema/index.js";
+import { encryptEmployeeApiKey, generateApiKey } from "../lib/api-key.js";
+import { RELAY_PROTOCOLS } from "../lib/relay/protocol.js";
 import {
-  decryptEmployeeApiKey,
-  encryptEmployeeApiKey,
-  generateApiKey,
-} from "../lib/api-key.js";
-import { writeOpsAudit } from "../lib/ops-audit.js";
+  getEmployeeUpstreamChannel,
+  getEmployeeUpstreamChannels,
+} from "../lib/upstream-channel-metadata.js";
 import {
-  DEFAULT_RELAY_PROTOCOL,
-  RELAY_PROTOCOLS,
-} from "../lib/relay/protocol.js";
-import { requirePasswordChanged, requireSession } from "../middleware/auth.js";
+  requirePasswordChanged,
+  requireRoles,
+  requireSession,
+} from "../middleware/auth.js";
+
+const createApiKeySchema = z.object({
+  name: z.string().trim().min(1).max(100),
+  productLineId: z.number().int().positive(),
+  protocol: z.enum(RELAY_PROTOCOLS),
+});
 
 export async function meRoutes(app: FastifyInstance) {
   app.addHook("preHandler", requireSession);
   app.addHook("preHandler", requirePasswordChanged);
+  app.addHook("preHandler", requireRoles("employee"));
+
+  app.get("/api/me/upstream-channels", async (req) => {
+    const channels = await getEmployeeUpstreamChannels(req.employeeId!);
+    return { success: true, data: channels };
+  });
 
   app.get("/api/me/api-keys", async (req) => {
     const rows = await db
@@ -32,11 +47,17 @@ export async function meRoutes(app: FastifyInstance) {
         name: employeeApiKeys.name,
         keyPrefix: employeeApiKeys.keyPrefix,
         protocol: employeeApiKeys.protocol,
+        productLineId: employeeApiKeys.productLineId,
+        productLineName: productLines.name,
+        providerCode: providers.code,
+        providerName: providers.name,
         status: employeeApiKeys.status,
         lastUsedAt: employeeApiKeys.lastUsedAt,
         createdAt: employeeApiKeys.createdAt,
       })
       .from(employeeApiKeys)
+      .innerJoin(productLines, eq(employeeApiKeys.productLineId, productLines.id))
+      .innerJoin(providers, eq(productLines.providerId, providers.id))
       .where(eq(employeeApiKeys.employeeId, req.employeeId!))
       .orderBy(desc(employeeApiKeys.id));
 
@@ -46,19 +67,55 @@ export async function meRoutes(app: FastifyInstance) {
   app.post("/api/me/api-keys", async (req, reply) => {
     reply.header("Cache-Control", "no-store");
     reply.header("Pragma", "no-cache");
-    const body = z
-      .object({
-        name: z.string().min(1).max(100).default("default"),
-        protocol: z.enum(RELAY_PROTOCOLS).default(DEFAULT_RELAY_PROTOCOL),
-      })
-      .safeParse(req.body ?? {});
+    const body = createApiKeySchema.safeParse(req.body ?? {});
     if (!body.success) {
-      return reply.code(400).send({ success: false, message: "参数无效" });
+      return reply.code(400).send({
+        success: false,
+        code: "invalid_request",
+        message: "参数无效",
+      });
     }
 
     const { raw, prefix, hash } = generateApiKey();
     const keyEncrypted = encryptEmployeeApiKey(raw);
-    const row = await db.transaction(async (tx) => {
+    const result = await db.transaction(async (tx) => {
+      // Serialize Key creation with admin role changes. Without this lock, an
+      // employee request that passed the pre-handler immediately before an
+      // employee -> admin/auditor transition could insert a new active Key
+      // after the transition transaction had already revoked the old ones.
+      const [owner] = await tx
+        .select({
+          role: employees.role,
+          status: employees.status,
+          mustChangePassword: employees.mustChangePassword,
+        })
+        .from(employees)
+        .where(eq(employees.id, req.employeeId!))
+        .limit(1)
+        .for("update");
+
+      if (
+        !owner ||
+        owner.role !== "employee" ||
+        owner.status !== "active" ||
+        owner.mustChangePassword
+      ) {
+        return { outcome: "forbidden" } as const;
+      }
+
+      const channel = await getEmployeeUpstreamChannel(
+        req.employeeId!,
+        body.data.productLineId,
+        tx,
+        { lockForCreate: true },
+      );
+      if (!channel) {
+        return { outcome: "channel_unavailable" } as const;
+      }
+      if (!channel.compatibleProtocols.includes(body.data.protocol)) {
+        return { outcome: "protocol_incompatible" } as const;
+      }
+
       const [created] = await tx
         .insert(employeeApiKeys)
         .values({
@@ -68,12 +125,14 @@ export async function meRoutes(app: FastifyInstance) {
           keyHash: hash,
           keyEncrypted,
           protocol: body.data.protocol,
+          productLineId: body.data.productLineId,
         })
         .returning({
           id: employeeApiKeys.id,
           name: employeeApiKeys.name,
           keyPrefix: employeeApiKeys.keyPrefix,
           protocol: employeeApiKeys.protocol,
+          productLineId: employeeApiKeys.productLineId,
           status: employeeApiKeys.status,
           createdAt: employeeApiKeys.createdAt,
         });
@@ -83,89 +142,49 @@ export async function meRoutes(app: FastifyInstance) {
         action: "api_key.create",
         targetType: "employee_api_key",
         targetId: String(created.id),
-        detail: { protocol: created.protocol },
+        detail: {
+          productLineId: created.productLineId,
+          productLineName: channel.productLineName,
+          providerCode: channel.providerCode,
+          providerName: channel.providerName,
+          protocol: created.protocol,
+        },
         ip: req.ip,
       });
 
-      return created;
+      return { outcome: "created", row: created, channel } as const;
     });
 
-    return {
-      success: true,
-      data: {
-        ...row,
-        key: raw,
-      },
-    };
-  });
-
-  // Intranet deployment: employees may re-copy their own keys anytime.
-  app.post("/api/me/api-keys/:id/reveal", async (req, reply) => {
-    reply.header("Cache-Control", "no-store");
-    reply.header("Pragma", "no-cache");
-    const params = z.object({ id: z.coerce.number().int().positive() }).safeParse(req.params);
-    if (!params.success) {
-      return reply.code(400).send({ success: false, message: "参数无效" });
+    if (result.outcome === "forbidden") {
+      return reply.code(403).send({
+        success: false,
+        code: "forbidden",
+        message: "权限不足",
+      });
     }
-
-    const [row] = await db
-      .select({
-        id: employeeApiKeys.id,
-        name: employeeApiKeys.name,
-        keyPrefix: employeeApiKeys.keyPrefix,
-        keyHash: employeeApiKeys.keyHash,
-        keyEncrypted: employeeApiKeys.keyEncrypted,
-        protocol: employeeApiKeys.protocol,
-        status: employeeApiKeys.status,
-      })
-      .from(employeeApiKeys)
-      .where(
-        and(
-          eq(employeeApiKeys.id, params.data.id),
-          eq(employeeApiKeys.employeeId, req.employeeId!),
-        ),
-      )
-      .limit(1);
-
-    if (!row) {
-      return reply.code(404).send({ success: false, message: "密钥不存在" });
-    }
-    if (row.status !== "active") {
-      return reply.code(400).send({ success: false, message: "已吊销的 Key 无法复制" });
-    }
-    if (!row.keyEncrypted) {
+    if (result.outcome === "channel_unavailable") {
       return reply.code(404).send({
         success: false,
-        code: "key_not_recoverable",
-        message: "该 Key 为旧版存储，无法再次复制，请新建",
+        code: "upstream_channel_unavailable",
+        message: "上游渠道不可用，请重新选择",
+      });
+    }
+    if (result.outcome === "protocol_incompatible") {
+      return reply.code(400).send({
+        success: false,
+        code: "channel_protocol_incompatible",
+        message: "所选协议与上游渠道不兼容",
       });
     }
 
-    let key: string;
-    try {
-      key = decryptEmployeeApiKey(row.keyEncrypted, row.keyHash);
-    } catch {
-      req.log.error({ employeeApiKeyId: row.id }, "employee API key integrity check failed");
-      return reply.code(500).send({ success: false, message: "密钥读取失败" });
-    }
-
-    await writeOpsAudit({
-      actorEmployeeId: req.employeeId,
-      action: "api_key.reveal",
-      targetType: "employee_api_key",
-      targetId: String(row.id),
-      detail: { protocol: row.protocol },
-      ip: req.ip,
-    });
-
     return {
       success: true,
       data: {
-        id: row.id,
-        name: row.name,
-        keyPrefix: row.keyPrefix,
-        protocol: row.protocol,
-        key,
+        ...result.row,
+        productLineName: result.channel.productLineName,
+        providerCode: result.channel.providerCode,
+        providerName: result.channel.providerName,
+        key: raw,
       },
     };
   });
@@ -176,37 +195,63 @@ export async function meRoutes(app: FastifyInstance) {
       return reply.code(400).send({ success: false, message: "参数无效" });
     }
 
-    const [row] = await db
-      .delete(employeeApiKeys)
-      .where(
-        and(
-          eq(employeeApiKeys.id, params.data.id),
-          eq(employeeApiKeys.employeeId, req.employeeId!),
-        ),
-      )
-      .returning({
-        id: employeeApiKeys.id,
-        name: employeeApiKeys.name,
-        keyPrefix: employeeApiKeys.keyPrefix,
-        protocol: employeeApiKeys.protocol,
+    const row = await db.transaction(async (tx) => {
+      const [target] = await tx
+        .select({
+          id: employeeApiKeys.id,
+          name: employeeApiKeys.name,
+          keyPrefix: employeeApiKeys.keyPrefix,
+          protocol: employeeApiKeys.protocol,
+          productLineId: employeeApiKeys.productLineId,
+          productLineName: productLines.name,
+          providerCode: providers.code,
+          providerName: providers.name,
+        })
+        .from(employeeApiKeys)
+        .innerJoin(productLines, eq(employeeApiKeys.productLineId, productLines.id))
+        .innerJoin(providers, eq(productLines.providerId, providers.id))
+        .where(
+          and(
+            eq(employeeApiKeys.id, params.data.id),
+            eq(employeeApiKeys.employeeId, req.employeeId!),
+          ),
+        )
+        .limit(1);
+
+      if (!target) return null;
+
+      await tx
+        .delete(employeeApiKeys)
+        .where(
+          and(
+            eq(employeeApiKeys.id, target.id),
+            eq(employeeApiKeys.employeeId, req.employeeId!),
+          ),
+        );
+
+      await tx.insert(opsAuditLogs).values({
+        actorEmployeeId: req.employeeId,
+        action: "api_key.delete",
+        targetType: "employee_api_key",
+        targetId: String(target.id),
+        detail: {
+          name: target.name,
+          keyPrefix: target.keyPrefix,
+          protocol: target.protocol,
+          productLineId: target.productLineId,
+          productLineName: target.productLineName,
+          providerCode: target.providerCode,
+          providerName: target.providerName,
+        },
+        ip: req.ip,
       });
+
+      return target;
+    });
 
     if (!row) {
       return reply.code(404).send({ success: false, message: "密钥不存在" });
     }
-
-    await writeOpsAudit({
-      actorEmployeeId: req.employeeId,
-      action: "api_key.delete",
-      targetType: "employee_api_key",
-      targetId: String(row.id),
-      detail: {
-        name: row.name,
-        keyPrefix: row.keyPrefix,
-        protocol: row.protocol,
-      },
-      ip: req.ip,
-    });
 
     return { success: true };
   });

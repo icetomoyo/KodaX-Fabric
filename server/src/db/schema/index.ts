@@ -66,11 +66,17 @@ export const employeeApiKeys = pgTable(
     employeeId: bigint("employee_id", { mode: "number" })
       .notNull()
       .references(() => employees.id),
-    name: varchar("name", { length: 100 }).notNull().default("default"),
+    name: varchar("name", { length: 100 }).notNull(),
     keyPrefix: varchar("key_prefix", { length: 32 }).notNull(),
     keyHash: varchar("key_hash", { length: 128 }).notNull(),
-    keyEncrypted: text("key_encrypted"),
-    protocol: relayProtocolEnum("protocol").notNull().default("openai_chat"),
+    keyEncrypted: text("key_encrypted").notNull(),
+    protocol: relayProtocolEnum("protocol").notNull(),
+    productLineId: bigint("product_line_id", { mode: "number" })
+      .notNull()
+      .references(() => productLines.id, {
+        onDelete: "restrict",
+        onUpdate: "no action",
+      }),
     status: apiKeyStatusEnum("status").notNull().default("active"),
     lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
     expiresAt: timestamp("expires_at", { withTimezone: true }),
@@ -79,6 +85,8 @@ export const employeeApiKeys = pgTable(
   (t) => [
     uniqueIndex("employee_api_keys_hash_uidx").on(t.keyHash),
     index("employee_api_keys_employee_idx").on(t.employeeId),
+    index("employee_api_keys_product_line_idx").on(t.productLineId),
+    index("employee_api_keys_employee_product_line_idx").on(t.employeeId, t.productLineId),
   ],
 );
 

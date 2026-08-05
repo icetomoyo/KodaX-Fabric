@@ -24,7 +24,7 @@ const [
   { buildApp },
   { db, sql },
   schema,
-  { generateApiKey },
+  { encryptEmployeeApiKey, generateApiKey },
   { encryptSecret, secretSuffix },
   { relayResponseAffinityKey },
   { redis },
@@ -396,19 +396,6 @@ async function insertFixtures(upstreamBaseUrl: string): Promise<void> {
     const clientModel = `${tag}-client-${marker}`;
     const upstreamModel = `${tag}-upstream-${marker}`;
     const generated = generateApiKey();
-    const [employeeKey] = await db
-      .insert(employeeApiKeys)
-      .values({
-        employeeId: employee.id,
-        name: `Native ${tag} key ${marker}`,
-        keyPrefix: generated.prefix,
-        keyHash: generated.hash,
-        protocol,
-        expiresAt: new Date(Date.now() + 15 * 60_000),
-      })
-      .returning({ id: employeeApiKeys.id });
-    created.employeeApiKeyIds.push(employeeKey.id);
-
     const [provider] = await db
       .insert(providers)
       .values({
@@ -437,6 +424,21 @@ async function insertFixtures(upstreamBaseUrl: string): Promise<void> {
       })
       .returning({ id: productLines.id });
     created.productLineIds.push(line.id);
+
+    const [employeeKey] = await db
+      .insert(employeeApiKeys)
+      .values({
+        employeeId: employee.id,
+        name: `Native ${tag} key ${marker}`,
+        keyPrefix: generated.prefix,
+        keyHash: generated.hash,
+        keyEncrypted: encryptEmployeeApiKey(generated.raw),
+        protocol,
+        productLineId: line.id,
+        expiresAt: new Date(Date.now() + 15 * 60_000),
+      })
+      .returning({ id: employeeApiKeys.id });
+    created.employeeApiKeyIds.push(employeeKey.id);
 
     const upstreamSecret = `native_upstream_${tag}_${randomUUID().replaceAll("-", "")}`;
     const [credential] = await db
@@ -538,8 +540,68 @@ async function assertModels(baseUrl: string, fixture: Fixture): Promise<void> {
     : { Authorization: `Bearer ${fixture.employeeKey}` };
   const response = await fetch(`${baseUrl}/v1/models`, { headers });
   assert.equal(response.status, 200);
+  const requestId = response.headers.get("x-tokenhub-request-id");
+  assert.match(requestId ?? "", /^threq_[a-f0-9]{32}$/);
+  assert.equal(
+    response.headers.get(
+      fixture.protocol === "anthropic_messages" ? "request-id" : "x-request-id",
+    ),
+    requestId,
+  );
   const payload = await response.json() as { data?: Array<{ id?: string }> };
   assert.deepEqual(payload.data?.map((item) => item.id), [fixture.clientModel]);
+}
+
+async function assertAnthropicModelsAuthErrors(
+  baseUrl: string,
+  fixture: Fixture,
+): Promise<void> {
+  const invalidResponse = await fetch(`${baseUrl}/v1/models`, {
+    headers: { "x-api-key": `th_invalid_${marker}` },
+  });
+  const invalidBody = await invalidResponse.json() as {
+    type?: string;
+    request_id?: string;
+    error?: { type?: string; code?: string };
+  };
+  const invalidRequestId = invalidResponse.headers.get("x-tokenhub-request-id");
+  assert.equal(invalidResponse.status, 401);
+  assert.equal(invalidBody.type, "error");
+  assert.equal(invalidBody.error?.type, "authentication_error");
+  assert.equal(invalidBody.error?.code, "invalid_api_key");
+  assert.equal(invalidBody.request_id, invalidRequestId);
+  assert.equal(invalidResponse.headers.get("request-id"), invalidRequestId);
+  assert.equal(invalidResponse.headers.get("x-request-id"), null);
+
+  assert(created.employeeId !== null);
+  await db
+    .update(employees)
+    .set({ status: "disabled", updatedAt: new Date() })
+    .where(eq(employees.id, created.employeeId));
+  try {
+    // A Bearer header alone is ambiguous before lookup. Once the Key is found,
+    // its persisted Anthropic protocol must still select the native envelope.
+    const disabledResponse = await fetch(`${baseUrl}/v1/models`, {
+      headers: { Authorization: `Bearer ${fixture.employeeKey}` },
+    });
+    const disabledBody = await disabledResponse.json() as {
+      type?: string;
+      request_id?: string;
+      error?: { code?: string };
+    };
+    const disabledRequestId = disabledResponse.headers.get("x-tokenhub-request-id");
+    assert.equal(disabledResponse.status, 401);
+    assert.equal(disabledBody.type, "error");
+    assert.equal(disabledBody.error?.code, "invalid_api_key");
+    assert.equal(disabledBody.request_id, disabledRequestId);
+    assert.equal(disabledResponse.headers.get("request-id"), disabledRequestId);
+    assert.equal(disabledResponse.headers.get("x-request-id"), null);
+  } finally {
+    await db
+      .update(employees)
+      .set({ status: "active", updatedAt: new Date() })
+      .where(eq(employees.id, created.employeeId));
+  }
 }
 
 async function runAssertions(baseUrl: string): Promise<void> {
@@ -547,6 +609,7 @@ async function runAssertions(baseUrl: string): Promise<void> {
   const messages = requiredFixture("anthropic_messages");
   await assertModels(baseUrl, responses);
   await assertModels(baseUrl, messages);
+  await assertAnthropicModelsAuthErrors(baseUrl, messages);
 
   const mismatchedResponses = await call(
     baseUrl,
@@ -570,8 +633,10 @@ async function runAssertions(baseUrl: string): Promise<void> {
   const mismatchedMessagesBody = JSON.parse(mismatchedMessages.text) as {
     type?: string;
     request_id?: string;
+    error?: { code?: string };
   };
   assert.equal(mismatchedMessagesBody.type, "error");
+  assert.equal(mismatchedMessagesBody.error?.code, "invalid_api_key");
   assert.equal(mismatchedMessagesBody.request_id, mismatchedMessages.requestId);
   assert.equal(mismatchedMessages.response.headers.get("request-id"), mismatchedMessages.requestId);
 
@@ -583,8 +648,12 @@ async function runAssertions(baseUrl: string): Promise<void> {
   );
   assert.equal(missingVersion.response.status, 400);
   assert.equal(
-    (JSON.parse(missingVersion.text) as { error?: { type?: string } }).error?.type,
+    (JSON.parse(missingVersion.text) as { error?: { type?: string; code?: string } }).error?.type,
     "invalid_request_error",
+  );
+  assert.equal(
+    (JSON.parse(missingVersion.text) as { error?: { code?: string } }).error?.code,
+    "invalid_request",
   );
 
   const malformedResponse = await fetch(`${baseUrl}/v1/messages`, {
@@ -604,10 +673,11 @@ async function runAssertions(baseUrl: string): Promise<void> {
   const malformedBody = JSON.parse(malformedText) as {
     type?: string;
     request_id?: string;
-    error?: { type?: string };
+    error?: { type?: string; code?: string };
   };
   assert.equal(malformedBody.type, "error");
   assert.equal(malformedBody.error?.type, "invalid_request_error");
+  assert.equal(malformedBody.error?.code, "invalid_request");
   assert.equal(malformedBody.request_id, malformedRequestId);
   assert.equal(malformedResponse.headers.get("request-id"), malformedRequestId);
   const malformedAudit = await waitForAudit(malformedRequestId);

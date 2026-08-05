@@ -1,5 +1,5 @@
 {
-  "id": "e3990aae-3f86-4af2-bf6a-c6fd2d621442",
+  "id": "ada359ca-a83c-4c1d-9162-b4c429631ba8",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -139,8 +139,7 @@
           "name": "name",
           "type": "varchar(100)",
           "primaryKey": false,
-          "notNull": true,
-          "default": "'default'"
+          "notNull": true
         },
         "key_prefix": {
           "name": "key_prefix",
@@ -151,6 +150,25 @@
         "key_hash": {
           "name": "key_hash",
           "type": "varchar(128)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "key_encrypted": {
+          "name": "key_encrypted",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "protocol": {
+          "name": "protocol",
+          "type": "relay_protocol",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "product_line_id": {
+          "name": "product_line_id",
+          "type": "bigint",
           "primaryKey": false,
           "notNull": true
         },
@@ -212,6 +230,42 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
+        },
+        "employee_api_keys_product_line_idx": {
+          "name": "employee_api_keys_product_line_idx",
+          "columns": [
+            {
+              "expression": "product_line_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "employee_api_keys_employee_product_line_idx": {
+          "name": "employee_api_keys_employee_product_line_idx",
+          "columns": [
+            {
+              "expression": "employee_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "product_line_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         }
       },
       "foreignKeys": {
@@ -226,6 +280,19 @@
             "id"
           ],
           "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "employee_api_keys_product_line_id_product_lines_id_fk": {
+          "name": "employee_api_keys_product_line_id_product_lines_id_fk",
+          "tableFrom": "employee_api_keys",
+          "tableTo": "product_lines",
+          "columnsFrom": [
+            "product_line_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
           "onUpdate": "no action"
         }
       },
@@ -1202,6 +1269,14 @@
           "primaryKey": false,
           "notNull": false
         },
+        "protocol": {
+          "name": "protocol",
+          "type": "relay_protocol",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'openai_chat'"
+        },
         "client_model": {
           "name": "client_model",
           "type": "varchar(128)",
@@ -1510,6 +1585,13 @@
           "type": "varchar(8)",
           "primaryKey": false,
           "notNull": true
+        },
+        "supported_protocols": {
+          "name": "supported_protocols",
+          "type": "relay_protocol[]",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{\"openai_chat\"}'"
         },
         "weight": {
           "name": "weight",
@@ -1826,6 +1908,15 @@
       "values": [
         "api",
         "coding_plan"
+      ]
+    },
+    "public.relay_protocol": {
+      "name": "relay_protocol",
+      "schema": "public",
+      "values": [
+        "openai_chat",
+        "openai_responses",
+        "anthropic_messages"
       ]
     },
     "public.share_mode": {
