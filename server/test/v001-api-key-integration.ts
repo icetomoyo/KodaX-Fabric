@@ -62,7 +62,6 @@ type ChannelResponse = {
   productLineCode: string;
   productLineName: string;
   productType: "api" | "coding_plan";
-  shareMode: "public_pool" | "grant_only";
   providerId: number;
   providerCode: string;
   providerName: string;
@@ -499,25 +498,36 @@ async function assertUpstreamChannelMetadata(): Promise<void> {
   const publicChannel = body.data.find(
     (channel) => channel.productLineId === requiredProductLine("public"),
   );
-  assert(publicChannel, "public_pool channel was not visible");
-  assert.equal(publicChannel.shareMode, "public_pool");
+  assert(publicChannel, "enabled public channel was not visible");
+  assert.equal("shareMode" in publicChannel, false, "legacy shareMode leaked into employee DTO");
   assert.equal(publicChannel.credentialCount, 2, "invalid-status/weight credentials were counted");
   assert.deepEqual(publicChannel.compatibleProtocols, ["openai_chat", "openai_responses"]);
 
   const grantChannel = body.data.find(
     (channel) => channel.productLineId === requiredProductLine("grant"),
   );
-  assert(grantChannel, "authorized grant_only channel was not visible");
-  assert.equal(grantChannel.shareMode, "grant_only");
-  assert.equal(grantChannel.credentialCount, 1, "ungranted credentials leaked into count");
+  assert(grantChannel, "historical grant_only channel was not visible");
+  assert.equal("shareMode" in grantChannel, false, "legacy shareMode leaked into employee DTO");
+  assert.equal(grantChannel.credentialCount, 3, "credential grants still restricted channel metadata");
   assert.deepEqual(
     grantChannel.compatibleProtocols,
-    ["openai_chat"],
-    "ungranted credential protocols leaked into metadata",
+    ["openai_chat", "openai_responses", "anthropic_messages"],
+    "ungranted credential protocols were still hidden",
+  );
+
+  const formerlyInvisibleGrantChannel = body.data.find(
+    (channel) => channel.productLineId === requiredProductLine("grant-invisible"),
+  );
+  assert(formerlyInvisibleGrantChannel, "ungranted enabled channel was not visible");
+  assert.equal(formerlyInvisibleGrantChannel.credentialCount, 1);
+  assert.deepEqual(formerlyInvisibleGrantChannel.compatibleProtocols, ["openai_chat"]);
+  assert.equal(
+    "shareMode" in formerlyInvisibleGrantChannel,
+    false,
+    "legacy shareMode leaked into employee DTO",
   );
 
   for (const hidden of [
-    "grant-invisible",
     "disabled-only",
     "auto-disabled-only",
     "weight-zero-only",
@@ -563,7 +573,7 @@ async function assertCreateValidationAndBinding(): Promise<void> {
     assert.equal(jsonBody<{ code?: string }>(response).code, "invalid_request");
   }
 
-  const invisible = await app!.inject({
+  const formerlyInvisible = await app!.inject({
     method: "POST",
     url: "/api/me/api-keys",
     headers,
@@ -573,11 +583,18 @@ async function assertCreateValidationAndBinding(): Promise<void> {
       protocol: "openai_chat",
     },
   });
-  assert.equal(invisible.statusCode, 404);
+  assert.equal(formerlyInvisible.statusCode, 200);
+  const formerlyInvisibleBody = jsonBody<{
+    success: boolean;
+    data: ApiKeyListItem & { key: string };
+  }>(formerlyInvisible);
+  assert.equal(formerlyInvisibleBody.success, true);
   assert.equal(
-    jsonBody<{ code?: string }>(invisible).code,
-    "upstream_channel_unavailable",
+    formerlyInvisibleBody.data.productLineId,
+    requiredProductLine("grant-invisible"),
   );
+  assert.equal(formerlyInvisibleBody.data.protocol, "openai_chat");
+  created.apiKeyIds.push(formerlyInvisibleBody.data.id);
 
   const mismatch = await app!.inject({
     method: "POST",

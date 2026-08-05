@@ -15,7 +15,10 @@ const {
   resolveRelayCandidatesFromSnapshot,
 } = await import("../src/lib/relay/routing.js");
 const { isValidRelayProductLineId } = await import("../src/lib/relay/types.js");
-const { candidateMatchesResponseAffinity } = await import(
+const {
+  candidateMatchesResponseAffinity,
+  relayCandidateConfigurationFingerprint,
+} = await import(
   "../src/lib/relay/response-affinity.js"
 );
 
@@ -35,8 +38,6 @@ function credential(
     meta: { discoveredModels: ["shared-model"] },
     productLineId,
     productType: "api",
-    shareMode: "public_pool",
-    allowAutoRoute: true,
     retryPolicy: null,
     providerCode: `provider-${productLineId}`,
     authStyle: "bearer",
@@ -57,7 +58,6 @@ function route(
     upstreamModel: `upstream-${routeId}`,
     routePriority: 0,
     routeWeight: 100,
-    shareMode: "public_pool",
     ...overrides,
   };
 }
@@ -94,7 +94,7 @@ test("routing fails closed when an invalid product line bypasses middleware", ()
   assert.equal(result.unavailableReason, "bound_channel_unavailable");
 });
 
-test("an explicit route in another channel cannot suppress channel auto discovery", () => {
+test("an explicit route in another channel cannot suppress transparent fallback", () => {
   const credentials = [credential(11, 1), credential(22, 2)];
   const routes = [route(200, 2)];
 
@@ -123,7 +123,7 @@ test("credentials without an explicit protocol are never scheduled", () => {
   assert.equal(result.unavailableReason, "unavailable");
 });
 
-test("a bound enabled zero-weight route suppresses auto fallback", () => {
+test("a bound enabled zero-weight route suppresses transparent fallback", () => {
   const result = resolveRelayCandidatesFromSnapshot(
     [credential(11, 1)],
     [route(100, 1, { routeWeight: 0 })],
@@ -191,24 +191,51 @@ test("cooling mixed with a permanently unavailable credential produces 503 class
   assert.equal(result.retryAfterSeconds, null);
 });
 
-test("bound model errors distinguish unknown from configured-but-unavailable", () => {
-  const unknown = resolveRelayCandidatesFromSnapshot(
+test("arbitrary client models are forwarded unchanged without discovery metadata", () => {
+  const transparent = resolveRelayCandidatesFromSnapshot(
     [credential(11, 1, { meta: { discoveredModels: [] } })],
     [],
-    "missing-model",
+    "gpt-5.6",
     "openai_chat",
     1,
   );
-  assert.equal(unknown.unavailableReason, "unknown_model");
+  assert.equal(transparent.unavailableReason, null);
+  assert.equal(transparent.candidates.length, 1);
+  assert.equal(transparent.candidates[0]?.clientModel, "gpt-5.6");
+  assert.equal(transparent.candidates[0]?.upstreamModel, "gpt-5.6");
+  assert.equal(transparent.candidates[0]?.routeId, null);
 
   const unavailable = resolveRelayCandidatesFromSnapshot(
     [],
-    [route(100, 1)],
-    "configured-model",
+    [],
+    "any-model",
     "openai_chat",
     1,
   );
   assert.equal(unavailable.unavailableReason, "unavailable");
+});
+
+test("transparent fallback includes every active positive compatible credential", () => {
+  const result = resolveRelayCandidatesFromSnapshot(
+    [
+      credential(11, 1, { meta: null }),
+      credential(12, 1, { meta: { discoveredModels: ["different-model"] } }),
+      credential(13, 1, { credentialStatus: "disabled" }),
+      credential(14, 1, { credentialWeight: 0 }),
+      credential(15, 1, { supportedProtocols: ["anthropic_messages"] }),
+    ],
+    [],
+    "glm-5.2",
+    "openai_chat",
+    1,
+  );
+
+  assert.equal(result.unavailableReason, null);
+  assert.deepEqual(
+    new Set(result.candidates.map((candidate) => candidate.credentialId)),
+    new Set([11, 12]),
+  );
+  assert.ok(result.candidates.every((candidate) => candidate.upstreamModel === "glm-5.2"));
 });
 
 test("Responses affinity cannot cross the Key-bound channel", () => {
@@ -220,23 +247,76 @@ test("Responses affinity cannot cross the Key-bound channel", () => {
     1,
   );
   const selected = result.candidates[0]!;
+  const configurationFingerprint = relayCandidateConfigurationFingerprint(selected);
 
   assert.equal(
     candidateMatchesResponseAffinity(selected, {
-      providerCode: selected.providerCode,
       productLineId: 2,
       credentialId: selected.credentialId,
       upstreamModel: selected.upstreamModel,
+      configurationFingerprint,
     }),
     false,
   );
   assert.equal(
     candidateMatchesResponseAffinity(selected, {
-      providerCode: selected.providerCode,
       productLineId: 1,
       credentialId: selected.credentialId,
       upstreamModel: selected.upstreamModel,
+      configurationFingerprint,
     }),
     true,
+  );
+});
+
+test("Responses affinity fails closed after routing-sensitive configuration changes", () => {
+  const result = resolveRelayCandidatesFromSnapshot(
+    [credential(11, 1)],
+    [],
+    "shared-model",
+    "openai_responses",
+    1,
+  );
+  const selected = result.candidates[0]!;
+  const affinity = {
+    productLineId: selected.productLineId,
+    credentialId: selected.credentialId,
+    upstreamModel: selected.upstreamModel,
+    configurationFingerprint: relayCandidateConfigurationFingerprint(selected),
+  };
+
+  assert.equal(
+    candidateMatchesResponseAffinity(
+      selected,
+      {
+        productLineId: selected.productLineId,
+        credentialId: selected.credentialId,
+        upstreamModel: selected.upstreamModel,
+      } as typeof affinity,
+    ),
+    false,
+  );
+
+  assert.equal(
+    candidateMatchesResponseAffinity({ ...selected, baseUrl: `${selected.baseUrl}/changed` }, affinity),
+    false,
+  );
+  assert.equal(
+    candidateMatchesResponseAffinity({ ...selected, authStyle: "x-api-key" }, affinity),
+    false,
+  );
+  assert.equal(
+    candidateMatchesResponseAffinity(
+      { ...selected, upstreamProtocol: "anthropic_messages" },
+      affinity,
+    ),
+    false,
+  );
+  assert.equal(
+    candidateMatchesResponseAffinity(
+      { ...selected, secretEncrypted: "rotated-encrypted-secret" },
+      affinity,
+    ),
+    false,
   );
 });

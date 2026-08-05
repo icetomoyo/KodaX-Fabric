@@ -8,7 +8,27 @@ export type RelayResponseAffinity = {
   credentialId: number;
   productLineId: number;
   upstreamModel: string;
+  configurationFingerprint: string;
 };
+
+type AffinityCandidateConfiguration = Pick<
+  RelayCandidate,
+  "baseUrl" | "authStyle" | "upstreamProtocol" | "secretEncrypted"
+>;
+
+/** Hash routing-sensitive configuration without persisting credential material in Redis. */
+export function relayCandidateConfigurationFingerprint(
+  candidate: AffinityCandidateConfiguration,
+): string {
+  return createHash("sha256")
+    .update(JSON.stringify([
+      candidate.baseUrl,
+      candidate.authStyle,
+      candidate.upstreamProtocol,
+      candidate.secretEncrypted,
+    ]))
+    .digest("hex");
+}
 
 export function relayResponseAffinityKey(employeeId: number, responseId: string): string {
   const digest = createHash("sha256").update(responseId).digest("hex");
@@ -32,6 +52,7 @@ export async function rememberRelayResponseAffinity(
     credentialId: candidate.credentialId,
     productLineId: candidate.productLineId,
     upstreamModel: candidate.upstreamModel,
+    configurationFingerprint: relayCandidateConfigurationFingerprint(candidate),
   };
   await redis.set(
     relayResponseAffinityKey(employeeId, responseId),
@@ -55,7 +76,9 @@ export async function findRelayResponseAffinity(
       !Number.isInteger(value.credentialId) ||
       !Number.isInteger(value.productLineId) ||
       typeof value.upstreamModel !== "string" ||
-      !value.upstreamModel
+      !value.upstreamModel ||
+      typeof value.configurationFingerprint !== "string" ||
+      !/^[a-f0-9]{64}$/.test(value.configurationFingerprint)
     ) {
       return null;
     }
@@ -71,5 +94,6 @@ export function candidateMatchesResponseAffinity(
 ): boolean {
   return candidate.credentialId === affinity.credentialId &&
     candidate.productLineId === affinity.productLineId &&
-    candidate.upstreamModel === affinity.upstreamModel;
+    candidate.upstreamModel === affinity.upstreamModel &&
+    relayCandidateConfigurationFingerprint(candidate) === affinity.configurationFingerprint;
 }

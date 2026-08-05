@@ -72,7 +72,12 @@
                     <h3 class="detail-title">{{ channelDisplayName(selectedChannel) }}</h3>
                     <el-tag effect="plain" size="small">{{ selectedChannel.providerName }}</el-tag>
                   </div>
-                  <div class="detail-subtitle mono wrap">{{ selectedChannel.baseUrl }}</div>
+                  <ProtocolRouteSummary
+                    class="detail-subtitle"
+                    :protocols="selectedChannel.protocols"
+                    :protocol-configs="selectedChannel.protocolConfigs"
+                    :fallback-base-url="selectedChannel.baseUrl"
+                  />
                   <div class="channel-protocols">
                     <span>渠道协议</span>
                     <el-tag
@@ -88,9 +93,12 @@
               </div>
               <div class="detail-actions">
                 <el-tag v-if="!canWrite" type="info" effect="plain" size="small">只读查看</el-tag>
-                <el-button v-else type="primary" @click="openAddKeys(selectedChannel)">
-                  添加 Key
-                </el-button>
+                <template v-else>
+                  <el-button @click="openEditChannel(selectedChannel)">编辑渠道</el-button>
+                  <el-button type="primary" @click="openAddKeys(selectedChannel)">
+                    添加 Key
+                  </el-button>
+                </template>
               </div>
             </div>
 
@@ -267,9 +275,56 @@
     </section>
 
     <el-dialog
+      v-model="showChannelEdit"
+      title="编辑上游渠道"
+      width="min(620px, 92vw)"
+      destroy-on-close
+      class="credential-dialog"
+    >
+      <div v-if="channelEditTarget" class="editing-context channel-edit-context">
+        <span class="provider-logo sm" :style="providerLogoStyle(channelEditTarget.providerCode)">
+          {{ providerShortName(channelEditTarget.providerCode) }}
+        </span>
+        <div>
+          <strong>{{ channelDisplayName(channelEditTarget) }}</strong>
+          <div class="cell-secondary">供应商与渠道变体不可在编辑时更换</div>
+        </div>
+      </div>
+
+      <el-form label-position="top" class="credential-form" @submit.prevent>
+        <ChannelConfigFields
+          v-model:name="channelEditForm.name"
+          v-model:supported-protocols="channelEditForm.supportedProtocols"
+          v-model:status="channelEditForm.status"
+          :protocol-configs="channelEditProtocolConfigs"
+          :legacy-protocols="channelEditLegacyProtocols"
+          :protocols-touched="channelEditProtocolsTouched"
+          :routing-config-drift="channelEditRoutingConfigDrift"
+          :routing-upgrade-requested="channelEditRoutingUpgradeRequested"
+          :disabled="channelEditSaving"
+          show-change-risk
+          @protocols-change="channelEditProtocolsTouched = true"
+          @request-routing-upgrade="channelEditRoutingUpgradeRequested = true"
+        />
+      </el-form>
+
+      <template #footer>
+        <el-button :disabled="channelEditSaving" @click="showChannelEdit = false">取消</el-button>
+        <el-button
+          type="primary"
+          :loading="channelEditSaving"
+          :disabled="channelEditSaving"
+          @click="saveChannelEdit"
+        >
+          保存
+        </el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog
       v-model="showBulkForm"
       :title="bulkForm.productLineId ? '批量添加 Key' : '新增渠道并导入 Key'"
-      width="780px"
+      width="min(780px, 94vw)"
       destroy-on-close
       class="credential-dialog"
       @closed="clearBulkSecrets"
@@ -295,9 +350,14 @@
           </button>
         </div>
 
-        <el-form label-position="top" class="credential-form">
-          <el-form-item label="渠道 / API 地址" required>
-            <el-select v-model="bulkForm.baseUrl" style="width: 100%" placeholder="选择官方 API 地址">
+        <el-form label-position="top" class="credential-form" @submit.prevent>
+          <el-form-item label="渠道变体" required>
+            <el-select
+              v-model="bulkForm.baseUrl"
+              style="width: 100%"
+              placeholder="选择渠道变体"
+              @change="selectBulkVariant"
+            >
               <el-option
                 v-for="option in bulkBaseUrlOptions"
                 :key="option.url"
@@ -306,9 +366,29 @@
               />
             </el-select>
             <div class="form-help">
-              渠道按「公司/模型」命名（如 智谱/GLM、深度求索/DeepSeek）；同一公司的不同区域会形成独立渠道。
+              选择渠道身份后，再由协议自动确定只读的上游 URL 与鉴权方式。
             </div>
           </el-form-item>
+
+          <div v-if="selectedConfiguredProductLine" class="configured-variant-notice">
+            <el-alert
+              title="该渠道变体已经存在，不能重复新建；可改为向现有渠道添加 Key。"
+              type="info"
+              :closable="false"
+              show-icon
+            />
+            <el-button type="primary" plain @click="useConfiguredVariant">
+              向现有渠道添加 Key
+            </el-button>
+          </div>
+
+          <ChannelConfigFields
+            v-model:name="bulkForm.name"
+            v-model:supported-protocols="bulkForm.supportedProtocols"
+            v-model:status="bulkForm.status"
+            :protocol-configs="bulkProtocolConfigs"
+            :disabled="bulkSaving || Boolean(selectedConfiguredProductLine)"
+          />
         </el-form>
       </template>
 
@@ -318,18 +398,24 @@
         </span>
         <div>
           <strong>{{ channelDisplayName(importTargetChannel) }}</strong>
-          <div class="cell-secondary mono wrap">{{ importTargetChannel.baseUrl }}</div>
+          <ProtocolRouteSummary
+            class="cell-secondary"
+            :protocols="importTargetChannel.protocols"
+            :protocol-configs="importTargetChannel.protocolConfigs"
+            :fallback-base-url="importTargetChannel.baseUrl"
+          />
         </div>
       </div>
 
-      <el-alert
-        v-if="importTargetChannel?.shareMode === 'grant_only'"
-        class="grant-import-alert"
-        type="warning"
-        :closable="false"
-        show-icon
-        title="员工授权按 Key 独立管理；新导入的 Key 不会继承同渠道其他 Key 的授权。"
-      />
+      <div v-else-if="selectedConfiguredProductLine" class="editing-context">
+        <span class="provider-logo sm" :style="providerLogoStyle(bulkForm.providerCode)">
+          {{ providerShortName(bulkForm.providerCode) }}
+        </span>
+        <div>
+          <strong>{{ selectedConfiguredProductLine.name }}</strong>
+          <div class="cell-secondary">向现有渠道添加 Key，渠道配置保持不变</div>
+        </div>
+      </div>
 
       <el-divider />
 
@@ -371,31 +457,7 @@
           </div>
         </div>
 
-        <el-form-item
-          v-if="!bulkForm.productLineId"
-          label="渠道协议"
-          required
-          class="protocol-form-item"
-        >
-          <el-select
-            v-model="bulkForm.supportedProtocols"
-            multiple
-            collapse-tags
-            collapse-tags-tooltip
-            class="protocol-multi-select"
-            placeholder="至少选择一种协议"
-          >
-            <el-option
-              v-for="option in relayProtocolOptions"
-              :key="option.value"
-              :label="option.label"
-              :value="option.value"
-            />
-          </el-select>
-          <div class="form-help">协议属于渠道，本次导入的所有 Key 将统一使用这些协议。</div>
-        </el-form-item>
-
-        <el-form-item v-else label="渠道协议" class="protocol-form-item">
+        <el-form-item v-if="bulkForm.productLineId" label="渠道协议" class="protocol-form-item">
           <div class="channel-protocol-summary">
             <el-tag
               v-for="protocol in bulkForm.supportedProtocols"
@@ -467,8 +529,14 @@
             <h4 class="section-heading">基本信息</h4>
             <dl class="info-grid">
               <div class="info-item full">
-                <dt>API 地址</dt>
-                <dd class="mono wrap">{{ effectiveBaseUrl(detailRow) }}</dd>
+                <dt>协议路由</dt>
+                <dd>
+                  <ProtocolRouteSummary
+                    :protocols="credentialProtocols(detailRow)"
+                    :protocol-configs="detailRow.protocolConfigs"
+                    :fallback-base-url="effectiveBaseUrl(detailRow)"
+                  />
+                </dd>
               </div>
               <div class="info-item">
                 <dt>最近使用</dt>
@@ -547,43 +615,6 @@
             <p v-else class="empty-hint">尚未做过连通性测试。</p>
           </section>
 
-          <section v-if="canManageGrants(detailRow)" class="detail-section">
-            <h4 class="section-heading">员工授权</h4>
-            <p class="empty-hint">该 Key 需显式授权员工后才可使用。</p>
-            <el-form v-if="canWrite" inline class="grant-form" @submit.prevent>
-              <el-form-item label="员工">
-                <el-select
-                  v-model="grantEmployeeId"
-                  filterable
-                  clearable
-                  style="width: 260px"
-                  placeholder="选择员工"
-                >
-                  <el-option
-                    v-for="user in users"
-                    :key="user.id"
-                    :label="`${user.name} (${user.phone})`"
-                    :value="user.id"
-                  />
-                </el-select>
-              </el-form-item>
-              <el-form-item>
-                <el-button type="primary" :loading="grantLoading" @click="addGrant">添加授权</el-button>
-              </el-form-item>
-            </el-form>
-            <el-table v-loading="grantsLoading" :data="grants" size="small" empty-text="暂无授权员工">
-              <el-table-column prop="employeeName" label="姓名" />
-              <el-table-column prop="employeePhone" label="手机" />
-              <el-table-column label="授权时间" min-width="170">
-                <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
-              </el-table-column>
-              <el-table-column v-if="canWrite" label="操作" width="72">
-                <template #default="{ row }">
-                  <el-button link type="danger" @click="removeGrant(row.id)">移除</el-button>
-                </template>
-              </el-table-column>
-            </el-table>
-          </section>
         </div>
       </template>
     </el-drawer>
@@ -597,13 +628,19 @@ import { ElMessage, ElMessageBox } from "element-plus";
 import { http } from "@/api/http";
 import { formatDateTime } from "@/lib/date-time";
 import { useAuthStore } from "@/stores/auth";
+import ChannelConfigFields from "@/views/admin/ChannelConfigFields.vue";
+import ProtocolRouteSummary from "@/views/admin/ProtocolRouteSummary.vue";
 import {
+  RELAY_PROTOCOLS,
   relayProtocolLabel,
   relayProtocolOptions,
+  type RelayAuthStyle,
   type RelayProtocol,
+  type RelayProtocolConfigs,
 } from "@/views/relay-protocol";
 
-type CredentialStatus = "active" | "disabled" | "auto_disabled" | "cooling";
+type ChannelStatus = "active" | "disabled";
+type CredentialStatus = ChannelStatus | "auto_disabled" | "cooling";
 
 type TestResult = {
   ok: boolean;
@@ -638,9 +675,10 @@ type CredentialRow = {
   providerStatus: string;
   productLineCode: string;
   productLineName: string;
-  productLineStatus: string;
+  productLineStatus: ChannelStatus;
   productType: "api" | "coding_plan";
-  shareMode: "public_pool" | "grant_only" | "disabled";
+  protocolConfigs: RelayProtocolConfigs;
+  configVersion: number;
   defaultBaseUrl: string;
   baseUrlOverride: string | null;
   createdAt?: string;
@@ -657,9 +695,17 @@ type ProviderBaseUrl = {
   url: string;
   productLineCode: string;
   productLineName: string;
+  protocolConfigs?: RelayProtocolConfigs;
 };
 
 type ProviderTemplateCode = "glm" | "kimi" | "deepseek" | "minimax";
+
+type ConfiguredProductLine = {
+  id: number;
+  code: string;
+  name: string;
+  status: ChannelStatus;
+};
 
 type ProviderTemplate = {
   code: ProviderTemplateCode;
@@ -670,9 +716,11 @@ type ProviderTemplate = {
   shortName: string;
   description?: string;
   baseUrls: ProviderBaseUrl[];
+  authStyle?: RelayAuthStyle;
   defaultProtocols: RelayProtocol[];
   defaultLabel: string;
   color: string;
+  productLines?: ConfiguredProductLine[];
 };
 
 type ChannelGroup = {
@@ -682,9 +730,10 @@ type ChannelGroup = {
   providerStatus: string;
   productLineCode: string;
   productLineName: string;
-  productLineStatus: string;
+  productLineStatus: ChannelStatus;
   productType: CredentialRow["productType"];
-  shareMode: CredentialRow["shareMode"];
+  protocolConfigs: RelayProtocolConfigs;
+  configVersion: number;
   baseUrl: string;
   protocols: RelayProtocol[];
   keys: CredentialRow[];
@@ -696,6 +745,12 @@ type ChannelGroup = {
   recentErrorCount: number;
 };
 
+type ChannelEditSnapshot = {
+  name: string;
+  supportedProtocols: RelayProtocol[];
+  status: ChannelStatus;
+};
+
 type ParsedKey = {
   lineNo: number;
   label: string;
@@ -703,8 +758,6 @@ type ParsedKey = {
   hasCustomLabel: boolean;
 };
 
-type UserOption = { id: number; name: string; phone: string };
-type GrantRow = { id: number; employeeName: string; employeePhone: string; createdAt: string };
 type KeyTableRef = {
   clearSelection: () => void;
   toggleRowSelection: (row: CredentialRow, selected?: boolean) => void;
@@ -717,8 +770,6 @@ const canWrite = computed(() => auth.isAdmin);
 
 const rows = ref<CredentialRow[]>([]);
 const templates = ref<ProviderTemplate[]>([]);
-const users = ref<UserOption[]>([]);
-const grants = ref<GrantRow[]>([]);
 const loading = ref(false);
 const selectedProductLineId = ref<number | null>(null);
 const syncingQuery = ref(false);
@@ -728,11 +779,17 @@ const selectedKeyRows = ref<CredentialRow[]>([]);
 const showBulkForm = ref(false);
 const bulkSaving = ref(false);
 
+const showChannelEdit = ref(false);
+const channelEditSaving = ref(false);
+const channelEditProtocolConfigs = ref<RelayProtocolConfigs>({});
+const channelEditLegacyProtocols = ref<RelayProtocol[]>([]);
+const channelEditProtocolsTouched = ref(false);
+const channelEditRoutingConfigDrift = ref(false);
+const channelEditRoutingUpgradeRequested = ref(false);
+const channelEditOriginal = ref<ChannelEditSnapshot | null>(null);
+
 const showKeyDetails = ref(false);
 const detailCredentialId = ref<number | null>(null);
-const grantsLoading = ref(false);
-const grantLoading = ref(false);
-const grantEmployeeId = ref<number>();
 
 const testingIds = ref<Set<number>>(new Set());
 const deletingIds = ref<Set<number>>(new Set());
@@ -746,8 +803,18 @@ const bulkForm = reactive({
   productLineId: null as number | null,
   providerCode: "glm" as ProviderTemplateCode,
   baseUrl: "",
+  name: "",
   rawKeys: "",
   supportedProtocols: ["openai_chat"] as RelayProtocol[],
+  status: "active" as ChannelStatus,
+});
+
+const channelEditForm = reactive({
+  id: 0,
+  configVersion: 0,
+  name: "",
+  supportedProtocols: [] as RelayProtocol[],
+  status: "active" as ChannelStatus,
 });
 
 const channels = computed<ChannelGroup[]>(() => {
@@ -762,8 +829,7 @@ const channels = computed<ChannelGroup[]>(() => {
     const first = keys[0];
     const coolingCount = keys.filter((key) => visibleStatus(key) === "cooling").length;
     const channelCanSchedule = first.providerStatus === "active"
-      && first.productLineStatus === "active"
-      && first.shareMode !== "disabled";
+      && first.productLineStatus === "active";
     const schedulableCount = channelCanSchedule
       ? keys.filter((key) => visibleStatus(key) === "active" && key.weight > 0).length
       : 0;
@@ -776,9 +842,10 @@ const channels = computed<ChannelGroup[]>(() => {
       productLineName: first.productLineName || first.productLineCode,
       productLineStatus: first.productLineStatus,
       productType: first.productType,
-      shareMode: first.shareMode,
+      protocolConfigs: channelProtocolConfigs(keys),
+      configVersion: first.configVersion ?? 1,
       baseUrl: effectiveBaseUrl(first),
-      protocols: credentialProtocols(first),
+      protocols: channelProtocols(keys),
       keys,
       totalCount: keys.length,
       schedulableCount,
@@ -794,6 +861,10 @@ const selectedChannel = computed(
   () => channels.value.find((channel) => channel.id === selectedProductLineId.value) ?? null,
 );
 
+const channelEditTarget = computed(
+  () => channels.value.find((channel) => channel.id === channelEditForm.id) ?? null,
+);
+
 const detailRow = computed(
   () => rows.value.find((row) => row.id === detailCredentialId.value) ?? null,
 );
@@ -803,6 +874,24 @@ const selectedBulkTemplate = computed(
 );
 
 const bulkBaseUrlOptions = computed(() => selectedBulkTemplate.value?.baseUrls ?? []);
+
+const selectedBulkBaseUrlOption = computed(
+  () => bulkBaseUrlOptions.value.find((option) => option.url === bulkForm.baseUrl) ?? null,
+);
+
+const selectedConfiguredProductLine = computed<ConfiguredProductLine | null>(() => {
+  const option = selectedBulkBaseUrlOption.value;
+  if (!option) return null;
+  return selectedBulkTemplate.value?.productLines?.find(
+    (line) => line.code === option.productLineCode,
+  ) ?? null;
+});
+
+const bulkProtocolConfigs = computed<RelayProtocolConfigs>(() => (
+  selectedBulkBaseUrlOption.value && selectedBulkTemplate.value
+    ? providerOptionProtocolConfigs(selectedBulkBaseUrlOption.value, selectedBulkTemplate.value)
+    : {}
+));
 
 const importTargetChannel = computed(
   () => channels.value.find((channel) => channel.id === bulkForm.productLineId) ?? null,
@@ -918,6 +1007,117 @@ function getErrorMessage(error: unknown, fallback: string): string {
   return typeof responseMessage === "string" ? responseMessage : fallback;
 }
 
+function getErrorCode(error: unknown): string | undefined {
+  const responseCode = (error as { response?: { data?: { code?: unknown } } })
+    ?.response?.data?.code;
+  return typeof responseCode === "string" ? responseCode : undefined;
+}
+
+function protocolSignature(protocols: RelayProtocol[]): string {
+  return [...protocols].sort().join(",");
+}
+
+function isValidHttpBaseUrl(value: string): boolean {
+  try {
+    const parsed = new URL(value);
+    return (parsed.protocol === "http:" || parsed.protocol === "https:")
+      && Boolean(parsed.hostname);
+  } catch {
+    return false;
+  }
+}
+
+function configurableProtocols(protocols: readonly RelayProtocol[]): RelayProtocol[] {
+  const configured = new Set(protocols);
+  return relayProtocolOptions
+    .map((option) => option.value)
+    .filter((protocol) => configured.has(protocol));
+}
+
+function legacyProtocols(protocols: readonly RelayProtocol[]): RelayProtocol[] {
+  const selectable = new Set(relayProtocolOptions.map((option) => option.value));
+  return RELAY_PROTOCOLS.filter(
+    (protocol) => protocols.includes(protocol) && !selectable.has(protocol),
+  );
+}
+
+function isValidProtocolConfig(
+  config: RelayProtocolConfigs[RelayProtocol],
+): config is { baseUrl: string; authStyle: RelayAuthStyle } {
+  return Boolean(
+    config
+      && isValidHttpBaseUrl(config.baseUrl)
+      && (config.authStyle === "bearer" || config.authStyle === "x-api-key"),
+  );
+}
+
+function providerOptionProtocolConfigs(
+  option: ProviderBaseUrl,
+  template: ProviderTemplate,
+): RelayProtocolConfigs {
+  const result: RelayProtocolConfigs = {};
+  for (const protocol of RELAY_PROTOCOLS) {
+    const config = option.protocolConfigs?.[protocol];
+    if (isValidProtocolConfig(config)) result[protocol] = { ...config };
+  }
+  if (Object.keys(result).length) return result;
+
+  // Compatibility for a briefly deployed template shape that had one URL and
+  // provider-level auth. New templates always send protocolConfigs.
+  const authStyle = template.authStyle ?? "bearer";
+  for (const protocol of configurableProtocols(template.defaultProtocols)) {
+    result[protocol] = { baseUrl: option.url, authStyle };
+  }
+  return result;
+}
+
+function initialOptionProtocols(
+  option: ProviderBaseUrl,
+  template: ProviderTemplate,
+): RelayProtocol[] {
+  const configs = providerOptionProtocolConfigs(option, template);
+  const available = relayProtocolOptions
+    .map((protocolOption) => protocolOption.value)
+    .filter((protocol) => isValidProtocolConfig(configs[protocol]));
+  const preferred = configurableProtocols(template.defaultProtocols)
+    .filter((protocol) => available.includes(protocol));
+  return preferred.length ? preferred : available;
+}
+
+function resolveTemplateOptionForChannel(
+  template: ProviderTemplate,
+  productLineCode: string,
+): ProviderBaseUrl | undefined {
+  return template.baseUrls.find((option) => option.productLineCode === productLineCode)
+    // Mirrors the backend compatibility rule for GLM product lines created
+    // before protocol-specific routing metadata existed.
+    ?? (template.code === "glm" ? template.baseUrls[0] : undefined);
+}
+
+function protocolsHaveConfigs(
+  protocols: readonly RelayProtocol[],
+  configs: RelayProtocolConfigs,
+): boolean {
+  return protocols.every((protocol) => isValidProtocolConfig(configs[protocol]));
+}
+
+function protocolConfigsMatch(
+  protocols: readonly RelayProtocol[],
+  current: RelayProtocolConfigs,
+  target: RelayProtocolConfigs,
+): boolean {
+  return protocols.every((protocol) => {
+    const currentConfig = current[protocol];
+    const targetConfig = target[protocol];
+    if (!isValidProtocolConfig(currentConfig) || !isValidProtocolConfig(targetConfig)) {
+      return false;
+    }
+    return currentConfig.baseUrl.trim().replace(/\/+$/, "")
+        === targetConfig.baseUrl.trim().replace(/\/+$/, "")
+      && currentConfig.authStyle === targetConfig.authStyle;
+  });
+}
+
 function effectiveBaseUrl(row: CredentialRow): string {
   return row.baseUrlOverride || row.defaultBaseUrl;
 }
@@ -926,16 +1126,30 @@ function credentialProtocols(row: CredentialRow): RelayProtocol[] {
   return row.supportedProtocols?.length ? row.supportedProtocols : ["openai_chat"];
 }
 
+function channelProtocols(keys: CredentialRow[]): RelayProtocol[] {
+  const supported = new Set(keys.flatMap((key) => credentialProtocols(key)));
+  return RELAY_PROTOCOLS.filter((protocol) => supported.has(protocol));
+}
+
+function channelProtocolConfigs(keys: CredentialRow[]): RelayProtocolConfigs {
+  const result: RelayProtocolConfigs = {};
+  for (const protocol of RELAY_PROTOCOLS) {
+    for (const key of keys) {
+      const config = key.protocolConfigs?.[protocol];
+      if (!isValidProtocolConfig(config)) continue;
+      result[protocol] = { ...config };
+      break;
+    }
+  }
+  return result;
+}
+
 function lastTest(row: CredentialRow): TestResult | undefined {
   return row.meta?.lastTest;
 }
 
 function discoveredModels(row: CredentialRow): string[] {
   return row.meta?.discoveredModels ?? lastTest(row)?.models ?? [];
-}
-
-function canManageGrants(row: CredentialRow): boolean {
-  return row.shareMode === "grant_only";
 }
 
 function isCoolingActive(row: CredentialRow): boolean {
@@ -987,7 +1201,10 @@ function baseUrlOptionLabel(option: ProviderBaseUrl): string {
   const channelName = template
     ? formatChannelName(template.name, option.productLineName)
     : option.productLineName;
-  return `${channelName} · ${option.label} · ${option.url}`;
+  const configured = template?.productLines?.some(
+    (line) => line.code === option.productLineCode,
+  );
+  return `${channelName} · ${option.label}${configured ? "（已配置）" : ""}`;
 }
 
 function statusText(status: CredentialStatus): string {
@@ -1077,26 +1294,12 @@ async function loadCredentials() {
 async function loadMeta() {
   const templateResponse = await http.get("/api/admin/credential-templates");
   if (templateResponse.data.success) templates.value = templateResponse.data.data;
-
-  if (canWrite.value) {
-    try {
-      const userResponse = await http.get("/api/admin/users", { params: { limit: 200 } });
-      if (userResponse.data.success) users.value = userResponse.data.data;
-    } catch {
-      users.value = [];
-    }
-  } else {
-    users.value = [];
-  }
 }
 
 async function refreshAll() {
   loading.value = true;
   try {
     await Promise.all([loadCredentials(), loadMeta()]);
-    if (showKeyDetails.value && detailRow.value && canManageGrants(detailRow.value)) {
-      await loadGrants(detailRow.value.id);
-    }
   } catch (error) {
     ElMessage.error(getErrorMessage(error, "加载上游渠道失败"));
   } finally {
@@ -1106,11 +1309,16 @@ async function refreshAll() {
 
 function resetBulkForm() {
   const first = templates.value[0];
+  const firstOption = first?.baseUrls[0];
   bulkForm.productLineId = null;
   bulkForm.providerCode = first?.code ?? "glm";
-  bulkForm.baseUrl = first?.baseUrls[0]?.url ?? "";
+  bulkForm.baseUrl = firstOption?.url ?? "";
+  bulkForm.name = firstOption?.productLineName ?? first?.modelName ?? "";
   bulkForm.rawKeys = "";
-  bulkForm.supportedProtocols = [...(first?.defaultProtocols ?? ["openai_chat"])];
+  bulkForm.status = "active";
+  bulkForm.supportedProtocols = first && firstOption
+    ? initialOptionProtocols(firstOption, first)
+    : ["openai_chat"];
 }
 
 function openCreateChannel() {
@@ -1118,19 +1326,174 @@ function openCreateChannel() {
   showBulkForm.value = true;
 }
 
+function openEditChannel(channel: ChannelGroup) {
+  if (!canWrite.value || channelEditSaving.value) return;
+  const template = templates.value.find((item) => item.code === channel.providerCode);
+  const option = template
+    ? resolveTemplateOptionForChannel(template, channel.productLineCode)
+    : undefined;
+  const templateConfigs = template && option
+    ? providerOptionProtocolConfigs(option, template)
+    : {};
+  const selectedConfigurableProtocols = configurableProtocols(channel.protocols);
+
+  channelEditForm.id = channel.id;
+  channelEditForm.configVersion = channel.configVersion;
+  channelEditForm.name = channel.productLineName;
+  channelEditForm.supportedProtocols = selectedConfigurableProtocols;
+  channelEditForm.status = channel.productLineStatus;
+  channelEditProtocolConfigs.value = Object.keys(templateConfigs).length
+    ? templateConfigs
+    : { ...channel.protocolConfigs };
+  channelEditLegacyProtocols.value = legacyProtocols(channel.protocols);
+  channelEditProtocolsTouched.value = false;
+  channelEditRoutingUpgradeRequested.value = false;
+  channelEditRoutingConfigDrift.value = Boolean(
+    selectedConfigurableProtocols.length
+      && template
+      && option
+      && protocolsHaveConfigs(selectedConfigurableProtocols, templateConfigs)
+      && !protocolConfigsMatch(
+        selectedConfigurableProtocols,
+        channel.protocolConfigs,
+        templateConfigs,
+      ),
+  );
+  channelEditOriginal.value = {
+    name: channel.productLineName,
+    supportedProtocols: [...channel.protocols],
+    status: channel.productLineStatus,
+  };
+  showChannelEdit.value = true;
+}
+
+async function saveChannelEdit() {
+  if (!canWrite.value || channelEditSaving.value) return;
+
+  const productLineId = channelEditForm.id;
+  const name = channelEditForm.name.trim();
+  const original = channelEditOriginal.value;
+  if (!productLineId) {
+    ElMessage.error("未找到要编辑的渠道");
+    return;
+  }
+  if (!original) {
+    ElMessage.error("渠道原始配置已失效，请重新打开编辑窗口");
+    return;
+  }
+  if (!name) {
+    ElMessage.warning("请输入渠道名称");
+    return;
+  }
+  if (name.length > 100) {
+    ElMessage.warning("渠道名称不能超过 100 个字符");
+    return;
+  }
+
+  const originalSelectableProtocols = configurableProtocols(original.supportedProtocols);
+  const selectableProtocolsChanged = protocolSignature(channelEditForm.supportedProtocols)
+    !== protocolSignature(originalSelectableProtocols);
+  const shouldRemoveLegacy = channelEditLegacyProtocols.value.length > 0
+    && (channelEditProtocolsTouched.value || channelEditRoutingUpgradeRequested.value);
+  const explicitlyUpgradingDrift = channelEditRoutingConfigDrift.value
+    && (channelEditProtocolsTouched.value || channelEditRoutingUpgradeRequested.value);
+  const shouldSendProtocols = selectableProtocolsChanged
+    || shouldRemoveLegacy
+    || explicitlyUpgradingDrift;
+  if (shouldSendProtocols && !channelEditForm.supportedProtocols.length) {
+    ElMessage.warning("请至少选择一种支持协议");
+    return;
+  }
+  if (
+    shouldSendProtocols
+    && !protocolsHaveConfigs(channelEditForm.supportedProtocols, channelEditProtocolConfigs.value)
+  ) {
+    ElMessage.warning("所选协议缺少有效的 URL 或鉴权配置");
+    return;
+  }
+
+  const payload: Record<string, unknown> = {
+    expectedConfigVersion: channelEditForm.configVersion,
+  };
+  if (name !== original.name) payload.name = name;
+  if (channelEditForm.status !== original.status) payload.status = channelEditForm.status;
+  if (shouldSendProtocols) {
+    payload.supportedProtocols = [...channelEditForm.supportedProtocols];
+  }
+  if (Object.keys(payload).length === 1) {
+    ElMessage.info("未检测到需要保存的修改");
+    return;
+  }
+
+  channelEditSaving.value = true;
+  try {
+    await http.patch(`/api/admin/product-lines/${productLineId}`, payload);
+    await loadCredentials();
+    if (channels.value.some((channel) => channel.id === productLineId)) {
+      selectedProductLineId.value = productLineId;
+      syncSelectedToQuery(productLineId);
+    }
+    showChannelEdit.value = false;
+    ElMessage.success("渠道已更新");
+  } catch (error) {
+    if (getErrorCode(error) === "CHANNEL_CONFIG_STALE") {
+      showChannelEdit.value = false;
+      await Promise.all([loadCredentials(), loadMeta()]).catch(() => undefined);
+      if (channels.value.some((channel) => channel.id === productLineId)) {
+        selectedProductLineId.value = productLineId;
+        syncSelectedToQuery(productLineId);
+      }
+      ElMessage.warning("渠道已被其他管理员更新，请刷新后重试");
+    } else {
+      ElMessage.error(getErrorMessage(error, "渠道更新失败"));
+    }
+  } finally {
+    channelEditSaving.value = false;
+  }
+}
+
 function openAddKeys(channel: ChannelGroup) {
   resetBulkForm();
   bulkForm.productLineId = channel.id;
   bulkForm.providerCode = channel.providerCode as ProviderTemplateCode;
   bulkForm.baseUrl = channel.baseUrl;
+  bulkForm.name = channel.productLineName;
   bulkForm.supportedProtocols = [...channel.protocols];
+  bulkForm.status = channel.productLineStatus;
   showBulkForm.value = true;
 }
 
 function selectBulkTemplate(template: ProviderTemplate) {
+  const option = template.baseUrls[0];
   bulkForm.providerCode = template.code;
-  bulkForm.baseUrl = template.baseUrls[0]?.url ?? "";
-  bulkForm.supportedProtocols = [...template.defaultProtocols];
+  bulkForm.baseUrl = option?.url ?? "";
+  bulkForm.name = option?.productLineName ?? template.modelName;
+  bulkForm.supportedProtocols = option ? initialOptionProtocols(option, template) : [];
+}
+
+function selectBulkVariant() {
+  const option = selectedBulkBaseUrlOption.value;
+  const template = selectedBulkTemplate.value;
+  if (!option || !template) return;
+  bulkForm.name = option.productLineName;
+  bulkForm.supportedProtocols = initialOptionProtocols(option, template);
+}
+
+function useConfiguredVariant() {
+  const configured = selectedConfiguredProductLine.value;
+  const option = selectedBulkBaseUrlOption.value;
+  const template = selectedBulkTemplate.value;
+  if (!configured || !option || !template) return;
+
+  const channel = channels.value.find((item) => item.id === configured.id);
+  bulkForm.productLineId = configured.id;
+  bulkForm.name = channel?.productLineName ?? configured.name;
+  bulkForm.supportedProtocols = channel
+    ? [...channel.protocols]
+    : initialOptionProtocols(option, template);
+  if (channel) {
+    bulkForm.status = channel.productLineStatus;
+  }
 }
 
 function clearBulkSecrets() {
@@ -1193,6 +1556,8 @@ function parseBulkKeys(
 
 async function saveBulkKeys() {
   const parsed = bulkParseResult.value;
+  const creatingChannel = !bulkForm.productLineId;
+  const selectedOption = selectedBulkBaseUrlOption.value;
   if (!parsed.keys.length) {
     ElMessage.warning("请粘贴至少一个 API Key");
     return;
@@ -1201,13 +1566,32 @@ async function saveBulkKeys() {
     ElMessage.warning("请先修正 Key 格式错误");
     return;
   }
-  if (!bulkForm.supportedProtocols.length) {
+  if (creatingChannel && !bulkForm.supportedProtocols.length) {
     ElMessage.warning("请至少选择一种支持协议");
     return;
   }
-  if (!bulkForm.productLineId && !bulkForm.baseUrl) {
-    ElMessage.warning("请选择渠道 API 地址");
-    return;
+  if (creatingChannel) {
+    const name = bulkForm.name.trim();
+    if (selectedConfiguredProductLine.value) {
+      ElMessage.warning("该渠道变体已经存在，请改为向现有渠道添加 Key");
+      return;
+    }
+    if (!name) {
+      ElMessage.warning("请输入渠道名称");
+      return;
+    }
+    if (name.length > 100) {
+      ElMessage.warning("渠道名称不能超过 100 个字符");
+      return;
+    }
+    if (!selectedOption) {
+      ElMessage.warning("请选择渠道变体");
+      return;
+    }
+    if (!protocolsHaveConfigs(bulkForm.supportedProtocols, bulkProtocolConfigs.value)) {
+      ElMessage.warning("所选协议缺少有效的 URL 或鉴权配置");
+      return;
+    }
   }
 
   bulkSaving.value = true;
@@ -1215,13 +1599,19 @@ async function saveBulkKeys() {
     const payload = {
       ...(bulkForm.productLineId
         ? { productLineId: bulkForm.productLineId }
-        : { providerCode: bulkForm.providerCode, baseUrl: bulkForm.baseUrl }),
+        : {
+          providerCode: bulkForm.providerCode,
+          // Legacy locator only; protocolConfigs determine actual upstream URLs.
+          baseUrl: selectedOption!.url,
+          name: bulkForm.name.trim(),
+          status: bulkForm.status,
+        }),
       keys: parsed.keys.map(({ label, secret, hasCustomLabel }) => (
         hasCustomLabel ? { label, secret } : { secret }
       )),
-      defaults: {
-        supportedProtocols: [...bulkForm.supportedProtocols],
-      },
+      ...(!bulkForm.productLineId
+        ? { supportedProtocols: [...bulkForm.supportedProtocols] }
+        : {}),
     };
     const { data } = await http.post("/api/admin/credentials/bulk-create", payload);
     const createdIds = Array.isArray(data.data?.credentials)
@@ -1237,19 +1627,24 @@ async function saveBulkKeys() {
     const createdCount = Number(data.data?.createdCount ?? data.data?.credentials?.length ?? parsed.keys.length);
     clearBulkSecrets();
     showBulkForm.value = false;
-    await loadCredentials();
+    if (creatingChannel) {
+      await Promise.all([loadCredentials(), loadMeta()]);
+    } else {
+      await loadCredentials();
+    }
     if (Number.isInteger(targetId) && channels.value.some((channel) => channel.id === targetId)) {
       selectedProductLineId.value = targetId;
     } else if (!bulkForm.productLineId) {
       const createdChannel = channels.value.find(
-        (channel) => channel.providerCode === bulkForm.providerCode && channel.baseUrl === bulkForm.baseUrl,
+        (channel) => channel.providerCode === bulkForm.providerCode
+          && channel.productLineCode === selectedOption?.productLineCode,
       );
       if (createdChannel) selectedProductLineId.value = createdChannel.id;
     }
     await nextTick();
     await selectKeysByIds(createdIds);
     ElMessage.success({
-      message: `已导入 ${createdCount} 个 Key，并自动选中。请点击“批量测试”；测试成功并发现模型后才会参与自动路由。`,
+      message: `已导入 ${createdCount} 个 Key，并自动选中。请点击“批量测试”确认上游连接可用。`,
       duration: 7000,
       showClose: true,
     });
@@ -1412,7 +1807,7 @@ async function batchDeleteCredentials() {
   const channelConfirmName = channelDisplayName(channel);
   try {
     await ElMessageBox.confirm(
-      `确认删除选中的 ${targets.length} 个 Key？对应的员工授权也会一并删除。删除后不可恢复，历史调用日志仍会保留。`,
+      `确认删除选中的 ${targets.length} 个 Key？删除后不可恢复，历史调用日志仍会保留。`,
       "批量删除 API Key",
       {
         type: "warning",
@@ -1456,64 +1851,10 @@ async function batchDeleteCredentials() {
 function openKeyDetails(row: CredentialRow) {
   detailCredentialId.value = row.id;
   showKeyDetails.value = true;
-  grantEmployeeId.value = undefined;
-  if (canManageGrants(row)) void loadGrants(row.id);
-  else grants.value = [];
 }
 
 function closeKeyDetails() {
   detailCredentialId.value = null;
-  grants.value = [];
-  grantEmployeeId.value = undefined;
-}
-
-async function loadGrants(credentialId: number) {
-  grantsLoading.value = true;
-  try {
-    const { data } = await http.get(`/api/admin/credentials/${credentialId}/grants`);
-    if (data.success && detailCredentialId.value === credentialId) grants.value = data.data;
-  } catch (error) {
-    if (detailCredentialId.value === credentialId) {
-      grants.value = [];
-      ElMessage.error(getErrorMessage(error, "加载授权失败"));
-    }
-  } finally {
-    grantsLoading.value = false;
-  }
-}
-
-async function addGrant() {
-  const credentialId = detailCredentialId.value;
-  if (!canWrite.value || !credentialId) return;
-  if (!grantEmployeeId.value) {
-    ElMessage.warning("请选择员工");
-    return;
-  }
-  grantLoading.value = true;
-  try {
-    await http.post(`/api/admin/credentials/${credentialId}/grants`, {
-      employeeId: grantEmployeeId.value,
-    });
-    ElMessage.success("已授权");
-    grantEmployeeId.value = undefined;
-    await loadGrants(credentialId);
-  } catch (error) {
-    ElMessage.error(getErrorMessage(error, "授权失败"));
-  } finally {
-    grantLoading.value = false;
-  }
-}
-
-async function removeGrant(grantId: number) {
-  const credentialId = detailCredentialId.value;
-  if (!canWrite.value || !credentialId) return;
-  try {
-    await http.delete(`/api/admin/credentials/${credentialId}/grants/${grantId}`);
-    ElMessage.success("已移除授权");
-    await loadGrants(credentialId);
-  } catch (error) {
-    ElMessage.error(getErrorMessage(error, "移除授权失败"));
-  }
 }
 
 onMounted(refreshAll);
@@ -2051,8 +2392,25 @@ onMounted(refreshAll);
   background: #f8fafc;
 }
 
-.grant-import-alert {
-  margin-top: 12px;
+.editing-context > div {
+  flex: 1;
+  min-width: 0;
+}
+
+.channel-edit-context {
+  margin-bottom: 18px;
+}
+
+.configured-variant-notice {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: -2px 0 18px;
+}
+
+.configured-variant-notice :deep(.el-alert) {
+  flex: 1;
+  min-width: 0;
 }
 
 .cell-secondary {
@@ -2065,12 +2423,13 @@ onMounted(refreshAll);
   margin-top: 4px;
 }
 
-.protocol-form-item :deep(.el-form-item__content) {
-  display: block;
+.credential-dialog :deep(.el-dialog__body) {
+  max-height: calc(100vh - 180px);
+  overflow-y: auto;
 }
 
-.protocol-multi-select {
-  width: 100%;
+.protocol-form-item :deep(.el-form-item__content) {
+  display: block;
 }
 
 .channel-protocol-summary {
@@ -2271,10 +2630,6 @@ onMounted(refreshAll);
   overflow: auto;
 }
 
-.grant-form {
-  margin-bottom: 10px;
-}
-
 .empty-hint {
   margin: 0;
   color: #64748b;
@@ -2326,6 +2681,11 @@ onMounted(refreshAll);
 
   .head-actions {
     width: 100%;
+  }
+
+  .configured-variant-notice {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .provider-grid,

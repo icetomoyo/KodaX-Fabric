@@ -18,6 +18,7 @@ const { decryptSecret, encryptSecret, secretSuffix } = await import(
 );
 const { relayProtocolEnum } = await import("../src/db/schema/index.js");
 const {
+  CONFIGURABLE_RELAY_PROTOCOLS,
   DEFAULT_RELAY_PROTOCOL,
   RELAY_PROTOCOLS,
   isRelayProtocol,
@@ -25,6 +26,7 @@ const {
 
 test("relay protocol runtime values stay aligned with the database enum", () => {
   assert.deepEqual(relayProtocolEnum.enumValues, [...RELAY_PROTOCOLS]);
+  assert.deepEqual(CONFIGURABLE_RELAY_PROTOCOLS, ["openai_chat", "anthropic_messages"]);
   assert.equal(DEFAULT_RELAY_PROTOCOL, "openai_chat");
   assert.equal(isRelayProtocol("openai_responses"), true);
   assert.equal(isRelayProtocol("anthropic_messages"), true);

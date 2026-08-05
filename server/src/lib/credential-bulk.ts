@@ -5,6 +5,27 @@ export type CredentialSecretDuplicateResult = {
   existingDuplicateIndexes: number[];
 };
 
+export type BulkChannelCreationIntent = {
+  productLineId?: number;
+  name?: string;
+  status?: string;
+};
+
+/**
+ * A provider/base-URL request carrying channel metadata means "create", not
+ * "locate or reuse". If another transaction won the unique product-line
+ * insert, importing into that winner would silently discard this request's
+ * metadata and mix credentials across administrators.
+ */
+export function shouldRejectExistingChannelForMetadataRequest(
+  input: BulkChannelCreationIntent,
+  productLineInsertedByRequest: boolean,
+): boolean {
+  if (input.productLineId !== undefined || productLineInsertedByRequest) return false;
+  return input.name !== undefined ||
+    input.status !== undefined;
+}
+
 /**
  * Compare credential secrets without returning the secrets themselves.
  *

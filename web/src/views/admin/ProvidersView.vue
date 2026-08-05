@@ -5,7 +5,7 @@
       <el-button v-if="auth.isAdmin" type="primary" @click="openCreateProvider">新增供应商</el-button>
     </div>
     <p class="muted">
-      不预置演示供应商。请按实际采购录入；产品线区分 API / Coding Plan，共享模式可编辑。
+      不预置演示供应商。请按实际采购录入；产品线区分 API / Coding Plan。
     </p>
 
     <el-empty v-if="!providers.length" description="暂无供应商，请先新增" />
@@ -17,15 +17,13 @@
             <el-table-column prop="code" label="产品线" width="120" />
             <el-table-column prop="name" label="名称" width="140" />
             <el-table-column prop="productType" label="类型" width="120" />
-            <el-table-column prop="shareMode" label="共享模式" width="130" />
-            <el-table-column prop="allowAutoRoute" label="自动选路" width="100">
-              <template #default="{ row: pl }">{{ pl.allowAutoRoute ? "是" : "否" }}</template>
-            </el-table-column>
             <el-table-column prop="status" label="状态" width="100" />
-            <el-table-column prop="baseUrlOverride" label="Base URL 覆盖" show-overflow-tooltip />
-            <el-table-column v-if="auth.isAdmin" label="操作" width="160">
+            <el-table-column label="上游配置" min-width="150">
+              <template #default>按协议自动配置</template>
+            </el-table-column>
+            <el-table-column label="操作" width="120">
               <template #default="{ row: pl }">
-                <el-button link type="primary" @click="editLine(pl)">编辑</el-button>
+                <el-button link type="primary" @click="manageChannel(pl.id)">渠道管理</el-button>
               </template>
             </el-table-column>
           </el-table>
@@ -57,7 +55,7 @@
         </el-form-item>
         <template v-if="!providerForm.id">
           <el-form-item label="默认产品线">
-            <el-checkbox v-model="providerForm.withApiLine">创建 api 产品线（公共池）</el-checkbox>
+            <el-checkbox v-model="providerForm.withApiLine">创建 api 产品线</el-checkbox>
           </el-form-item>
         </template>
       </el-form>
@@ -67,47 +65,20 @@
       </template>
     </el-dialog>
 
-    <el-dialog v-model="showLine" title="编辑产品线" width="520px">
-      <el-form label-width="120px">
-        <el-form-item label="名称"><el-input v-model="lineForm.name" /></el-form-item>
-        <el-form-item label="共享模式">
-          <el-select v-model="lineForm.shareMode" style="width: 100%">
-            <el-option label="公共池 public_pool" value="public_pool" />
-            <el-option label="仅授权 grant_only" value="grant_only" />
-            <el-option label="禁用 disabled" value="disabled" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="自动选路">
-          <el-switch v-model="lineForm.allowAutoRoute" />
-        </el-form-item>
-        <el-form-item label="状态">
-          <el-select v-model="lineForm.status" style="width: 100%">
-            <el-option label="active" value="active" />
-            <el-option label="disabled" value="disabled" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="Base URL 覆盖">
-          <el-input v-model="lineForm.baseUrlOverride" placeholder="可选" />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="showLine = false">取消</el-button>
-        <el-button type="primary" :loading="saving" @click="saveLine">保存</el-button>
-      </template>
-    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
 import { onMounted, reactive, ref } from "vue";
+import { useRouter } from "vue-router";
 import { ElMessage } from "element-plus";
 import { http } from "@/api/http";
 import { useAuthStore } from "@/stores/auth";
 
 const auth = useAuthStore();
+const router = useRouter();
 const providers = ref<Array<Record<string, any>>>([]);
 const showProvider = ref(false);
-const showLine = ref(false);
 const saving = ref(false);
 const providerForm = reactive({
   id: 0,
@@ -116,14 +87,6 @@ const providerForm = reactive({
   defaultBaseUrl: "",
   status: "active",
   withApiLine: true,
-});
-const lineForm = reactive({
-  id: 0,
-  name: "",
-  shareMode: "public_pool",
-  allowAutoRoute: true,
-  status: "active",
-  baseUrlOverride: "" as string | null,
 });
 
 async function load() {
@@ -150,14 +113,8 @@ function editProvider(row: any) {
   showProvider.value = true;
 }
 
-function editLine(pl: any) {
-  lineForm.id = pl.id;
-  lineForm.name = pl.name;
-  lineForm.shareMode = pl.shareMode;
-  lineForm.allowAutoRoute = pl.allowAutoRoute;
-  lineForm.status = pl.status;
-  lineForm.baseUrlOverride = pl.baseUrlOverride ?? "";
-  showLine.value = true;
+function manageChannel(productLineId: number) {
+  void router.push({ path: "/admin/credentials", query: { channelId: String(productLineId) } });
 }
 
 async function saveProvider() {
@@ -184,26 +141,6 @@ async function saveProvider() {
     }
     ElMessage.success("已保存");
     showProvider.value = false;
-    await load();
-  } catch (e: any) {
-    ElMessage.error(e.response?.data?.message || "保存失败");
-  } finally {
-    saving.value = false;
-  }
-}
-
-async function saveLine() {
-  saving.value = true;
-  try {
-    await http.patch(`/api/admin/product-lines/${lineForm.id}`, {
-      name: lineForm.name,
-      shareMode: lineForm.shareMode,
-      allowAutoRoute: lineForm.allowAutoRoute,
-      status: lineForm.status,
-      baseUrlOverride: lineForm.baseUrlOverride || null,
-    });
-    ElMessage.success("已保存");
-    showLine.value = false;
     await load();
   } catch (e: any) {
     ElMessage.error(e.response?.data?.message || "保存失败");

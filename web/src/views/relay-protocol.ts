@@ -6,6 +6,15 @@ export const RELAY_PROTOCOLS = [
 
 export type RelayProtocol = (typeof RELAY_PROTOCOLS)[number];
 
+export type RelayAuthStyle = "bearer" | "x-api-key";
+
+export type RelayProtocolConfig = {
+  baseUrl: string;
+  authStyle: RelayAuthStyle;
+};
+
+export type RelayProtocolConfigs = Partial<Record<RelayProtocol, RelayProtocolConfig>>;
+
 export type RelayProtocolOption = {
   value: RelayProtocol;
   label: string;
@@ -15,7 +24,7 @@ export type RelayProtocolOption = {
   authHeaders: readonly string[];
 };
 
-export const relayProtocolOptions: readonly RelayProtocolOption[] = [
+const relayProtocolDefinitions: readonly RelayProtocolOption[] = [
   {
     value: "openai_chat",
     label: "OpenAI 对话（Chat Completions）",
@@ -26,9 +35,9 @@ export const relayProtocolOptions: readonly RelayProtocolOption[] = [
   },
   {
     value: "openai_responses",
-    label: "OpenAI 响应（Responses / Codex）",
-    shortLabel: "OpenAI Responses",
-    description: "适用于 OpenAI Responses API、Codex 和兼容客户端",
+    label: "OpenAI 响应（Responses / Codex，旧协议）",
+    shortLabel: "OpenAI Responses（旧协议）",
+    description: "仅用于兼容已创建的 OpenAI Responses API Key",
     endpoint: "POST /v1/responses",
     authHeaders: ["Authorization: Bearer <你的 API Key>"],
   },
@@ -45,12 +54,16 @@ export const relayProtocolOptions: readonly RelayProtocolOption[] = [
   },
 ];
 
+/** 新建渠道、编辑渠道和创建员工 Key 时允许选择的协议。 */
+export const relayProtocolOptions: readonly RelayProtocolOption[] =
+  relayProtocolDefinitions.filter((option) => option.value !== "openai_responses");
+
 export function isRelayProtocol(value: unknown): value is RelayProtocol {
   return RELAY_PROTOCOLS.includes(value as RelayProtocol);
 }
 
 export function relayProtocolOption(protocol: RelayProtocol): RelayProtocolOption {
-  return relayProtocolOptions.find((option) => option.value === protocol)!;
+  return relayProtocolDefinitions.find((option) => option.value === protocol)!;
 }
 
 export function relayProtocolLabel(protocol: unknown, short = false): string {

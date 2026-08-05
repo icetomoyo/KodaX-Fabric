@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { inspectCredentialSecretDuplicates } from "../src/lib/credential-bulk.js";
+import {
+  inspectCredentialSecretDuplicates,
+  shouldRejectExistingChannelForMetadataRequest,
+} from "../src/lib/credential-bulk.js";
 
 test("bulk credential duplicate inspection reports every duplicate input position", () => {
   assert.deepEqual(
@@ -33,4 +36,32 @@ test("bulk credential duplicate inspection never includes secret values in its r
   const result = inspectCredentialSecretDuplicates([secret, secret], [secret]);
 
   assert.equal(JSON.stringify(result).includes(secret), false);
+});
+
+test("metadata-bearing channel creation never falls through to an existing conflict row", () => {
+  const creation = {
+    providerCode: "glm",
+    name: "GLM Coding Plan",
+    status: "active",
+  };
+
+  assert.equal(
+    shouldRejectExistingChannelForMetadataRequest(creation, false),
+    true,
+  );
+  assert.equal(
+    shouldRejectExistingChannelForMetadataRequest(creation, true),
+    false,
+  );
+  assert.equal(
+    shouldRejectExistingChannelForMetadataRequest({}, false),
+    false,
+  );
+  assert.equal(
+    shouldRejectExistingChannelForMetadataRequest(
+      { productLineId: 42, name: "ignored by schema" },
+      false,
+    ),
+    false,
+  );
 });

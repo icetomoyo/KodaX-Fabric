@@ -11,14 +11,22 @@ import {
   requestAudits,
   upstreamCredentials,
 } from "../../db/schema/index.js";
-import { inspectCredentialSecretDuplicates } from "../../lib/credential-bulk.js";
+import {
+  inspectCredentialSecretDuplicates,
+  shouldRejectExistingChannelForMetadataRequest,
+} from "../../lib/credential-bulk.js";
 import { decryptSecret, encryptSecret, secretSuffix } from "../../lib/crypto-secret.js";
 import { writeOpsAudit } from "../../lib/ops-audit.js";
+import {
+  formatUpstreamBusinessFailure,
+  parseUpstreamBusinessFailure,
+} from "../../lib/upstream-connection-test.js";
 import {
   getProviderTemplate,
   isAllowedTemplateHost,
   PROVIDER_TEMPLATES,
   resolveTemplateBaseUrlOption,
+  resolveTemplateProtocolConfigs,
 } from "../../lib/provider-templates.js";
 import {
   DEFAULT_RELAY_PROTOCOL,
@@ -29,6 +37,17 @@ import {
   buildRelayUpstreamHeaders,
   buildRelayUpstreamUrl,
 } from "../../lib/relay/upstream.js";
+import {
+  configurableSupportedProtocolsSchema,
+  resolveChannelCredentialInsertProtocols,
+  resolveTemplateChannelName,
+} from "../../lib/upstream-channel-update.js";
+import {
+  configuredProtocols,
+  parseProductLineProtocolConfigs,
+  planEmptyChannelProtocolConfigInitialization,
+  resolveProtocolUpstreamConfig,
+} from "../../lib/upstream-protocol-config.js";
 import {
   requirePasswordChanged,
   requireRoles,
@@ -54,13 +73,7 @@ type BulkProductLineContext = {
 
 const RECENT_WINDOW_MS = 24 * 60 * 60 * 1_000;
 
-const supportedProtocolsSchema = z
-  .array(z.enum(RELAY_PROTOCOLS))
-  .min(1)
-  .max(RELAY_PROTOCOLS.length)
-  .refine((values) => new Set(values).size === values.length, {
-    message: "支持协议不能重复",
-  });
+const supportedProtocolsSchema = configurableSupportedProtocolsSchema;
 
 const upstreamSecretSchema = z
   .string()
@@ -84,6 +97,8 @@ const bulkCredentialCreateSchema = z
     productLineId: z.number().int().positive().optional(),
     providerCode: z.string().trim().min(1).max(64).optional(),
     baseUrl: z.string().url().optional(),
+    name: z.string().trim().min(1).max(100).optional(),
+    status: z.enum(["active", "disabled"]).optional(),
     keys: z
       .array(
         z.object({
@@ -115,6 +130,16 @@ const bulkCredentialCreateSchema = z
         code: z.ZodIssueCode.custom,
         message: "providerCode 和 baseUrl 必须同时提供",
         path: value.providerCode ? ["baseUrl"] : ["providerCode"],
+      });
+    }
+    if (
+      locatesById &&
+      (value.name !== undefined || value.status !== undefined)
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "渠道配置项仅可在新建渠道时提供",
+        path: ["productLineId"],
       });
     }
   });
@@ -179,19 +204,13 @@ function metaWithoutStaleTest(meta: unknown): Record<string, unknown> {
   return previous;
 }
 
-/** Align stored display names with template 公司/模型 convention when they drift. */
-async function syncTemplateDisplayNames(
+/** Keep the provider company name aligned without overwriting editable channel names. */
+async function syncTemplateProviderDisplayName(
   tx: Pick<typeof db, "update">,
   provider: typeof providers.$inferSelect,
-  productLine: typeof productLines.$inferSelect,
   template: { name: string },
-  baseUrlOption: { productLineName: string },
-): Promise<{
-  provider: typeof providers.$inferSelect;
-  productLine: typeof productLines.$inferSelect;
-}> {
+): Promise<typeof providers.$inferSelect> {
   let nextProvider = provider;
-  let nextProductLine = productLine;
 
   if (provider.name !== template.name) {
     const [updated] = await tx
@@ -202,16 +221,89 @@ async function syncTemplateDisplayNames(
     if (updated) nextProvider = updated;
   }
 
-  if (productLine.name !== baseUrlOption.productLineName) {
-    const [updated] = await tx
-      .update(productLines)
-      .set({ name: baseUrlOption.productLineName, updatedAt: new Date() })
-      .where(eq(productLines.id, productLine.id))
-      .returning();
-    if (updated) nextProductLine = updated;
+  return nextProvider;
+}
+
+type TemplateChannelProtocolInitializationResult =
+  | { kind: "unchanged" | "initialized"; productLine: typeof productLines.$inferSelect }
+  | { kind: "protocol_unsupported"; unsupportedProtocols: RelayProtocol[] }
+  | { kind: "config_stale" };
+
+/**
+ * Initialise protocol-specific routing while the caller holds the channel's
+ * advisory lock and has already taken a fresh product-line snapshot. Legacy
+ * channels with credentials are intentionally left untouched.
+ */
+async function initializeEmptyTemplateChannelProtocolConfigs(
+  tx: Pick<typeof db, "update">,
+  input: {
+    productLine: typeof productLines.$inferSelect;
+    providerCode: string;
+    credentialCount: number;
+    requestedProtocols?: readonly RelayProtocol[];
+    fallbackProtocols?: readonly RelayProtocol[];
+    repairExplicitDrift: boolean;
+  },
+): Promise<TemplateChannelProtocolInitializationResult> {
+  if (input.credentialCount !== 0) {
+    return { kind: "unchanged", productLine: input.productLine };
   }
 
-  return { provider: nextProvider, productLine: nextProductLine };
+  const currentConfigs = parseProductLineProtocolConfigs(input.productLine.protocolConfigs);
+  if (currentConfigs !== null && !input.repairExplicitDrift) {
+    return { kind: "unchanged", productLine: input.productLine };
+  }
+
+  const template = getProviderTemplate(input.providerCode);
+  if (!template) {
+    return { kind: "unchanged", productLine: input.productLine };
+  }
+  const targetProtocols = input.requestedProtocols
+    ?? input.fallbackProtocols
+    ?? template.defaultProtocols;
+  if (!targetProtocols.length) {
+    return { kind: "unchanged", productLine: input.productLine };
+  }
+  const resolution = resolveTemplateProtocolConfigs(
+    template,
+    input.productLine.code,
+    targetProtocols,
+  );
+  if (!resolution.ok) {
+    return {
+      kind: "protocol_unsupported",
+      unsupportedProtocols: resolution.unsupportedProtocols,
+    };
+  }
+
+  const plan = planEmptyChannelProtocolConfigInitialization({
+    credentialCount: input.credentialCount,
+    currentProtocolConfigs: input.productLine.protocolConfigs,
+    targetProtocolConfigs: resolution.configs,
+    currentConfigVersion: input.productLine.configVersion,
+    protocolsExplicitlyRequested: input.repairExplicitDrift,
+  });
+  if (!plan.shouldInitialize) {
+    return { kind: "unchanged", productLine: input.productLine };
+  }
+
+  const [updated] = await tx
+    .update(productLines)
+    .set({
+      protocolConfigs: resolution.configs,
+      configVersion: plan.nextConfigVersion,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(productLines.id, input.productLine.id),
+        eq(productLines.configVersion, input.productLine.configVersion),
+      ),
+    )
+    .returning();
+  return updated
+    ? { kind: "initialized", productLine: updated }
+    : { kind: "config_stale" };
 }
 
 function resolveTestProtocol(
@@ -244,6 +336,7 @@ async function testCredentialConnection(
   const [credential] = await db
     .select({
       id: upstreamCredentials.id,
+      productLineId: upstreamCredentials.productLineId,
       secretEncrypted: upstreamCredentials.secretEncrypted,
       meta: upstreamCredentials.meta,
       supportedProtocols: upstreamCredentials.supportedProtocols,
@@ -251,6 +344,8 @@ async function testCredentialConnection(
       authStyle: providers.authStyle,
       defaultBaseUrl: providers.defaultBaseUrl,
       baseUrlOverride: productLines.baseUrlOverride,
+      protocolConfigs: productLines.protocolConfigs,
+      configVersion: productLines.configVersion,
     })
     .from(upstreamCredentials)
     .innerJoin(productLines, eq(upstreamCredentials.productLineId, productLines.id))
@@ -262,29 +357,40 @@ async function testCredentialConnection(
     throw new Error("凭证不存在");
   }
 
+  const protocol = resolveTestProtocol(credential.supportedProtocols, preferredProtocol);
+  const upstreamConfig = resolveProtocolUpstreamConfig({
+    protocol,
+    protocolConfigs: credential.protocolConfigs,
+    legacyBaseUrl: credential.baseUrlOverride || credential.defaultBaseUrl,
+    legacyAuthStyle: credential.authStyle,
+  });
+  if (!upstreamConfig) {
+    throw new Error("该渠道缺少所选协议的端点配置");
+  }
   const template = getProviderTemplate(credential.providerCode);
-  const baseUrl = (credential.baseUrlOverride || credential.defaultBaseUrl).replace(/\/+$/, "");
-  if (!template || !isAllowedTemplateHost(template, baseUrl)) {
+  if (!template || !isAllowedTemplateHost(template, upstreamConfig.baseUrl)) {
     throw new Error("当前仅支持对已确认供应商的官方 HTTPS 地址进行连通性测试");
   }
 
-  const protocol = resolveTestProtocol(credential.supportedProtocols, preferredProtocol);
   const testedAt = new Date().toISOString();
   const startedAt = Date.now();
   let result: CredentialTestResult;
 
   try {
     const secret = decryptSecret(credential.secretEncrypted);
-    const response = await fetch(buildRelayUpstreamUrl(baseUrl, protocol, "models"), {
+    const response = await fetch(
+      buildRelayUpstreamUrl(upstreamConfig.baseUrl, protocol, "models"),
+      {
       method: "GET",
       headers: buildRelayUpstreamHeaders({
         protocol,
-        authStyle: credential.authStyle,
+        authStyle: upstreamConfig.authStyle,
         secret,
       }),
       redirect: "manual",
       signal: AbortSignal.timeout(12_000),
-    });
+      },
+    );
     const raw = await response.text();
     let payload: unknown = null;
     try {
@@ -292,20 +398,24 @@ async function testCredentialConnection(
     } catch {
       payload = null;
     }
-    const models = response.ok ? parseModels(payload) : [];
+    const businessFailure = parseUpstreamBusinessFailure(payload);
+    const connectionOk = response.ok && businessFailure === null;
+    const models = connectionOk ? parseModels(payload) : [];
     result = {
-      ok: response.ok,
+      ok: connectionOk,
       testedAt,
       latencyMs: Date.now() - startedAt,
       httpStatus: response.status,
       modelCount: models.length,
       models,
       protocol,
-      message: response.ok
+      message: connectionOk
         ? models.length
           ? `连接成功（${protocol}），发现 ${models.length} 个模型`
           : `连接成功（${protocol}），上游未返回可识别的模型列表`
-        : errorSummary(response.status, raw),
+        : response.ok && businessFailure
+          ? formatUpstreamBusinessFailure(businessFailure)
+          : errorSummary(response.status, raw),
     };
   } catch (error) {
     const message = error instanceof Error && error.name === "TimeoutError"
@@ -328,19 +438,54 @@ async function testCredentialConnection(
   const previousMeta = credential.meta && typeof credential.meta === "object"
     ? credential.meta as Record<string, unknown>
     : {};
-  await db
-    .update(upstreamCredentials)
-    .set({
-      meta: {
-        ...previousMeta,
-        lastTest: result,
-        discoveredModels: result.models,
-      },
-      lastError: result.ok ? null : result.message,
-      lastErrorAt: result.ok ? null : new Date(),
-      updatedAt: new Date(),
-    })
-    .where(eq(upstreamCredentials.id, credential.id));
+  await db.transaction(async (tx) => {
+    const [currentChannel] = await tx
+      .select({
+        configVersion: productLines.configVersion,
+        protocolConfigs: productLines.protocolConfigs,
+        baseUrlOverride: productLines.baseUrlOverride,
+        defaultBaseUrl: providers.defaultBaseUrl,
+        authStyle: providers.authStyle,
+      })
+      .from(productLines)
+      .innerJoin(providers, eq(productLines.providerId, providers.id))
+      .where(eq(productLines.id, credential.productLineId))
+      .limit(1)
+      .for("share");
+    if (!currentChannel || currentChannel.configVersion !== credential.configVersion) return;
+    const currentUpstreamConfig = resolveProtocolUpstreamConfig({
+      protocol,
+      protocolConfigs: currentChannel.protocolConfigs,
+      legacyBaseUrl: currentChannel.baseUrlOverride || currentChannel.defaultBaseUrl,
+      legacyAuthStyle: currentChannel.authStyle,
+    });
+    if (
+      !currentUpstreamConfig ||
+      currentUpstreamConfig.baseUrl !== upstreamConfig.baseUrl ||
+      currentUpstreamConfig.authStyle !== upstreamConfig.authStyle
+    ) {
+      return;
+    }
+
+    await tx
+      .update(upstreamCredentials)
+      .set({
+        meta: {
+          ...previousMeta,
+          lastTest: result,
+          discoveredModels: result.models,
+        },
+        lastError: result.ok ? null : result.message,
+        lastErrorAt: result.ok ? null : new Date(),
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(upstreamCredentials.id, credential.id),
+          eq(upstreamCredentials.secretEncrypted, credential.secretEncrypted),
+        ),
+      );
+  });
 
   return result;
 }
@@ -370,6 +515,8 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
             code: line.code,
             name: line.name,
             baseUrl: line.baseUrlOverride || provider?.defaultBaseUrl,
+            protocolConfigs: line.protocolConfigs,
+            configVersion: line.configVersion,
             status: line.status,
           })),
         };
@@ -387,7 +534,7 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
           baseUrl: z.string().url().optional(),
           label: z.string().trim().min(1).max(200),
           secret: upstreamSecretSchema,
-          supportedProtocols: supportedProtocolsSchema.default([DEFAULT_RELAY_PROTOCOL]),
+          supportedProtocols: supportedProtocolsSchema.optional(),
           weight: z.number().int().min(0).max(10000).default(100),
           priority: z.number().int().min(-1000).max(1000).default(0),
           testAfterCreate: z.boolean().default(true),
@@ -411,6 +558,23 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
         return reply.code(400).send({
           success: false,
           message: "Base URL 必须选择该供应商的官方地址",
+        });
+      }
+      // Omission means "inherit" when this template locator resolves to an
+      // existing channel. Template defaults are only used to initialise a
+      // channel that does not exist yet.
+      const newChannelProtocols = body.data.supportedProtocols ?? template.defaultProtocols;
+      const newChannelProtocolConfigResolution = resolveTemplateProtocolConfigs(
+        template,
+        baseUrlOption.productLineCode,
+        newChannelProtocols,
+      );
+      if (!newChannelProtocolConfigResolution.ok) {
+        return reply.code(400).send({
+          success: false,
+          code: "CHANNEL_PROTOCOL_UNSUPPORTED",
+          message: "当前渠道不支持所选协议",
+          unsupportedProtocols: newChannelProtocolConfigResolution.unsupportedProtocols,
         });
       }
 
@@ -445,6 +609,10 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
             ),
           )
           .limit(1);
+        const productLineName = resolveTemplateChannelName(
+          productLine?.name,
+          baseUrlOption.productLineName,
+        );
 
         if (!productLine) {
           [productLine] = await tx
@@ -452,10 +620,12 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
             .values({
               providerId: provider.id,
               code: baseUrlOption.productLineCode,
-              name: baseUrlOption.productLineName,
-              productType: "api",
+              name: productLineName,
+              productType: baseUrlOption.productType,
               baseUrlOverride:
                 baseUrlOption.url === provider.defaultBaseUrl ? null : baseUrlOption.url,
+              protocolConfigs: newChannelProtocolConfigResolution.configs,
+              configVersion: 1,
               shareMode: "public_pool",
               allowAutoRoute: true,
               status: "active",
@@ -463,24 +633,56 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
             .returning();
         }
 
-        ({ provider, productLine } = await syncTemplateDisplayNames(
-          tx,
-          provider,
-          productLine,
-          template,
-          baseUrlOption,
-        ));
-
         await tx.execute(
           sql`select pg_advisory_xact_lock(${productLine.id})`,
         );
+        const [lockedProductLine] = await tx
+          .select()
+          .from(productLines)
+          .where(eq(productLines.id, productLine.id))
+          .limit(1)
+          .for("share");
+        if (!lockedProductLine) throw new Error("渠道不存在");
+        productLine = lockedProductLine;
+        provider = await syncTemplateProviderDisplayName(
+          tx,
+          provider,
+          template,
+        );
+
         const existingRows = await tx
           .select({
             id: upstreamCredentials.id,
             secretEncrypted: upstreamCredentials.secretEncrypted,
+            supportedProtocols: upstreamCredentials.supportedProtocols,
           })
           .from(upstreamCredentials)
           .where(eq(upstreamCredentials.productLineId, productLine.id));
+        const initialization = await initializeEmptyTemplateChannelProtocolConfigs(tx, {
+          productLine,
+          providerCode: provider.code,
+          credentialCount: existingRows.length,
+          requestedProtocols: body.data.supportedProtocols,
+          fallbackProtocols: template.defaultProtocols,
+          repairExplicitDrift: body.data.supportedProtocols !== undefined,
+        });
+        if (initialization.kind === "protocol_unsupported") return initialization;
+        if (initialization.kind === "config_stale") return initialization;
+        productLine = initialization.productLine;
+        const protocolResolution = resolveChannelCredentialInsertProtocols(
+          existingRows,
+          body.data.supportedProtocols,
+          configuredProtocols(parseProductLineProtocolConfigs(productLine.protocolConfigs)),
+        );
+        if (protocolResolution.kind === "mismatch") {
+          return {
+            kind: "channel_protocol_mismatch",
+            channelProtocols: protocolResolution.channelProtocols,
+          } as const;
+        }
+        if (protocolResolution.kind === "unset") {
+          return { kind: "channel_protocol_unset" } as const;
+        }
         const existingSecrets: string[] = [];
         const unreadableCredentialIds: number[] = [];
         for (const existing of existingRows) {
@@ -510,7 +712,7 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
             label: body.data.label,
             secretEncrypted: encryptSecret(body.data.secret),
             secretSuffix: secretSuffix(body.data.secret),
-            supportedProtocols: body.data.supportedProtocols,
+            supportedProtocols: protocolResolution.protocols,
             weight: body.data.weight,
             priority: body.data.priority,
             meta: {
@@ -535,16 +737,48 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
             id: productLine.id,
             code: productLine.code,
             name: productLine.name,
+            protocolConfigs: productLine.protocolConfigs,
+            configVersion: productLine.configVersion,
           },
           baseUrl: productLine.baseUrlOverride || provider.defaultBaseUrl,
         } as const;
       });
 
+      if (created.kind === "config_stale") {
+        return reply.code(409).send({
+          success: false,
+          code: "CHANNEL_CONFIG_STALE",
+          message: "渠道配置已被其他操作更新，请刷新后重试",
+        });
+      }
+      if (created.kind === "protocol_unsupported") {
+        return reply.code(400).send({
+          success: false,
+          code: "CHANNEL_PROTOCOL_UNSUPPORTED",
+          message: "当前渠道不支持所选协议",
+          unsupportedProtocols: created.unsupportedProtocols,
+        });
+      }
       if (created.kind === "existing_secret_unreadable") {
         return reply.code(409).send({
           success: false,
           message: "渠道中存在无法解密的旧 Key，无法安全完成重复检查",
           credentialIds: created.credentialIds,
+        });
+      }
+      if (created.kind === "channel_protocol_mismatch") {
+        return reply.code(409).send({
+          success: false,
+          code: "CHANNEL_PROTOCOL_MISMATCH",
+          message: "渠道协议已发生变化，请刷新后重试",
+          supportedProtocols: created.channelProtocols,
+        });
+      }
+      if (created.kind === "channel_protocol_unset") {
+        return reply.code(400).send({
+          success: false,
+          code: "CHANNEL_PROTOCOLS_UNSET",
+          message: "渠道尚未配置支持协议",
         });
       }
       if (created.kind === "existing_duplicate") {
@@ -566,7 +800,7 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
             httpStatus: null,
             modelCount: 0,
             models: [],
-            protocol: resolveTestProtocol(body.data.supportedProtocols),
+            protocol: resolveTestProtocol(created.credential.supportedProtocols),
             message: error instanceof Error ? error.message : "连接测试失败",
           };
         }
@@ -580,7 +814,7 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
         detail: {
           providerCode: body.data.providerCode,
           productLineId: created.productLine.id,
-          supportedProtocols: body.data.supportedProtocols,
+          supportedProtocols: created.credential.supportedProtocols,
           testOk: test?.ok ?? null,
         },
         ip: req.ip,
@@ -622,10 +856,9 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
         });
       }
 
-      const supportedProtocols =
+      const requestedSupportedProtocols =
         body.data.defaults?.supportedProtocols
-        ?? body.data.supportedProtocols
-        ?? [DEFAULT_RELAY_PROTOCOL];
+        ?? body.data.supportedProtocols;
       const weight = body.data.defaults?.weight ?? body.data.weight ?? 100;
       const priority = body.data.defaults?.priority ?? body.data.priority ?? 0;
 
@@ -643,6 +876,24 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
         return reply.code(400).send({
           success: false,
           message: "Base URL 必须选择该供应商的官方地址",
+        });
+      }
+      const newChannelProtocols = requestedSupportedProtocols
+        ?? template?.defaultProtocols
+        ?? [DEFAULT_RELAY_PROTOCOL];
+      const newChannelProtocolConfigResolution = template && baseUrlOption
+        ? resolveTemplateProtocolConfigs(
+          template,
+          baseUrlOption.productLineCode,
+          newChannelProtocols,
+        )
+        : null;
+      if (newChannelProtocolConfigResolution && !newChannelProtocolConfigResolution.ok) {
+        return reply.code(400).send({
+          success: false,
+          code: "CHANNEL_PROTOCOL_UNSUPPORTED",
+          message: "当前渠道不支持所选协议",
+          unsupportedProtocols: newChannelProtocolConfigResolution.unsupportedProtocols,
         });
       }
 
@@ -664,7 +915,11 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
           };
         } else {
           // The guards above make these values available in this locator branch.
-          if (!template || !baseUrlOption) {
+          if (
+            !template || !baseUrlOption ||
+            !newChannelProtocolConfigResolution ||
+            !newChannelProtocolConfigResolution.ok
+          ) {
             throw new Error("渠道定位参数无效");
           }
 
@@ -698,6 +953,7 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
           }
           if (!provider) throw new Error("供应商创建失败");
 
+          let productLineInsertedByRequest = false;
           let [productLine] = await tx
             .select()
             .from(productLines)
@@ -708,6 +964,10 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
               ),
             )
             .limit(1);
+          const productLineName = resolveTemplateChannelName(
+            productLine?.name,
+            body.data.name ?? baseUrlOption.productLineName,
+          );
 
           if (!productLine) {
             [productLine] = await tx
@@ -715,18 +975,19 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
               .values({
                 providerId: provider.id,
                 code: baseUrlOption.productLineCode,
-                name: baseUrlOption.productLineName,
-                productType: "api",
+                name: productLineName,
+                productType: baseUrlOption.productType,
                 baseUrlOverride:
                   baseUrlOption.url === provider.defaultBaseUrl ? null : baseUrlOption.url,
-                shareMode: "public_pool",
-                allowAutoRoute: true,
-                status: "active",
+                protocolConfigs: newChannelProtocolConfigResolution.configs,
+                configVersion: 1,
+                status: body.data.status ?? "active",
               })
               .onConflictDoNothing({
                 target: [productLines.providerId, productLines.code],
               })
               .returning();
+            productLineInsertedByRequest = Boolean(productLine);
 
             if (!productLine) {
               [productLine] = await tx
@@ -742,14 +1003,30 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
             }
           }
           if (!productLine) throw new Error("渠道创建失败");
+          if (
+            shouldRejectExistingChannelForMetadataRequest(
+              {
+                productLineId: body.data.productLineId,
+                name: body.data.name,
+                status: body.data.status,
+              },
+              productLineInsertedByRequest,
+            )
+          ) {
+            return {
+              kind: "channel_already_exists",
+              productLineId: productLine.id,
+            } as const;
+          }
 
-          ({ provider, productLine } = await syncTemplateDisplayNames(
+          await tx.execute(
+            sql`select pg_advisory_xact_lock(${productLine.id})`,
+          );
+          provider = await syncTemplateProviderDisplayName(
             tx,
             provider,
-            productLine,
             template,
-            baseUrlOption,
-          ));
+          );
 
           context = {
             provider,
@@ -763,14 +1040,73 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
         await tx.execute(
           sql`select pg_advisory_xact_lock(${context.productLine.id})`,
         );
+        const [lockedProductLine] = await tx
+          .select()
+          .from(productLines)
+          .where(eq(productLines.id, context.productLine.id))
+          .limit(1)
+          .for("share");
+        if (!lockedProductLine) return { kind: "product_line_not_found" } as const;
+        context = {
+          ...context,
+          productLine: lockedProductLine,
+          baseUrl: lockedProductLine.baseUrlOverride || context.provider.defaultBaseUrl,
+        };
 
         const existingRows = await tx
           .select({
             id: upstreamCredentials.id,
             secretEncrypted: upstreamCredentials.secretEncrypted,
+            supportedProtocols: upstreamCredentials.supportedProtocols,
           })
           .from(upstreamCredentials)
           .where(eq(upstreamCredentials.productLineId, context.productLine.id));
+
+        const initialization = await initializeEmptyTemplateChannelProtocolConfigs(tx, {
+          productLine: context.productLine,
+          providerCode: context.provider.code,
+          credentialCount: existingRows.length,
+          requestedProtocols: requestedSupportedProtocols,
+          fallbackProtocols: body.data.productLineId === undefined
+            ? newChannelProtocols
+            : undefined,
+          repairExplicitDrift: requestedSupportedProtocols !== undefined,
+        });
+        if (initialization.kind === "protocol_unsupported") return initialization;
+        if (initialization.kind === "config_stale") return initialization;
+        context = {
+          ...context,
+          productLine: initialization.productLine,
+          baseUrl: initialization.productLine.baseUrlOverride || context.provider.defaultBaseUrl,
+        };
+
+        const storedProtocols = configuredProtocols(
+          parseProductLineProtocolConfigs(context.productLine.protocolConfigs),
+        );
+        let protocolResolution = resolveChannelCredentialInsertProtocols(
+          existingRows,
+          requestedSupportedProtocols,
+          storedProtocols,
+        );
+        if (
+          protocolResolution.kind === "unset" &&
+          body.data.productLineId === undefined
+        ) {
+          protocolResolution = resolveChannelCredentialInsertProtocols(
+            existingRows,
+            newChannelProtocols,
+            storedProtocols,
+          );
+        }
+        if (protocolResolution.kind === "mismatch") {
+          return {
+            kind: "channel_protocol_mismatch",
+            channelProtocols: protocolResolution.channelProtocols,
+          } as const;
+        }
+        if (protocolResolution.kind === "unset") {
+          return { kind: "channel_protocol_unset" } as const;
+        }
 
         const existingSecrets: string[] = [];
         const unreadableCredentialIds: number[] = [];
@@ -812,7 +1148,7 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
                 ?? `${context.productLine.name} Key ${String(existingRows.length + index + 1).padStart(labelWidth, "0")}`,
               secretEncrypted: encryptSecret(item.secret),
               secretSuffix: secretSuffix(item.secret),
-              supportedProtocols,
+              supportedProtocols: protocolResolution.protocols,
               weight,
               priority,
               meta: {
@@ -846,24 +1182,67 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
             labels: credentials.map((item) => item.label),
             secretSuffixes: credentials.map((item) => item.secretSuffix),
             count: credentials.length,
-            supportedProtocols,
+            supportedProtocols: protocolResolution.protocols,
             weight,
             priority,
           },
           ip: req.ip,
         });
 
-        return { kind: "created", context, credentials } as const;
+        return {
+          kind: "created",
+          context,
+          credentials,
+          supportedProtocols: protocolResolution.protocols,
+        } as const;
       });
 
       if (created.kind === "product_line_not_found") {
         return reply.code(404).send({ success: false, message: "渠道不存在" });
+      }
+      if (created.kind === "channel_already_exists") {
+        return reply.code(409).send({
+          success: false,
+          code: "CHANNEL_ALREADY_EXISTS",
+          message: "该渠道变体已存在，请刷新后向现有渠道添加 Key",
+          productLineId: created.productLineId,
+        });
+      }
+      if (created.kind === "config_stale") {
+        return reply.code(409).send({
+          success: false,
+          code: "CHANNEL_CONFIG_STALE",
+          message: "渠道配置已被其他操作更新，请刷新后重试",
+        });
+      }
+      if (created.kind === "protocol_unsupported") {
+        return reply.code(400).send({
+          success: false,
+          code: "CHANNEL_PROTOCOL_UNSUPPORTED",
+          message: "当前渠道不支持所选协议",
+          unsupportedProtocols: created.unsupportedProtocols,
+        });
       }
       if (created.kind === "existing_secret_unreadable") {
         return reply.code(409).send({
           success: false,
           message: "渠道中存在无法解密的旧 Key，无法安全完成重复检查",
           credentialIds: created.credentialIds,
+        });
+      }
+      if (created.kind === "channel_protocol_mismatch") {
+        return reply.code(409).send({
+          success: false,
+          code: "CHANNEL_PROTOCOL_MISMATCH",
+          message: "渠道协议已发生变化，请刷新后重试",
+          supportedProtocols: created.channelProtocols,
+        });
+      }
+      if (created.kind === "channel_protocol_unset") {
+        return reply.code(400).send({
+          success: false,
+          code: "CHANNEL_PROTOCOLS_UNSET",
+          message: "渠道尚未配置支持协议，请显式选择协议",
         });
       }
       if (created.kind === "existing_duplicates") {
@@ -888,11 +1267,18 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
             name: created.context.productLine.name,
             productType: created.context.productLine.productType,
             shareMode: created.context.productLine.shareMode,
+            allowAutoRoute: created.context.productLine.allowAutoRoute,
             status: created.context.productLine.status,
             baseUrl: created.context.baseUrl,
+            protocolConfigs: created.context.productLine.protocolConfigs,
+            configVersion: created.context.productLine.configVersion,
           },
           credentials: created.credentials,
-          defaults: { supportedProtocols, weight, priority },
+          defaults: {
+            supportedProtocols: created.supportedProtocols,
+            weight,
+            priority,
+          },
         },
       };
     },
@@ -930,11 +1316,14 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
         productLineStatus: productLines.status,
         productType: productLines.productType,
         shareMode: productLines.shareMode,
+        allowAutoRoute: productLines.allowAutoRoute,
         providerCode: providers.code,
         providerName: providers.name,
         providerStatus: providers.status,
         defaultBaseUrl: providers.defaultBaseUrl,
         baseUrlOverride: productLines.baseUrlOverride,
+        protocolConfigs: productLines.protocolConfigs,
+        configVersion: productLines.configVersion,
       })
       .from(upstreamCredentials)
       .innerJoin(productLines, eq(upstreamCredentials.productLineId, productLines.id))
@@ -1174,7 +1563,7 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
           productLineId: z.number().int().positive(),
           label: z.string().min(1).max(200),
           secret: upstreamSecretSchema,
-          supportedProtocols: supportedProtocolsSchema.default([DEFAULT_RELAY_PROTOCOL]),
+          supportedProtocols: supportedProtocolsSchema.optional(),
           weight: z.number().int().min(0).max(10000).default(100),
           priority: z.number().int().default(0),
           meta: z.record(z.unknown()).optional(),
@@ -1186,23 +1575,53 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
       }
 
       const result = await db.transaction(async (tx) => {
-        const [productLine] = await tx
-          .select({ id: productLines.id })
-          .from(productLines)
-          .where(eq(productLines.id, body.data.productLineId))
-          .limit(1);
-        if (!productLine) return { kind: "product_line_not_found" } as const;
-
         await tx.execute(
-          sql`select pg_advisory_xact_lock(${productLine.id})`,
+          sql`select pg_advisory_xact_lock(${body.data.productLineId})`,
         );
+        const [located] = await tx
+          .select({
+            productLine: productLines,
+            providerCode: providers.code,
+          })
+          .from(productLines)
+          .innerJoin(providers, eq(productLines.providerId, providers.id))
+          .where(eq(productLines.id, body.data.productLineId))
+          .limit(1)
+          .for("share");
+        if (!located) return { kind: "product_line_not_found" } as const;
+        let productLine = located.productLine;
         const existingRows = await tx
           .select({
             id: upstreamCredentials.id,
             secretEncrypted: upstreamCredentials.secretEncrypted,
+            supportedProtocols: upstreamCredentials.supportedProtocols,
           })
           .from(upstreamCredentials)
           .where(eq(upstreamCredentials.productLineId, productLine.id));
+        const initialization = await initializeEmptyTemplateChannelProtocolConfigs(tx, {
+          productLine,
+          providerCode: located.providerCode,
+          credentialCount: existingRows.length,
+          requestedProtocols: body.data.supportedProtocols,
+          repairExplicitDrift: body.data.supportedProtocols !== undefined,
+        });
+        if (initialization.kind === "protocol_unsupported") return initialization;
+        if (initialization.kind === "config_stale") return initialization;
+        productLine = initialization.productLine;
+        const protocolResolution = resolveChannelCredentialInsertProtocols(
+          existingRows,
+          body.data.supportedProtocols,
+          configuredProtocols(parseProductLineProtocolConfigs(productLine.protocolConfigs)),
+        );
+        if (protocolResolution.kind === "mismatch") {
+          return {
+            kind: "channel_protocol_mismatch",
+            channelProtocols: protocolResolution.channelProtocols,
+          } as const;
+        }
+        if (protocolResolution.kind === "unset") {
+          return { kind: "channel_protocol_unset" } as const;
+        }
         const existingSecrets: string[] = [];
         const unreadableCredentialIds: number[] = [];
         for (const existing of existingRows) {
@@ -1232,7 +1651,7 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
             label: body.data.label,
             secretEncrypted: encryptSecret(body.data.secret),
             secretSuffix: secretSuffix(body.data.secret),
-            supportedProtocols: body.data.supportedProtocols,
+            supportedProtocols: protocolResolution.protocols,
             weight: body.data.weight,
             priority: body.data.priority,
             meta: body.data.meta,
@@ -1266,11 +1685,41 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
       if (result.kind === "product_line_not_found") {
         return reply.code(400).send({ success: false, message: "产品线不存在" });
       }
+      if (result.kind === "config_stale") {
+        return reply.code(409).send({
+          success: false,
+          code: "CHANNEL_CONFIG_STALE",
+          message: "渠道配置已被其他操作更新，请刷新后重试",
+        });
+      }
+      if (result.kind === "protocol_unsupported") {
+        return reply.code(400).send({
+          success: false,
+          code: "CHANNEL_PROTOCOL_UNSUPPORTED",
+          message: "当前渠道不支持所选协议",
+          unsupportedProtocols: result.unsupportedProtocols,
+        });
+      }
       if (result.kind === "existing_secret_unreadable") {
         return reply.code(409).send({
           success: false,
           message: "渠道中存在无法解密的旧 Key，无法安全完成重复检查",
           credentialIds: result.credentialIds,
+        });
+      }
+      if (result.kind === "channel_protocol_mismatch") {
+        return reply.code(409).send({
+          success: false,
+          code: "CHANNEL_PROTOCOL_MISMATCH",
+          message: "渠道协议已发生变化，请刷新后重试",
+          supportedProtocols: result.channelProtocols,
+        });
+      }
+      if (result.kind === "channel_protocol_unset") {
+        return reply.code(400).send({
+          success: false,
+          code: "CHANNEL_PROTOCOLS_UNSET",
+          message: "渠道尚未配置支持协议，请显式选择协议",
         });
       }
       if (result.kind === "existing_duplicate") {
@@ -1288,13 +1737,26 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
     "/api/admin/credentials/:id",
     { preHandler: [requireRoles("admin")] },
     async (req, reply) => {
-      const params = z.object({ id: z.coerce.number() }).safeParse(req.params);
+      const params = z
+        .object({ id: z.coerce.number().int().positive() })
+        .safeParse(req.params);
+      const rawBody = req.body && typeof req.body === "object"
+        ? req.body as Record<string, unknown>
+        : {};
+      if (
+        Object.prototype.hasOwnProperty.call(rawBody, "baseUrl") ||
+        Object.prototype.hasOwnProperty.call(rawBody, "supportedProtocols")
+      ) {
+        return reply.code(400).send({
+          success: false,
+          code: "CHANNEL_LEVEL_FIELD",
+          message: "Base URL 和支持协议属于渠道配置，请通过渠道编辑功能修改",
+        });
+      }
       const body = z
         .object({
           label: z.string().min(1).max(200).optional(),
           secret: upstreamSecretSchema.optional(),
-          baseUrl: z.string().url().optional(),
-          supportedProtocols: supportedProtocolsSchema.optional(),
           weight: z.number().int().min(0).max(10000).optional(),
           priority: z.number().int().optional(),
           status: z
@@ -1303,6 +1765,10 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
           coolUntil: z.string().datetime().nullable().optional(),
           meta: z.record(z.unknown()).nullable().optional(),
         })
+        .strict()
+        .refine((value) => Object.keys(value).length > 0, {
+          message: "至少提供一个要修改的字段",
+        })
         .safeParse(req.body);
 
       if (!params.success || !body.success) {
@@ -1310,20 +1776,32 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
       }
 
       const result = await db.transaction(async (tx) => {
+        const [location] = await tx
+          .select({ productLineId: upstreamCredentials.productLineId })
+          .from(upstreamCredentials)
+          .where(eq(upstreamCredentials.id, params.data.id))
+          .limit(1);
+        if (!location) return { kind: "not_found" } as const;
+
+        // Channel-wide writes and credential create/import take this lock
+        // before locking credential rows. Keeping that order prevents the
+        // credential -> advisory / advisory -> credential deadlock.
+        await tx.execute(
+          sql`select pg_advisory_xact_lock(${location.productLineId})`,
+        );
         const [existing] = await tx
           .select({
             id: upstreamCredentials.id,
             productLineId: upstreamCredentials.productLineId,
-            secretEncrypted: upstreamCredentials.secretEncrypted,
             meta: upstreamCredentials.meta,
-            providerId: providers.id,
-            providerCode: providers.code,
-            defaultBaseUrl: providers.defaultBaseUrl,
           })
           .from(upstreamCredentials)
-          .innerJoin(productLines, eq(upstreamCredentials.productLineId, productLines.id))
-          .innerJoin(providers, eq(productLines.providerId, providers.id))
-          .where(eq(upstreamCredentials.id, params.data.id))
+          .where(
+            and(
+              eq(upstreamCredentials.id, params.data.id),
+              eq(upstreamCredentials.productLineId, location.productLineId),
+            ),
+          )
           .limit(1)
           .for("update");
 
@@ -1333,9 +1811,6 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
         if (body.data.label !== undefined) patch.label = body.data.label;
         if (body.data.weight !== undefined) patch.weight = body.data.weight;
         if (body.data.priority !== undefined) patch.priority = body.data.priority;
-        if (body.data.supportedProtocols !== undefined) {
-          patch.supportedProtocols = body.data.supportedProtocols;
-        }
         if (body.data.status !== undefined) {
           patch.status = body.data.status;
           if (body.data.status === "active") {
@@ -1346,91 +1821,20 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
         if (body.data.coolUntil !== undefined) {
           patch.coolUntil = body.data.coolUntil ? new Date(body.data.coolUntil) : null;
         }
-        if (body.data.meta !== undefined) patch.meta = body.data.meta;
+        if (body.data.meta !== undefined) {
+          patch.meta = body.data.secret === undefined
+            ? body.data.meta
+            : metaWithoutStaleTest(body.data.meta);
+        }
         if (body.data.secret !== undefined) {
           patch.secretEncrypted = encryptSecret(body.data.secret);
           patch.secretSuffix = secretSuffix(body.data.secret);
+          patch.meta ??= metaWithoutStaleTest(existing.meta);
+          patch.lastError = null;
+          patch.lastErrorAt = null;
         }
 
-        const requiresDuplicateCheck =
-          body.data.secret !== undefined || body.data.baseUrl !== undefined;
-        let candidateSecret = body.data.secret;
-        if (requiresDuplicateCheck && candidateSecret === undefined) {
-          try {
-            candidateSecret = decryptSecret(existing.secretEncrypted);
-          } catch {
-            return { kind: "current_secret_unreadable" } as const;
-          }
-        }
-
-        let targetProductLineId = existing.productLineId;
-        let resolvedBaseUrl: string | undefined;
-        if (body.data.baseUrl !== undefined) {
-          const template = getProviderTemplate(existing.providerCode);
-          if (!template) return { kind: "unsupported_provider" } as const;
-
-          const baseUrlOption = resolveTemplateBaseUrlOption(template, body.data.baseUrl);
-          if (!baseUrlOption) return { kind: "invalid_base_url" } as const;
-
-          let [targetProductLine] = await tx
-            .select()
-            .from(productLines)
-            .where(
-              and(
-                eq(productLines.providerId, existing.providerId),
-                eq(productLines.code, baseUrlOption.productLineCode),
-              ),
-            )
-            .limit(1);
-          if (!targetProductLine) {
-            [targetProductLine] = await tx
-              .insert(productLines)
-              .values({
-                providerId: existing.providerId,
-                code: baseUrlOption.productLineCode,
-                name: baseUrlOption.productLineName,
-                productType: "api",
-                baseUrlOverride:
-                  baseUrlOption.url === existing.defaultBaseUrl ? null : baseUrlOption.url,
-                shareMode: "public_pool",
-                allowAutoRoute: true,
-                status: "active",
-              })
-              .onConflictDoNothing({
-                target: [productLines.providerId, productLines.code],
-              })
-              .returning();
-            if (!targetProductLine) {
-              [targetProductLine] = await tx
-                .select()
-                .from(productLines)
-                .where(
-                  and(
-                    eq(productLines.providerId, existing.providerId),
-                    eq(productLines.code, baseUrlOption.productLineCode),
-                  ),
-                )
-                .limit(1);
-            }
-          }
-          if (!targetProductLine) throw new Error("渠道创建失败");
-
-          targetProductLineId = targetProductLine.id;
-          resolvedBaseUrl = baseUrlOption.url;
-          if (targetProductLineId !== existing.productLineId) {
-            patch.productLineId = targetProductLineId;
-            // Endpoint changed: previous connectivity results no longer apply.
-            if (body.data.meta === undefined) {
-              patch.meta = metaWithoutStaleTest(existing.meta);
-            }
-          }
-        }
-
-        if (requiresDuplicateCheck) {
-          if (candidateSecret === undefined) throw new Error("凭证去重参数无效");
-          await tx.execute(
-            sql`select pg_advisory_xact_lock(${targetProductLineId})`,
-          );
+        if (body.data.secret !== undefined) {
           const targetCredentials = await tx
             .select({
               id: upstreamCredentials.id,
@@ -1439,7 +1843,7 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
             .from(upstreamCredentials)
             .where(
               and(
-                eq(upstreamCredentials.productLineId, targetProductLineId),
+                eq(upstreamCredentials.productLineId, existing.productLineId),
                 ne(upstreamCredentials.id, existing.id),
               ),
             );
@@ -1459,7 +1863,7 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
             } as const;
           }
           if (
-            inspectCredentialSecretDuplicates([candidateSecret], targetSecrets)
+            inspectCredentialSecretDuplicates([body.data.secret], targetSecrets)
               .existingDuplicateIndexes.length
           ) {
             return { kind: "existing_duplicate" } as const;
@@ -1488,7 +1892,6 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
           detail: {
             ...body.data,
             secret: body.data.secret ? "[updated]" : undefined,
-            baseUrl: resolvedBaseUrl ?? body.data.baseUrl,
             productLineId: row.productLineId,
           },
           ip: req.ip,
@@ -1499,24 +1902,6 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
 
       if (result.kind === "not_found") {
         return reply.code(404).send({ success: false, message: "凭证不存在" });
-      }
-      if (result.kind === "unsupported_provider") {
-        return reply.code(400).send({
-          success: false,
-          message: "当前渠道平台不支持修改 API 地址",
-        });
-      }
-      if (result.kind === "invalid_base_url") {
-        return reply.code(400).send({
-          success: false,
-          message: "Base URL 必须选择该供应商的官方地址",
-        });
-      }
-      if (result.kind === "current_secret_unreadable") {
-        return reply.code(409).send({
-          success: false,
-          message: "当前 Key 无法解密，不能安全移动到其他渠道",
-        });
       }
       if (result.kind === "existing_secret_unreadable") {
         return reply.code(409).send({

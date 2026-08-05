@@ -1,4 +1,11 @@
-import type { RelayProtocol } from "./relay/protocol.js";
+import type {
+  ConfigurableRelayProtocol,
+  RelayProtocol,
+} from "./relay/protocol.js";
+import type {
+  ProductLineProtocolConfigs,
+  ProtocolUpstreamConfig,
+} from "./upstream-protocol-config.js";
 
 export type ProviderTemplateCode =
   | "glm"
@@ -12,6 +19,8 @@ export type ProviderBaseUrlOption = {
   host: string;
   productLineCode: string;
   productLineName: string;
+  productType: "api" | "coding_plan";
+  protocolConfigs: ProductLineProtocolConfigs;
 };
 
 export type ProviderTemplate = {
@@ -24,7 +33,7 @@ export type ProviderTemplate = {
   description: string;
   baseUrls: ProviderBaseUrlOption[];
   authStyle: "bearer" | "x-api-key";
-  defaultProtocols: RelayProtocol[];
+  defaultProtocols: ConfigurableRelayProtocol[];
   defaultLabel: string;
   color: string;
 };
@@ -50,16 +59,27 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
     name: "智谱",
     modelName: "GLM",
     shortName: "GLM",
-    description: "智谱开放平台 API，Bearer 鉴权，兼容 Chat Completions。",
+    description: "GLM Coding Plan，支持 OpenAI Chat 与 Anthropic Messages。",
     authStyle: "bearer",
-    defaultProtocols: ["openai_chat"],
+    defaultProtocols: ["openai_chat", "anthropic_messages"],
     baseUrls: [
       {
-        label: "中国区",
-        url: "https://open.bigmodel.cn/api/paas/v4",
+        label: "Coding Plan",
+        url: "https://open.bigmodel.cn/api/coding/paas/v4",
         host: "open.bigmodel.cn",
         productLineCode: "api",
         productLineName: "GLM",
+        productType: "coding_plan",
+        protocolConfigs: {
+          openai_chat: {
+            baseUrl: "https://open.bigmodel.cn/api/coding/paas/v4",
+            authStyle: "bearer",
+          },
+          anthropic_messages: {
+            baseUrl: "https://open.bigmodel.cn/api/anthropic",
+            authStyle: "x-api-key",
+          },
+        },
       },
     ],
     defaultLabel: "智谱/GLM",
@@ -80,6 +100,10 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
         host: "api.kimi.com",
         productLineCode: "kimi_code",
         productLineName: "Kimi Code",
+        productType: "coding_plan",
+        protocolConfigs: {
+          openai_chat: { baseUrl: "https://api.kimi.com/coding/v1", authStyle: "bearer" },
+        },
       },
       {
         label: "中国区",
@@ -87,6 +111,10 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
         host: "api.moonshot.cn",
         productLineCode: "api",
         productLineName: "Kimi（中国区）",
+        productType: "api",
+        protocolConfigs: {
+          openai_chat: { baseUrl: "https://api.moonshot.cn/v1", authStyle: "bearer" },
+        },
       },
       {
         label: "国际区",
@@ -94,6 +122,10 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
         host: "api.moonshot.ai",
         productLineCode: "api_intl",
         productLineName: "Kimi（国际区）",
+        productType: "api",
+        protocolConfigs: {
+          openai_chat: { baseUrl: "https://api.moonshot.ai/v1", authStyle: "bearer" },
+        },
       },
     ],
     defaultLabel: "月之暗面/Kimi",
@@ -114,6 +146,10 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
         host: "api.deepseek.com",
         productLineCode: "api",
         productLineName: "DeepSeek",
+        productType: "api",
+        protocolConfigs: {
+          openai_chat: { baseUrl: "https://api.deepseek.com", authStyle: "bearer" },
+        },
       },
     ],
     defaultLabel: "深度求索/DeepSeek",
@@ -134,6 +170,10 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
         host: "api.minimaxi.com",
         productLineCode: "api",
         productLineName: "MiniMax（中国区）",
+        productType: "api",
+        protocolConfigs: {
+          openai_chat: { baseUrl: "https://api.minimaxi.com/v1", authStyle: "bearer" },
+        },
       },
       {
         label: "国际区",
@@ -141,6 +181,10 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
         host: "api.minimax.io",
         productLineCode: "api_intl",
         productLineName: "MiniMax（国际区）",
+        productType: "api",
+        protocolConfigs: {
+          openai_chat: { baseUrl: "https://api.minimax.io/v1", authStyle: "bearer" },
+        },
       },
     ],
     defaultLabel: "MiniMax",
@@ -152,13 +196,57 @@ export function getProviderTemplate(code: string): ProviderTemplate | undefined 
   return PROVIDER_TEMPLATES.find((item) => item.code === code);
 }
 
+export function resolveTemplateProductLineOption(
+  template: ProviderTemplate,
+  productLineCode: string,
+): ProviderBaseUrlOption | undefined {
+  return template.baseUrls.find((item) => item.productLineCode === productLineCode)
+    ?? (template.code === "glm" ? template.baseUrls[0] : undefined);
+}
+
+export type TemplateProtocolConfigResolution =
+  | { ok: true; configs: ProductLineProtocolConfigs }
+  | { ok: false; reason: "product_line_unsupported"; unsupportedProtocols: RelayProtocol[] }
+  | { ok: false; reason: "protocol_unsupported"; unsupportedProtocols: RelayProtocol[] };
+
+export function resolveTemplateProtocolConfigs(
+  template: ProviderTemplate,
+  productLineCode: string,
+  protocols: readonly RelayProtocol[],
+): TemplateProtocolConfigResolution {
+  const option = resolveTemplateProductLineOption(template, productLineCode);
+  if (!option) {
+    return {
+      ok: false,
+      reason: "product_line_unsupported",
+      unsupportedProtocols: [...protocols],
+    };
+  }
+
+  const configs: ProductLineProtocolConfigs = {};
+  const unsupportedProtocols: RelayProtocol[] = [];
+  for (const protocol of protocols) {
+    const config = option.protocolConfigs[protocol as ConfigurableRelayProtocol] as
+      | ProtocolUpstreamConfig
+      | undefined;
+    if (!config) {
+      unsupportedProtocols.push(protocol);
+      continue;
+    }
+    configs[protocol as ConfigurableRelayProtocol] = { ...config };
+  }
+  return unsupportedProtocols.length > 0
+    ? { ok: false, reason: "protocol_unsupported", unsupportedProtocols }
+    : { ok: true, configs };
+}
+
 export function normalizeBaseUrl(value: string): string {
   return value.trim().replace(/\/+$/, "");
 }
 
 export function resolveTemplateBaseUrl(template: ProviderTemplate, value?: string): string | null {
   const normalized = normalizeBaseUrl(value || template.baseUrls[0].url);
-  const allowed = template.baseUrls.some((item) => normalizeBaseUrl(item.url) === normalized);
+  const allowed = Boolean(resolveTemplateBaseUrlOption(template, normalized));
   return allowed ? normalized : null;
 }
 
@@ -167,7 +255,12 @@ export function resolveTemplateBaseUrlOption(
   value?: string,
 ): ProviderBaseUrlOption | undefined {
   const normalized = normalizeBaseUrl(value || template.baseUrls[0].url);
-  return template.baseUrls.find((item) => normalizeBaseUrl(item.url) === normalized);
+  return template.baseUrls.find((item) =>
+    normalizeBaseUrl(item.url) === normalized ||
+    Object.values(item.protocolConfigs).some((config) =>
+      config && normalizeBaseUrl(config.baseUrl) === normalized
+    )
+  );
 }
 
 export function isAllowedTemplateHost(template: ProviderTemplate, value: string): boolean {

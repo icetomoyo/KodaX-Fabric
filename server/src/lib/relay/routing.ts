@@ -1,13 +1,13 @@
 import { and, eq, isNull, lte, or } from "drizzle-orm";
 import { db } from "../../db/client.js";
 import {
-  credentialEmployeeGrants,
   modelRoutes,
   productLines,
   providers,
   upstreamCredentials,
 } from "../../db/schema/index.js";
 import { effectiveCredentialStatus } from "../credential-status.js";
+import { resolveProtocolUpstreamConfig } from "../upstream-protocol-config.js";
 import type { RelayProtocol } from "./protocol.js";
 import type {
   RelayCandidate,
@@ -25,8 +25,6 @@ export type AvailableRelayCredential = {
   meta: unknown;
   productLineId: number;
   productType: "api" | "coding_plan";
-  shareMode: "public_pool" | "grant_only" | "disabled";
-  allowAutoRoute: boolean;
   retryPolicy: unknown;
   providerCode: string;
   authStyle: string;
@@ -40,14 +38,12 @@ export type AvailableRelayModelRoute = {
   upstreamModel: string;
   routePriority: number;
   routeWeight: number;
-  shareMode: "public_pool" | "grant_only" | "disabled";
 };
 
 export type RelayCandidateResolution = {
   candidates: RelayCandidate[];
   unavailableReason:
     | "bound_channel_unavailable"
-    | "unknown_model"
     | "cooling"
     | "unavailable"
     | null;
@@ -98,7 +94,7 @@ type RelayCredentialAccess = {
 };
 
 async function loadAccessibleCredentials(
-  employeeId: number,
+  _employeeId: number,
   protocol: RelayProtocol,
   productLineId: number,
   options: { readOnly?: boolean } = {},
@@ -124,7 +120,7 @@ async function loadAccessibleCredentials(
       );
   }
 
-  const [rows, grants, boundChannel] = await Promise.all([
+  const [rows, boundChannel] = await Promise.all([
     db
       .select({
         credentialId: upstreamCredentials.id,
@@ -137,29 +133,23 @@ async function loadAccessibleCredentials(
         meta: upstreamCredentials.meta,
         productLineId: productLines.id,
         productType: productLines.productType,
-        shareMode: productLines.shareMode,
-        allowAutoRoute: productLines.allowAutoRoute,
         retryPolicy: productLines.retryPolicy,
         providerCode: providers.code,
         authStyle: providers.authStyle,
         supportedProtocols: upstreamCredentials.supportedProtocols,
         defaultBaseUrl: providers.defaultBaseUrl,
         baseUrlOverride: productLines.baseUrlOverride,
+        protocolConfigs: productLines.protocolConfigs,
       })
       .from(upstreamCredentials)
       .innerJoin(productLines, eq(upstreamCredentials.productLineId, productLines.id))
       .innerJoin(providers, eq(productLines.providerId, providers.id))
       .where(eq(upstreamCredentials.productLineId, productLineId)),
     db
-      .select({ credentialId: credentialEmployeeGrants.credentialId })
-      .from(credentialEmployeeGrants)
-      .where(eq(credentialEmployeeGrants.employeeId, employeeId)),
-    db
         .select({
           productLineId: productLines.id,
           productLineStatus: productLines.status,
           providerStatus: providers.status,
-          shareMode: productLines.shareMode,
         })
         .from(productLines)
         .innerJoin(providers, eq(productLines.providerId, providers.id))
@@ -168,49 +158,46 @@ async function loadAccessibleCredentials(
         .then((result) => result[0] ?? null),
   ]);
 
-  const grantedCredentialIds = new Set(grants.map((grant) => grant.credentialId));
-  const hasChannelGrant = rows.some((row) => grantedCredentialIds.has(row.credentialId));
   const unavailable = !boundChannel ||
     boundChannel.productLineStatus !== "active" ||
-    boundChannel.providerStatus !== "active" ||
-    boundChannel.shareMode === "disabled" ||
-    (boundChannel.shareMode === "grant_only" && !hasChannelGrant);
+    boundChannel.providerStatus !== "active";
   if (unavailable) {
     return { credentials: [], boundChannelUnavailable: true };
   }
 
   const credentials = rows
-    .filter((row) => {
-      if (row.shareMode === "public_pool") return true;
-      if (row.shareMode === "grant_only") {
-        return grantedCredentialIds.has(row.credentialId);
-      }
-      return false;
+    .filter((row) => credentialSupportsProtocol(row, protocol))
+    .map((row): AvailableRelayCredential | null => {
+      const upstreamConfig = resolveProtocolUpstreamConfig({
+        protocol,
+        protocolConfigs: row.protocolConfigs,
+        legacyBaseUrl: row.baseUrlOverride || row.defaultBaseUrl,
+        legacyAuthStyle: row.authStyle,
+      });
+      if (!upstreamConfig) return null;
+      return {
+        credentialId: row.credentialId,
+        credentialSuffix: row.credentialSuffix,
+        secretEncrypted: row.secretEncrypted,
+        credentialPriority: row.credentialPriority,
+        credentialWeight: row.credentialWeight,
+        credentialStatus: effectiveCredentialStatus(
+          row.credentialStatus,
+          row.coolUntil,
+          now,
+        ),
+        coolUntil: row.coolUntil,
+        meta: row.meta,
+        productLineId: row.productLineId,
+        productType: row.productType,
+        retryPolicy: row.retryPolicy,
+        providerCode: row.providerCode,
+        authStyle: upstreamConfig.authStyle,
+        supportedProtocols: row.supportedProtocols ?? [],
+        baseUrl: upstreamConfig.baseUrl,
+      };
     })
-    .map((row) => ({
-      credentialId: row.credentialId,
-      credentialSuffix: row.credentialSuffix,
-      secretEncrypted: row.secretEncrypted,
-      credentialPriority: row.credentialPriority,
-      credentialWeight: row.credentialWeight,
-      credentialStatus: effectiveCredentialStatus(
-        row.credentialStatus,
-        row.coolUntil,
-        now,
-      ),
-      coolUntil: row.coolUntil,
-      meta: row.meta,
-      productLineId: row.productLineId,
-      productType: row.productType,
-      shareMode: row.shareMode,
-      allowAutoRoute: row.allowAutoRoute,
-      retryPolicy: row.retryPolicy,
-      providerCode: row.providerCode,
-      authStyle: row.authStyle,
-      supportedProtocols: row.supportedProtocols ?? [],
-      baseUrl: (row.baseUrlOverride || row.defaultBaseUrl).replace(/\/+$/, ""),
-    }))
-    .filter((credential) => credentialSupportsProtocol(credential, protocol));
+    .filter((credential): credential is AvailableRelayCredential => credential !== null);
 
   return {
     credentials: filterRelayItemsToProductLine(credentials, productLineId),
@@ -234,10 +221,8 @@ function coolingRetryAfter(credentials: AvailableRelayCredential[]): number | nu
 }
 
 function unavailableResolution(
-  known: boolean,
   credentials: AvailableRelayCredential[],
 ): Pick<RelayCandidateResolution, "unavailableReason" | "retryAfterSeconds"> {
-  if (!known) return { unavailableReason: "unknown_model", retryAfterSeconds: null };
   const retryAfterSeconds = coolingRetryAfter(credentials);
   if (retryAfterSeconds !== null) {
     return { unavailableReason: "cooling", retryAfterSeconds };
@@ -347,8 +332,9 @@ function toRelayCandidate(
 
 /**
  * Pure routing core used by both production queries and focused tests. Raw
- * rows are scoped to the Key product line before explicit-route detection, auto
- * discovery, candidate construction, weighting, and error classification.
+ * rows are scoped to the Key product line before explicit-route detection,
+ * transparent fallback, candidate construction, weighting, and error
+ * classification.
  */
 export function resolveRelayCandidatesFromSnapshot(
   rawCredentials: readonly AvailableRelayCredential[],
@@ -382,9 +368,6 @@ export function resolveRelayCandidatesFromSnapshot(
     }
   } else {
     for (const credential of activeCredentials) {
-      if (!credential.allowAutoRoute || !discoveredModels(credential.meta).includes(clientModel)) {
-        continue;
-      }
       candidates.push(toRelayCandidate(credential, clientModel, upstreamProtocol));
     }
   }
@@ -405,20 +388,16 @@ export function resolveRelayCandidatesFromSnapshot(
       : [];
     return {
       candidates: [],
-      ...unavailableResolution(true, eligibleCredentials),
+      ...unavailableResolution(eligibleCredentials),
     };
   }
 
-  const mappedCredentials = credentials.filter(
-    (credential) =>
-      credential.allowAutoRoute && discoveredModels(credential.meta).includes(clientModel),
-  );
-  const eligibleCredentials = mappedCredentials.filter(
+  const eligibleCredentials = credentials.filter(
     (credential) => credential.credentialWeight > 0,
   );
   return {
     candidates: [],
-    ...unavailableResolution(mappedCredentials.length > 0, eligibleCredentials),
+    ...unavailableResolution(eligibleCredentials),
   };
 }
 
@@ -455,7 +434,6 @@ export async function resolveRelayCandidates(
       upstreamModel: modelRoutes.upstreamModel,
       routePriority: modelRoutes.priority,
       routeWeight: modelRoutes.weight,
-      shareMode: productLines.shareMode,
     })
     .from(modelRoutes)
     .innerJoin(productLines, eq(modelRoutes.productLineId, productLines.id))
@@ -538,10 +516,8 @@ export async function resolveAccessibleRelayModels(
   const byId = new Map<string, string>();
   const boundExplicitModels = new Set(routes.map((route) => route.clientModel));
   for (const credential of credentials) {
-    if (!credential.allowAutoRoute) continue;
     for (const model of discoveredModels(credential.meta)) {
-      // An enabled explicit route in the bound channel suppresses auto-route
-      // even when that route is currently unusable.
+      // Prefer the explicit model-list entry for a duplicate client model.
       if (boundExplicitModels.has(model)) continue;
       if (!byId.has(model)) byId.set(model, credential.providerCode);
     }

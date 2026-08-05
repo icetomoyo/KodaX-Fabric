@@ -117,6 +117,8 @@ export const productLines = pgTable(
     name: varchar("name", { length: 100 }).notNull(),
     productType: productTypeEnum("product_type").notNull(),
     baseUrlOverride: text("base_url_override"),
+    protocolConfigs: jsonb("protocol_configs"),
+    configVersion: integer("config_version").notNull().default(1),
     shareMode: shareModeEnum("share_mode").notNull().default("public_pool"),
     allowAutoRoute: boolean("allow_auto_route").notNull().default(true),
     retryPolicy: jsonb("retry_policy"),

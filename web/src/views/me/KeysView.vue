@@ -258,7 +258,6 @@ type UpstreamChannel = {
   productLineCode: string;
   productLineName: string;
   productType: "api" | "coding_plan" | string;
-  shareMode: string;
   providerId: number;
   providerCode: string;
   providerName: string;
