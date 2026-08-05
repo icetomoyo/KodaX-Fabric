@@ -2,56 +2,121 @@
   <div class="page-card profile-page">
     <h2 class="page-title">个人中心</h2>
 
-    <el-descriptions :column="2" border class="account-info">
-      <el-descriptions-item label="姓名">{{ auth.user?.name || "—" }}</el-descriptions-item>
-      <el-descriptions-item label="手机号">{{ auth.user?.phone || "—" }}</el-descriptions-item>
-      <el-descriptions-item label="角色">{{ roleLabel }}</el-descriptions-item>
-      <el-descriptions-item label="部门">{{ auth.user?.dept || "—" }}</el-descriptions-item>
-    </el-descriptions>
+    <section class="profile-section">
+      <div class="section-heading">
+        <h3 class="section-title">基本信息</h3>
+        <p class="section-desc">手机号同时用于登录，请确保填写准确。</p>
+      </div>
+
+      <el-form
+        v-if="auth.isAdmin"
+        label-position="top"
+        class="profile-form"
+        @submit.prevent="submitProfile"
+      >
+        <div class="profile-fields">
+          <el-form-item label="姓名" required>
+            <el-input
+              v-model="profileForm.name"
+              autocomplete="name"
+              :maxlength="100"
+            />
+          </el-form-item>
+          <el-form-item label="手机号" required>
+            <el-input
+              v-model="profileForm.phone"
+              autocomplete="tel"
+              inputmode="tel"
+              :maxlength="20"
+            />
+          </el-form-item>
+          <el-form-item label="部门">
+            <el-input v-model="profileForm.dept" :maxlength="100" />
+          </el-form-item>
+          <el-form-item label="角色">
+            <el-input :model-value="roleLabel" disabled />
+          </el-form-item>
+        </div>
+        <div class="form-actions">
+          <el-button
+            type="primary"
+            native-type="submit"
+            :loading="profileSaving"
+            :disabled="!profileDirty"
+          >
+            保存个人信息
+          </el-button>
+          <el-button v-if="profileDirty" :disabled="profileSaving" @click="resetProfile">
+            取消修改
+          </el-button>
+        </div>
+      </el-form>
+
+      <el-descriptions v-else :column="2" border class="account-info">
+        <el-descriptions-item label="姓名">{{ auth.user?.name || "—" }}</el-descriptions-item>
+        <el-descriptions-item label="手机号">{{ auth.user?.phone || "—" }}</el-descriptions-item>
+        <el-descriptions-item label="角色">{{ roleLabel }}</el-descriptions-item>
+        <el-descriptions-item label="部门">{{ auth.user?.dept || "—" }}</el-descriptions-item>
+      </el-descriptions>
+    </section>
 
     <el-divider />
 
-    <h3 class="section-title">修改密码</h3>
-    <el-form label-position="top" class="password-form" @submit.prevent="submit">
-      <el-form-item label="原密码" required>
-        <el-input
-          v-model="form.oldPassword"
-          type="password"
-          show-password
-          autocomplete="current-password"
-        />
-      </el-form-item>
-      <el-form-item label="新密码" required>
-        <el-input
-          v-model="form.newPassword"
-          type="password"
-          show-password
-          autocomplete="new-password"
-          :maxlength="128"
-        />
-      </el-form-item>
-      <el-form-item label="确认密码" required>
-        <el-input
-          v-model="form.confirmPassword"
-          type="password"
-          show-password
-          autocomplete="new-password"
-          :maxlength="128"
-        />
-      </el-form-item>
-      <el-button type="primary" native-type="submit" :loading="saving">保存密码</el-button>
-    </el-form>
+    <section class="profile-section">
+      <div class="section-heading">
+        <h3 class="section-title">修改密码</h3>
+        <p class="section-desc">定期更新密码有助于保护账号安全。</p>
+      </div>
+      <el-form label-position="top" class="password-form" @submit.prevent="submitPassword">
+        <el-form-item label="原密码" required>
+          <el-input
+            v-model="passwordForm.oldPassword"
+            type="password"
+            show-password
+            autocomplete="current-password"
+          />
+        </el-form-item>
+        <el-form-item label="新密码" required>
+          <el-input
+            v-model="passwordForm.newPassword"
+            type="password"
+            show-password
+            autocomplete="new-password"
+            :maxlength="128"
+          />
+        </el-form-item>
+        <el-form-item label="确认密码" required>
+          <el-input
+            v-model="passwordForm.confirmPassword"
+            type="password"
+            show-password
+            autocomplete="new-password"
+            :maxlength="128"
+          />
+        </el-form-item>
+        <el-button type="primary" native-type="submit" :loading="passwordSaving">
+          保存密码
+        </el-button>
+      </el-form>
+    </section>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, reactive, ref } from "vue";
+import { computed, reactive, ref, watch } from "vue";
 import { ElMessage } from "element-plus";
+import { http } from "@/api/http";
 import { useAuthStore } from "@/stores/auth";
 
 const auth = useAuthStore();
-const saving = ref(false);
-const form = reactive({
+const profileSaving = ref(false);
+const passwordSaving = ref(false);
+const profileForm = reactive({
+  name: "",
+  phone: "",
+  dept: "",
+});
+const passwordForm = reactive({
   oldPassword: "",
   newPassword: "",
   confirmPassword: "",
@@ -63,29 +128,90 @@ const roleLabel = computed(() => ({
   employee: "员工",
 }[auth.user?.role || "employee"]));
 
-async function submit() {
-  if (!form.oldPassword || !form.newPassword) {
+const profileDirty = computed(() => {
+  const user = auth.user;
+  if (!user) return false;
+  return (
+    profileForm.name.trim() !== user.name ||
+    profileForm.phone.trim() !== user.phone ||
+    profileForm.dept.trim() !== (user.dept ?? "")
+  );
+});
+
+watch(
+  () => auth.user,
+  () => resetProfile(),
+  { immediate: true },
+);
+
+function resetProfile() {
+  profileForm.name = auth.user?.name ?? "";
+  profileForm.phone = auth.user?.phone ?? "";
+  profileForm.dept = auth.user?.dept ?? "";
+}
+
+function requestErrorMessage(error: unknown, fallback: string) {
+  const requestError = error as {
+    message?: string;
+    response?: { data?: { message?: string } };
+  };
+  return requestError.response?.data?.message || requestError.message || fallback;
+}
+
+async function submitProfile() {
+  const user = auth.user;
+  if (!user || !auth.isAdmin) return;
+
+  const name = profileForm.name.trim();
+  const phone = profileForm.phone.trim();
+  const dept = profileForm.dept.trim();
+  if (!name || !phone) {
+    ElMessage.warning("请填写姓名和手机号");
+    return;
+  }
+  if (phone.length < 5) {
+    ElMessage.warning("手机号长度应为 5–20 个字符");
+    return;
+  }
+
+  profileSaving.value = true;
+  try {
+    const { data } = await http.patch(`/api/admin/users/${user.id}`, {
+      name,
+      phone,
+      dept: dept || null,
+    });
+    if (!data.success) throw new Error(data.message || "保存失败");
+    await auth.fetchMe();
+    ElMessage.success("个人信息已更新");
+  } catch (error) {
+    ElMessage.error(requestErrorMessage(error, "个人信息更新失败"));
+  } finally {
+    profileSaving.value = false;
+  }
+}
+
+async function submitPassword() {
+  if (!passwordForm.oldPassword || !passwordForm.newPassword) {
     ElMessage.warning("请填写密码");
     return;
   }
-  if (form.newPassword !== form.confirmPassword) {
+  if (passwordForm.newPassword !== passwordForm.confirmPassword) {
     ElMessage.warning("两次密码不一致");
     return;
   }
 
-  saving.value = true;
+  passwordSaving.value = true;
   try {
-    await auth.changePassword(form.oldPassword, form.newPassword);
-    form.oldPassword = "";
-    form.newPassword = "";
-    form.confirmPassword = "";
+    await auth.changePassword(passwordForm.oldPassword, passwordForm.newPassword);
+    passwordForm.oldPassword = "";
+    passwordForm.newPassword = "";
+    passwordForm.confirmPassword = "";
     ElMessage.success("密码已修改");
-  } catch (error: unknown) {
-    const message = (error as { response?: { data?: { message?: string } } })
-      .response?.data?.message;
-    ElMessage.error(message || "修改失败");
+  } catch (error) {
+    ElMessage.error(requestErrorMessage(error, "修改失败"));
   } finally {
-    saving.value = false;
+    passwordSaving.value = false;
   }
 }
 </script>
@@ -95,16 +221,51 @@ async function submit() {
   max-width: 880px;
 }
 
+.profile-section {
+  margin-top: 18px;
+}
+
+.section-heading {
+  margin-bottom: 18px;
+}
+
+.section-title {
+  margin: 0;
+  font-size: 17px;
+}
+
+.section-desc {
+  margin: 6px 0 0;
+  color: #64748b;
+  font-size: 13px;
+}
+
+.profile-form {
+  max-width: 720px;
+}
+
+.profile-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: 24px;
+}
+
+.form-actions {
+  display: flex;
+  gap: 8px;
+}
+
 .account-info {
   margin-top: 16px;
 }
 
-.section-title {
-  margin: 0 0 16px;
-  font-size: 17px;
-}
-
 .password-form {
   max-width: 480px;
+}
+
+@media (max-width: 700px) {
+  .profile-fields {
+    grid-template-columns: 1fr;
+  }
 }
 </style>
