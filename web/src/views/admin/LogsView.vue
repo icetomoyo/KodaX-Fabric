@@ -260,9 +260,9 @@ const statusOptions: Array<{ label: string; value: LogStatus }> = [
 ];
 
 const providerNames: Record<string, string> = {
-  glm: "GLM",
-  kimi: "Kimi",
-  deepseek: "DeepSeek",
+  glm: "智谱/GLM",
+  kimi: "月之暗面/Kimi",
+  deepseek: "深度求索/DeepSeek",
   minimax: "MiniMax",
 };
 

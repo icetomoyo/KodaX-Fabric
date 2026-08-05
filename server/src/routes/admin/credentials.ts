@@ -179,6 +179,41 @@ function metaWithoutStaleTest(meta: unknown): Record<string, unknown> {
   return previous;
 }
 
+/** Align stored display names with template 公司/模型 convention when they drift. */
+async function syncTemplateDisplayNames(
+  tx: Pick<typeof db, "update">,
+  provider: typeof providers.$inferSelect,
+  productLine: typeof productLines.$inferSelect,
+  template: { name: string },
+  baseUrlOption: { productLineName: string },
+): Promise<{
+  provider: typeof providers.$inferSelect;
+  productLine: typeof productLines.$inferSelect;
+}> {
+  let nextProvider = provider;
+  let nextProductLine = productLine;
+
+  if (provider.name !== template.name) {
+    const [updated] = await tx
+      .update(providers)
+      .set({ name: template.name, updatedAt: new Date() })
+      .where(eq(providers.id, provider.id))
+      .returning();
+    if (updated) nextProvider = updated;
+  }
+
+  if (productLine.name !== baseUrlOption.productLineName) {
+    const [updated] = await tx
+      .update(productLines)
+      .set({ name: baseUrlOption.productLineName, updatedAt: new Date() })
+      .where(eq(productLines.id, productLine.id))
+      .returning();
+    if (updated) nextProductLine = updated;
+  }
+
+  return { provider: nextProvider, productLine: nextProductLine };
+}
+
 function resolveTestProtocol(
   supportedProtocols: RelayProtocol[] | null | undefined,
   preferred?: RelayProtocol,
@@ -427,6 +462,14 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
             })
             .returning();
         }
+
+        ({ provider, productLine } = await syncTemplateDisplayNames(
+          tx,
+          provider,
+          productLine,
+          template,
+          baseUrlOption,
+        ));
 
         await tx.execute(
           sql`select pg_advisory_xact_lock(${productLine.id})`,
@@ -699,6 +742,14 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
             }
           }
           if (!productLine) throw new Error("渠道创建失败");
+
+          ({ provider, productLine } = await syncTemplateDisplayNames(
+            tx,
+            provider,
+            productLine,
+            template,
+            baseUrlOption,
+          ));
 
           context = {
             provider,

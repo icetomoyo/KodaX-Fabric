@@ -91,7 +91,7 @@
           </div>
           <div>
             <dt>上游渠道</dt>
-            <dd>{{ createdResult.providerName }} · {{ createdResult.productLineName }}</dd>
+            <dd>{{ channelLabel({ providerName: createdResult.providerName, productLineName: createdResult.productLineName }) }}</dd>
           </div>
           <div>
             <dt>协议</dt>
@@ -366,12 +366,18 @@ function resetCreateState() {
   channelsLoading.value = false;
 }
 
-function channelLabel(channel: UpstreamChannel): string {
-  return `${channel.providerName} · ${channel.productLineName}`;
+/** 公司名称/模型名称，如 智谱/GLM、深度求索/DeepSeek */
+function channelLabel(channel: Pick<UpstreamChannel, "providerName" | "productLineName">): string {
+  const company = channel.providerName.trim();
+  const model = channel.productLineName.trim();
+  if (!company) return model;
+  if (!model) return company;
+  if (company === model || model.startsWith(`${company}/`)) return model;
+  return `${company}/${model}`;
 }
 
 function keyChannelLabel(row: KeyRow): string {
-  return `${row.providerName} · ${row.productLineName}`;
+  return channelLabel(row);
 }
 
 function onChannelChange(productLineId: number | null) {

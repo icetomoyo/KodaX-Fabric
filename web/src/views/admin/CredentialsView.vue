@@ -45,8 +45,8 @@
                   {{ providerShortName(channel.providerCode) }}
                 </span>
                 <div class="channel-card-copy">
-                  <strong class="channel-card-title">{{ channel.productLineName }}</strong>
-                  <span class="channel-card-meta">{{ channel.providerName }}</span>
+                  <strong class="channel-card-title">{{ channelDisplayName(channel) }}</strong>
+                  <span class="channel-card-meta">{{ channel.productLineCode }}</span>
                 </div>
                 <el-tag :type="channelAvailabilityType(channel)" size="small" effect="light">
                   {{ channel.schedulableCount }}/{{ channel.totalCount }} 可调度
@@ -69,7 +69,7 @@
                 </span>
                 <div class="detail-copy">
                   <div class="detail-title-row">
-                    <h3 class="detail-title">{{ selectedChannel.productLineName }}</h3>
+                    <h3 class="detail-title">{{ channelDisplayName(selectedChannel) }}</h3>
                     <el-tag effect="plain" size="small">{{ selectedChannel.providerName }}</el-tag>
                   </div>
                   <div class="detail-subtitle mono wrap">{{ selectedChannel.baseUrl }}</div>
@@ -275,7 +275,7 @@
       @closed="clearBulkSecrets"
     >
       <template v-if="!bulkForm.productLineId">
-        <div class="section-label">供应商</div>
+        <div class="section-label">选择渠道（公司名称/模型名称）</div>
         <div class="provider-grid">
           <button
             v-for="template in templates"
@@ -289,8 +289,8 @@
               {{ template.shortName }}
             </span>
             <span class="provider-card-copy">
-              <strong>{{ template.name }}</strong>
-              <small>{{ template.description }}</small>
+              <strong>{{ templateDisplayName(template) }}</strong>
+              <small>{{ template.name }} · {{ template.modelName }}</small>
             </span>
           </button>
         </div>
@@ -301,11 +301,13 @@
               <el-option
                 v-for="option in bulkBaseUrlOptions"
                 :key="option.url"
-                :label="`${option.productLineName} · ${option.label} · ${option.url}`"
+                :label="baseUrlOptionLabel(option)"
                 :value="option.url"
               />
             </el-select>
-            <div class="form-help">同一供应商的不同区域或产品线会分别形成独立渠道。</div>
+            <div class="form-help">
+              渠道按「公司/模型」命名（如 智谱/GLM、深度求索/DeepSeek）；同一公司的不同区域会形成独立渠道。
+            </div>
           </el-form-item>
         </el-form>
       </template>
@@ -315,7 +317,7 @@
           {{ providerShortName(importTargetChannel.providerCode) }}
         </span>
         <div>
-          <strong>{{ importTargetChannel.providerName }} · {{ importTargetChannel.productLineName }}</strong>
+          <strong>{{ channelDisplayName(importTargetChannel) }}</strong>
           <div class="cell-secondary mono wrap">{{ importTargetChannel.baseUrl }}</div>
         </div>
       </div>
@@ -440,7 +442,7 @@
               </el-tag>
             </div>
             <p>
-              {{ detailRow.providerName }} · {{ detailRow.productLineName }} ·
+              {{ channelDisplayName(detailRow) }} ·
               <span class="secret-mask inline">•••• {{ detailRow.secretSuffix }}</span>
             </p>
           </div>
@@ -661,7 +663,10 @@ type ProviderTemplateCode = "glm" | "kimi" | "deepseek" | "minimax";
 
 type ProviderTemplate = {
   code: ProviderTemplateCode;
+  /** 公司名称 */
   name: string;
+  /** 模型品牌名 */
+  modelName: string;
   shortName: string;
   description?: string;
   baseUrls: ProviderBaseUrl[];
@@ -804,9 +809,14 @@ const importTargetChannel = computed(
 );
 
 const importChannelLabel = computed(() => {
-  if (importTargetChannel.value) return importTargetChannel.value.productLineName;
+  if (importTargetChannel.value) return channelDisplayName(importTargetChannel.value);
   const option = bulkBaseUrlOptions.value.find((item) => item.url === bulkForm.baseUrl);
-  return option?.productLineName || selectedBulkTemplate.value?.defaultLabel || "API Key";
+  if (option && selectedBulkTemplate.value) {
+    return formatChannelName(selectedBulkTemplate.value.name, option.productLineName);
+  }
+  return selectedBulkTemplate.value
+    ? templateDisplayName(selectedBulkTemplate.value)
+    : "API Key";
 });
 
 const bulkParseResult = computed(() => parseBulkKeys(
@@ -950,6 +960,34 @@ function providerShortName(code: string): string {
 
 function providerLogoStyle(code: string): Record<string, string> {
   return { background: providerColor(code) };
+}
+
+/** 公司名称/模型名称，如 智谱/GLM、深度求索/DeepSeek */
+function formatChannelName(companyName: string, modelName: string): string {
+  const company = companyName.trim();
+  const model = modelName.trim();
+  if (!company) return model;
+  if (!model) return company;
+  if (company === model || model.startsWith(`${company}/`)) return model;
+  return `${company}/${model}`;
+}
+
+function templateDisplayName(template: ProviderTemplate): string {
+  return formatChannelName(template.name, template.modelName || template.shortName);
+}
+
+function channelDisplayName(
+  channel: Pick<ChannelGroup, "providerName" | "productLineName"> | Pick<CredentialRow, "providerName" | "productLineName">,
+): string {
+  return formatChannelName(channel.providerName, channel.productLineName);
+}
+
+function baseUrlOptionLabel(option: ProviderBaseUrl): string {
+  const template = selectedBulkTemplate.value;
+  const channelName = template
+    ? formatChannelName(template.name, option.productLineName)
+    : option.productLineName;
+  return `${channelName} · ${option.label} · ${option.url}`;
 }
 
 function statusText(status: CredentialStatus): string {
@@ -1371,7 +1409,7 @@ async function batchDeleteCredentials() {
     ElMessage.warning("单次最多批量删除 200 个 Key");
     return;
   }
-  const channelConfirmName = `${channel.providerName} · ${channel.productLineName}`;
+  const channelConfirmName = channelDisplayName(channel);
   try {
     await ElMessageBox.confirm(
       `确认删除选中的 ${targets.length} 个 Key？对应的员工授权也会一并删除。删除后不可恢复，历史调用日志仍会保留。`,

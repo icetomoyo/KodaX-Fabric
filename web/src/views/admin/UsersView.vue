@@ -402,7 +402,12 @@ function requestErrorMessage(error: unknown, fallback: string) {
 }
 
 function keyChannelLabel(row: EmployeeKeyRow): string {
-  return `${row.providerName} · ${row.productLineName}`;
+  const company = row.providerName.trim();
+  const model = row.productLineName.trim();
+  if (!company) return model;
+  if (!model) return company;
+  if (company === model || model.startsWith(`${company}/`)) return model;
+  return `${company}/${model}`;
 }
 
 async function openApiKeys(row: UserRow) {
