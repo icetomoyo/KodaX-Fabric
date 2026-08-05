@@ -11,7 +11,7 @@ const envSchema = z.object({
   DATABASE_URL: z.string().min(1),
   REDIS_URL: z.string().min(1),
   PORT: z.coerce.number().default(3100),
-  HOST: z.string().default("127.0.0.1"),
+  HOST: z.string().default("0.0.0.0"),
   CORS_ORIGIN: z.string().default("http://127.0.0.1:5173"),
   JWT_SECRET: z.string().min(16),
   CREDENTIAL_ENCRYPT_KEY: z.string().min(16),

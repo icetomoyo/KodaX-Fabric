@@ -48,9 +48,13 @@ npm run db:setup
 npm run dev
 ```
 
-- API: http://127.0.0.1:3100（默认避开本机 3000 占用）  
-- Web: http://127.0.0.1:5173  
-- 健康检查: http://127.0.0.1:3100/health  
+- 本机 API: http://127.0.0.1:3100（默认避开本机 3000 占用）
+- 本机 Web: http://127.0.0.1:5173
+- 局域网 Web: `http://<本机局域网 IP>:5173`
+- 局域网 API: `http://<本机局域网 IP>:3100`
+- 健康检查: http://127.0.0.1:3100/health
+
+开发服务器默认监听所有网卡，`npm run dev` 启动后 Vite 会在 `Network` 一栏打印局域网地址。macOS 也可以用 `ipconfig getifaddr en0` 查询当前 Wi-Fi IP；若其他设备无法连接，请确认两台设备在同一局域网，并允许 Node.js 通过系统防火墙。
 
 默认种子管理员见 `.env` 中 `SEED_ADMIN_*`（首次登录会要求改密）。
 
