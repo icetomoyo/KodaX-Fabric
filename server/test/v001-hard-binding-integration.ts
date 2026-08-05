@@ -6,7 +6,7 @@
  * node:http upstream. It is intentionally excluded from the default test
  * suite. Run it explicitly against an isolated development/test database:
  *
- *   pnpm --filter @tokenhub/server exec tsx test/v001-hard-binding-integration.ts
+ *   npm run test:v001:binding --workspace=@tokenhub/server
  *
  * Every database fixture is uniquely tagged. Cleanup addresses only IDs
  * returned by this run and removes rows in foreign-key dependency order.

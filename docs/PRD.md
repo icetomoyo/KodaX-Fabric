@@ -495,7 +495,7 @@ Coding Plan 默认使用 `grant_only`。多账号、多终端或共享套餐凭�
 | ORM | Drizzle |
 | 主库 | PostgreSQL 16 |
 | 缓存 | Redis 7，用于限流、并发租约、冷却和 Responses 亲和 |
-| 包管理 | pnpm workspace |
+| 包管理 | npm workspaces |
 
 ### 10.3 开发环境约定
 
