@@ -32,6 +32,34 @@ const updateUserSchema = z
   })
   .refine((data) => Object.keys(data).length > 0);
 
+type AdminUserListQuery = {
+  limit: number;
+  offset: number;
+  q?: string;
+};
+
+export function buildAdminUserListQuery(query: AdminUserListQuery) {
+  return db
+    .select({
+      id: employees.id,
+      name: employees.name,
+      phone: employees.phone,
+      dept: employees.dept,
+      role: employees.role,
+      status: employees.status,
+      lastLoginAt: employees.lastLoginAt,
+    })
+    .from(employees)
+    .where(
+      query.q
+        ? sql`(${employees.name} ilike ${"%" + query.q + "%"} or ${employees.phone} ilike ${"%" + query.q + "%"})`
+        : sql`true`,
+    )
+    .orderBy(desc(employees.id))
+    .limit(query.limit)
+    .offset(query.offset);
+}
+
 export async function adminUserRoutes(app: FastifyInstance) {
   app.addHook("preHandler", requireSession);
   app.addHook("preHandler", requirePasswordChanged);
@@ -46,34 +74,7 @@ export async function adminUserRoutes(app: FastifyInstance) {
       })
       .parse(req.query);
 
-    const rows = await db
-      .select({
-        id: employees.id,
-        name: employees.name,
-        phone: employees.phone,
-        dept: employees.dept,
-        role: employees.role,
-        status: employees.status,
-        mustChangePassword: employees.mustChangePassword,
-        lastLoginAt: employees.lastLoginAt,
-        createdAt: employees.createdAt,
-        activeApiKeyCount: sql<number>`(
-          select count(*)::int
-          from ${employeeApiKeys}
-          where ${employeeApiKeys.employeeId} = ${employees.id}
-            and ${employeeApiKeys.status} = 'active'
-            and (${employeeApiKeys.expiresAt} is null or ${employeeApiKeys.expiresAt} > now())
-        )`,
-      })
-      .from(employees)
-      .where(
-        query.q
-          ? sql`(${employees.name} ilike ${"%" + query.q + "%"} or ${employees.phone} ilike ${"%" + query.q + "%"})`
-          : sql`true`,
-      )
-      .orderBy(desc(employees.id))
-      .limit(query.limit)
-      .offset(query.offset);
+    const rows = await buildAdminUserListQuery(query);
 
     return { success: true, data: rows };
   });

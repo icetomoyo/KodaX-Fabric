@@ -684,17 +684,23 @@ async function assertAdminCannotAccessEmployeeApiKeys(): Promise<void> {
 
   const usersResponse = await app!.inject({
     method: "GET",
-    url: `/api/admin/users?q=${encodeURIComponent(employee.phone)}`,
+    url: `/api/admin/users?q=${encodeURIComponent(marker)}`,
     headers: authHeaders(admin),
   });
   assert.equal(usersResponse.statusCode, 200);
   const usersBody = jsonBody<{
     success: boolean;
-    data: Array<{ id: number; activeApiKeyCount: number }>;
+    data: Array<{ id: number; [key: string]: unknown }>;
   }>(usersResponse);
   const listedEmployee = usersBody.data.find((user) => user.id === employee.id);
   assert(listedEmployee, "employee was absent from the admin user list");
-  assert(listedEmployee.activeApiKeyCount > 0, "active API Key count was removed from user list");
+  for (const listedUser of usersBody.data) {
+    assert.equal(
+      Object.hasOwn(listedUser, "activeApiKeyCount"),
+      false,
+      "admin user list exposed an API Key count",
+    );
+  }
 
   const listResponse = await app!.inject({
     method: "GET",

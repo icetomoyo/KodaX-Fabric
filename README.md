@@ -106,7 +106,7 @@ docker compose exec -T postgres psql -U app -d postgres -c "CREATE DATABASE toke
 
 ## 模型代理使用
 
-员工首次登录并完成改密后，在 Web 的「API Key」页面（`/me/keys`）依次选择上游渠道、该渠道的兼容协议并填写名称。每把员工 Key 固定绑定一个上游渠道和一种协议：OpenAI Chat Completions、OpenAI Responses 或 Anthropic Messages；模型查询、调用、重试和 Responses 亲和都不会跨出绑定渠道。完整明文仅在创建成功时向创建员工本人展示一次，关闭后员工和管理员均不能再次查看或复制；管理员在「员工管理」中只能看到员工的 active Key 数量 `activeApiKeyCount`。以下示例中的值仅为占位符，不是真实 Key：
+员工首次登录并完成改密后，在 Web 的「API Key」页面（`/me/keys`）依次选择上游渠道、该渠道的兼容协议并填写名称。每把员工 Key 固定绑定一个上游渠道和一种协议：OpenAI Chat Completions、OpenAI Responses 或 Anthropic Messages；模型查询、调用、重试和 Responses 亲和都不会跨出绑定渠道。完整明文仅在创建成功时向创建员工本人展示一次，关闭后员工和管理员均不能再次查看或复制；管理员的「员工管理」列表不显示或返回任何员工 Key 信息。以下示例中的值仅为占位符，不是真实 Key：
 
 ```sh
 export TOKENHUB_API_KEY="th_replace_with_your_employee_key"

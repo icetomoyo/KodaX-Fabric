@@ -20,34 +20,17 @@
     <el-table :data="rows" stripe>
       <el-table-column prop="name" label="姓名" width="120" />
       <el-table-column prop="phone" label="手机号" width="140" />
-      <el-table-column prop="dept" label="部门" width="120" />
-      <el-table-column label="角色" width="100">
-        <template #default="{ row }">
-          {{ roleLabel(row.role) }}
-        </template>
-      </el-table-column>
+      <el-table-column prop="dept" label="部门" width="240" />
       <el-table-column label="状态" width="100">
         <template #default="{ row }">
-          {{ statusLabel(row.status) }}
-        </template>
-      </el-table-column>
-      <el-table-column prop="mustChangePassword" label="待改密" width="90">
-        <template #default="{ row }">
-          {{ row.mustChangePassword ? "是" : "否" }}
+          <el-tag :type="row.status === 'active' ? 'success' : 'danger'" size="small">
+            {{ statusLabel(row.status) }}
+          </el-tag>
         </template>
       </el-table-column>
       <el-table-column label="最近登录" min-width="210">
         <template #default="{ row }">
           {{ formatDateTime(row.lastLoginAt) }}
-        </template>
-      </el-table-column>
-      <el-table-column label="API Key" width="100">
-        <template #default="{ row }">
-          <span v-if="row.role !== 'employee'" class="muted">—</span>
-          <span v-else-if="(row.activeApiKeyCount ?? 0) > 0">
-            {{ row.activeApiKeyCount }} 个
-          </span>
-          <span v-else class="muted">未创建</span>
         </template>
       </el-table-column>
       <el-table-column label="操作" width="250">
@@ -198,9 +181,7 @@ type UserRow = {
   dept: string | null;
   role: "employee" | "admin" | "auditor";
   status: "active" | "disabled";
-  mustChangePassword: boolean;
   lastLoginAt: string | null;
-  activeApiKeyCount?: number;
 };
 
 const rows = ref<UserRow[]>([]);
@@ -236,11 +217,6 @@ const editForm = reactive({
   status: "active" as UserRow["status"],
 });
 
-const roleLabels: Record<UserRow["role"], string> = {
-  employee: "员工",
-  admin: "管理员",
-  auditor: "审计员",
-};
 const statusLabels: Record<UserRow["status"], string> = {
   active: "正常",
   disabled: "已停用",
@@ -292,10 +268,6 @@ async function doImport() {
   } finally {
     importing.value = false;
   }
-}
-
-function roleLabel(role: UserRow["role"]) {
-  return roleLabels[role];
 }
 
 function statusLabel(status: UserRow["status"]) {

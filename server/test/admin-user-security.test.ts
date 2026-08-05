@@ -7,7 +7,20 @@ process.env.REDIS_URL ??= "redis://127.0.0.1:6379/15";
 process.env.JWT_SECRET ??= "unit-test-jwt-secret";
 process.env.CREDENTIAL_ENCRYPT_KEY ??= "unit-test-credential-secret";
 
-const { adminUserRoutes } = await import("../src/routes/admin/users.js");
+const { adminUserRoutes, buildAdminUserListQuery } = await import(
+  "../src/routes/admin/users.js"
+);
+
+test("admin user list selects employee data without API-key joins", () => {
+  const compiledSql = buildAdminUserListQuery({ limit: 50, offset: 0 })
+    .toSQL()
+    .sql.replace(/\s+/g, " ");
+
+  assert.match(compiledSql, /from "employees"/);
+  assert.doesNotMatch(compiledSql, /employee_api_keys/);
+  assert.doesNotMatch(compiledSql, /active_api_key_count/);
+  assert.doesNotMatch(compiledSql, /\bjoin\b/);
+});
 
 test("admin routes do not expose employee API-key metadata or plaintext", async () => {
   const app = Fastify();
