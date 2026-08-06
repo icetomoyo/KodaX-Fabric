@@ -272,7 +272,6 @@ export async function writeRelayAudit(input: RelayAuditInput): Promise<void> {
         totalTokens,
         requestCount: 1,
         errorCount,
-        softLimitHit: false,
       })
       .onConflictDoUpdate({
         target: [usageCountersDaily.day, usageCountersDaily.employeeId],

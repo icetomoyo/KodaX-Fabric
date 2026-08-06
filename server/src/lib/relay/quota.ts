@@ -3,7 +3,7 @@ import { and, eq } from "drizzle-orm";
 import { env } from "../../config.js";
 import { db } from "../../db/client.js";
 import {
-  quotaPolicies,
+  quotaPolicy,
   usageCountersDaily,
 } from "../../db/schema/index.js";
 import { quotaDayAt } from "../quota-time.js";
@@ -39,9 +39,9 @@ export function assertDailyTokenLimit(totalTokens: number, dailyTokenLimit: numb
 
 export async function getEffectiveRelayQuota(_employeeId: number): Promise<EffectiveRelayQuota> {
   const [policy] = await db
-    .select({ dailyTokenLimit: quotaPolicies.hardTpmDay })
-    .from(quotaPolicies)
-    .where(eq(quotaPolicies.isDefault, true))
+    .select({ dailyTokenLimit: quotaPolicy.dailyTokenLimit })
+    .from(quotaPolicy)
+    .where(eq(quotaPolicy.key, "default"))
     .limit(1);
   if (policy?.dailyTokenLimit === null || policy?.dailyTokenLimit === undefined) {
     throw new Error("默认日 Token 配额未初始化，请先执行 v0.0.3 数据库迁移");

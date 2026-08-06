@@ -33,11 +33,7 @@ export const OPS_AUDIT_ACTION_LABELS: Record<string, string> = {
   "model_route.delete": "删除模型路由",
   "log_grant.create": "新建日志授权",
   "log_grant.update": "更新日志授权",
-  "quota_policy.create": "新建配额策略",
   "quota_policy.update": "更新配额策略",
-  "quota_override.upsert": "设置员工配额",
-  "quota_override.delete": "删除员工配额",
-  "log.read_body": "查看调用正文",
   "log.read_context": "查看结构化调用上下文",
 };
 
@@ -100,21 +96,12 @@ export const OPS_AUDIT_DETAIL_KEY_LABELS: Record<string, string> = {
   scopeType: "授权范围",
   scopePayload: "范围详情",
   depts: "部门",
-  canReadBody: "可读正文",
   expiresAt: "过期时间",
   enabled: "启用",
   clientModel: "对外模型",
   upstreamModel: "上游模型",
   config: "配置",
-  isDefault: "默认策略",
-  softTpmDay: "日 Token 软限",
-  hardTpmDay: "日 Token 硬限",
   dailyTokenLimit: "单日 Token 上限",
-  rpm: "RPM",
-  maxConcurrency: "并发",
-  softReqDay: "日请求软限",
-  hardReqDay: "日请求硬限",
-  policyId: "策略 ID",
   ownerEmployeeId: "内容所属员工 ID",
   ownerPhone: "内容所属手机号",
 };
@@ -142,7 +129,6 @@ const OPS_AUDIT_VALUE_LABELS: Record<string, string> = {
   "[updated]": "已更新",
 };
 
-const UNLIMITED_KEYS = new Set(["hardTpmDay", "hardReqDay"]);
 const TEST_RESULT_KEYS = new Set(["ok", "testOk"]);
 
 export const OPS_AUDIT_ACTION_OPTIONS = Object.entries(OPS_AUDIT_ACTION_LABELS).map(
@@ -180,7 +166,6 @@ function isIsoDate(value: string): boolean {
 export function formatAuditDetailValue(value: unknown, key = ""): string {
   if (value === null || value === undefined || value === "") {
     if (TEST_RESULT_KEYS.has(key)) return "未测试";
-    if (UNLIMITED_KEYS.has(key)) return "不限";
     return "—";
   }
 

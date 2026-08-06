@@ -196,29 +196,11 @@ export const modelRoutes = pgTable(
   (t) => [index("model_routes_client_idx").on(t.clientModel, t.enabled)],
 );
 
-export const quotaPolicies = pgTable("quota_policies", {
-  id: bigint("id", { mode: "number" }).generatedAlwaysAsIdentity().primaryKey(),
-  name: varchar("name", { length: 100 }).notNull(),
-  softTpmDay: bigint("soft_tpm_day", { mode: "number" }),
-  hardTpmDay: bigint("hard_tpm_day", { mode: "number" }),
-  rpm: integer("rpm").notNull().default(60),
-  maxConcurrency: integer("max_concurrency").notNull().default(5),
-  softReqDay: bigint("soft_req_day", { mode: "number" }),
-  hardReqDay: bigint("hard_req_day", { mode: "number" }),
-  isDefault: boolean("is_default").notNull().default(false),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-});
-
-export const employeeQuotaOverrides = pgTable("employee_quota_overrides", {
-  employeeId: bigint("employee_id", { mode: "number" })
-    .primaryKey()
-    .references(() => employees.id),
-  policyId: bigint("policy_id", { mode: "number" }).references(() => quotaPolicies.id),
-  softTpmDay: bigint("soft_tpm_day", { mode: "number" }),
-  hardTpmDay: bigint("hard_tpm_day", { mode: "number" }),
-  rpm: integer("rpm"),
-  maxConcurrency: integer("max_concurrency"),
+export const quotaPolicy = pgTable("quota_policy", {
+  key: varchar("key", { length: 32 }).primaryKey().default("default"),
+  dailyTokenLimit: bigint("daily_token_limit", { mode: "number" })
+    .notNull()
+    .default(500_000_000),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -235,7 +217,6 @@ export const usageCountersDaily = pgTable(
     totalTokens: bigint("total_tokens", { mode: "number" }).notNull().default(0),
     requestCount: bigint("request_count", { mode: "number" }).notNull().default(0),
     errorCount: bigint("error_count", { mode: "number" }).notNull().default(0),
-    softLimitHit: boolean("soft_limit_hit").notNull().default(false),
   },
   (t) => [
     uniqueIndex("usage_counters_daily_uidx").on(t.day, t.employeeId),
@@ -306,7 +287,6 @@ export const logAccessGrants = pgTable("log_access_grants", {
     .references(() => employees.id),
   scopeType: grantScopeEnum("scope_type").notNull(),
   scopePayload: jsonb("scope_payload"),
-  canReadBody: boolean("can_read_body").notNull().default(true),
   expiresAt: timestamp("expires_at", { withTimezone: true }),
   grantedBy: bigint("granted_by", { mode: "number" }),
   status: varchar("status", { length: 32 }).notNull().default("active"),

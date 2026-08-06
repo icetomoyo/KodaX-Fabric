@@ -50,12 +50,10 @@ const [
 const {
   credentialEmployeeGrants,
   employeeApiKeys,
-  employeeQuotaOverrides,
   employees,
   modelRoutes,
   productLines,
   providers,
-  quotaPolicies,
   requestAuditBodies,
   requestAudits,
   upstreamCredentials,
@@ -109,7 +107,6 @@ const allProtocols: Protocol[] = [
 const created = {
   employeeId: null as number | null,
   apiKeyIds: [] as number[],
-  quotaPolicyIds: [] as number[],
   providerIds: [] as number[],
   productLineIds: [] as number[],
   credentialIds: [] as number[],
@@ -391,27 +388,6 @@ async function insertFixtures(upstreamBaseUrl: string): Promise<void> {
     })
     .returning({ id: employees.id });
   created.employeeId = employee.id;
-
-  const [quota] = await db
-    .insert(quotaPolicies)
-    .values({
-      name: `Hard Binding Quota ${marker}`,
-      softTpmDay: null,
-      hardTpmDay: null,
-      rpm: 100,
-      maxConcurrency: 10,
-      softReqDay: null,
-      hardReqDay: null,
-      isDefault: false,
-    })
-    .returning({ id: quotaPolicies.id });
-  created.quotaPolicyIds.push(quota.id);
-  await db.insert(employeeQuotaOverrides).values({
-    employeeId: employee.id,
-    policyId: quota.id,
-    rpm: 100,
-    maxConcurrency: 10,
-  });
 
   for (const channel of ["A", "B"] as const) {
     const [provider] = await db
@@ -748,6 +724,7 @@ async function assertCrossChannelAffinityCannotEscape(baseUrl: string): Promise<
       credentialId: requireCredential("B-only"),
       productLineId: requireProductLine("B"),
       upstreamModel: upstreamModelB,
+      configurationFingerprint: "0".repeat(64),
     }),
     "EX",
     300,
@@ -882,9 +859,6 @@ async function cleanup(): Promise<void> {
     await db
       .delete(usageCountersDaily)
       .where(eq(usageCountersDaily.employeeId, created.employeeId));
-    await db
-      .delete(employeeQuotaOverrides)
-      .where(eq(employeeQuotaOverrides.employeeId, created.employeeId));
   }
 
   await deleteIds(created.grantIds, (ids) =>
@@ -897,8 +871,6 @@ async function cleanup(): Promise<void> {
     db.delete(upstreamCredentials).where(inArray(upstreamCredentials.id, ids)));
   await deleteIds(created.productLineIds, (ids) =>
     db.delete(productLines).where(inArray(productLines.id, ids)));
-  await deleteIds(created.quotaPolicyIds, (ids) =>
-    db.delete(quotaPolicies).where(inArray(quotaPolicies.id, ids)));
   await deleteIds(created.providerIds, (ids) =>
     db.delete(providers).where(inArray(providers.id, ids)));
   if (created.employeeId !== null) {

@@ -317,7 +317,6 @@ interface LogRow {
 
 interface LogDetail {
   meta: LogRow;
-  canReadContext: boolean;
 }
 
 interface AuditContext {

@@ -119,7 +119,6 @@ async function createFixtures() {
     totalTokens: 10,
     requestCount: 2,
     errorCount: 1,
-    softLimitHit: false,
   });
   await db.insert(requestAudits).values([
     {
@@ -238,14 +237,15 @@ async function main() {
       ));
     assert.equal(dedupCount.count, 1);
 
-    const legacyBody = await app.inject({
+    const metadataResponse = await app.inject({
       method: "GET",
-      url: `/api/admin/logs/${requestIds[0]}?includeBody=true`,
+      url: `/api/admin/logs/${requestIds[0]}`,
       headers: auth("admin"),
     });
-    const legacyPayload = json<{ deprecated: boolean; data: { body: unknown } }>(legacyBody);
-    assert.equal(legacyPayload.deprecated, true);
-    assert.equal(legacyPayload.data.body, null);
+    assert.equal(metadataResponse.statusCode, 200);
+    const metadataPayload = json<{ data: { meta: unknown } }>(metadataResponse);
+    assert(metadataPayload.data.meta);
+    assert.equal("body" in metadataPayload.data, false);
 
     const quotaPolicy = await app.inject({
       method: "GET",
@@ -263,15 +263,6 @@ async function main() {
     });
     assert.equal(invalidQuota.statusCode, 400);
     assert.equal(json<{ code: string }>(invalidQuota).code, "quota_policy_invalid");
-
-    const legacyQuotaWrite = await app.inject({
-      method: "POST",
-      url: "/api/admin/quota-policies",
-      headers: auth("admin"),
-      payload: { name: "must-not-be-created" },
-    });
-    assert.equal(legacyQuotaWrite.statusCode, 410);
-    assert.equal(json<{ code: string }>(legacyQuotaWrite).code, "quota_policy_deprecated");
 
     console.log("v0.0.3 integration checks passed");
   } finally {

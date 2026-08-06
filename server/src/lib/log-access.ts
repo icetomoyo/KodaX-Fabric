@@ -11,13 +11,13 @@ export type AccessSubject = {
 export async function canAccessEmployeeLogs(
   subject: AccessSubject,
   targetEmployeeId: number,
-): Promise<{ allowed: boolean; canReadBody: boolean }> {
+): Promise<{ allowed: boolean }> {
   if (subject.role === "admin") {
-    return { allowed: true, canReadBody: true };
+    return { allowed: true };
   }
 
   if (subject.employeeId === targetEmployeeId) {
-    return { allowed: true, canReadBody: true };
+    return { allowed: true };
   }
 
   const grants = await db
@@ -32,7 +32,7 @@ export async function canAccessEmployeeLogs(
     );
 
   if (grants.length === 0) {
-    return { allowed: false, canReadBody: false };
+    return { allowed: false };
   }
 
   const [target] = await db
@@ -42,11 +42,10 @@ export async function canAccessEmployeeLogs(
     .limit(1);
 
   if (!target) {
-    return { allowed: false, canReadBody: false };
+    return { allowed: false };
   }
 
   let allowed = false;
-  let canReadBody = false;
 
   for (const g of grants) {
     const payload = (g.scopePayload ?? {}) as {
@@ -61,11 +60,10 @@ export async function canAccessEmployeeLogs(
 
     if (hit) {
       allowed = true;
-      if (g.canReadBody) canReadBody = true;
     }
   }
 
-  return { allowed, canReadBody };
+  return { allowed };
 }
 
 export async function listAccessibleEmployeeFilter(

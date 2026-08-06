@@ -140,16 +140,9 @@ export async function adminLogRoutes(app: FastifyInstance) {
 
   app.get("/api/admin/logs/:requestId", async (req, reply) => {
     const params = z.object({ requestId: z.string().min(1) }).safeParse(req.params);
-    const query = z
-      .object({
-        includeBody: z
-          .enum(["true", "false"])
-          .default("false")
-          .transform((v) => v === "true"),
-      })
-      .parse(req.query);
+    const query = z.object({}).strict().safeParse(req.query);
 
-    if (!params.success) {
+    if (!params.success || !query.success) {
       return reply.code(400).send({ success: false, message: "参数无效" });
     }
 
@@ -180,7 +173,6 @@ export async function adminLogRoutes(app: FastifyInstance) {
 
     return {
       success: true,
-      deprecated: query.includeBody,
       data: {
         meta: {
           ...meta.audit,
@@ -188,10 +180,6 @@ export async function adminLogRoutes(app: FastifyInstance) {
           employeePhone: meta.employeePhone,
           employeeDept: meta.employeeDept,
         },
-        body: null,
-        canReadBody: false,
-        canReadContext: req.session?.role === "admin",
-        deprecated: query.includeBody,
       },
     };
   });

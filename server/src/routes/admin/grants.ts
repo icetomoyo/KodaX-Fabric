@@ -24,7 +24,6 @@ export async function adminGrantRoutes(app: FastifyInstance) {
         granteePhone: employees.phone,
         scopeType: logAccessGrants.scopeType,
         scopePayload: logAccessGrants.scopePayload,
-        canReadBody: logAccessGrants.canReadBody,
         expiresAt: logAccessGrants.expiresAt,
         grantedBy: logAccessGrants.grantedBy,
         status: logAccessGrants.status,
@@ -49,9 +48,9 @@ export async function adminGrantRoutes(app: FastifyInstance) {
           })
           .optional()
           .default({}),
-        canReadBody: z.boolean().default(true),
         expiresAt: z.string().datetime().nullable().optional(),
       })
+      .strict()
       .safeParse(req.body);
 
     if (!body.success) {
@@ -80,7 +79,6 @@ export async function adminGrantRoutes(app: FastifyInstance) {
         granteeEmployeeId: body.data.granteeEmployeeId,
         scopeType: body.data.scopeType,
         scopePayload: body.data.scopePayload,
-        canReadBody: body.data.canReadBody,
         expiresAt: body.data.expiresAt ? new Date(body.data.expiresAt) : null,
         grantedBy: req.employeeId,
         status: "active",
@@ -104,9 +102,9 @@ export async function adminGrantRoutes(app: FastifyInstance) {
     const body = z
       .object({
         status: z.enum(["active", "revoked"]).optional(),
-        canReadBody: z.boolean().optional(),
         expiresAt: z.string().datetime().nullable().optional(),
       })
+      .strict()
       .safeParse(req.body);
 
     if (!params.success || !body.success) {
@@ -115,7 +113,6 @@ export async function adminGrantRoutes(app: FastifyInstance) {
 
     const patch: Record<string, unknown> = {};
     if (body.data.status !== undefined) patch.status = body.data.status;
-    if (body.data.canReadBody !== undefined) patch.canReadBody = body.data.canReadBody;
     if (body.data.expiresAt !== undefined) {
       patch.expiresAt = body.data.expiresAt ? new Date(body.data.expiresAt) : null;
     }

@@ -6,7 +6,7 @@ import { db } from "../../db/client.js";
 import {
   employeeApiKeys,
   employees,
-  quotaPolicies,
+  quotaPolicy,
   requestAudits,
   usageCountersDaily,
 } from "../../db/schema/index.js";
@@ -191,10 +191,9 @@ export async function adminUserRoutes(app: FastifyInstance) {
         .from(requestAudits)
         .where(auditWhere),
       db
-        .select({ dailyTokenLimit: quotaPolicies.hardTpmDay })
-        .from(quotaPolicies)
-        .where(eq(quotaPolicies.isDefault, true))
-        .orderBy(asc(quotaPolicies.id))
+        .select({ dailyTokenLimit: quotaPolicy.dailyTokenLimit })
+        .from(quotaPolicy)
+        .where(eq(quotaPolicy.key, "default"))
         .limit(1),
     ]);
 

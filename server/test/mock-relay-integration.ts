@@ -43,12 +43,10 @@ const [
 const {
   credentialEmployeeGrants,
   employeeApiKeys,
-  employeeQuotaOverrides,
   employees,
   modelRoutes,
   productLines,
   providers,
-  quotaPolicies,
   requestAuditBodies,
   requestAudits,
   upstreamCredentials,
@@ -157,7 +155,6 @@ const scenarios: ScenarioDefinition[] = [
 const created = {
   employeeId: null as number | null,
   employeeApiKeyIds: [] as number[],
-  quotaPolicyIds: [] as number[],
   providerIds: [] as number[],
   productLineIds: [] as number[],
   credentialIds: [] as number[],
@@ -370,27 +367,6 @@ async function insertFixtures(upstreamBaseUrl: string): Promise<void> {
     })
     .returning({ id: employees.id });
   created.employeeId = employee.id;
-
-  const [quotaPolicy] = await db
-    .insert(quotaPolicies)
-    .values({
-      name: `M2 Mock Quota ${marker}`,
-      softTpmDay: null,
-      hardTpmDay: null,
-      rpm: 100,
-      maxConcurrency: 10,
-      softReqDay: null,
-      hardReqDay: null,
-      isDefault: false,
-    })
-    .returning({ id: quotaPolicies.id });
-  created.quotaPolicyIds.push(quotaPolicy.id);
-  await db.insert(employeeQuotaOverrides).values({
-    employeeId: employee.id,
-    policyId: quotaPolicy.id,
-    rpm: 100,
-    maxConcurrency: 10,
-  });
 
   for (const definition of scenarios) {
     const scenarioMarker = `${marker}_${definition.name.replaceAll("-", "_")}`;
@@ -850,9 +826,6 @@ async function cleanupFixtures(): Promise<void> {
     await db
       .delete(usageCountersDaily)
       .where(eq(usageCountersDaily.employeeId, created.employeeId));
-    await db
-      .delete(employeeQuotaOverrides)
-      .where(eq(employeeQuotaOverrides.employeeId, created.employeeId));
   }
 
   await deleteIds(created.grantIds, (ids) =>
@@ -869,9 +842,6 @@ async function cleanupFixtures(): Promise<void> {
   );
   await deleteIds(created.productLineIds, (ids) =>
     db.delete(productLines).where(inArray(productLines.id, ids)),
-  );
-  await deleteIds(created.quotaPolicyIds, (ids) =>
-    db.delete(quotaPolicies).where(inArray(quotaPolicies.id, ids)),
   );
   await deleteIds(created.providerIds, (ids) =>
     db.delete(providers).where(inArray(providers.id, ids)),

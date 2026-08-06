@@ -1,7 +1,7 @@
 import { eq } from "drizzle-orm";
 import { env } from "../config.js";
 import { db, sql } from "./client.js";
-import { employees, quotaPolicies, systemSettings } from "./schema/index.js";
+import { employees, quotaPolicy, systemSettings } from "./schema/index.js";
 import { hashPassword } from "../lib/password.js";
 
 /** 仅种子管理员账号；供应商/凭证/路由等由管理员在后台录入，不做演示数据。 */
@@ -35,23 +35,13 @@ async function seedAdmin() {
 
 /** 系统运行所需的最小配置（非业务演示数据） */
 async function seedMinimalSystemConfig() {
-  const [def] = await db
-    .select({ id: quotaPolicies.id })
-    .from(quotaPolicies)
-    .where(eq(quotaPolicies.isDefault, true))
-    .limit(1);
+  const inserted = await db
+    .insert(quotaPolicy)
+    .values({ key: "default", dailyTokenLimit: 500_000_000 })
+    .onConflictDoNothing()
+    .returning({ key: quotaPolicy.key });
 
-  if (!def) {
-    await db.insert(quotaPolicies).values({
-      name: "默认日 Token 配额",
-      softTpmDay: null,
-      hardTpmDay: 500_000_000,
-      rpm: env.RELAY_SAFEGUARD_RPM,
-      maxConcurrency: env.RELAY_SAFEGUARD_MAX_CONCURRENCY,
-      softReqDay: null,
-      hardReqDay: null,
-      isDefault: true,
-    });
+  if (inserted.length) {
     console.log("Seeded default quota policy");
   }
 

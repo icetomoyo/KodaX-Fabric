@@ -10,7 +10,6 @@ import {
   opsAuditLogs,
   productLines,
   providers,
-  quotaPolicies,
   requestAudits,
   upstreamCredentials,
 } from "../../db/schema/index.js";
@@ -90,7 +89,6 @@ export async function adminOpsAuditRoutes(app: FastifyInstance) {
     const productLineIds = numericTargetIds("product_line");
     const credentialIds = numericTargetIds("upstream_credential");
     const modelRouteIds = numericTargetIds("model_route");
-    const quotaPolicyIds = numericTargetIds("quota_policy");
     const logGrantIds = numericTargetIds("log_access_grant");
     const requestIds = targetIds("request_audit");
 
@@ -101,7 +99,6 @@ export async function adminOpsAuditRoutes(app: FastifyInstance) {
       productLineTargets,
       credentialTargets,
       modelRouteTargets,
-      quotaPolicyTargets,
       logGrantTargets,
       requestTargets,
     ] = await Promise.all([
@@ -158,12 +155,6 @@ export async function adminOpsAuditRoutes(app: FastifyInstance) {
             .from(modelRoutes)
             .where(inArray(modelRoutes.id, modelRouteIds))
         : [],
-      quotaPolicyIds.length
-        ? db
-            .select({ id: quotaPolicies.id, name: quotaPolicies.name })
-            .from(quotaPolicies)
-            .where(inArray(quotaPolicies.id, quotaPolicyIds))
-        : [],
       logGrantIds.length
         ? db
             .select({ id: logAccessGrants.id, employeeName: employees.name })
@@ -209,7 +200,9 @@ export async function adminOpsAuditRoutes(app: FastifyInstance) {
     for (const row of modelRouteTargets) {
       setTargetName("model_route", row.id, `${row.clientModel} → ${row.upstreamModel}`);
     }
-    for (const row of quotaPolicyTargets) setTargetName("quota_policy", row.id, row.name);
+    for (const targetId of targetIds("quota_policy")) {
+      setTargetName("quota_policy", targetId, "每日 Token 配额");
+    }
     for (const row of logGrantTargets) {
       setTargetName("log_access_grant", row.id, `${row.employeeName}的日志授权`);
     }
