@@ -4,12 +4,11 @@
       <div class="brand">TokenHub Admin</div>
       <el-menu :default-active="route.path" router>
         <el-menu-item index="/admin">概览</el-menu-item>
-        <el-menu-item v-if="auth.isAdmin" index="/admin/users">员工管理</el-menu-item>
+        <el-menu-item index="/admin/users">员工管理</el-menu-item>
         <el-menu-item index="/admin/credentials">上游渠道</el-menu-item>
         <el-menu-item index="/admin/logs">调用日志</el-menu-item>
-        <el-menu-item v-if="auth.isAdmin" index="/admin/log-grants">日志授权</el-menu-item>
-        <el-menu-item v-if="auth.isAdmin" index="/admin/quota">配额策略</el-menu-item>
-        <el-menu-item v-if="auth.isAdmin" index="/admin/ops-audit">操作审计</el-menu-item>
+        <el-menu-item index="/admin/quota">配额策略</el-menu-item>
+        <el-menu-item index="/admin/ops-audit">操作审计</el-menu-item>
         <el-menu-item index="/admin/profile">个人中心</el-menu-item>
       </el-menu>
     </el-aside>
@@ -20,7 +19,7 @@
             <strong>{{ auth.user?.name }}</strong>
             <span class="muted"> · 管理后台</span>
           </router-link>
-          <el-tag size="small" effect="plain" type="warning">{{ portalLabel }}</el-tag>
+          <el-tag size="small" effect="plain" type="warning">管理员</el-tag>
         </div>
         <div class="header-right">
           <el-button link type="primary" @click="onLogout">退出</el-button>
@@ -34,17 +33,12 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useAuthStore } from "@/stores/auth";
 
 const route = useRoute();
 const router = useRouter();
 const auth = useAuthStore();
-
-const portalLabel = computed(() =>
-  auth.user?.role === "auditor" ? "审计员视角" : "管理员视角",
-);
 
 function onLogout() {
   auth.logout();

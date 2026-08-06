@@ -7,7 +7,7 @@ export type User = {
   name: string;
   phone: string;
   dept?: string | null;
-  role: "employee" | "admin" | "auditor";
+  role: "employee" | "admin";
   status: string;
   mustChangePassword: boolean;
   lastLoginAt?: string | null;
@@ -24,9 +24,6 @@ export const useAuthStore = defineStore("auth", () => {
 
   const isLoggedIn = computed(() => Boolean(token.value));
   const isAdmin = computed(() => user.value?.role === "admin");
-  const isAuditor = computed(
-    () => user.value?.role === "admin" || user.value?.role === "auditor",
-  );
 
   function setSession(nextToken: string, nextUser: User) {
     token.value = nextToken;
@@ -72,7 +69,6 @@ export const useAuthStore = defineStore("auth", () => {
     user,
     isLoggedIn,
     isAdmin,
-    isAuditor,
     setSession,
     logout,
     login,

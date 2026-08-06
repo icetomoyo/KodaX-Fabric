@@ -494,7 +494,7 @@ async function testCredentialConnection(
 export async function adminCredentialRoutes(app: FastifyInstance) {
   app.addHook("preHandler", requireSession);
   app.addHook("preHandler", requirePasswordChanged);
-  app.addHook("preHandler", requireRoles("admin", "auditor"));
+  app.addHook("preHandler", requireRoles("admin"));
 
   app.get("/api/admin/credential-templates", async () => {
     const providerRows = await db.select().from(providers);
@@ -2107,7 +2107,7 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
     },
   );
 
-  // Coding plan style grants — read allowed for auditor; write remains admin-only.
+  // Coding plan style grants — admin only.
   app.get("/api/admin/credentials/:id/grants", async (req, reply) => {
     const params = z.object({ id: z.coerce.number() }).safeParse(req.params);
     if (!params.success) {

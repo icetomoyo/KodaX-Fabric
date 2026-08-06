@@ -39,7 +39,7 @@ const {
   usageCountersDaily,
 } = schema;
 
-type Role = "employee" | "admin" | "auditor";
+type Role = "employee" | "admin" ;
 type User = { id: number; role: Role; token: string };
 
 const marker = `v3_${randomUUID().replaceAll("-", "").slice(0, 8)}`;
@@ -82,7 +82,7 @@ function assertNoSensitiveEmployeeUsage(value: unknown) {
 
 async function createFixtures() {
   const passwordHash = await hashPassword("V003Integration@123");
-  for (const role of ["employee", "admin", "auditor"] as const) {
+  for (const role of ["employee", "admin"] as const) {
     const [row] = await db
       .insert(employees)
       .values({
@@ -189,7 +189,7 @@ async function main() {
     const deniedUsage = await app.inject({
       method: "GET",
       url: `/api/admin/users/${employee.id}/usage?from=${day}&to=${day}`,
-      headers: auth("auditor"),
+      headers: auth("employee"),
     });
     assert.equal(deniedUsage.statusCode, 403);
 
@@ -210,7 +210,7 @@ async function main() {
     const deniedContext = await app.inject({
       method: "GET",
       url: `/api/admin/logs/${requestIds[0]}/context`,
-      headers: auth("auditor"),
+      headers: auth("employee"),
     });
     assert.equal(deniedContext.statusCode, 403);
 

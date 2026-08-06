@@ -81,7 +81,7 @@ export async function meRoutes(app: FastifyInstance) {
     const result = await db.transaction(async (tx) => {
       // Serialize Key creation with admin role changes. Without this lock, an
       // employee request that passed the pre-handler immediately before an
-      // employee -> admin/auditor transition could insert a new active Key
+      // employee -> admin transition could insert a new active Key
       // after the transition transaction had already revoked the old ones.
       const [owner] = await tx
         .select({

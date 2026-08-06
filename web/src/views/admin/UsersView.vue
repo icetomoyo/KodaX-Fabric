@@ -77,7 +77,6 @@
           <el-select v-model="form.role" style="width: 100%">
             <el-option label="员工" value="employee" />
             <el-option label="管理员" value="admin" />
-            <el-option label="审计员" value="auditor" />
           </el-select>
         </el-form-item>
       </el-form>
@@ -100,7 +99,6 @@
           >
             <el-option label="员工" value="employee" />
             <el-option label="管理员" value="admin" />
-            <el-option label="审计员" value="auditor" />
           </el-select>
         </el-form-item>
         <el-form-item label="状态">
@@ -181,7 +179,7 @@ type UserRow = {
   name: string;
   phone: string;
   dept: string | null;
-  role: "employee" | "admin" | "auditor";
+  role: "employee" | "admin";
   status: "active" | "disabled";
   lastLoginAt: string | null;
 };
@@ -206,7 +204,7 @@ const form = reactive({
   phone: "",
   password: "",
   dept: "",
-  role: "employee" as "employee" | "admin" | "auditor",
+  role: "employee" as "employee" | "admin",
 });
 const resetForm = reactive({
   password: "",

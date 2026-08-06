@@ -48,7 +48,7 @@ export const router = createRouter({
     {
       path: "/admin",
       component: () => import("@/layouts/AdminLayout.vue"),
-      meta: { roles: ["admin", "auditor"] },
+      meta: { roles: ["admin"] },
       children: [
         {
           path: "",
@@ -59,29 +59,24 @@ export const router = createRouter({
           path: "users",
           name: "admin-users",
           component: () => import("@/views/admin/UsersView.vue"),
-          meta: { roles: ["admin"] },
         },
         {
           path: "users/:id",
           name: "admin-user-detail",
           component: () => import("@/views/admin/UserDetailView.vue"),
-          meta: { roles: ["admin"] },
         },
         {
           path: "providers",
           redirect: "/admin/credentials",
-          meta: { roles: ["admin", "auditor"] },
         },
         {
           path: "credentials",
           name: "admin-credentials",
           component: () => import("@/views/admin/CredentialsView.vue"),
-          meta: { roles: ["admin", "auditor"] },
         },
         {
           path: "model-routes",
           redirect: "/admin/credentials",
-          meta: { roles: ["admin", "auditor"] },
         },
         {
           path: "logs",
@@ -89,22 +84,14 @@ export const router = createRouter({
           component: () => import("@/views/admin/LogsView.vue"),
         },
         {
-          path: "log-grants",
-          name: "admin-log-grants",
-          component: () => import("@/views/admin/LogGrantsView.vue"),
-          meta: { roles: ["admin"] },
-        },
-        {
           path: "quota",
           name: "admin-quota",
           component: () => import("@/views/admin/QuotaView.vue"),
-          meta: { roles: ["admin"] },
         },
         {
           path: "ops-audit",
           name: "admin-ops-audit",
           component: () => import("@/views/admin/OpsAuditView.vue"),
-          meta: { roles: ["admin"] },
         },
         {
           path: "profile",

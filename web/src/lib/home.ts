@@ -3,12 +3,12 @@ import type { User } from "@/stores/auth";
 /** Default landing path after login. */
 export function homePathForUser(user: Pick<User, "role"> | null | undefined): string {
   if (!user) return "/login";
-  if (user.role === "admin" || user.role === "auditor") return "/admin";
+  if (user.role === "admin") return "/admin";
   return "/me";
 }
 
 export function canUseAdminConsole(user: Pick<User, "role"> | null | undefined): boolean {
-  return user?.role === "admin" || user?.role === "auditor";
+  return user?.role === "admin";
 }
 
 export function canUseEmployeeWorkspace(user: Pick<User, "role"> | null | undefined): boolean {

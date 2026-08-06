@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import { and, desc, eq, gte, inArray, lte, sql } from "drizzle-orm";
+import { and, desc, eq, gte, lte, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../../db/client.js";
 import {
@@ -9,10 +9,6 @@ import {
   requestAudits,
 } from "../../db/schema/index.js";
 import { normalizeAuditContext } from "../../lib/audit-context.js";
-import {
-  canAccessEmployeeLogs,
-  listAccessibleEmployeeFilter,
-} from "../../lib/log-access.js";
 import {
   requirePasswordChanged,
   requireRoles,
@@ -29,9 +25,9 @@ export function contextAuditDedupSince(now: Date = new Date()): Date {
 export async function adminLogRoutes(app: FastifyInstance) {
   app.addHook("preHandler", requireSession);
   app.addHook("preHandler", requirePasswordChanged);
-  app.addHook("preHandler", requireRoles("admin", "auditor"));
+  app.addHook("preHandler", requireRoles("admin"));
 
-  app.get("/api/admin/logs", async (req, reply) => {
+  app.get("/api/admin/logs", async (req) => {
     const query = z
       .object({
         limit: z.coerce.number().min(1).max(200).default(50),
@@ -46,41 +42,11 @@ export async function adminLogRoutes(app: FastifyInstance) {
       })
       .parse(req.query);
 
-    const subject = {
-      employeeId: req.employeeId!,
-      role: req.session!.role,
-    };
-
-    const scope = await listAccessibleEmployeeFilter(subject);
-    if (!scope.all && (scope.employeeIds?.length === 0 && scope.depts.length === 0)) {
-      return { success: true, data: { total: 0, items: [] } };
-    }
-
     const conditions = [];
 
     if (query.employeeId) {
-      const access = await canAccessEmployeeLogs(subject, query.employeeId);
-      if (!access.allowed) {
-        return reply.code(403).send({ success: false, message: "无权查看该员工日志" });
-      }
       conditions.push(eq(requestAudits.employeeId, query.employeeId));
-    } else if (!scope.all) {
-      // Filter by granted employee ids and depts
-      const deptIds: number[] = [];
-      if (scope.depts.length) {
-        const deptEmployees = await db
-          .select({ id: employees.id })
-          .from(employees)
-          .where(inArray(employees.dept, scope.depts));
-        deptIds.push(...deptEmployees.map((e) => e.id));
-      }
-      const ids = new Set([...(scope.employeeIds ?? []), ...deptIds]);
-      if (ids.size === 0) {
-        return { success: true, data: { total: 0, items: [] } };
-      }
-      conditions.push(inArray(requestAudits.employeeId, [...ids]));
     }
-
     if (query.model) conditions.push(eq(requestAudits.clientModel, query.model));
     if (query.providerCode) conditions.push(eq(requestAudits.providerCode, query.providerCode));
     if (query.status) {
@@ -160,15 +126,6 @@ export async function adminLogRoutes(app: FastifyInstance) {
 
     if (!meta) {
       return reply.code(404).send({ success: false, message: "记录不存在" });
-    }
-
-    const subject = {
-      employeeId: req.employeeId!,
-      role: req.session!.role,
-    };
-    const access = await canAccessEmployeeLogs(subject, meta.audit.employeeId);
-    if (!access.allowed) {
-      return reply.code(403).send({ success: false, message: "无权查看该记录" });
     }
 
     return {

@@ -1,5 +1,5 @@
 {
-  "id": "ada359ca-a83c-4c1d-9162-b4c429631ba8",
+  "id": "b433d903-4f8b-4a08-99f3-17269b1ba413",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -302,89 +302,6 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.employee_quota_overrides": {
-      "name": "employee_quota_overrides",
-      "schema": "",
-      "columns": {
-        "employee_id": {
-          "name": "employee_id",
-          "type": "bigint",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "policy_id": {
-          "name": "policy_id",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "soft_tpm_day": {
-          "name": "soft_tpm_day",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "hard_tpm_day": {
-          "name": "hard_tpm_day",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "rpm": {
-          "name": "rpm",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "max_concurrency": {
-          "name": "max_concurrency",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "employee_quota_overrides_employee_id_employees_id_fk": {
-          "name": "employee_quota_overrides_employee_id_employees_id_fk",
-          "tableFrom": "employee_quota_overrides",
-          "tableTo": "employees",
-          "columnsFrom": [
-            "employee_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "employee_quota_overrides_policy_id_quota_policies_id_fk": {
-          "name": "employee_quota_overrides_policy_id_quota_policies_id_fk",
-          "tableFrom": "employee_quota_overrides",
-          "tableTo": "quota_policies",
-          "columnsFrom": [
-            "policy_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
     "public.employees": {
       "name": "employees",
       "schema": "",
@@ -504,102 +421,6 @@
         }
       },
       "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.log_access_grants": {
-      "name": "log_access_grants",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "bigint",
-          "primaryKey": true,
-          "notNull": true,
-          "identity": {
-            "type": "always",
-            "name": "log_access_grants_id_seq",
-            "schema": "public",
-            "increment": "1",
-            "startWith": "1",
-            "minValue": "1",
-            "maxValue": "9223372036854775807",
-            "cache": "1",
-            "cycle": false
-          }
-        },
-        "grantee_employee_id": {
-          "name": "grantee_employee_id",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "scope_type": {
-          "name": "scope_type",
-          "type": "grant_scope",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "scope_payload": {
-          "name": "scope_payload",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "can_read_body": {
-          "name": "can_read_body",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": true
-        },
-        "expires_at": {
-          "name": "expires_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "granted_by": {
-          "name": "granted_by",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "status": {
-          "name": "status",
-          "type": "varchar(32)",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'active'"
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "log_access_grants_grantee_employee_id_employees_id_fk": {
-          "name": "log_access_grants_grantee_employee_id_employees_id_fk",
-          "tableFrom": "log_access_grants",
-          "tableTo": "employees",
-          "columnsFrom": [
-            "grantee_employee_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
@@ -872,6 +693,19 @@
           "primaryKey": false,
           "notNull": false
         },
+        "protocol_configs": {
+          "name": "protocol_configs",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "config_version": {
+          "name": "config_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
         "share_mode": {
           "name": "share_mode",
           "type": "share_mode",
@@ -1058,84 +892,23 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.quota_policies": {
-      "name": "quota_policies",
+    "public.quota_policy": {
+      "name": "quota_policy",
       "schema": "",
       "columns": {
-        "id": {
-          "name": "id",
-          "type": "bigint",
+        "key": {
+          "name": "key",
+          "type": "varchar(32)",
           "primaryKey": true,
           "notNull": true,
-          "identity": {
-            "type": "always",
-            "name": "quota_policies_id_seq",
-            "schema": "public",
-            "increment": "1",
-            "startWith": "1",
-            "minValue": "1",
-            "maxValue": "9223372036854775807",
-            "cache": "1",
-            "cycle": false
-          }
+          "default": "'default'"
         },
-        "name": {
-          "name": "name",
-          "type": "varchar(100)",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "soft_tpm_day": {
-          "name": "soft_tpm_day",
+        "daily_token_limit": {
+          "name": "daily_token_limit",
           "type": "bigint",
           "primaryKey": false,
-          "notNull": false
-        },
-        "hard_tpm_day": {
-          "name": "hard_tpm_day",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "rpm": {
-          "name": "rpm",
-          "type": "integer",
-          "primaryKey": false,
           "notNull": true,
-          "default": 60
-        },
-        "max_concurrency": {
-          "name": "max_concurrency",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 5
-        },
-        "soft_req_day": {
-          "name": "soft_req_day",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "hard_req_day": {
-          "name": "hard_req_day",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "is_default": {
-          "name": "is_default",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
+          "default": 500000000
         },
         "updated_at": {
           "name": "updated_at",
@@ -1785,13 +1558,6 @@
           "primaryKey": false,
           "notNull": true,
           "default": 0
-        },
-        "soft_limit_hit": {
-          "name": "soft_limit_hit",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": false
         }
       },
       "indexes": {
@@ -1812,6 +1578,27 @@
             }
           ],
           "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "usage_counters_daily_employee_day_idx": {
+          "name": "usage_counters_daily_employee_day_idx",
+          "columns": [
+            {
+              "expression": "employee_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "day",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -1881,8 +1668,7 @@
       "schema": "public",
       "values": [
         "employee",
-        "admin",
-        "auditor"
+        "admin"
       ]
     },
     "public.employee_status": {
@@ -1891,15 +1677,6 @@
       "values": [
         "active",
         "disabled"
-      ]
-    },
-    "public.grant_scope": {
-      "name": "grant_scope",
-      "schema": "public",
-      "values": [
-        "all",
-        "dept",
-        "employees"
       ]
     },
     "public.product_type": {

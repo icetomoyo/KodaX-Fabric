@@ -2,7 +2,7 @@
 
 公司内网 LLM 统一出口：官方供应商 Key 池共享、员工级全文审计、不计费。
 
-> v0.0.3 功能实现与本地验证已完成；生产环境尚未部署。
+> v0.0.4 功能实现与本地验证已完成；生产环境尚未部署。
 
 📄 **产品需求文档（PRD）**：[docs/PRD.md](./docs/PRD.md)
 
@@ -27,7 +27,7 @@ docker compose ps
 
 默认使用独立库名 **`tokenhub`**（需已创建，见下方）。
 
-v0.0.1 是初始数据库基线；现有数据库升级到 v0.0.3 时直接执行增量 Migration，无需重建数据库。全新环境会按顺序执行全部迁移并写入最小种子。
+v0.0.4 采用干净数据库基线：全新环境执行迁移与最小种子即可。本地开发重建数据库会清空业务数据。
 
 ## 快速开始
 
@@ -84,7 +84,7 @@ PY
 
 并手动设置 `JWT_SECRET`、`CREDENTIAL_ENCRYPT_KEY`（可用 `openssl rand -base64 48`）。
 
-v0.0.3 新增治理变量：`QUOTA_TIMEZONE`（默认 `Asia/Shanghai`）、`RELAY_SAFEGUARD_RPM`（默认 `60`）和 `RELAY_SAFEGUARD_MAX_CONCURRENCY`（默认 `5`）。前者决定日 Token 配额的自然日边界，后两者是系统级稳定性保护，不在配额页面编辑。
+治理变量：`QUOTA_TIMEZONE`（默认 `Asia/Shanghai`）、`RELAY_SAFEGUARD_RPM`（默认 `60`）和 `RELAY_SAFEGUARD_MAX_CONCURRENCY`（默认 `5`）。前者决定日 Token 配额的自然日边界，后两者是系统级稳定性保护，不在配额页面编辑。
 
 ### 创建 tokenhub 库（若尚未创建）
 
@@ -99,10 +99,9 @@ docker compose exec -T postgres psql -U app -d postgres -c "CREATE DATABASE toke
 | 角色 | 路径 | 能力 |
 |---|---|---|
 | 员工 | `/me/*` | 改密、API Key、自己的用量与日志 |
-| 管理员 | `/admin/*` only | 概览、员工、上游渠道、调用日志、日志授权、配额、操作审计（不进入员工端） |
-| 审计员 | `/admin/*` only | 概览、渠道只读信息、调用日志元数据（授权范围内，不进入员工端或读取正文） |
+| 管理员 | `/admin/*` only | 概览、员工、上游渠道、调用日志、配额、操作审计（不进入员工端） |
 
-管理后台菜单：概览 · 员工管理 · 上游渠道 · 调用日志 · 日志授权 · 配额策略 · 操作审计 · 个人中心。供应商、产品线和模型路由保留为内部数据结构，不再暴露独立页面。
+管理后台菜单：概览 · 员工管理 · 上游渠道 · 调用日志 · 配额策略 · 操作审计 · 个人中心。供应商、产品线和模型路由保留为内部数据结构，不再暴露独立页面。
 
 模型代理已启用，原生支持 `/v1/chat/completions`、`/v1/responses`、`/v1/responses/compact`、`/v1/messages` 与 `/v1/messages/count_tokens`（员工 API Key）；网页 Chat 非一期范围。
 
@@ -231,7 +230,7 @@ Claude Code 的 `ANTHROPIC_BASE_URL` 应填写 TokenHub 服务地址本身（例
 - 绑定渠道停用时请求返回 `bound_channel_unavailable`；未配置显式映射的模型名会原样透传上游，由上游判断模型是否存在；全部冷却或无可用凭证分别返回 `model_channels_cooling`、`model_unavailable`。OpenAI 与 Anthropic 响应均保留确定性 `code`。
 - 员工调用受单日总 Token 硬上限约束，并受固定 RPM/并发 safeguard 保护；超限时按当前协议返回 OpenAI 或 Anthropic 原生错误格式，RPM 超限响应会带 `Retry-After`。
 - 成功、上游错误、限流和取消等调用都会写入员工级审计与用量记录；请求头中的员工 API Key 不会写入审计正文。
-- 管理端结构化上下文仅管理员可读，并按用户提示词、返回信息、Skill/工具和元数据展示；审计员只能查看授权范围内元数据。员工查看自己的已保存正文维持不变。
+- 管理端结构化上下文仅管理员可读，并按用户提示词、返回信息、Skill/工具和元数据展示。员工查看自己的已保存正文维持不变。
 
 ## 常用命令
 

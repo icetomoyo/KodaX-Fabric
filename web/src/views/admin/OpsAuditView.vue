@@ -64,6 +64,7 @@
       <el-pagination
         v-model:current-page="page"
         background
+        small
         layout="total, prev, pager, next"
         :total="total"
         :page-size="limit"
@@ -138,7 +139,8 @@ type AuditItem = {
 const items = ref<AuditItem[]>([]);
 const total = ref(0);
 const page = ref(1);
-const limit = 50;
+/** Align with admin call logs: 10 rows per page. */
+const limit = 10;
 const loading = ref(false);
 const action = ref("");
 const detailVisible = ref(false);

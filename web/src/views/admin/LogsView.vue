@@ -146,7 +146,7 @@
           </div>
 
           <el-tabs v-model="activeDetailTab" class="context-tabs">
-            <el-tab-pane v-if="auth.isAdmin" label="用户提示词" name="prompt">
+            <el-tab-pane label="用户提示词" name="prompt">
               <div v-loading="contextLoading" class="tab-content">
                 <div class="tab-toolbar">
                   <span>按原始顺序展示消息与多模态块</span>
@@ -182,7 +182,7 @@
               </div>
             </el-tab-pane>
 
-            <el-tab-pane v-if="auth.isAdmin" label="返回信息" name="response">
+            <el-tab-pane label="返回信息" name="response">
               <div v-loading="contextLoading" class="tab-content">
                 <div class="tab-toolbar">
                   <span>保留上游响应的结构化内容</span>
@@ -207,7 +207,7 @@
               </div>
             </el-tab-pane>
 
-            <el-tab-pane v-if="auth.isAdmin" label="Skill / 工具" name="skills">
+            <el-tab-pane label="Skill / 工具" name="skills">
               <div v-loading="contextLoading" class="tab-content">
                 <div class="tab-toolbar">
                   <span>工具定义、调用与 Skill 上下文</span>
@@ -233,14 +233,6 @@
 
             <el-tab-pane label="元数据" name="metadata">
               <div class="tab-content">
-                <el-alert
-                  v-if="!auth.isAdmin"
-                  title="v0.0.3 起，审计员仅可查看授权范围内的调用元数据，不能读取上下文正文。"
-                  type="info"
-                  :closable="false"
-                  show-icon
-                  class="metadata-notice"
-                />
                 <el-descriptions :column="1" border size="small" class="detail-descriptions">
                   <el-descriptions-item label="时间">{{ formatDateTime(detail.meta.createdAt) }}</el-descriptions-item>
                   <el-descriptions-item label="员工">{{ detail.meta.employeeName }} / {{ detail.meta.employeePhone }}</el-descriptions-item>
@@ -284,7 +276,6 @@ import { ElMessage } from "element-plus";
 import { http } from "@/api/http";
 import StructuredJson from "@/components/StructuredJson.vue";
 import { formatDateTime } from "@/lib/date-time";
-import { useAuthStore } from "@/stores/auth";
 import { relayProtocolLabel, type RelayProtocol } from "@/views/relay-protocol";
 
 type LogStatus = "success" | "upstream_error" | "client_error" | "cancelled";
@@ -351,7 +342,6 @@ const providerNames: Record<string, string> = {
 };
 
 const numberFormatter = new Intl.NumberFormat("zh-CN");
-const auth = useAuthStore();
 
 const filters = reactive({
   employeeId: "",
@@ -534,15 +524,13 @@ async function openDetail(requestId: string) {
   detail.value = null;
   context.value = null;
   rawPanels.value = [];
-  activeDetailTab.value = auth.isAdmin ? "prompt" : "metadata";
+  activeDetailTab.value = "prompt";
   drawer.value = true;
   detailLoading.value = true;
-  contextLoading.value = auth.isAdmin;
+  contextLoading.value = true;
   try {
     const metadataPromise = http.get(`/api/admin/logs/${requestId}`);
-    const contextPromise = auth.isAdmin
-      ? http.get(`/api/admin/logs/${requestId}/context`)
-      : Promise.resolve(null);
+    const contextPromise = http.get(`/api/admin/logs/${requestId}/context`);
     const [metadataResult, contextResult] = await Promise.allSettled([
       metadataPromise,
       contextPromise,
@@ -552,7 +540,7 @@ async function openDetail(requestId: string) {
     if (metadataResult.value.data.success) detail.value = metadataResult.value.data.data;
     if (contextResult.status === "fulfilled" && contextResult.value?.data.success) {
       context.value = contextResult.value.data.data;
-    } else if (auth.isAdmin && contextResult.status === "rejected") {
+    } else if (contextResult.status === "rejected") {
       ElMessage.error(contextResult.reason?.response?.data?.message || "结构化上下文加载失败");
     }
   } catch (e: any) {

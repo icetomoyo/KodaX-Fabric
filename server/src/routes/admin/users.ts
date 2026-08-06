@@ -35,7 +35,7 @@ const createUserSchema = z.object({
   phone: z.string().min(5).max(20),
   password: z.string().min(8).max(128),
   dept: z.string().max(100).optional().nullable(),
-  role: z.enum(["employee", "admin", "auditor"]).default("employee"),
+  role: z.enum(["employee", "admin"]).default("employee"),
 });
 
 const updateUserSchema = z
@@ -43,7 +43,7 @@ const updateUserSchema = z
     name: z.string().trim().min(1).max(100).optional(),
     phone: z.string().trim().min(5).max(20).optional(),
     dept: z.string().trim().max(100).nullable().optional(),
-    role: z.enum(["employee", "admin", "auditor"]).optional(),
+    role: z.enum(["employee", "admin"]).optional(),
     status: z.enum(["active", "disabled"]).optional(),
   })
   .refine((data) => Object.keys(data).length > 0);

@@ -6,9 +6,9 @@ import {
   modelRoutes,
   providers,
   requestAudits,
-  upstreamCredentials,
   usageCountersDaily,
 } from "../../db/schema/index.js";
+import { getChannelOverviewStats } from "../../lib/channel-overview.js";
 import {
   requirePasswordChanged,
   requireRoles,
@@ -18,23 +18,16 @@ import {
 export async function adminOverviewRoutes(app: FastifyInstance) {
   app.addHook("preHandler", requireSession);
   app.addHook("preHandler", requirePasswordChanged);
-  app.addHook("preHandler", requireRoles("admin", "auditor"));
+  app.addHook("preHandler", requireRoles("admin"));
 
   app.get("/api/admin/overview", async () => {
+    const now = new Date();
     const [userCount] = await db.select({ n: count() }).from(employees);
     const [activeUsers] = await db
       .select({ n: count() })
       .from(employees)
       .where(eq(employees.status, "active"));
-    const [credCount] = await db.select({ n: count() }).from(upstreamCredentials);
-    const [activeCreds] = await db
-      .select({ n: count() })
-      .from(upstreamCredentials)
-      .where(eq(upstreamCredentials.status, "active"));
-    const [autoDisabled] = await db
-      .select({ n: count() })
-      .from(upstreamCredentials)
-      .where(eq(upstreamCredentials.status, "auto_disabled"));
+    const channels = await getChannelOverviewStats(now);
     const [providerCount] = await db.select({ n: count() }).from(providers);
     const [routeCount] = await db
       .select({ n: count() })
@@ -105,11 +98,7 @@ export async function adminOverviewRoutes(app: FastifyInstance) {
       success: true,
       data: {
         employees: { total: userCount.n, active: activeUsers.n },
-        credentials: {
-          total: credCount.n,
-          active: activeCreds.n,
-          autoDisabled: autoDisabled.n,
-        },
+        channels,
         providers: providerCount.n,
         modelRoutesEnabled: routeCount.n,
         today: {

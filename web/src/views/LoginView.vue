@@ -38,11 +38,11 @@ const auth = useAuthStore();
 const router = useRouter();
 const route = useRoute();
 
-function resolveRedirect(role: "employee" | "admin" | "auditor") {
+function resolveRedirect(role: "employee" | "admin") {
   const home = homePathForUser({ role });
   const raw = route.query.redirect as string | undefined;
   // Admin must not be sent to employee pages via redirect
-  if (role === "admin" || role === "auditor") {
+  if (role === "admin") {
     if (!raw || raw.startsWith("/me")) return home;
     if (raw.startsWith("/admin") || raw === "/change-password") return raw;
     return home;

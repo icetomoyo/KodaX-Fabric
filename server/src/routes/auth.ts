@@ -3,7 +3,7 @@ import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../db/client.js";
 import { employees } from "../db/schema/index.js";
-import { signSession } from "../lib/jwt.js";
+import { isSessionRole, signSession } from "../lib/jwt.js";
 import { hashPassword, validateNewPassword, verifyPassword } from "../lib/password.js";
 import { writeOpsAudit } from "../lib/ops-audit.js";
 import { requireSession } from "../middleware/auth.js";
@@ -40,7 +40,7 @@ export async function authRoutes(app: FastifyInstance) {
       .where(eq(employees.phone, body.data.phone))
       .limit(1);
 
-    if (!user || user.status !== "active") {
+    if (!user || user.status !== "active" || !isSessionRole(user.role)) {
       return reply.code(401).send({ success: false, message: "手机号或密码错误" });
     }
 
@@ -117,7 +117,7 @@ export async function authRoutes(app: FastifyInstance) {
         .where(eq(employees.id, req.employeeId!))
         .limit(1);
 
-      if (!user) {
+      if (!user || !isSessionRole(user.role)) {
         return reply.code(401).send({ success: false, message: "用户不存在" });
       }
 

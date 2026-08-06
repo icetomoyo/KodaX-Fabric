@@ -13,7 +13,7 @@ import {
 export async function adminModelRouteRoutes(app: FastifyInstance) {
   app.addHook("preHandler", requireSession);
   app.addHook("preHandler", requirePasswordChanged);
-  app.addHook("preHandler", requireRoles("admin", "auditor"));
+  app.addHook("preHandler", requireRoles("admin"));
 
   app.get("/api/admin/model-routes", async (req) => {
     const query = z

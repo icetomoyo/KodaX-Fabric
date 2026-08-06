@@ -8,7 +8,7 @@
         </div>
         <div class="head-actions">
           <el-button :loading="loading" @click="load">刷新</el-button>
-          <el-button v-if="auth.isAdmin" type="primary" @click="router.push('/admin/credentials')">
+          <el-button type="primary" @click="router.push('/admin/credentials')">
             管理渠道
           </el-button>
         </div>
@@ -37,13 +37,13 @@
         </div>
         <div class="kpi-card success">
           <span class="kpi-label">启用渠道</span>
-          <strong class="kpi-value">{{ formatNumber(data?.credentials?.active) }}</strong>
-          <span class="kpi-foot">共 {{ formatNumber(data?.credentials?.total) }} 个渠道</span>
+          <strong class="kpi-value">{{ formatNumber(data?.channels?.enabled) }}</strong>
+          <span class="kpi-foot">共 {{ formatNumber(data?.channels?.total) }} 个渠道</span>
         </div>
-        <div class="kpi-card" :class="{ danger: (data?.credentials?.autoDisabled ?? 0) > 0 }">
+        <div class="kpi-card" :class="{ danger: (data?.channels?.unavailable ?? 0) > 0 }">
           <span class="kpi-label">异常渠道</span>
-          <strong class="kpi-value">{{ formatNumber(data?.credentials?.autoDisabled) }}</strong>
-          <span class="kpi-foot">自动停用，需关注</span>
+          <strong class="kpi-value">{{ formatNumber(data?.channels?.unavailable) }}</strong>
+          <span class="kpi-foot">已启用但暂无可调度 Key</span>
         </div>
         <div class="kpi-card muted">
           <span class="kpi-label">接入平台</span>
@@ -57,15 +57,10 @@
           <span class="quick-dot blue" />
           <span>
             <strong>上游渠道</strong>
-            <small>{{ auth.isAdmin ? "凭证池 · 连通测试 · 启停" : "渠道状态 · 只读查看" }}</small>
+            <small>凭证池 · 连通测试 · 启停</small>
           </span>
         </button>
-        <button
-          v-if="auth.isAdmin"
-          type="button"
-          class="quick-link"
-          @click="router.push('/admin/users')"
-        >
+        <button type="button" class="quick-link" @click="router.push('/admin/users')">
           <span class="quick-dot violet" />
           <span>
             <strong>员工管理</strong>
@@ -79,28 +74,11 @@
             <small>全文审计 · 用量追踪</small>
           </span>
         </button>
-        <button
-          v-if="auth.isAdmin"
-          type="button"
-          class="quick-link"
-          @click="router.push('/admin/quota')"
-        >
+        <button type="button" class="quick-link" @click="router.push('/admin/quota')">
           <span class="quick-dot amber" />
           <span>
             <strong>配额策略</strong>
-            <small>软上限 · RPM / 并发</small>
-          </span>
-        </button>
-        <button
-          v-if="!auth.isAdmin"
-          type="button"
-          class="quick-link"
-          @click="router.push('/admin/profile')"
-        >
-          <span class="quick-dot amber" />
-          <span>
-            <strong>个人中心</strong>
-            <small>账号信息 · 改密</small>
+            <small>单日 Token 硬上限</small>
           </span>
         </button>
       </div>
@@ -240,11 +218,10 @@ import { useRouter } from "vue-router";
 import { ElMessage } from "element-plus";
 import { http } from "@/api/http";
 import { formatDateTime } from "@/lib/date-time";
-import { useAuthStore } from "@/stores/auth";
 
 type OverviewData = {
   employees?: { total: number; active: number };
-  credentials?: { total: number; active: number; autoDisabled: number };
+  channels?: { total: number; enabled: number; unavailable: number };
   providers?: number;
   modelRoutesEnabled?: number;
   today?: { requests: number; tokens: number; errors: number };
@@ -280,7 +257,6 @@ const PROVIDER_META: Record<string, { label: string; color: string }> = {
 };
 
 const router = useRouter();
-const auth = useAuthStore();
 const loading = ref(false);
 const data = ref<OverviewData | null>(null);
 

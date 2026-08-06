@@ -45,7 +45,7 @@ const {
   upstreamCredentials,
 } = schema;
 
-type Role = "employee" | "admin" | "auditor";
+type Role = "employee" | "admin" ;
 type Protocol = "openai_chat" | "openai_responses" | "anthropic_messages";
 type CredentialStatus = "active" | "cooling" | "disabled" | "auto_disabled";
 
@@ -247,7 +247,6 @@ async function createUsers(): Promise<void> {
   for (const [role, suffix] of [
     ["employee", "emp"],
     ["admin", "adm"],
-    ["auditor", "aud"],
   ] as const) {
     const phone = `${suffix}${runId.slice(0, 16)}`;
     const name = `${role} ${marker}`;
@@ -469,14 +468,12 @@ async function assertStrictMeRoleBoundary(): Promise<void> {
   });
   assert.equal(employeeResponse.statusCode, 200);
 
-  for (const role of ["admin", "auditor"] as const) {
-    const response = await app!.inject({
-      method: "GET",
-      url: "/api/me/upstream-channels",
-      headers: authHeaders(requiredUser(role)),
-    });
-    assert.equal(response.statusCode, 403, `${role} unexpectedly entered /api/me`);
-  }
+  const response = await app!.inject({
+    method: "GET",
+    url: "/api/me/upstream-channels",
+    headers: authHeaders(requiredUser("admin")),
+  });
+  assert.equal(response.statusCode, 403, "admin unexpectedly entered /api/me");
 }
 
 async function assertUpstreamChannelMetadata(): Promise<void> {
@@ -856,13 +853,13 @@ async function assertRoleTransitionRevocation(): Promise<void> {
     );
   assert.equal(activeBefore.length, fixtureKeyIds.length);
 
-  const toAuditor = await app!.inject({
+  const toAdmin = await app!.inject({
     method: "PATCH",
     url: `/api/admin/users/${employee.id}`,
     headers: authHeaders(admin),
-    payload: { role: "auditor" },
+    payload: { role: "admin" },
   });
-  assert.equal(toAuditor.statusCode, 200);
+  assert.equal(toAdmin.statusCode, 200);
 
   const [afterTransition, keysAfterTransition] = await Promise.all([
     db
@@ -875,7 +872,7 @@ async function assertRoleTransitionRevocation(): Promise<void> {
       .from(employeeApiKeys)
       .where(inArray(employeeApiKeys.id, fixtureKeyIds)),
   ]);
-  assert.equal(afterTransition[0]?.role, "auditor");
+  assert.equal(afterTransition[0]?.role, "admin");
   assert.equal(keysAfterTransition.length, fixtureKeyIds.length);
   assert(keysAfterTransition.every((key) => key.status === "revoked"));
 
@@ -896,7 +893,7 @@ async function assertRoleTransitionRevocation(): Promise<void> {
       ),
     );
   const revocationAudit = revocationAuditRows.find(
-    (row) => isRecord(row.detail) && row.detail.role === "auditor",
+    (row) => isRecord(row.detail) && row.detail.role === "admin",
   );
   assert(revocationAudit && isRecord(revocationAudit.detail));
   assert.equal(revocationAudit.detail.previousRole, "employee");

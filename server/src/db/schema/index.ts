@@ -13,7 +13,7 @@ import {
   varchar,
 } from "drizzle-orm/pg-core";
 
-export const employeeRoleEnum = pgEnum("employee_role", ["employee", "admin", "auditor"]);
+export const employeeRoleEnum = pgEnum("employee_role", ["employee", "admin"]);
 export const employeeStatusEnum = pgEnum("employee_status", ["active", "disabled"]);
 export const apiKeyStatusEnum = pgEnum("api_key_status", ["active", "revoked"]);
 export const relayProtocolEnum = pgEnum("relay_protocol", [
@@ -29,7 +29,6 @@ export const credentialStatusEnum = pgEnum("credential_status", [
   "auto_disabled",
   "cooling",
 ]);
-export const grantScopeEnum = pgEnum("grant_scope", ["all", "dept", "employees"]);
 export const auditStatusEnum = pgEnum("audit_status", [
   "success",
   "upstream_error",
@@ -277,19 +276,6 @@ export const requestAuditBodies = pgTable("request_audit_bodies", {
   storage: bodyStorageEnum("storage").notNull().default("db"),
   objectKey: text("object_key"),
   truncated: boolean("truncated").notNull().default(false),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
-
-export const logAccessGrants = pgTable("log_access_grants", {
-  id: bigint("id", { mode: "number" }).generatedAlwaysAsIdentity().primaryKey(),
-  granteeEmployeeId: bigint("grantee_employee_id", { mode: "number" })
-    .notNull()
-    .references(() => employees.id),
-  scopeType: grantScopeEnum("scope_type").notNull(),
-  scopePayload: jsonb("scope_payload"),
-  expiresAt: timestamp("expires_at", { withTimezone: true }),
-  grantedBy: bigint("granted_by", { mode: "number" }),
-  status: varchar("status", { length: 32 }).notNull().default("active"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

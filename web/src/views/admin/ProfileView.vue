@@ -124,7 +124,6 @@ const passwordForm = reactive({
 
 const roleLabel = computed(() => ({
   admin: "管理员",
-  auditor: "审计员",
   employee: "员工",
 }[auth.user?.role || "employee"]));
 

@@ -2,9 +2,8 @@ CREATE TYPE "public"."api_key_status" AS ENUM('active', 'revoked');--> statement
 CREATE TYPE "public"."audit_status" AS ENUM('success', 'upstream_error', 'client_error', 'cancelled');--> statement-breakpoint
 CREATE TYPE "public"."body_storage" AS ENUM('db', 'object');--> statement-breakpoint
 CREATE TYPE "public"."credential_status" AS ENUM('active', 'disabled', 'auto_disabled', 'cooling');--> statement-breakpoint
-CREATE TYPE "public"."employee_role" AS ENUM('employee', 'admin', 'auditor');--> statement-breakpoint
+CREATE TYPE "public"."employee_role" AS ENUM('employee', 'admin');--> statement-breakpoint
 CREATE TYPE "public"."employee_status" AS ENUM('active', 'disabled');--> statement-breakpoint
-CREATE TYPE "public"."grant_scope" AS ENUM('all', 'dept', 'employees');--> statement-breakpoint
 CREATE TYPE "public"."product_type" AS ENUM('api', 'coding_plan');--> statement-breakpoint
 CREATE TYPE "public"."relay_protocol" AS ENUM('openai_chat', 'openai_responses', 'anthropic_messages');--> statement-breakpoint
 CREATE TYPE "public"."share_mode" AS ENUM('public_pool', 'grant_only', 'disabled');--> statement-breakpoint
@@ -32,16 +31,6 @@ CREATE TABLE "employee_api_keys" (
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
-CREATE TABLE "employee_quota_overrides" (
-	"employee_id" bigint PRIMARY KEY NOT NULL,
-	"policy_id" bigint,
-	"soft_tpm_day" bigint,
-	"hard_tpm_day" bigint,
-	"rpm" integer,
-	"max_concurrency" integer,
-	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
-);
---> statement-breakpoint
 CREATE TABLE "employees" (
 	"id" bigint PRIMARY KEY GENERATED ALWAYS AS IDENTITY (sequence name "employees_id_seq" INCREMENT BY 1 MINVALUE 1 MAXVALUE 9223372036854775807 START WITH 1 CACHE 1),
 	"name" varchar(100) NOT NULL,
@@ -56,18 +45,6 @@ CREATE TABLE "employees" (
 	"created_by" bigint,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
-);
---> statement-breakpoint
-CREATE TABLE "log_access_grants" (
-	"id" bigint PRIMARY KEY GENERATED ALWAYS AS IDENTITY (sequence name "log_access_grants_id_seq" INCREMENT BY 1 MINVALUE 1 MAXVALUE 9223372036854775807 START WITH 1 CACHE 1),
-	"grantee_employee_id" bigint NOT NULL,
-	"scope_type" "grant_scope" NOT NULL,
-	"scope_payload" jsonb,
-	"can_read_body" boolean DEFAULT true NOT NULL,
-	"expires_at" timestamp with time zone,
-	"granted_by" bigint,
-	"status" varchar(32) DEFAULT 'active' NOT NULL,
-	"created_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
 CREATE TABLE "model_routes" (
@@ -101,6 +78,8 @@ CREATE TABLE "product_lines" (
 	"name" varchar(100) NOT NULL,
 	"product_type" "product_type" NOT NULL,
 	"base_url_override" text,
+	"protocol_configs" jsonb,
+	"config_version" integer DEFAULT 1 NOT NULL,
 	"share_mode" "share_mode" DEFAULT 'public_pool' NOT NULL,
 	"allow_auto_route" boolean DEFAULT true NOT NULL,
 	"retry_policy" jsonb,
@@ -121,17 +100,9 @@ CREATE TABLE "providers" (
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
-CREATE TABLE "quota_policies" (
-	"id" bigint PRIMARY KEY GENERATED ALWAYS AS IDENTITY (sequence name "quota_policies_id_seq" INCREMENT BY 1 MINVALUE 1 MAXVALUE 9223372036854775807 START WITH 1 CACHE 1),
-	"name" varchar(100) NOT NULL,
-	"soft_tpm_day" bigint,
-	"hard_tpm_day" bigint,
-	"rpm" integer DEFAULT 60 NOT NULL,
-	"max_concurrency" integer DEFAULT 5 NOT NULL,
-	"soft_req_day" bigint,
-	"hard_req_day" bigint,
-	"is_default" boolean DEFAULT false NOT NULL,
-	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+CREATE TABLE "quota_policy" (
+	"key" varchar(32) PRIMARY KEY DEFAULT 'default' NOT NULL,
+	"daily_token_limit" bigint DEFAULT 500000000 NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
@@ -216,17 +187,13 @@ CREATE TABLE "usage_counters_daily" (
 	"completion_tokens" bigint DEFAULT 0 NOT NULL,
 	"total_tokens" bigint DEFAULT 0 NOT NULL,
 	"request_count" bigint DEFAULT 0 NOT NULL,
-	"error_count" bigint DEFAULT 0 NOT NULL,
-	"soft_limit_hit" boolean DEFAULT false NOT NULL
+	"error_count" bigint DEFAULT 0 NOT NULL
 );
 --> statement-breakpoint
 ALTER TABLE "credential_employee_grants" ADD CONSTRAINT "credential_employee_grants_credential_id_upstream_credentials_id_fk" FOREIGN KEY ("credential_id") REFERENCES "public"."upstream_credentials"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "credential_employee_grants" ADD CONSTRAINT "credential_employee_grants_employee_id_employees_id_fk" FOREIGN KEY ("employee_id") REFERENCES "public"."employees"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "employee_api_keys" ADD CONSTRAINT "employee_api_keys_employee_id_employees_id_fk" FOREIGN KEY ("employee_id") REFERENCES "public"."employees"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "employee_api_keys" ADD CONSTRAINT "employee_api_keys_product_line_id_product_lines_id_fk" FOREIGN KEY ("product_line_id") REFERENCES "public"."product_lines"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "employee_quota_overrides" ADD CONSTRAINT "employee_quota_overrides_employee_id_employees_id_fk" FOREIGN KEY ("employee_id") REFERENCES "public"."employees"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "employee_quota_overrides" ADD CONSTRAINT "employee_quota_overrides_policy_id_quota_policies_id_fk" FOREIGN KEY ("policy_id") REFERENCES "public"."quota_policies"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "log_access_grants" ADD CONSTRAINT "log_access_grants_grantee_employee_id_employees_id_fk" FOREIGN KEY ("grantee_employee_id") REFERENCES "public"."employees"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "model_routes" ADD CONSTRAINT "model_routes_product_line_id_product_lines_id_fk" FOREIGN KEY ("product_line_id") REFERENCES "public"."product_lines"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "product_lines" ADD CONSTRAINT "product_lines_provider_id_providers_id_fk" FOREIGN KEY ("provider_id") REFERENCES "public"."providers"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "request_audits" ADD CONSTRAINT "request_audits_employee_id_employees_id_fk" FOREIGN KEY ("employee_id") REFERENCES "public"."employees"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
@@ -246,4 +213,5 @@ CREATE UNIQUE INDEX "request_audits_request_id_uidx" ON "request_audits" USING b
 CREATE INDEX "request_audits_employee_created_idx" ON "request_audits" USING btree ("employee_id","created_at");--> statement-breakpoint
 CREATE INDEX "request_audits_created_idx" ON "request_audits" USING btree ("created_at");--> statement-breakpoint
 CREATE INDEX "upstream_credentials_pl_idx" ON "upstream_credentials" USING btree ("product_line_id","status");--> statement-breakpoint
-CREATE UNIQUE INDEX "usage_counters_daily_uidx" ON "usage_counters_daily" USING btree ("day","employee_id");
+CREATE UNIQUE INDEX "usage_counters_daily_uidx" ON "usage_counters_daily" USING btree ("day","employee_id");--> statement-breakpoint
+CREATE INDEX "usage_counters_daily_employee_day_idx" ON "usage_counters_daily" USING btree ("employee_id","day");

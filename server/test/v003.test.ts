@@ -160,7 +160,7 @@ test("context normalization handles Chat, Responses and Anthropic without header
   assert.equal(truncatedSerialized.includes("headers"), false);
 });
 
-test("admin log context guard rejects auditors and uses a five-minute audit window", async () => {
+test("admin log context guard rejects employees and uses a five-minute audit window", async () => {
   let statusCode = 200;
   let payload: unknown;
   const reply = {
@@ -174,7 +174,7 @@ test("admin log context guard rejects auditors and uses a five-minute audit wind
     },
   } as unknown as FastifyReply;
   await requireAdminLogContext(
-    { session: { role: "auditor" } } as unknown as FastifyRequest,
+    { session: { role: "employee" } } as unknown as FastifyRequest,
     reply,
   );
   assert.equal(statusCode, 403);

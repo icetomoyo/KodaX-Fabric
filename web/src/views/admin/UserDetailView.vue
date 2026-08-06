@@ -140,7 +140,7 @@ type UsageResponse = {
     name: string;
     phone: string;
     dept: string | null;
-    role: "employee" | "admin" | "auditor";
+    role: "employee" | "admin";
     status: "active" | "disabled";
     lastLoginAt: string | null;
   };
@@ -350,7 +350,7 @@ function formatPercent(value: number | null): string {
 }
 
 function roleLabel(role: UsageResponse["employee"]["role"]): string {
-  return { employee: "员工", admin: "管理员", auditor: "审计员" }[role];
+  return { employee: "员工", admin: "管理员" }[role];
 }
 
 watch(() => route.params.id, resetForUser, { immediate: true });
