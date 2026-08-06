@@ -101,7 +101,14 @@
 
         <div class="secret-label">完整 API Key</div>
         <div class="secret-box">
-          <code>{{ createdResult.key }}</code>
+          <el-input
+            :model-value="createdResult.key"
+            readonly
+            type="textarea"
+            :autosize="{ minRows: 2, maxRows: 4 }"
+            class="secret-input"
+            @focus="selectSecretInput"
+          />
           <el-button
             type="primary"
             :loading="copyingCreatedKey"
@@ -159,23 +166,38 @@
             </div>
           </el-form-item>
 
-          <el-form-item label="2. 兼容协议" required>
-            <el-select
+          <el-form-item label="2. 兼容协议" required class="protocol-form-item">
+            <el-radio-group
               v-model="createForm.protocol"
-              placeholder="请先选择上游渠道"
-              style="width: 100%"
-              :disabled="creating || !selectedChannel || compatibleProtocolOptions.length === 0"
+              class="protocol-radio-group"
+              :disabled="creating || !selectedChannel"
             >
-              <el-option
-                v-for="option in compatibleProtocolOptions"
+              <el-radio
+                v-for="option in protocolChoiceOptions"
                 :key="option.value"
-                :label="option.shortLabel"
                 :value="option.value"
+                :disabled="!option.available"
+                border
+                class="protocol-radio-option"
               >
-                <span>{{ option.shortLabel }}</span>
-                <span class="protocol-endpoint">{{ option.endpoint }}</span>
-              </el-option>
-            </el-select>
+                <span class="protocol-option-copy">
+                  <strong>{{ option.displayLabel }}</strong>
+                  <small>{{ option.description }}</small>
+                  <code>{{ option.endpoint }}</code>
+                </span>
+              </el-radio>
+            </el-radio-group>
+
+            <div v-if="!selectedChannel" class="form-help">
+              请先选择上游渠道；协议决定客户端请求接口与鉴权方式。
+            </div>
+            <div v-else-if="compatibleProtocolOptions.length === 0" class="form-help">
+              该渠道暂无兼容协议，请联系管理员检查渠道 Key 的协议声明。
+            </div>
+            <div v-else class="form-help">
+              一把 Key 只能绑定一种协议；请按客户端实际协议选择，创建后不可修改。
+            </div>
+
             <el-alert
               v-if="selectedChannel && compatibleProtocolOptions.length === 0"
               class="protocol-empty"
@@ -183,6 +205,26 @@
               type="warning"
               :closable="false"
             />
+
+            <div v-if="selectedProtocolGuide" class="protocol-guide">
+              <div class="protocol-guide-head">
+                <strong>{{ selectedProtocolGuide.shortLabel }}</strong>
+                <el-tag size="small" effect="plain">已选协议</el-tag>
+              </div>
+              <div class="protocol-guide-row">
+                <span>请求接口</span>
+                <code>{{ selectedProtocolGuide.endpoint }}</code>
+              </div>
+              <div class="protocol-guide-row">
+                <span>鉴权 Header</span>
+                <div class="protocol-guide-lines">
+                  <code
+                    v-for="line in selectedProtocolGuide.authHeaders"
+                    :key="line"
+                  >{{ line }}</code>
+                </div>
+              </div>
+            </div>
           </el-form-item>
 
           <el-form-item label="3. 名称" required>
@@ -232,9 +274,11 @@
 import { computed, onMounted, reactive, ref } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { http } from "@/api/http";
+import { copyText } from "@/lib/clipboard";
 import { formatDateTime } from "@/lib/date-time";
 import {
   relayProtocolLabel,
+  relayProtocolOption,
   relayProtocolOptions,
   type RelayProtocol,
 } from "@/views/relay-protocol";
@@ -304,6 +348,35 @@ const selectedChannel = computed(() =>
 const compatibleProtocolOptions = computed(() => {
   const protocols = selectedChannel.value?.compatibleProtocols ?? [];
   return relayProtocolOptions.filter((option) => protocols.includes(option.value));
+});
+
+/** Card choices mirror admin channel protocol picker; unavailable ones stay visible but disabled. */
+const protocolChoiceOptions = computed(() => {
+  const available = new Set(
+    (selectedChannel.value?.compatibleProtocols ?? []) as RelayProtocol[],
+  );
+  return relayProtocolOptions.map((option) => {
+    const isAvailable = selectedChannel.value
+      ? available.has(option.value)
+      : false;
+    return {
+      ...option,
+      available: isAvailable,
+      displayLabel: isAvailable
+        ? option.label
+        : selectedChannel.value
+          ? `${option.label}（当前渠道不支持）`
+          : option.label,
+    };
+  });
+});
+
+const selectedProtocolGuide = computed(() => {
+  if (!createForm.protocol) return null;
+  if (!compatibleProtocolOptions.value.some((option) => option.value === createForm.protocol)) {
+    return null;
+  }
+  return relayProtocolOption(createForm.protocol);
 });
 
 const canCreate = computed(() =>
@@ -432,15 +505,6 @@ function handleCreateBeforeClose(done: () => void) {
   done();
 }
 
-async function writeClipboard(value: string): Promise<boolean> {
-  try {
-    await navigator.clipboard.writeText(value);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 async function createKey() {
   if (!selectedChannel.value) {
     ElMessage.warning("请选择上游渠道");
@@ -511,14 +575,26 @@ async function createKey() {
   }
 }
 
+function selectSecretInput(event: FocusEvent) {
+  const target = event.target;
+  if (target instanceof HTMLTextAreaElement || target instanceof HTMLInputElement) {
+    target.select();
+  }
+}
+
 async function copyCreatedKey() {
   if (!createdResult.value) return;
   copyingCreatedKey.value = true;
-  const copied = await writeClipboard(createdResult.value.key);
-  copied
-    ? ElMessage.success("API Key 已复制")
-    : ElMessage.error("复制失败，请手动选择并复制 API Key");
-  copyingCreatedKey.value = false;
+  try {
+    const copied = await copyText(createdResult.value.key);
+    if (copied) {
+      ElMessage.success("API Key 已复制");
+    } else {
+      ElMessage.error("复制失败，请点击 Key 文本全选后手动复制");
+    }
+  } finally {
+    copyingCreatedKey.value = false;
+  }
 }
 
 async function removeKey(row: KeyRow) {
@@ -627,15 +703,132 @@ onMounted(load);
   line-height: 1.5;
 }
 
-.protocol-endpoint {
-  float: right;
-  margin-left: 20px;
-  color: #94a3b8;
+.protocol-form-item :deep(.el-form-item__content) {
+  display: block;
+}
+
+.protocol-radio-group {
+  display: grid;
+  grid-template-columns: 1fr;
+  width: 100%;
+  gap: 10px;
+}
+
+.protocol-radio-option.el-radio.is-bordered {
+  width: 100%;
+  height: auto;
+  min-height: 72px;
+  margin: 0;
+  padding: 12px 14px;
+  border-radius: 8px;
+  align-items: flex-start;
+}
+
+.protocol-radio-option :deep(.el-radio__input) {
+  margin-top: 2px;
+}
+
+.protocol-radio-option :deep(.el-radio__label) {
+  min-width: 0;
+  width: 100%;
+  padding-left: 10px;
+  white-space: normal;
+}
+
+.protocol-option-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  line-height: 1.4;
+}
+
+.protocol-option-copy strong {
+  color: #334155;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.protocol-option-copy small {
+  color: #64748b;
   font-size: 12px;
+}
+
+.protocol-option-copy code {
+  color: #475569;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+}
+
+.protocol-radio-option.is-checked .protocol-option-copy strong {
+  color: var(--el-color-primary);
+}
+
+.protocol-radio-option.is-disabled .protocol-option-copy strong,
+.protocol-radio-option.is-disabled .protocol-option-copy small,
+.protocol-radio-option.is-disabled .protocol-option-copy code {
+  color: #94a3b8;
+}
+
+.form-help {
+  margin-top: 8px;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .protocol-empty {
   margin-top: 8px;
+}
+
+.protocol-guide {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.protocol-guide-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.protocol-guide-head strong {
+  color: #0f172a;
+  font-size: 13px;
+}
+
+.protocol-guide-row {
+  display: grid;
+  grid-template-columns: 84px minmax(0, 1fr);
+  gap: 10px;
+  margin-top: 8px;
+  align-items: start;
+}
+
+.protocol-guide-row > span {
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.protocol-guide-row > code,
+.protocol-guide-lines code {
+  display: block;
+  overflow-wrap: anywhere;
+  color: #334155;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.protocol-guide-lines {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
 }
 
 .submit-error {
@@ -692,25 +885,25 @@ onMounted(load);
   gap: 10px;
 }
 
-.secret-box code {
-  display: flex;
+.secret-input {
   flex: 1;
-  align-items: center;
   min-width: 0;
-  padding: 12px;
-  overflow-wrap: anywhere;
-  border: 1px solid #fbbf24;
-  border-radius: 8px;
+}
+
+.secret-input :deep(.el-textarea__inner) {
+  min-height: 72px;
+  border-color: #fbbf24;
   background: #fffbeb;
   color: #92400e;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 13px;
   line-height: 1.6;
-  user-select: all;
+  word-break: break-all;
 }
 
 .secret-box .el-button {
   height: auto;
+  align-self: stretch;
 }
 
 .result-tip {

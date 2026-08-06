@@ -275,6 +275,7 @@ import { computed, onMounted, reactive, ref } from "vue";
 import { ElMessage } from "element-plus";
 import { http } from "@/api/http";
 import StructuredJson from "@/components/StructuredJson.vue";
+import { copyText } from "@/lib/clipboard";
 import { formatDateTime } from "@/lib/date-time";
 import { relayProtocolLabel, type RelayProtocol } from "@/views/relay-protocol";
 
@@ -429,12 +430,9 @@ function shortRequestId(requestId: string): string {
 }
 
 async function copyRequestId(requestId: string) {
-  try {
-    await navigator.clipboard.writeText(requestId);
-    ElMessage.success("Request ID 已复制");
-  } catch {
-    ElMessage.error("复制失败");
-  }
+  const copied = await copyText(requestId);
+  if (copied) ElMessage.success("Request ID 已复制");
+  else ElMessage.error("复制失败");
 }
 
 function messageRole(message: unknown): string {
@@ -461,12 +459,9 @@ function formatBytes(value: number): string {
 }
 
 async function copyStructured(value: unknown) {
-  try {
-    await navigator.clipboard.writeText(JSON.stringify(value ?? null, null, 2));
-    ElMessage.success("结构化数据已复制");
-  } catch {
-    ElMessage.error("复制失败");
-  }
+  const copied = await copyText(JSON.stringify(value ?? null, null, 2));
+  if (copied) ElMessage.success("结构化数据已复制");
+  else ElMessage.error("复制失败");
 }
 
 const hasSkillContext = computed(() => Boolean(

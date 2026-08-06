@@ -19,6 +19,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { ElMessage } from "element-plus";
+import { copyText } from "@/lib/clipboard";
 
 const props = withDefaults(defineProps<{
   value: unknown;
@@ -57,12 +58,9 @@ const valueSummary = computed(() => {
 });
 
 async function copy() {
-  try {
-    await navigator.clipboard.writeText(serialized.value);
-    ElMessage.success("结构化数据已复制");
-  } catch {
-    ElMessage.error("复制失败");
-  }
+  const copied = await copyText(serialized.value);
+  if (copied) ElMessage.success("结构化数据已复制");
+  else ElMessage.error("复制失败");
 }
 
 watch(() => props.value, () => { expanded.value = false; });
