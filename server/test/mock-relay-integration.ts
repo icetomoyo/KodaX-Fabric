@@ -521,7 +521,7 @@ async function callRelay(baseUrl: string, fixture: ScenarioFixture): Promise<Rel
   rememberRedisKeys(created.employeeId);
   let response: Response;
   try {
-    response = await fetch(`${baseUrl}/v1/chat/completions`, {
+    response = await fetch(`${baseUrl}/ai/chat/completions`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${fixture.employeeApiKeyRaw}`,

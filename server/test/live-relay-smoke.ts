@@ -60,7 +60,7 @@ async function waitForAudits(expected: number) {
 }
 
 async function callChat(model: string, stream: boolean): Promise<SmokeResult> {
-  const response = await fetch(`${baseUrl}/v1/chat/completions`, {
+  const response = await fetch(`${baseUrl}/ai/chat/completions`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${raw}`,
@@ -136,10 +136,10 @@ async function main() {
     .returning({ id: employeeApiKeys.id });
   createdKeyId = created.id;
 
-  const modelResponse = await fetch(`${baseUrl}/v1/models`, {
+  const modelResponse = await fetch(`${baseUrl}/ai/models`, {
     headers: { Authorization: `Bearer ${raw}` },
   });
-  assert.equal(modelResponse.status, 200, "GET /v1/models should succeed");
+  assert.equal(modelResponse.status, 200, "GET /ai/models should succeed");
   const modelPayload = (await modelResponse.json()) as {
     data?: Array<{ id?: unknown }>;
   };

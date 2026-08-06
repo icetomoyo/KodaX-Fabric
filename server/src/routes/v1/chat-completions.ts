@@ -16,6 +16,7 @@ import {
   RelayLimitError,
   type RelayQuotaLease,
 } from "../../lib/relay/quota.js";
+import { RELAY_ENDPOINTS } from "../../lib/relay/protocol.js";
 import {
   resolveAccessibleRelayModels,
   resolveRelayCandidates,
@@ -283,67 +284,69 @@ function noRouteError(message = "当前账户没有可用于该模型的渠道")
   );
 }
 
-export async function v1RelayRoutes(app: FastifyInstance) {
-  app.get(
-    "/v1/models",
-    { onRequest: requireAnyRelayApiKey },
-    async (req, reply) => {
-      const principal = req.relayPrincipal!;
-      const requestId = `threq_${randomUUID().replaceAll("-", "")}`;
-      reply.header("x-tokenhub-request-id", requestId);
-      if (principal.protocol === "anthropic_messages") {
-        reply.header("request-id", requestId);
-      } else {
-        reply.header("x-request-id", requestId);
-      }
-      const resolution = await resolveAccessibleRelayModels(
-        principal.employeeId,
-        principal.protocol,
-        principal.productLineId,
-      );
-      if (resolution.unavailableReason === "bound_channel_unavailable") {
+export async function relayRoutes(app: FastifyInstance) {
+  for (const path of [RELAY_ENDPOINTS.models, RELAY_ENDPOINTS.anthropicModels]) {
+    app.get(
+      path,
+      { onRequest: requireAnyRelayApiKey },
+      async (req, reply) => {
+        const principal = req.relayPrincipal!;
+        const requestId = `threq_${randomUUID().replaceAll("-", "")}`;
+        reply.header("x-tokenhub-request-id", requestId);
         if (principal.protocol === "anthropic_messages") {
-          return reply.code(503).send({
-            type: "error",
-            error: {
-              type: "api_error",
-              message: "当前 Key 绑定的上游渠道不可用",
-              code: "bound_channel_unavailable",
-            },
-            request_id: requestId,
-          });
+          reply.header("request-id", requestId);
+        } else {
+          reply.header("x-request-id", requestId);
         }
-        return reply.code(503).send(
-          openAiError(
-            "当前 Key 绑定的上游渠道不可用",
-            "service_unavailable",
-            "bound_channel_unavailable",
-          ),
+        const resolution = await resolveAccessibleRelayModels(
+          principal.employeeId,
+          principal.protocol,
+          principal.productLineId,
         );
-      }
-      const models = resolution.models;
-      if (principal.protocol === "anthropic_messages") {
+        if (resolution.unavailableReason === "bound_channel_unavailable") {
+          if (principal.protocol === "anthropic_messages") {
+            return reply.code(503).send({
+              type: "error",
+              error: {
+                type: "api_error",
+                message: "当前 Key 绑定的上游渠道不可用",
+                code: "bound_channel_unavailable",
+              },
+              request_id: requestId,
+            });
+          }
+          return reply.code(503).send(
+            openAiError(
+              "当前 Key 绑定的上游渠道不可用",
+              "service_unavailable",
+              "bound_channel_unavailable",
+            ),
+          );
+        }
+        const models = resolution.models;
+        if (principal.protocol === "anthropic_messages") {
+          return {
+            data: models.map((model) => ({
+              id: model.id,
+              display_name: model.id,
+            })),
+          };
+        }
         return {
+          object: "list",
           data: models.map((model) => ({
             id: model.id,
-            display_name: model.id,
+            object: "model",
+            created: 0,
+            owned_by: model.ownedBy,
           })),
         };
-      }
-      return {
-        object: "list",
-        data: models.map((model) => ({
-          id: model.id,
-          object: "model",
-          created: 0,
-          owned_by: model.ownedBy,
-        })),
-      };
-    },
-  );
+      },
+    );
+  }
 
   app.post(
-    "/v1/chat/completions",
+    RELAY_ENDPOINTS.chatCompletions,
     { onRequest: requireRelayApiKey },
     async (req, reply) => {
       const startedAt = Date.now();

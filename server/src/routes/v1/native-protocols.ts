@@ -14,7 +14,10 @@ import {
   type RelayAuditInput,
 } from "../../lib/relay/audit.js";
 import { createNativeSsePassthrough } from "../../lib/relay/native-sse.js";
-import type { RelayProtocol } from "../../lib/relay/protocol.js";
+import {
+  RELAY_ENDPOINTS,
+  type RelayProtocol,
+} from "../../lib/relay/protocol.js";
 import {
   acquireRelayQuota,
   RelayLimitError,
@@ -57,10 +60,10 @@ type NativeRequestBody = JsonObject & {
 
 type NativeRouteConfig = {
   path:
-    | "/v1/responses"
-    | "/v1/responses/compact"
-    | "/v1/messages"
-    | "/v1/messages/count_tokens";
+    | typeof RELAY_ENDPOINTS.responses
+    | typeof RELAY_ENDPOINTS.responsesCompact
+    | typeof RELAY_ENDPOINTS.messages
+    | typeof RELAY_ENDPOINTS.messagesCountTokens;
   protocol: NativeProtocol;
   operation: Extract<
     RelayUpstreamOperation,
@@ -103,7 +106,7 @@ const messagesCountTokensSchema = z
 
 const routeConfigs: NativeRouteConfig[] = [
   {
-    path: "/v1/responses",
+    path: RELAY_ENDPOINTS.responses,
     protocol: "openai_responses",
     operation: "responses",
     schema: responsesSchema,
@@ -112,7 +115,7 @@ const routeConfigs: NativeRouteConfig[] = [
     requiresAnthropicVersion: false,
   },
   {
-    path: "/v1/responses/compact",
+    path: RELAY_ENDPOINTS.responsesCompact,
     protocol: "openai_responses",
     operation: "responses_compact",
     schema: responsesCompactSchema,
@@ -121,7 +124,7 @@ const routeConfigs: NativeRouteConfig[] = [
     requiresAnthropicVersion: false,
   },
   {
-    path: "/v1/messages",
+    path: RELAY_ENDPOINTS.messages,
     protocol: "anthropic_messages",
     operation: "messages",
     schema: messagesSchema,
@@ -130,7 +133,7 @@ const routeConfigs: NativeRouteConfig[] = [
     requiresAnthropicVersion: true,
   },
   {
-    path: "/v1/messages/count_tokens",
+    path: RELAY_ENDPOINTS.messagesCountTokens,
     protocol: "anthropic_messages",
     operation: "messages_count_tokens",
     schema: messagesCountTokensSchema,
@@ -1103,7 +1106,7 @@ async function handleNativeRequest(
 }
 
 function nativeProtocolForPath(url: string): NativeProtocol {
-  return url.split("?", 1)[0]?.startsWith("/v1/messages")
+  return url.split("?", 1)[0]?.startsWith(RELAY_ENDPOINTS.messages)
     ? "anthropic_messages"
     : "openai_responses";
 }
@@ -1188,7 +1191,7 @@ async function handleNativeParsingError(
   return reply.code(status).type("application/json; charset=utf-8").send(payload);
 }
 
-export async function v1NativeProtocolRoutes(app: FastifyInstance) {
+export async function nativeProtocolRoutes(app: FastifyInstance) {
   app.setErrorHandler((error, req, reply) =>
     handleNativeParsingError(app, error, req, reply));
   for (const config of routeConfigs) {

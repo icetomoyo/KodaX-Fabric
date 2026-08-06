@@ -94,13 +94,13 @@ TokenHub 面向公司内部员工，不提供外部注册、API 转售、充值�
 |---|---|---|
 | 管理员 `admin` | `/admin/*` | 员工管理、渠道与凭证管理、模型与授权、配额、全量日志、操作审计和运营概览 |
 | 员工 `employee` | `/me/*` | 修改密码、创建和删除自己的 API Key、查看自己的用量与调用记录 |
-| 调用方 | `/v1/*` | 使用有效的员工 API Key 调用与查询模型，不具有页面权限 |
+| 调用方 | `/ai/*` | 使用有效的员工 API Key 调用与查询模型，不具有页面权限 |
 
 ### 3.2 角色隔离
 
 - `/api/me/*` 只允许已改密的 `employee` 访问；
 - `/api/admin/*` 按 `admin` 的权限子集授权；
-- `/v1/*` 只接受状态有效、所有者为 active `employee` 的内部 API Key；
+- `/ai/*` 只接受状态有效、所有者为 active `employee` 的内部 API Key；
 - `admin` 不能创建调用 Key，也不能进入员工端；
 - `employee` 不能进入管理端；
 - 页面不提供管理端和员工端之间的切换入口；
@@ -159,7 +159,7 @@ TokenHub 面向公司内部员工，不提供外部注册、API 转售、充值�
 ### 4.4 员工调用模型
 
 1. 员工在 IDE、CLI 或脚本中配置 TokenHub Base URL 和内部 API Key。
-2. 调用方通过 `/v1/models` 查询该 Key 当前真实可调用的模型。
+2. 调用方通过 `/ai/models` 查询该 Key 当前真实可调用的模型。
 3. 调用方发起与 Key 协议一致的请求。
 4. 网关完成 Key 鉴权、角色校验、渠道与授权复核、配额检查、模型解析和凭证调度。
 5. 网关将请求原生转发至绑定渠道，按策略在该渠道内重试。
@@ -209,7 +209,7 @@ TokenHub 面向公司内部员工，不提供外部注册、API 转售、充值�
 | F-16 | P0 | 故障处理 | 401/403 自动停用、429 冷却、5xx/网络错误切换、400 不重试 | ✅ 当前可用 |
 | F-17 | P0 | 显式路由与模型发现 | 支持显式模型路由和 `allow_auto_route + discoveredModels` 自动发现 | ✅ 当前可用 |
 | F-18 | P0 | 绑定渠道内模型解析 | 显式路由判定、自动发现、凭证选择和错误结果均限定在绑定 ProductLine | ✅ 当前可用 |
-| F-19 | P0 | 绑定渠道内模型列表 | `/v1/models` 只返回该 Key 当前可调用的绑定渠道模型 | ✅ 当前可用 |
+| F-19 | P0 | 绑定渠道内模型列表 | `/ai/models` 只返回该 Key 当前可调用的绑定渠道模型 | ✅ 当前可用 |
 | F-20 | P0 | 绑定渠道内重试与亲和 | 所有重试和 Responses `previous_response_id` 亲和不得跨渠道 | ✅ 当前可用 |
 | F-21 | P1 | Responses 严格亲和 | `previous_response_id` 必须命中原凭证、ProductLine 和上游模型；记录缺失或原候选不可用时返回确定错误 | ✅ 当前可用 |
 
@@ -286,18 +286,18 @@ API Key 页面遵循以下交互：
 | 员工自助 | `/api/me/*` | employee Session/JWT + 已改密 | ✅ 当前可用 |
 | 员工可选渠道 | `GET /api/me/upstream-channels` | employee Session/JWT + 已改密 | ✅ 当前可用 |
 | 管理接口 | `/api/admin/*` | admin Session/JWT + 已改密 + 路由级权限 | ✅ 当前可用 |
-| 模型代理 | `/v1/*` | 有效 employee API Key | ✅ 当前可用；所有 Key 全链路限定绑定渠道 |
+| 模型代理 | `/ai/*` | 有效 employee API Key | ✅ 当前可用；所有 Key 全链路限定绑定渠道 |
 
 ### 7.2 模型代理接口
 
 | 协议 | 接口 | 说明 |
 |---|---|---|
-| 模型列表 | `GET /v1/models` | 只返回当前 Key 在绑定渠道和协议下真实可调用的模型 |
-| OpenAI Chat | `POST /v1/chat/completions` | OpenAI Chat Completions 原生透传 |
-| OpenAI Responses | `POST /v1/responses` | Responses 原生 JSON/SSE 透传 |
-| OpenAI Responses | `POST /v1/responses/compact` | Responses compact 原生透传 |
-| Anthropic Messages | `POST /v1/messages` | Messages 原生 JSON/SSE 透传 |
-| Anthropic Messages | `POST /v1/messages/count_tokens` | Anthropic token count 原生透传 |
+| 模型列表 | `GET /ai/models` | 只返回当前 Key 在绑定渠道和协议下真实可调用的模型 |
+| OpenAI Chat | `POST /ai/chat/completions` | OpenAI Chat Completions 原生透传 |
+| OpenAI Responses | `POST /ai/responses` | Responses 原生 JSON/SSE 透传 |
+| OpenAI Responses | `POST /ai/responses/compact` | Responses compact 原生透传 |
+| Anthropic Messages | `POST /ai/v1/messages` | Messages 原生 JSON/SSE 透传 |
+| Anthropic Messages | `POST /ai/v1/messages/count_tokens` | Anthropic token count 原生透传 |
 
 协议绑定 Key 只能调用对应协议入口。模型列表、身份校验和审计接口不构成跨协议转换。
 
@@ -394,7 +394,7 @@ EmployeeApiKey（员工内部 Key）
 
 ### 8.8 模型列表一致性
 
-`GET /v1/models` 与实际调用共用同一套员工状态、Key 协议、绑定 ProductLine、共享模式、授权、凭证状态和模型解析规则，只列绑定渠道当前可调用的模型，不展示其他渠道的同名模型。
+`GET /ai/models` 与实际调用共用同一套员工状态、Key 协议、绑定 ProductLine、共享模式、授权、凭证状态和模型解析规则，只列绑定渠道当前可调用的模型，不展示其他渠道的同名模型。
 
 模型列表按查询时的 effective credential status 计算，属于只读操作，不回写 cooling 或其他凭证状态。
 
@@ -576,7 +576,7 @@ Coding Plan 默认使用 `grant_only`。多账号、多终端或共享套餐凭�
 
 - Provider、ProductLine、UpstreamCredential 三层结构；
 - 上游凭证批量录入、加密存储、连接测试、模型发现、协议、状态、优先级、权重和员工授权；
-- 绑定渠道内的 `GET /v1/models`、Chat Completions、Responses、Responses compact、Messages 和 Messages count_tokens；
+- 绑定渠道内的 `GET /ai/models`、Chat Completions、Responses、Responses compact、Messages 和 Messages count_tokens；
 - 显式模型路由与已发现模型自动路由；
 - JSON 与 SSE 原生透传、首字节前重试、客户端断开取消上游；
 - 401/403 自动停用、429 冷却、5xx/网络错误切换和 400 不重试；
@@ -596,7 +596,7 @@ Coding Plan 默认使用 `grant_only`。多账号、多终端或共享套餐凭�
 - employee、admin 的页面和接口边界；
 - 员工明文仅在创建时向本人展示一次，管理员员工列表不返回任何 Key 信息，也不能列出、查看或复制员工 Key；
 - 用户离开 employee 角色时 revoke active Key；
-- `/v1/models` 和五个原生调用入口的绑定渠道隔离；
+- `/ai/models` 和五个原生调用入口的绑定渠道隔离；
 - 绑定渠道内显式路由、自动发现、凭证选择、重试和 Responses 亲和；
 - 固定错误状态、错误码、审计字段和管理列表渠道信息；
 
@@ -613,7 +613,7 @@ Coding Plan 默认使用 `grant_only`。多账号、多终端或共享套餐凭�
 | v0.0.1 API/数据库集成 | 严格角色、渠道可见性与防泄漏、创建校验、本人一次性明文、管理端无 Key 列表/reveal 路由、NOT NULL/FK、角色吊销全部通过 |
 | 隔离 Mock | 401 换凭证、400 不重试、429 冷却换凭证、500 首字节前切换 SSE 全部通过 |
 | 原生协议 Mock | Responses JSON/SSE/compact、Messages JSON/SSE、协议 Key、Header 透传、usage 和审计全部通过 |
-| v0.0.1 渠道隔离矩阵 | `test:v001:binding` 通过：五个调用入口均绑定 A，401/429/500/网络错误只在 A 内重试，B 调用数为 0；`/v1/models` 隔离、跨渠道 Responses 亲和阻断和停用 A 后的审计归属均通过 |
+| v0.0.1 渠道隔离矩阵 | `test:v001:binding` 通过：五个调用入口均绑定 A，401/429/500/网络错误只在 A 内重试，B 调用数为 0；`/ai/models` 隔离、跨渠道 Responses 亲和阻断和停用 A 后的审计归属均通过 |
 
 默认单元测试不覆盖真实上游、浏览器交互和生产发布环境；这些场景仍需按部署清单执行验收。
 
@@ -628,14 +628,14 @@ Coding Plan 默认使用 `grant_only`。多账号、多终端或共享套餐凭�
 5. admin 不能访问 `/me` 或创建调用 Key；employee 不能访问管理端。
 6. employee 角色退出时 active Key 全部 revoke，再次成为 employee 时不自动生效。
 7. 两个渠道配置同名模型时，绑定渠道 A 的 Key 在所有协议入口、重试和 affinity 场景中均不能命中渠道 B。
-8. `/v1/models` 只列绑定渠道中当前可调用的模型，列表与实际请求结果使用相同过滤口径，并且查询不回写凭证状态。
+8. `/ai/models` 只列绑定渠道中当前可调用的模型，列表与实际请求结果使用相同过滤口径，并且查询不回写凭证状态。
 9. 显式路由和绑定渠道内自动发现的优先关系符合第 8.6 节。
 10. grant 撤销、共享模式调整、渠道/凭证停用、权重归零和协议移除在后续请求中生效，且不跨渠道。
 11. 渠道、模型、冷却和凭证不可用场景返回第 8.9 节定义的状态码和错误 envelope。
 12. 员工渠道接口不解密或泄露 Secret、上游 Base URL和未授权凭证数量。
 13. 所有 Key 必须关联 ProductLine；被 Key 引用的 ProductLine 不能被删除或置空。
 14. 渠道列表返回后发生授权、状态或协议变化时，创建接口重新校验并返回第 7.3 节定义的错误，不创建失效绑定。
-15. Chat、Responses、Responses compact、Messages、Messages count_tokens 和 `/v1/models` 全部通过渠道隔离验收。
+15. Chat、Responses、Responses compact、Messages、Messages count_tokens 和 `/ai/models` 全部通过渠道隔离验收。
 
 ---
 

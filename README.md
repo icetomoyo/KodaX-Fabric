@@ -103,7 +103,7 @@ docker compose exec -T postgres psql -U app -d postgres -c "CREATE DATABASE toke
 
 管理后台菜单：概览 · 员工管理 · 上游渠道 · 调用日志 · 配额策略 · 操作审计 · 个人中心。供应商、产品线和模型路由保留为内部数据结构，不再暴露独立页面。
 
-模型代理已启用，原生支持 `/v1/chat/completions`、`/v1/responses`、`/v1/responses/compact`、`/v1/messages` 与 `/v1/messages/count_tokens`（员工 API Key）；网页 Chat 非一期范围。
+模型代理已启用，员工统一使用 `/ai` Base URL。原生支持 `/ai/chat/completions`、`/ai/responses`、`/ai/responses/compact`、`/ai/v1/messages` 与 `/ai/v1/messages/count_tokens`（员工 API Key）；网页 Chat 非一期范围。
 
 ## 模型代理使用
 
@@ -111,8 +111,10 @@ docker compose exec -T postgres psql -U app -d postgres -c "CREATE DATABASE toke
 
 ```sh
 export TOKENHUB_API_KEY="th_replace_with_your_employee_key"
-export TOKENHUB_BASE_URL="http://127.0.0.1:3100/v1"
+export TOKENHUB_BASE_URL="http://127.0.0.1:3100/ai"
 ```
+
+原员工入口 `/v1/*` 已移除；已有客户端需要将 TokenHub Base URL 更新为 `/ai`。
 
 生产或内网部署时，将 `TOKENHUB_BASE_URL` 替换为实际 TokenHub 地址。OpenAI Chat 与 Responses 使用 Bearer；Anthropic Messages 同时接受原生 `x-api-key` 和 Bearer（若两者并存，值必须一致）：
 
@@ -123,7 +125,7 @@ x-api-key: <Anthropic Messages 员工 API Key>
 
 ### 查询可用模型
 
-`/v1/models` 只返回当前 Key 在绑定渠道和绑定协议下真实可调用的模型：
+`/ai/models` 只返回当前 Key 在绑定渠道和绑定协议下真实可调用的模型：
 
 ```sh
 curl -sS "${TOKENHUB_BASE_URL}/models" \
@@ -179,7 +181,7 @@ curl -N "${TOKENHUB_BASE_URL}/responses" \
   }'
 ```
 
-Codex 长任务需要的 `POST /v1/responses/compact` 也按相同协议和鉴权原生直通。
+Codex 长任务需要的 `POST /ai/responses/compact` 也按相同协议和鉴权原生直通。
 `previous_response_id` 会通过 Redis 维持原生上游凭证亲和；当前未开放需要额外查询/取消接口的 `background` 和 `conversation` 模式，网关会明确返回 `unsupported_stateful_response`，不会随机发送到错误上游。
 
 ### 原生 Anthropic Messages
@@ -187,7 +189,7 @@ Codex 长任务需要的 `POST /v1/responses/compact` 也按相同协议和鉴�
 Messages 使用绑定“Anthropic Messages”协议的员工 Key；`anthropic-version` 必填，`anthropic-beta` 会安全透传：
 
 ```sh
-curl -N "${TOKENHUB_BASE_URL}/messages" \
+curl -N "${TOKENHUB_BASE_URL}/v1/messages" \
   -H "x-api-key: ${TOKENHUB_API_KEY}" \
   -H "anthropic-version: 2023-06-01" \
   -H "Content-Type: application/json" \
@@ -201,8 +203,8 @@ curl -N "${TOKENHUB_BASE_URL}/messages" \
   }'
 ```
 
-Claude Code 的 `ANTHROPIC_BASE_URL` 应填写 TokenHub 服务地址本身（例如 `http://127.0.0.1:3100`），不要附加 `/v1`；Claude Code 会自行请求 `/v1/messages`。
-可选的 `/v1/messages/count_tokens` 也会原生直通，以便 Claude Code 获取精确上下文 Token 数。
+Claude Code 的 `ANTHROPIC_BASE_URL` 与其他员工客户端统一填写 TokenHub Base URL（例如 `http://127.0.0.1:3100/ai`）。协议与上游渠道由员工 API Key 的绑定关系确定，员工侧不再按协议切换 Base URL。
+可选的 `/ai/v1/messages/count_tokens` 也会原生直通，以便 Claude Code 获取精确上下文 Token 数。
 
 ### CC Switch 配置
 
@@ -210,15 +212,15 @@ Claude Code 的 `ANTHROPIC_BASE_URL` 应填写 TokenHub 服务地址本身（例
 
 | 配置项 | 值 |
 |---|---|
-| Base URL | 按下表选择，部署后替换为实际地址 |
+| Base URL | 统一填写 TokenHub Base URL，部署后替换为实际地址 |
 | API Key | 员工在 TokenHub 生成的 `th_...` Key |
-| Model | 从 `GET /v1/models` 返回结果中选择 |
+| Model | 从 `GET /ai/models` 返回结果中选择 |
 
 | 员工 Key 协议 | CC Switch API 格式 | Base URL | 实际入口 |
 |---|---|---|---|
-| OpenAI Chat Completions | OpenAI Chat Completions | `http://127.0.0.1:3100/v1` | `/v1/chat/completions` |
-| OpenAI Responses | OpenAI Responses API | `http://127.0.0.1:3100/v1` | `/v1/responses` |
-| Anthropic Messages | Anthropic Messages | `http://127.0.0.1:3100` | `/v1/messages` |
+| OpenAI Chat Completions | OpenAI Chat Completions | `http://127.0.0.1:3100/ai` | `/ai/chat/completions` |
+| OpenAI Responses | OpenAI Responses API | `http://127.0.0.1:3100/ai` | `/ai/responses` |
+| Anthropic Messages | Anthropic Messages | `http://127.0.0.1:3100/ai` | `/ai/v1/messages` |
 
 如果 CC Switch 分别要求 Host 和接口路径，按上表填写。不要把上游供应商 Key 配入 CC Switch。
 

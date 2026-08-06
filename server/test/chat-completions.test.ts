@@ -12,9 +12,46 @@ const {
   RelayResponseTooLargeError,
   readBoundedBody,
   readFirstNonEmptyChunk,
+  relayRoutes,
   settleFailedAttempt,
   toFastifyReadable,
 } = await import("../src/routes/v1/chat-completions.js");
+const { nativeProtocolRoutes } = await import("../src/routes/v1/native-protocols.js");
+
+test("employee relay uses one /ai base and no legacy /v1 entrypoints", async () => {
+  const app = Fastify();
+  await app.register(relayRoutes);
+  await app.register(nativeProtocolRoutes);
+
+  const currentRoutes = [
+    { method: "GET", url: "/ai/models" },
+    { method: "GET", url: "/ai/v1/models" },
+    { method: "POST", url: "/ai/chat/completions" },
+    { method: "POST", url: "/ai/responses" },
+    { method: "POST", url: "/ai/responses/compact" },
+    { method: "POST", url: "/ai/v1/messages" },
+    { method: "POST", url: "/ai/v1/messages/count_tokens" },
+  ] as const;
+  for (const route of currentRoutes) {
+    const response = await app.inject(route);
+    assert.equal(response.statusCode, 401, `${route.method} ${route.url} is not registered`);
+  }
+
+  const legacyRoutes = [
+    { method: "GET", url: "/v1/models" },
+    { method: "POST", url: "/v1/chat/completions" },
+    { method: "POST", url: "/v1/responses" },
+    { method: "POST", url: "/v1/responses/compact" },
+    { method: "POST", url: "/v1/messages" },
+    { method: "POST", url: "/v1/messages/count_tokens" },
+  ] as const;
+  for (const route of legacyRoutes) {
+    const response = await app.inject(route);
+    assert.equal(response.statusCode, 404, `${route.method} ${route.url} is still exposed`);
+  }
+
+  await app.close();
+});
 
 test("first-byte validation skips legal empty chunks", async () => {
   const stream = new ReadableStream<Uint8Array>({

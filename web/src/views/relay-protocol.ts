@@ -6,6 +6,8 @@ export const RELAY_PROTOCOLS = [
 
 export type RelayProtocol = (typeof RELAY_PROTOCOLS)[number];
 
+export const RELAY_BASE_PATH = "/ai" as const;
+
 export type RelayAuthStyle = "bearer" | "x-api-key";
 
 export type RelayProtocolConfig = {
@@ -30,7 +32,7 @@ const relayProtocolDefinitions: readonly RelayProtocolOption[] = [
     label: "OpenAI 对话（Chat Completions）",
     shortLabel: "OpenAI 对话",
     description: "适用于 OpenAI Chat Completions 兼容客户端",
-    endpoint: "POST /v1/chat/completions",
+    endpoint: `POST ${RELAY_BASE_PATH}/chat/completions`,
     authHeaders: ["Authorization: Bearer <你的 API Key>"],
   },
   {
@@ -38,7 +40,7 @@ const relayProtocolDefinitions: readonly RelayProtocolOption[] = [
     label: "OpenAI 响应（Responses / Codex，旧协议）",
     shortLabel: "OpenAI Responses（旧协议）",
     description: "仅用于兼容已创建的 OpenAI Responses API Key",
-    endpoint: "POST /v1/responses",
+    endpoint: `POST ${RELAY_BASE_PATH}/responses`,
     authHeaders: ["Authorization: Bearer <你的 API Key>"],
   },
   {
@@ -46,7 +48,7 @@ const relayProtocolDefinitions: readonly RelayProtocolOption[] = [
     label: "Anthropic 消息（Claude）",
     shortLabel: "Claude Messages",
     description: "适用于 Anthropic SDK、Claude Code 和兼容客户端",
-    endpoint: "POST /v1/messages",
+    endpoint: `POST ${RELAY_BASE_PATH}/v1/messages`,
     authHeaders: [
       "x-api-key: <你的 API Key>",
       "anthropic-version: 2023-06-01",
@@ -72,16 +74,13 @@ export function relayProtocolLabel(protocol: unknown, short = false): string {
   return short ? option.shortLabel : option.label;
 }
 
-export function relayClientBaseUrl(protocol: RelayProtocol, baseUrl: string): string {
-  const normalized = baseUrl.replace(/\/+$/, "");
-  if (protocol === "anthropic_messages") {
-    return normalized.replace(/\/v1$/i, "");
-  }
-  return normalized;
+/** 员工侧统一使用 TokenHub 提供的 Base URL，不再按协议改写路径。 */
+export function relayClientBaseUrl(baseUrl: string): string {
+  return baseUrl.replace(/\/+$/, "");
 }
 
 export function relayClientSettings(protocol: RelayProtocol, baseUrl: string): string[] {
-  const clientBaseUrl = relayClientBaseUrl(protocol, baseUrl);
+  const clientBaseUrl = relayClientBaseUrl(baseUrl);
   if (protocol === "anthropic_messages") {
     return [
       `ANTHROPIC_BASE_URL=${clientBaseUrl}`,

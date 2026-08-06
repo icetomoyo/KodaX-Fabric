@@ -514,7 +514,7 @@ async function assertModels(baseUrl: string, fixture: Fixture): Promise<void> {
   const headers = fixture.protocol === "anthropic_messages"
     ? { "x-api-key": fixture.employeeKey }
     : { Authorization: `Bearer ${fixture.employeeKey}` };
-  const response = await fetch(`${baseUrl}/v1/models`, { headers });
+  const response = await fetch(`${baseUrl}/ai/models`, { headers });
   assert.equal(response.status, 200);
   const requestId = response.headers.get("x-tokenhub-request-id");
   assert.match(requestId ?? "", /^threq_[a-f0-9]{32}$/);
@@ -532,7 +532,7 @@ async function assertAnthropicModelsAuthErrors(
   baseUrl: string,
   fixture: Fixture,
 ): Promise<void> {
-  const invalidResponse = await fetch(`${baseUrl}/v1/models`, {
+  const invalidResponse = await fetch(`${baseUrl}/ai/models`, {
     headers: { "x-api-key": `th_invalid_${marker}` },
   });
   const invalidBody = await invalidResponse.json() as {
@@ -557,7 +557,7 @@ async function assertAnthropicModelsAuthErrors(
   try {
     // A Bearer header alone is ambiguous before lookup. Once the Key is found,
     // its persisted Anthropic protocol must still select the native envelope.
-    const disabledResponse = await fetch(`${baseUrl}/v1/models`, {
+    const disabledResponse = await fetch(`${baseUrl}/ai/models`, {
       headers: { Authorization: `Bearer ${fixture.employeeKey}` },
     });
     const disabledBody = await disabledResponse.json() as {
@@ -589,7 +589,7 @@ async function runAssertions(baseUrl: string): Promise<void> {
 
   const mismatchedResponses = await call(
     baseUrl,
-    "/v1/responses",
+    "/ai/responses",
     { Authorization: `Bearer ${messages.employeeKey}` },
     { model: responses.clientModel, input: "test" },
   );
@@ -598,7 +598,7 @@ async function runAssertions(baseUrl: string): Promise<void> {
 
   const mismatchedMessages = await call(
     baseUrl,
-    "/v1/messages",
+    "/ai/v1/messages",
     {
       Authorization: `Bearer ${responses.employeeKey}`,
       "anthropic-version": "2023-06-01",
@@ -618,7 +618,7 @@ async function runAssertions(baseUrl: string): Promise<void> {
 
   const missingVersion = await call(
     baseUrl,
-    "/v1/messages",
+    "/ai/v1/messages",
     { "x-api-key": messages.employeeKey },
     { model: messages.clientModel, max_tokens: 32, messages: [{ role: "user", content: "x" }] },
   );
@@ -632,7 +632,7 @@ async function runAssertions(baseUrl: string): Promise<void> {
     "invalid_request",
   );
 
-  const malformedResponse = await fetch(`${baseUrl}/v1/messages`, {
+  const malformedResponse = await fetch(`${baseUrl}/ai/v1/messages`, {
     method: "POST",
     headers: {
       "content-type": "application/json",
@@ -662,7 +662,7 @@ async function runAssertions(baseUrl: string): Promise<void> {
 
   const responseJson = await call(
     baseUrl,
-    "/v1/responses",
+    "/ai/responses",
     {
       Authorization: `Bearer ${responses.employeeKey}`,
       "openai-beta": "responses-test=v1",
@@ -679,7 +679,7 @@ async function runAssertions(baseUrl: string): Promise<void> {
 
   const responseContinuation = await call(
     baseUrl,
-    "/v1/responses",
+    "/ai/responses",
     {
       Authorization: `Bearer ${responses.employeeKey}`,
       "openai-beta": "responses-test=v1",
@@ -695,7 +695,7 @@ async function runAssertions(baseUrl: string): Promise<void> {
 
   const missingAffinity = await call(
     baseUrl,
-    "/v1/responses",
+    "/ai/responses",
     { Authorization: `Bearer ${responses.employeeKey}` },
     {
       model: responses.clientModel,
@@ -711,7 +711,7 @@ async function runAssertions(baseUrl: string): Promise<void> {
 
   const unsupportedBackground = await call(
     baseUrl,
-    "/v1/responses",
+    "/ai/responses",
     { Authorization: `Bearer ${responses.employeeKey}` },
     { model: responses.clientModel, input: "background", background: true },
   );
@@ -719,7 +719,7 @@ async function runAssertions(baseUrl: string): Promise<void> {
 
   const responseStream = await call(
     baseUrl,
-    "/v1/responses",
+    "/ai/responses",
     {
       Authorization: `Bearer ${responses.employeeKey}`,
       "openai-beta": "responses-test=v1",
@@ -734,7 +734,7 @@ async function runAssertions(baseUrl: string): Promise<void> {
 
   const compact = await call(
     baseUrl,
-    "/v1/responses/compact",
+    "/ai/responses/compact",
     {
       Authorization: `Bearer ${responses.employeeKey}`,
       "openai-beta": "responses-test=v1",
@@ -747,7 +747,7 @@ async function runAssertions(baseUrl: string): Promise<void> {
 
   const messageJson = await call(
     baseUrl,
-    "/v1/messages?beta=true",
+    "/ai/v1/messages?beta=true",
     {
       "x-api-key": messages.employeeKey,
       "anthropic-version": "2023-06-01",
@@ -766,7 +766,7 @@ async function runAssertions(baseUrl: string): Promise<void> {
 
   const messageStream = await call(
     baseUrl,
-    "/v1/messages",
+    "/ai/v1/messages",
     {
       "x-api-key": messages.employeeKey,
       "anthropic-version": "2023-06-01",
@@ -785,7 +785,7 @@ async function runAssertions(baseUrl: string): Promise<void> {
 
   const countTokens = await call(
     baseUrl,
-    "/v1/messages/count_tokens?beta=true",
+    "/ai/v1/messages/count_tokens?beta=true",
     {
       "x-api-key": messages.employeeKey,
       "anthropic-version": "2023-06-01",
@@ -802,7 +802,7 @@ async function runAssertions(baseUrl: string): Promise<void> {
 
   const messageOverload = await call(
     baseUrl,
-    "/v1/messages",
+    "/ai/v1/messages",
     {
       "x-api-key": messages.employeeKey,
       "anthropic-version": "2023-06-01",
@@ -885,10 +885,10 @@ async function runAssertions(baseUrl: string): Promise<void> {
   console.log(JSON.stringify({
     ok: true,
     endpoints: [
-      "/v1/responses",
-      "/v1/responses/compact",
-      "/v1/messages",
-      "/v1/messages/count_tokens",
+      "/ai/responses",
+      "/ai/responses/compact",
+      "/ai/v1/messages",
+      "/ai/v1/messages/count_tokens",
     ],
     modelIsolation: true,
     protocolBoundKeys: true,

@@ -12,8 +12,8 @@ import { adminModelRouteRoutes } from "./routes/admin/model-routes.js";
 import { adminLogRoutes } from "./routes/admin/logs.js";
 import { adminQuotaRoutes } from "./routes/admin/quota.js";
 import { adminOpsAuditRoutes } from "./routes/admin/ops-audit.js";
-import { v1RelayRoutes } from "./routes/v1/chat-completions.js";
-import { v1NativeProtocolRoutes } from "./routes/v1/native-protocols.js";
+import { relayRoutes } from "./routes/v1/chat-completions.js";
+import { nativeProtocolRoutes } from "./routes/v1/native-protocols.js";
 
 export async function buildApp() {
   const app = Fastify({
@@ -38,8 +38,8 @@ export async function buildApp() {
   await app.register(adminLogRoutes);
   await app.register(adminQuotaRoutes);
   await app.register(adminOpsAuditRoutes);
-  await app.register(v1RelayRoutes);
-  await app.register(v1NativeProtocolRoutes);
+  await app.register(relayRoutes);
+  await app.register(nativeProtocolRoutes);
 
   return app;
 }

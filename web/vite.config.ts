@@ -23,7 +23,7 @@ export default defineConfig({
         changeOrigin: true,
         xfwd: true,
       },
-      "/v1": {
+      "/ai": {
         target: "http://127.0.0.1:3100",
         changeOrigin: true,
         xfwd: true,

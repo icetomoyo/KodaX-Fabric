@@ -13,7 +13,10 @@ import {
   usageCountersDaily,
 } from "../db/schema/index.js";
 import { encryptEmployeeApiKey, generateApiKey } from "../lib/api-key.js";
-import { CONFIGURABLE_RELAY_PROTOCOLS } from "../lib/relay/protocol.js";
+import {
+  CONFIGURABLE_RELAY_PROTOCOLS,
+  RELAY_BASE_PATH,
+} from "../lib/relay/protocol.js";
 import {
   getEmployeeUpstreamChannel,
   getEmployeeUpstreamChannels,
@@ -305,7 +308,7 @@ export async function meRoutes(app: FastifyInstance) {
           requestCount: Number(month?.requestCount ?? 0),
         },
         relay: {
-          baseUrl: `${req.protocol}://${req.hostname}:${process.env.PORT ?? 3100}/v1`,
+          baseUrl: `${req.protocol}://${req.hostname}:${process.env.PORT ?? 3100}${RELAY_BASE_PATH}`,
           note: "Authorization: Bearer <your employee API key>",
         },
       },

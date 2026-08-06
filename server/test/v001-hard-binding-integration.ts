@@ -537,10 +537,10 @@ function assertChannelBWasNeverCalled(context: string): void {
 
 async function assertBoundModelLists(baseUrl: string): Promise<void> {
   for (const protocol of allProtocols) {
-    const response = await fetch(`${baseUrl}/v1/models`, {
+    const response = await fetch(`${baseUrl}/ai/models`, {
       headers: protocolHeaders(protocol),
     });
-    assert.equal(response.status, 200, `${protocol} /v1/models failed`);
+    assert.equal(response.status, 200, `${protocol} /ai/models failed`);
     const requestId = response.headers.get("x-tokenhub-request-id");
     assert.match(requestId ?? "", /^threq_[a-f0-9]{32}$/);
     assert.equal(
@@ -582,7 +582,7 @@ async function assertFiveProtocolEntrypoints(baseUrl: string): Promise<ApiResult
   firstCredentialTrap = "http_500";
   const chat = await callApi(
     baseUrl,
-    "/v1/chat/completions",
+    "/ai/chat/completions",
     "openai_chat",
     {
       model: sharedModel,
@@ -595,7 +595,7 @@ async function assertFiveProtocolEntrypoints(baseUrl: string): Promise<ApiResult
 
   const responses = await callApi(
     baseUrl,
-    "/v1/responses",
+    "/ai/responses",
     "openai_responses",
     { model: sharedModel, input: "hard binding responses" },
   );
@@ -607,7 +607,7 @@ async function assertFiveProtocolEntrypoints(baseUrl: string): Promise<ApiResult
 
   const compact = await callApi(
     baseUrl,
-    "/v1/responses/compact",
+    "/ai/responses/compact",
     "openai_responses",
     { model: sharedModel, input: [{ role: "user", content: "compact" }] },
   );
@@ -619,7 +619,7 @@ async function assertFiveProtocolEntrypoints(baseUrl: string): Promise<ApiResult
 
   const messages = await callApi(
     baseUrl,
-    "/v1/messages",
+    "/ai/v1/messages",
     "anthropic_messages",
     {
       model: sharedModel,
@@ -634,7 +634,7 @@ async function assertFiveProtocolEntrypoints(baseUrl: string): Promise<ApiResult
 
   const countTokens = await callApi(
     baseUrl,
-    "/v1/messages/count_tokens",
+    "/ai/v1/messages/count_tokens",
     "anthropic_messages",
     {
       model: sharedModel,
@@ -688,7 +688,7 @@ async function assertRetryFailureClassesStayBound(baseUrl: string): Promise<void
 
     const result = await callApi(
       baseUrl,
-      "/v1/chat/completions",
+      "/ai/chat/completions",
       "openai_chat",
       {
         model: sharedModel,
@@ -733,7 +733,7 @@ async function assertCrossChannelAffinityCannotEscape(baseUrl: string): Promise<
   const callsBefore = upstreamCalls.length;
   const result = await callApi(
     baseUrl,
-    "/v1/responses",
+    "/ai/responses",
     "openai_responses",
     {
       model: sharedModel,
@@ -764,7 +764,7 @@ async function assertDisabledBoundChannel(baseUrl: string): Promise<void> {
   const results = await Promise.all([
     callApi(
       baseUrl,
-      "/v1/chat/completions",
+      "/ai/chat/completions",
       "openai_chat",
       {
         model: sharedModel,
@@ -773,13 +773,13 @@ async function assertDisabledBoundChannel(baseUrl: string): Promise<void> {
     ),
     callApi(
       baseUrl,
-      "/v1/responses",
+      "/ai/responses",
       "openai_responses",
       { model: sharedModel, input: "disabled A responses" },
     ),
     callApi(
       baseUrl,
-      "/v1/messages",
+      "/ai/v1/messages",
       "anthropic_messages",
       {
         model: sharedModel,
