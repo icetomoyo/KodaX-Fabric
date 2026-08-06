@@ -46,14 +46,12 @@
                 </span>
                 <div class="channel-card-copy">
                   <strong class="channel-card-title">{{ channelDisplayName(channel) }}</strong>
-                  <span class="channel-card-meta">{{ channel.productLineCode }}</span>
                 </div>
-                <el-tag :type="channelAvailabilityType(channel)" size="small" effect="light">
-                  {{ channel.schedulableCount }}/{{ channel.totalCount }} 可调度
+                <el-tag :type="channelStatusType(channel)" size="small" effect="light">
+                  {{ channelStatusText(channel) }}
                 </el-tag>
               </div>
               <div class="channel-card-bottom">
-                <span class="channel-code">{{ channel.productLineCode }}</span>
                 <span>{{ channel.totalCount }} 个 Key</span>
               </div>
             </button>
@@ -63,76 +61,25 @@
         <main class="channel-detail-pane">
           <template v-if="selectedChannel">
             <div class="detail-header">
-              <div class="detail-identity">
-                <span class="provider-logo" :style="providerLogoStyle(selectedChannel.providerCode)">
-                  {{ providerShortName(selectedChannel.providerCode) }}
-                </span>
-                <div class="detail-copy">
-                  <div class="detail-title-row">
-                    <h3 class="detail-title">{{ channelDisplayName(selectedChannel) }}</h3>
-                    <el-tag effect="plain" size="small">{{ selectedChannel.providerName }}</el-tag>
-                  </div>
-                  <ProtocolRouteSummary
-                    class="detail-subtitle"
-                    :protocols="selectedChannel.protocols"
-                    :protocol-configs="selectedChannel.protocolConfigs"
-                    :fallback-base-url="selectedChannel.baseUrl"
-                  />
-                  <div class="channel-protocols">
-                    <span>渠道协议</span>
-                    <el-tag
-                      v-for="protocol in selectedChannel.protocols"
-                      :key="protocol"
-                      size="small"
-                      effect="plain"
-                    >
-                      {{ relayProtocolLabel(protocol, true) }}
-                    </el-tag>
-                  </div>
-                </div>
+              <div class="detail-copy">
+                <h3 class="detail-title">{{ channelDisplayName(selectedChannel) }}</h3>
               </div>
               <div class="detail-actions">
                 <el-tag v-if="!canWrite" type="info" effect="plain" size="small">只读查看</el-tag>
-                <template v-else>
+                <template v-if="canWrite">
                   <el-button @click="openEditChannel(selectedChannel)">编辑渠道</el-button>
                   <el-button type="primary" @click="openAddKeys(selectedChannel)">
                     添加 Key
                   </el-button>
                 </template>
-              </div>
-            </div>
-
-            <div class="channel-overview">
-              <div class="overview-card">
-                <span>Key 总数</span>
-                <strong>{{ selectedChannel.totalCount }}</strong>
-              </div>
-              <div class="overview-card success">
-                <span>可调度</span>
-                <strong>{{ selectedChannel.schedulableCount }}</strong>
-              </div>
-              <div class="overview-card warning">
-                <span>冷却中</span>
-                <strong>{{ selectedChannel.coolingCount }}</strong>
-              </div>
-              <div class="overview-card danger">
-                <span>不可调度</span>
-                <strong>{{ selectedChannel.unschedulableCount }}</strong>
-              </div>
-              <div class="overview-card wide">
-                <span>近 24h 调用</span>
-                <strong>
-                  {{ selectedChannel.recentSuccessCount + selectedChannel.recentErrorCount }}
-                  <small>成功 {{ selectedChannel.recentSuccessCount }} / 失败 {{ selectedChannel.recentErrorCount }}</small>
-                </strong>
+                <el-button @click="openChannelDetails(selectedChannel)">渠道详情</el-button>
               </div>
             </div>
 
             <section class="key-pool-section">
               <div class="key-pool-head">
                 <div>
-                  <h4>Key 列表</h4>
-                  <p>协议由渠道统一管理；每个 Key 独立参与调度、冷却和健康检查</p>
+                  <h4>Key 列表（{{ selectedChannel.totalCount }}）</h4>
                 </div>
                 <div v-if="canWrite" class="batch-actions">
                   <span class="selection-hint">已选 {{ selectedKeyRows.length }} 项</span>
@@ -487,6 +434,79 @@
     </el-dialog>
 
     <el-drawer
+      v-model="showChannelDetails"
+      title="渠道详情"
+      size="min(680px, 94vw)"
+      destroy-on-close
+      class="channel-detail-drawer"
+    >
+      <div v-loading="channelSummaryLoading" class="channel-summary-body">
+        <template v-if="selectedChannelSummary">
+          <div class="drawer-head channel-summary-head">
+            <div class="detail-identity">
+              <span
+                class="provider-logo"
+                :style="providerLogoStyle(selectedChannelSummary.provider.code)"
+              >
+                {{ providerShortName(selectedChannelSummary.provider.code) }}
+              </span>
+              <div>
+                <h3 class="drawer-title">
+                  {{ formatChannelName(selectedChannelSummary.provider.name, selectedChannelSummary.name) }}
+                </h3>
+                <p>{{ selectedChannelSummary.provider.name }} · ProductLine {{ selectedChannelSummary.code }}</p>
+              </div>
+            </div>
+            <el-tag
+              :type="selectedChannelSummary.status === 'active' && selectedChannelSummary.provider.status === 'active' ? 'success' : 'danger'"
+            >
+              {{ selectedChannelSummary.status === "active" && selectedChannelSummary.provider.status === "active" ? "启用" : "停用" }}
+            </el-tag>
+          </div>
+
+          <section class="detail-section">
+            <h4 class="section-heading">渠道配置</h4>
+            <dl class="info-grid">
+              <div class="info-item"><dt>供应商</dt><dd>{{ selectedChannelSummary.provider.name }}</dd></div>
+              <div class="info-item"><dt>ProductLine</dt><dd>{{ selectedChannelSummary.code }}</dd></div>
+              <div class="info-item"><dt>接入类型</dt><dd>{{ selectedChannelSummary.productType === "coding_plan" ? "Coding Plan" : "API" }}</dd></div>
+              <div class="info-item"><dt>共享模式</dt><dd>{{ selectedChannelSummary.shareMode }}</dd></div>
+              <div class="info-item full"><dt>Base URL</dt><dd class="url-value">{{ selectedChannelSummary.baseUrl }}</dd></div>
+              <div class="info-item full">
+                <dt>协议路由</dt>
+                <dd>
+                  <ProtocolRouteSummary
+                    :protocols="selectedChannelSummary.protocols"
+                    :protocol-configs="selectedChannelSummary.protocolConfigs"
+                    :fallback-base-url="selectedChannelSummary.baseUrl"
+                  />
+                </dd>
+              </div>
+            </dl>
+          </section>
+
+          <section class="detail-section">
+            <h4 class="section-heading">渠道统计</h4>
+            <div class="channel-overview drawer-overview">
+              <div class="overview-card"><span>Key 总数</span><strong>{{ selectedChannelSummary.stats.totalCount }}</strong></div>
+              <div class="overview-card success"><span>可调度</span><strong>{{ selectedChannelSummary.stats.schedulableCount }}</strong></div>
+              <div class="overview-card warning"><span>冷却中</span><strong>{{ selectedChannelSummary.stats.coolingCount }}</strong></div>
+              <div class="overview-card danger"><span>不可调度</span><strong>{{ selectedChannelSummary.stats.unschedulableCount }}</strong></div>
+              <div class="overview-card wide">
+                <span>滚动 24h</span>
+                <strong>
+                  {{ selectedChannelSummary.stats.recentSuccessCount + selectedChannelSummary.stats.recentErrorCount }}
+                  <small>成功 {{ selectedChannelSummary.stats.recentSuccessCount }} / 失败 {{ selectedChannelSummary.stats.recentErrorCount }}</small>
+                </strong>
+              </div>
+            </div>
+          </section>
+        </template>
+        <el-empty v-else-if="!channelSummaryLoading" description="渠道详情加载失败" />
+      </div>
+    </el-drawer>
+
+    <el-drawer
       v-model="showKeyDetails"
       title="Key 详情"
       size="min(680px, 92vw)"
@@ -745,6 +765,30 @@ type ChannelGroup = {
   recentErrorCount: number;
 };
 
+type ChannelSummary = {
+  id: number;
+  code: string;
+  name: string;
+  productType: "api" | "coding_plan";
+  shareMode: string;
+  allowAutoRoute: boolean;
+  status: ChannelStatus;
+  provider: { id: number; code: string; name: string; status: string };
+  baseUrl: string;
+  protocolConfigs: RelayProtocolConfigs;
+  configVersion: number;
+  protocols: RelayProtocol[];
+  stats: {
+    totalCount: number;
+    schedulableCount: number;
+    coolingCount: number;
+    unschedulableCount: number;
+    recentWindowHours: number;
+    recentSuccessCount: number;
+    recentErrorCount: number;
+  };
+};
+
 type ChannelEditSnapshot = {
   name: string;
   supportedProtocols: RelayProtocol[];
@@ -790,6 +834,9 @@ const channelEditOriginal = ref<ChannelEditSnapshot | null>(null);
 
 const showKeyDetails = ref(false);
 const detailCredentialId = ref<number | null>(null);
+const showChannelDetails = ref(false);
+const channelSummaryLoading = ref(false);
+const channelSummaries = ref(new Map<number, ChannelSummary>());
 
 const testingIds = ref<Set<number>>(new Set());
 const deletingIds = ref<Set<number>>(new Set());
@@ -859,6 +906,12 @@ const channels = computed<ChannelGroup[]>(() => {
 
 const selectedChannel = computed(
   () => channels.value.find((channel) => channel.id === selectedProductLineId.value) ?? null,
+);
+
+const selectedChannelSummary = computed(
+  () => selectedProductLineId.value == null
+    ? null
+    : channelSummaries.value.get(selectedProductLineId.value) ?? null,
 );
 
 const channelEditTarget = computed(
@@ -965,6 +1018,7 @@ watch(selectedProductLineId, (id) => {
   if (detailRow.value && detailRow.value.productLineId !== id) {
     showKeyDetails.value = false;
   }
+  showChannelDetails.value = false;
 });
 
 watch(() => route.query.channelId, () => {
@@ -1225,10 +1279,14 @@ function statusTagType(status: CredentialStatus): "success" | "info" | "danger" 
   }[status];
 }
 
-function channelAvailabilityType(channel: ChannelGroup): "success" | "warning" | "danger" | "info" {
-  if (!channel.totalCount || !channel.schedulableCount) return "danger";
-  if (channel.schedulableCount < channel.totalCount) return "warning";
-  return "success";
+function channelStatusText(channel: ChannelGroup): string {
+  return channel.providerStatus === "active" && channel.productLineStatus === "active"
+    ? "启用"
+    : "停用";
+}
+
+function channelStatusType(channel: ChannelGroup): "success" | "danger" {
+  return channelStatusText(channel) === "启用" ? "success" : "danger";
 }
 
 function healthSummary(row: CredentialRow): string {
@@ -1287,7 +1345,27 @@ async function loadCredentials() {
   const { data } = await http.get("/api/admin/credentials");
   if (data.success) {
     rows.value = data.data;
+    channelSummaries.value = new Map();
     clearSelectedKeys();
+  }
+}
+
+async function openChannelDetails(channel: ChannelGroup) {
+  selectedProductLineId.value = channel.id;
+  showChannelDetails.value = true;
+  if (channelSummaries.value.has(channel.id)) return;
+  channelSummaryLoading.value = true;
+  try {
+    const { data } = await http.get(`/api/admin/product-lines/${channel.id}/summary`);
+    if (data.success) {
+      const next = new Map(channelSummaries.value);
+      next.set(channel.id, data.data);
+      channelSummaries.value = next;
+    }
+  } catch (error) {
+    ElMessage.error(getErrorMessage(error, "渠道详情加载失败"));
+  } finally {
+    channelSummaryLoading.value = false;
   }
 }
 
@@ -1926,6 +2004,24 @@ onMounted(refreshAll);
   height: 100%;
   border: 1px solid #e5e7eb;
   border-radius: 12px;
+}
+
+.channel-summary-body {
+  min-height: 280px;
+}
+
+.channel-summary-head {
+  margin-bottom: 16px;
+}
+
+.url-value {
+  overflow-wrap: anywhere;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+}
+
+.drawer-overview {
+  margin: 0;
 }
 
 .channel-list-pane {

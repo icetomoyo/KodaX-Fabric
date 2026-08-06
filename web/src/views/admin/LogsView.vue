@@ -134,79 +134,146 @@
       />
     </div>
 
-    <el-drawer v-model="drawer" title="调用详情" size="560px">
-      <template v-if="detail">
-        <el-descriptions :column="1" border size="small" class="detail-descriptions">
-          <el-descriptions-item label="Request ID">
-            <span class="detail-request-id">{{ detail.meta.requestId }}</span>
-            <el-button link type="primary" @click="copyRequestId(detail.meta.requestId)">
-              复制
-            </el-button>
-          </el-descriptions-item>
-          <el-descriptions-item label="时间">
-            {{ formatDateTime(detail.meta.createdAt) }}
-          </el-descriptions-item>
-          <el-descriptions-item label="员工">
-            {{ detail.meta.employeeName }} / {{ detail.meta.employeePhone }}
-          </el-descriptions-item>
-          <el-descriptions-item label="客户端协议">
-            {{ relayProtocolLabel(detail.meta.protocol) }}
-          </el-descriptions-item>
-          <el-descriptions-item label="模型">
-            {{ modelTooltip(detail.meta) }}
-          </el-descriptions-item>
-          <el-descriptions-item label="上游渠道">
-            {{ providerText(detail.meta.providerCode) }} ·
-            {{ productTypeText(detail.meta.productType) }} · Key
-            {{ detail.meta.credentialSuffix || "—" }}
-          </el-descriptions-item>
-          <el-descriptions-item label="状态">
-            <span class="result-cell">
-              <span class="status-pill" :class="`is-${detail.meta.status}`">
-                <i class="status-dot" />
-                {{ statusText(detail.meta.status) }}
-              </span>
-              <span v-if="detail.meta.httpStatus" class="http-status">
-                HTTP {{ detail.meta.httpStatus }}
-              </span>
-            </span>
-          </el-descriptions-item>
-          <el-descriptions-item label="Tokens">
-            {{ formatNumber(detail.meta.promptTokens) }} +
-            {{ formatNumber(detail.meta.completionTokens) }} =
-            {{ formatNumber(detail.meta.totalTokens) }}
-          </el-descriptions-item>
-          <el-descriptions-item label="耗时">
-            {{ formatLatency(detail.meta.latencyMs) }} ·
-            {{ detail.meta.isStream ? "流式" : "非流式" }} · 重试
-            {{ detail.meta.retryCount ?? 0 }} 次
-          </el-descriptions-item>
-          <el-descriptions-item
-            v-if="detail.meta.errorCode || detail.meta.errorMessage"
-            label="错误"
-          >
-            {{ detail.meta.errorCode }} {{ detail.meta.errorMessage }}
-          </el-descriptions-item>
-        </el-descriptions>
+    <el-drawer v-model="drawer" title="调用详情" size="min(820px, 96vw)">
+      <div v-loading="detailLoading" class="log-detail-body">
+        <template v-if="detail">
+          <div class="detail-heading">
+            <div>
+              <span class="detail-request-id">{{ detail.meta.requestId }}</span>
+              <el-button link type="primary" @click="copyRequestId(detail.meta.requestId)">复制</el-button>
+            </div>
+            <el-tag v-if="context?.truncated" type="warning">内容已截断</el-tag>
+          </div>
 
-        <div style="margin-top: 16px">
-          <el-button
-            v-if="detail.canReadBody && !detail.body"
-            type="primary"
-            @click="loadBody"
-            :loading="loadingBody"
-          >
-            加载全文（记入审计）
-          </el-button>
-        </div>
+          <el-tabs v-model="activeDetailTab" class="context-tabs">
+            <el-tab-pane v-if="auth.isAdmin" label="用户提示词" name="prompt">
+              <div v-loading="contextLoading" class="tab-content">
+                <div class="tab-toolbar">
+                  <span>按原始顺序展示消息与多模态块</span>
+                  <el-button link type="primary" @click="copyStructured(context?.tabs.userPrompt)">复制本页</el-button>
+                </div>
+                <el-empty
+                  v-if="!context?.tabs.userPrompt.messages.length"
+                  description="该记录没有可识别的用户提示词"
+                  :image-size="70"
+                />
+                <div v-else class="message-list">
+                  <article
+                    v-for="(message, index) in context.tabs.userPrompt.messages"
+                    :key="index"
+                    class="message-card"
+                  >
+                    <el-tag size="small" effect="plain">{{ messageRole(message) }}</el-tag>
+                    <StructuredJson :value="messageContent(message)" empty-text="消息内容为空" />
+                  </article>
+                </div>
+                <el-collapse
+                  v-if="context?.tabs.userPrompt.raw != null"
+                  v-model="rawPanels"
+                  class="raw-collapse"
+                >
+                  <el-collapse-item title="展开请求原始 JSON" name="request-raw">
+                    <StructuredJson
+                      v-if="rawPanels.includes('request-raw')"
+                      :value="context.tabs.userPrompt.raw"
+                    />
+                  </el-collapse-item>
+                </el-collapse>
+              </div>
+            </el-tab-pane>
 
-        <template v-if="detail.body">
-          <h4>Request Body</h4>
-          <pre class="code">{{ pretty(detail.body.requestBody) }}</pre>
-          <h4>Response Body</h4>
-          <pre class="code">{{ pretty(detail.body.responseBody) }}</pre>
+            <el-tab-pane v-if="auth.isAdmin" label="返回信息" name="response">
+              <div v-loading="contextLoading" class="tab-content">
+                <div class="tab-toolbar">
+                  <span>保留上游响应的结构化内容</span>
+                  <el-button link type="primary" @click="copyStructured(context?.tabs.response)">复制本页</el-button>
+                </div>
+                <StructuredJson
+                  :value="context?.tabs.response.content ?? []"
+                  empty-text="该记录没有可识别的返回内容"
+                />
+                <el-collapse
+                  v-if="context?.tabs.response.raw != null"
+                  v-model="rawPanels"
+                  class="raw-collapse"
+                >
+                  <el-collapse-item title="展开响应原始 JSON" name="response-raw">
+                    <StructuredJson
+                      v-if="rawPanels.includes('response-raw')"
+                      :value="context.tabs.response.raw"
+                    />
+                  </el-collapse-item>
+                </el-collapse>
+              </div>
+            </el-tab-pane>
+
+            <el-tab-pane v-if="auth.isAdmin" label="Skill / 工具" name="skills">
+              <div v-loading="contextLoading" class="tab-content">
+                <div class="tab-toolbar">
+                  <span>工具定义、调用与 Skill 上下文</span>
+                  <el-button link type="primary" @click="copyStructured(context?.tabs.skills)">复制本页</el-button>
+                </div>
+                <el-empty v-if="!hasSkillContext" description="该记录没有 Skill 或工具信息" :image-size="70" />
+                <template v-else>
+                  <section v-if="context?.tabs.skills.tools.length" class="context-section">
+                    <h4>工具定义</h4>
+                    <StructuredJson :value="context.tabs.skills.tools" />
+                  </section>
+                  <section v-if="context?.tabs.skills.toolCalls.length" class="context-section">
+                    <h4>工具调用</h4>
+                    <StructuredJson :value="context.tabs.skills.toolCalls" />
+                  </section>
+                  <section v-if="context?.tabs.skills.skills.length" class="context-section">
+                    <h4>Skills</h4>
+                    <StructuredJson :value="context.tabs.skills.skills" />
+                  </section>
+                </template>
+              </div>
+            </el-tab-pane>
+
+            <el-tab-pane label="元数据" name="metadata">
+              <div class="tab-content">
+                <el-alert
+                  v-if="!auth.isAdmin"
+                  title="v0.0.3 起，审计员仅可查看授权范围内的调用元数据，不能读取上下文正文。"
+                  type="info"
+                  :closable="false"
+                  show-icon
+                  class="metadata-notice"
+                />
+                <el-descriptions :column="1" border size="small" class="detail-descriptions">
+                  <el-descriptions-item label="时间">{{ formatDateTime(detail.meta.createdAt) }}</el-descriptions-item>
+                  <el-descriptions-item label="员工">{{ detail.meta.employeeName }} / {{ detail.meta.employeePhone }}</el-descriptions-item>
+                  <el-descriptions-item label="客户端协议">{{ relayProtocolLabel(detail.meta.protocol) }}</el-descriptions-item>
+                  <el-descriptions-item label="模型">{{ modelTooltip(detail.meta) }}</el-descriptions-item>
+                  <el-descriptions-item label="上游渠道">
+                    {{ providerText(detail.meta.providerCode) }} · {{ productTypeText(detail.meta.productType) }} · Key {{ detail.meta.credentialSuffix || "—" }}
+                  </el-descriptions-item>
+                  <el-descriptions-item label="状态">
+                    <span class="result-cell">
+                      <span class="status-pill" :class="`is-${detail.meta.status}`"><i class="status-dot" />{{ statusText(detail.meta.status) }}</span>
+                      <span v-if="detail.meta.httpStatus" class="http-status">HTTP {{ detail.meta.httpStatus }}</span>
+                    </span>
+                  </el-descriptions-item>
+                  <el-descriptions-item label="Tokens">
+                    {{ formatNumber(detail.meta.promptTokens) }} + {{ formatNumber(detail.meta.completionTokens) }} = {{ formatNumber(detail.meta.totalTokens) }}
+                  </el-descriptions-item>
+                  <el-descriptions-item label="耗时">
+                    {{ formatLatency(detail.meta.latencyMs) }} · {{ detail.meta.isStream ? "流式" : "非流式" }} · 重试 {{ detail.meta.retryCount ?? 0 }} 次
+                  </el-descriptions-item>
+                  <el-descriptions-item v-if="detail.meta.errorCode || detail.meta.errorMessage" label="错误">
+                    {{ detail.meta.errorCode }} {{ detail.meta.errorMessage }}
+                  </el-descriptions-item>
+                  <template v-if="context">
+                    <el-descriptions-item label="请求正文大小">{{ formatBytes(context.tabs.metadata.requestBodySize) }}</el-descriptions-item>
+                    <el-descriptions-item label="响应正文大小">{{ formatBytes(context.tabs.metadata.responseBodySize) }}</el-descriptions-item>
+                  </template>
+                </el-descriptions>
+              </div>
+            </el-tab-pane>
+          </el-tabs>
         </template>
-      </template>
+      </div>
     </el-drawer>
   </div>
 </template>
@@ -215,7 +282,9 @@
 import { computed, onMounted, reactive, ref } from "vue";
 import { ElMessage } from "element-plus";
 import { http } from "@/api/http";
+import StructuredJson from "@/components/StructuredJson.vue";
 import { formatDateTime } from "@/lib/date-time";
+import { useAuthStore } from "@/stores/auth";
 import { relayProtocolLabel, type RelayProtocol } from "@/views/relay-protocol";
 
 type LogStatus = "success" | "upstream_error" | "client_error" | "cancelled";
@@ -248,8 +317,24 @@ interface LogRow {
 
 interface LogDetail {
   meta: LogRow;
-  body: { requestBody: unknown; responseBody: unknown } | null;
-  canReadBody: boolean;
+  canReadContext: boolean;
+}
+
+interface AuditContext {
+  requestId: string;
+  truncated: boolean;
+  tabs: {
+    userPrompt: { messages: unknown[]; raw: unknown };
+    response: { content: unknown[]; raw: unknown };
+    skills: { tools: unknown[]; toolCalls: unknown[]; skills: unknown[] };
+    metadata: {
+      protocol: RelayProtocol;
+      clientModel: string;
+      upstreamModel: string | null;
+      requestBodySize: number;
+      responseBodySize: number;
+    };
+  };
 }
 
 const statusOptions: Array<{ label: string; value: LogStatus }> = [
@@ -267,6 +352,7 @@ const providerNames: Record<string, string> = {
 };
 
 const numberFormatter = new Intl.NumberFormat("zh-CN");
+const auth = useAuthStore();
 
 const filters = reactive({
   employeeId: "",
@@ -282,8 +368,12 @@ const limit = 10;
 const loading = ref(false);
 const drawer = ref(false);
 const detail = ref<LogDetail | null>(null);
-const currentRequestId = ref("");
-const loadingBody = ref(false);
+const context = ref<AuditContext | null>(null);
+const detailLoading = ref(false);
+const contextLoading = ref(false);
+const activeDetailTab = ref("metadata");
+const rawPanels = ref<string[]>([]);
+let detailSequence = 0;
 
 const hasFilters = computed(() => Object.values(filters).some(Boolean));
 
@@ -358,13 +448,45 @@ async function copyRequestId(requestId: string) {
   }
 }
 
-function pretty(v: unknown) {
+function messageRole(message: unknown): string {
+  if (message && typeof message === "object" && !Array.isArray(message)) {
+    const role = (message as Record<string, unknown>).role;
+    if (typeof role === "string" && role) return role;
+  }
+  return "message";
+}
+
+function messageContent(message: unknown): unknown {
+  if (message && typeof message === "object" && !Array.isArray(message)) {
+    const record = message as Record<string, unknown>;
+    return record.content ?? record;
+  }
+  return message;
+}
+
+function formatBytes(value: number): string {
+  if (!value) return "0 B";
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
+  return `${(value / 1024 / 1024).toFixed(1)} MB`;
+}
+
+async function copyStructured(value: unknown) {
   try {
-    return JSON.stringify(v, null, 2);
+    await navigator.clipboard.writeText(JSON.stringify(value ?? null, null, 2));
+    ElMessage.success("结构化数据已复制");
   } catch {
-    return String(v);
+    ElMessage.error("复制失败");
   }
 }
+
+const hasSkillContext = computed(() => Boolean(
+  context.value && (
+    context.value.tabs.skills.tools.length
+    || context.value.tabs.skills.toolCalls.length
+    || context.value.tabs.skills.skills.length
+  ),
+));
 
 async function load() {
   loading.value = true;
@@ -409,27 +531,40 @@ function resetFilters() {
 }
 
 async function openDetail(requestId: string) {
-  currentRequestId.value = requestId;
-  const { data } = await http.get(`/api/admin/logs/${requestId}`, {
-    params: { includeBody: "false" },
-  });
-  if (data.success) {
-    detail.value = data.data;
-    drawer.value = true;
-  }
-}
-
-async function loadBody() {
-  loadingBody.value = true;
+  const sequence = ++detailSequence;
+  detail.value = null;
+  context.value = null;
+  rawPanels.value = [];
+  activeDetailTab.value = auth.isAdmin ? "prompt" : "metadata";
+  drawer.value = true;
+  detailLoading.value = true;
+  contextLoading.value = auth.isAdmin;
   try {
-    const { data } = await http.get(`/api/admin/logs/${currentRequestId.value}`, {
-      params: { includeBody: "true" },
-    });
-    if (data.success) detail.value = data.data;
+    const metadataPromise = http.get(`/api/admin/logs/${requestId}`);
+    const contextPromise = auth.isAdmin
+      ? http.get(`/api/admin/logs/${requestId}/context`)
+      : Promise.resolve(null);
+    const [metadataResult, contextResult] = await Promise.allSettled([
+      metadataPromise,
+      contextPromise,
+    ]);
+    if (sequence !== detailSequence) return;
+    if (metadataResult.status === "rejected") throw metadataResult.reason;
+    if (metadataResult.value.data.success) detail.value = metadataResult.value.data.data;
+    if (contextResult.status === "fulfilled" && contextResult.value?.data.success) {
+      context.value = contextResult.value.data.data;
+    } else if (auth.isAdmin && contextResult.status === "rejected") {
+      ElMessage.error(contextResult.reason?.response?.data?.message || "结构化上下文加载失败");
+    }
   } catch (e: any) {
-    ElMessage.error(e.response?.data?.message || "无权或加载失败");
+    if (sequence === detailSequence) {
+      ElMessage.error(e.response?.data?.message || "调用详情加载失败");
+    }
   } finally {
-    loadingBody.value = false;
+    if (sequence === detailSequence) {
+      detailLoading.value = false;
+      contextLoading.value = false;
+    }
   }
 }
 
@@ -602,13 +737,57 @@ onMounted(load);
   width: 92px;
   color: #667085;
 }
-.code {
-  background: #0f172a;
-  color: #e2e8f0;
-  padding: 12px;
-  border-radius: 8px;
-  overflow: auto;
-  max-height: 320px;
+.log-detail-body {
+  min-height: 260px;
+}
+.detail-heading,
+.tab-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.detail-heading {
+  min-height: 30px;
+  margin-bottom: 10px;
+}
+.context-tabs :deep(.el-tabs__header) {
+  margin-bottom: 12px;
+}
+.tab-content {
+  min-height: 260px;
+}
+.tab-toolbar {
+  margin-bottom: 10px;
+  color: #667085;
   font-size: 12px;
+}
+.message-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.message-card {
+  padding: 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 9px;
+  background: #f8fafc;
+}
+.message-card > :deep(.el-tag) {
+  margin-bottom: 6px;
+}
+.raw-collapse {
+  margin-top: 14px;
+}
+.context-section + .context-section {
+  margin-top: 16px;
+}
+.context-section h4 {
+  margin: 0 0 6px;
+  color: #344054;
+  font-size: 13px;
+}
+.metadata-notice {
+  margin-bottom: 12px;
 }
 </style>

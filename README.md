@@ -2,7 +2,7 @@
 
 公司内网 LLM 统一出口：官方供应商 Key 池共享、员工级全文审计、不计费。
 
-> v0.0.1 代码开发与全新数据库隔离验证已完成；生产数据库尚未初始化，生产环境尚未部署。
+> v0.0.3 功能实现与本地验证已完成；生产环境尚未部署。
 
 📄 **产品需求文档（PRD）**：[docs/PRD.md](./docs/PRD.md)
 
@@ -27,7 +27,7 @@ docker compose ps
 
 默认使用独立库名 **`tokenhub`**（需已创建，见下方）。
 
-v0.0.1 是首次正式发布基线，使用全新数据库执行唯一初始 Migration 和最小种子。开发环境数据库应重新创建后使用。
+v0.0.1 是初始数据库基线；现有数据库升级到 v0.0.3 时直接执行增量 Migration，无需重建数据库。全新环境会按顺序执行全部迁移并写入最小种子。
 
 ## 快速开始
 
@@ -84,6 +84,8 @@ PY
 
 并手动设置 `JWT_SECRET`、`CREDENTIAL_ENCRYPT_KEY`（可用 `openssl rand -base64 48`）。
 
+v0.0.3 新增治理变量：`QUOTA_TIMEZONE`（默认 `Asia/Shanghai`）、`RELAY_SAFEGUARD_RPM`（默认 `60`）和 `RELAY_SAFEGUARD_MAX_CONCURRENCY`（默认 `5`）。前者决定日 Token 配额的自然日边界，后两者是系统级稳定性保护，不在配额页面编辑。
+
 ### 创建 tokenhub 库（若尚未创建）
 
 ```sh
@@ -98,7 +100,7 @@ docker compose exec -T postgres psql -U app -d postgres -c "CREATE DATABASE toke
 |---|---|---|
 | 员工 | `/me/*` | 改密、API Key、自己的用量与日志 |
 | 管理员 | `/admin/*` only | 概览、员工、上游渠道、调用日志、日志授权、配额、操作审计（不进入员工端） |
-| 审计员 | `/admin/*` only | 概览、调用日志（授权范围内，不进入员工端） |
+| 审计员 | `/admin/*` only | 概览、渠道只读信息、调用日志元数据（授权范围内，不进入员工端或读取正文） |
 
 管理后台菜单：概览 · 员工管理 · 上游渠道 · 调用日志 · 日志授权 · 配额策略 · 操作审计 · 个人中心。供应商、产品线和模型路由保留为内部数据结构，不再暴露独立页面。
 
@@ -224,11 +226,12 @@ Claude Code 的 `ANTHROPIC_BASE_URL` 应填写 TokenHub 服务地址本身（例
 ### 调度、限流与审计
 
 - 每个上游渠道可声明同时支持多个协议；TokenHub 先锁定员工 Key 绑定的 ProductLine，再按协议和可用状态选择该渠道内的上游凭证。同一请求重试时不会重复使用同一凭证，也不会切换到其他渠道。
-- 管理端按供应商与产品线对渠道分组；一个渠道可集中管理多条上游 Key，并支持批量导入、测试、启停和删除。
+- 管理端按供应商与产品线对渠道分组；渠道配置与聚合统计集中在“渠道详情”，Key 列表只承担脱敏后的 Key 级管理。
 - 上游 `401/403` 会自动停用对应凭证，`429` 会进入短暂冷却，`5xx` 或网络错误可切换凭证重试；请求参数导致的 `400` 不重试。
 - 绑定渠道停用时请求返回 `bound_channel_unavailable`；未配置显式映射的模型名会原样透传上游，由上游判断模型是否存在；全部冷却或无可用凭证分别返回 `model_channels_cooling`、`model_unavailable`。OpenAI 与 Anthropic 响应均保留确定性 `code`。
-- 员工调用受 RPM、并发和日配额约束；超出硬限制时按当前协议返回 OpenAI 或 Anthropic 原生错误格式，RPM 超限响应会带 `Retry-After`。
+- 员工调用受单日总 Token 硬上限约束，并受固定 RPM/并发 safeguard 保护；超限时按当前协议返回 OpenAI 或 Anthropic 原生错误格式，RPM 超限响应会带 `Retry-After`。
 - 成功、上游错误、限流和取消等调用都会写入员工级审计与用量记录；请求头中的员工 API Key 不会写入审计正文。
+- 管理端结构化上下文仅管理员可读，并按用户提示词、返回信息、Skill/工具和元数据展示；审计员只能查看授权范围内元数据。员工查看自己的已保存正文维持不变。
 
 ## 常用命令
 
@@ -239,11 +242,12 @@ npm run db:migrate      # 执行迁移
 npm run db:seed         # 仅种子管理员 + 最小系统配置（无演示供应商/凭证）
 npm run db:cleanup-demo # 事务清理 Key、渠道和业务数据（保留员工账号与系统基线）
 npm run db:generate     # 改 schema 后生成迁移
-npm test --workspace=@tokenhub/server # 服务端默认单元测试（76 项）
+npm test --workspace=@tokenhub/server # 服务端默认单元测试（84 项）
 npm run test:relay:mock --workspace=@tokenhub/server # 本地 PG/Redis + Mock 上游集成测试
 npm run test:relay:native:mock --workspace=@tokenhub/server # Responses/Messages 原生协议集成测试
 npm run test:v001:api --workspace=@tokenhub/server # v0.0.1 Key/权限/数据库约束集成测试
 npm run test:v001:binding --workspace=@tokenhub/server # v0.0.1 全协议 A/B 渠道硬绑定集成测试
+npm run test:v003:integration --workspace=@tokenhub/server # v0.0.3 用量、权限、正文脱敏与审计去重集成测试
 ```
 
 `test:relay:*` 和 `test:v001:*` 会使用当前配置的 PostgreSQL/Redis；只能在已完成 Migration 的隔离开发或测试环境运行，不要直接指向生产数据库。
@@ -255,5 +259,5 @@ npm run test:v001:binding --workspace=@tokenhub/server # v0.0.1 全协议 A/B �
 
 - 多官方供应商 ×（API / Coding Plan）凭证池  
 - API 默认可公共共享；Coding Plan 默认授权制  
-- 请求/响应审计（脱敏、单条容量上限与截断标记）；管理员 + 授权可见
-- 不计费；软日上限 + RPM/并发治理  
+- 请求/响应审计（脱敏、单条容量上限与截断标记）；管理端正文仅管理员可见
+- 不计费；按员工单日总 Token 硬上限 + 系统级 RPM/并发 safeguard

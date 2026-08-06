@@ -8,7 +8,7 @@ import {
   requestAudits,
   usageCountersDaily,
 } from "../../db/schema/index.js";
-import type { EffectiveRelayQuota } from "./quota.js";
+import { quotaDayAt } from "../quota-time.js";
 import type { RelayProtocol } from "./protocol.js";
 import type {
   RelayCandidate,
@@ -57,8 +57,6 @@ export type RelayAuditInput = {
   requestHeaders: Record<string, string>;
   requestBody: unknown;
   responseBody: unknown;
-  quota?: EffectiveRelayQuota | null;
-  softLimitHit?: boolean;
   clientIp?: string;
   userAgent?: string;
   requestPath?: string;
@@ -212,15 +210,7 @@ export async function writeRelayAudit(input: RelayAuditInput): Promise<void> {
   const completionTokens = safeInteger(usage.completionTokens) ?? 0;
   const totalTokens = safeInteger(usage.totalTokens) ?? 0;
   const errorCount = input.status === "success" ? 0 : 1;
-  const incomingSoftLimitHit = Boolean(
-    input.softLimitHit ||
-      (input.quota?.softTpmDay !== null &&
-        input.quota?.softTpmDay !== undefined &&
-        totalTokens >= input.quota.softTpmDay) ||
-      (input.quota?.softReqDay !== null &&
-        input.quota?.softReqDay !== undefined &&
-        1 >= input.quota.softReqDay),
-  );
+  const quotaDay = quotaDayAt(new Date(), env.QUOTA_TIMEZONE);
 
   await db.transaction(async (tx) => {
     const [inserted] = await tx
@@ -272,27 +262,17 @@ export async function writeRelayAudit(input: RelayAuditInput): Promise<void> {
       truncated: request.truncated || response.truncated,
     });
 
-    let softLimitExpression = sql`${usageCountersDaily.softLimitHit} or ${incomingSoftLimitHit}`;
-    if (input.quota?.softTpmDay !== null && input.quota?.softTpmDay !== undefined) {
-      softLimitExpression = sql`${softLimitExpression} or (${usageCountersDaily.totalTokens} + ${totalTokens} >= ${input.quota.softTpmDay})`;
-    }
-    if (input.quota?.softReqDay !== null && input.quota?.softReqDay !== undefined) {
-      softLimitExpression = sql`${softLimitExpression} or (${usageCountersDaily.requestCount} + 1 >= ${input.quota.softReqDay})`;
-    }
-
     await tx
       .insert(usageCountersDaily)
       .values({
-        // Evaluate the day inside PostgreSQL so quota checks, counters and
-        // dashboards all use the database's configured local timezone.
-        day: sql`current_date`,
+        day: quotaDay,
         employeeId: input.principal.employeeId,
         promptTokens,
         completionTokens,
         totalTokens,
         requestCount: 1,
         errorCount,
-        softLimitHit: incomingSoftLimitHit,
+        softLimitHit: false,
       })
       .onConflictDoUpdate({
         target: [usageCountersDaily.day, usageCountersDaily.employeeId],
@@ -302,7 +282,6 @@ export async function writeRelayAudit(input: RelayAuditInput): Promise<void> {
           totalTokens: sql`${usageCountersDaily.totalTokens} + ${totalTokens}`,
           requestCount: sql`${usageCountersDaily.requestCount} + 1`,
           errorCount: sql`${usageCountersDaily.errorCount} + ${errorCount}`,
-          softLimitHit: softLimitExpression,
         },
       });
 

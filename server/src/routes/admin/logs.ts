@@ -4,19 +4,27 @@ import { z } from "zod";
 import { db } from "../../db/client.js";
 import {
   employees,
+  opsAuditLogs,
   requestAuditBodies,
   requestAudits,
 } from "../../db/schema/index.js";
+import { normalizeAuditContext } from "../../lib/audit-context.js";
 import {
   canAccessEmployeeLogs,
   listAccessibleEmployeeFilter,
 } from "../../lib/log-access.js";
-import { writeOpsAudit } from "../../lib/ops-audit.js";
 import {
   requirePasswordChanged,
   requireRoles,
   requireSession,
 } from "../../middleware/auth.js";
+
+const CONTEXT_AUDIT_DEDUP_MS = 5 * 60_000;
+export const requireAdminLogContext = requireRoles("admin");
+
+export function contextAuditDedupSince(now: Date = new Date()): Date {
+  return new Date(now.getTime() - CONTEXT_AUDIT_DEDUP_MS);
+}
 
 export async function adminLogRoutes(app: FastifyInstance) {
   app.addHook("preHandler", requireSession);
@@ -170,33 +178,9 @@ export async function adminLogRoutes(app: FastifyInstance) {
       return reply.code(403).send({ success: false, message: "无权查看该记录" });
     }
 
-    let body: typeof requestAuditBodies.$inferSelect | null = null;
-    if (query.includeBody) {
-      if (!access.canReadBody) {
-        return reply.code(403).send({ success: false, message: "无权查看对话正文" });
-      }
-      const [b] = await db
-        .select()
-        .from(requestAuditBodies)
-        .where(eq(requestAuditBodies.requestId, params.data.requestId))
-        .limit(1);
-      body = b ?? null;
-
-      await writeOpsAudit({
-        actorEmployeeId: req.employeeId,
-        action: "log.read_body",
-        targetType: "request_audit",
-        targetId: params.data.requestId,
-        detail: {
-          ownerEmployeeId: meta.audit.employeeId,
-          ownerPhone: meta.employeePhone,
-        },
-        ip: req.ip,
-      });
-    }
-
     return {
       success: true,
+      deprecated: query.includeBody,
       data: {
         meta: {
           ...meta.audit,
@@ -204,9 +188,90 @@ export async function adminLogRoutes(app: FastifyInstance) {
           employeePhone: meta.employeePhone,
           employeeDept: meta.employeeDept,
         },
-        body,
-        canReadBody: access.canReadBody,
+        body: null,
+        canReadBody: false,
+        canReadContext: req.session?.role === "admin",
+        deprecated: query.includeBody,
       },
     };
   });
+
+  app.get(
+    "/api/admin/logs/:requestId/context",
+    { preHandler: [requireAdminLogContext] },
+    async (req, reply) => {
+      const params = z.object({ requestId: z.string().min(1).max(64) }).safeParse(req.params);
+      if (!params.success) {
+        return reply.code(400).send({ success: false, message: "参数无效" });
+      }
+
+      const [row] = await db
+        .select({
+          requestId: requestAudits.requestId,
+          employeeId: requestAudits.employeeId,
+          employeePhone: employees.phone,
+          protocol: requestAudits.protocol,
+          clientModel: requestAudits.clientModel,
+          upstreamModel: requestAudits.upstreamModel,
+          requestBody: requestAuditBodies.requestBody,
+          responseBody: requestAuditBodies.responseBody,
+          requestBodySize: requestAuditBodies.requestBodySize,
+          responseBodySize: requestAuditBodies.responseBodySize,
+          truncated: requestAuditBodies.truncated,
+        })
+        .from(requestAudits)
+        .innerJoin(employees, eq(requestAudits.employeeId, employees.id))
+        .leftJoin(requestAuditBodies, eq(requestAudits.requestId, requestAuditBodies.requestId))
+        .where(eq(requestAudits.requestId, params.data.requestId))
+        .limit(1);
+      if (!row) {
+        return reply.code(404).send({ success: false, message: "记录不存在" });
+      }
+
+      const dedupSince = contextAuditDedupSince();
+      const actorEmployeeId = req.employeeId!;
+      await db.transaction(async (tx) => {
+        const lockKey = `${actorEmployeeId}:${row.requestId}`;
+        await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`);
+        const [recentRead] = await tx
+          .select({ id: opsAuditLogs.id })
+          .from(opsAuditLogs)
+          .where(and(
+            eq(opsAuditLogs.actorEmployeeId, actorEmployeeId),
+            eq(opsAuditLogs.action, "log.read_context"),
+            eq(opsAuditLogs.targetId, row.requestId),
+            gte(opsAuditLogs.createdAt, dedupSince),
+          ))
+          .limit(1);
+        if (!recentRead) {
+          await tx.insert(opsAuditLogs).values({
+            actorEmployeeId,
+            action: "log.read_context",
+            targetType: "request_audit",
+            targetId: row.requestId,
+            detail: {
+              ownerEmployeeId: row.employeeId,
+              ownerPhone: row.employeePhone,
+            },
+            ip: req.ip,
+          });
+        }
+      });
+
+      return {
+        success: true,
+        data: normalizeAuditContext({
+          requestId: row.requestId,
+          protocol: row.protocol,
+          clientModel: row.clientModel,
+          upstreamModel: row.upstreamModel,
+          requestBody: row.requestBody,
+          responseBody: row.responseBody,
+          requestBodySize: row.requestBodySize,
+          responseBodySize: row.responseBodySize,
+          truncated: row.truncated ?? false,
+        }),
+      };
+    },
+  );
 }

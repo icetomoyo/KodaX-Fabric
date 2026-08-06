@@ -370,8 +370,6 @@ type FinalizeAuditInput = Omit<
   | "clientIp"
   | "userAgent"
   | "requestPath"
-  | "quota"
-  | "softLimitHit"
 >;
 
 async function handleNativeRequest(
@@ -420,8 +418,6 @@ async function handleNativeRequest(
       clientIp: req.ip,
       userAgent: requestUserAgent(req),
       requestPath: req.url,
-      quota: lease?.effective,
-      softLimitHit: lease?.softLimitHit,
     });
   };
 

@@ -1,267 +1,149 @@
 <template>
-  <div>
-    <div class="page-card" style="margin-bottom: 16px">
-      <div class="head">
-        <h2 class="page-title" style="margin: 0">配额策略</h2>
-        <el-button type="primary" @click="openPolicyCreate">新建策略</el-button>
+  <div class="page-card quota-page" v-loading="loading">
+    <div class="head">
+      <div>
+        <h2 class="page-title">单日 Token 配额</h2>
+        <p class="subtitle">每名员工每日共享同一个硬上限，个人用量请在员工详情中查看。</p>
       </div>
-      <el-table :data="policies" stripe>
-        <el-table-column prop="name" label="名称" width="120" />
-        <el-table-column prop="isDefault" label="默认" width="70">
-          <template #default="{ row }">{{ row.isDefault ? "是" : "" }}</template>
-        </el-table-column>
-        <el-table-column prop="softTpmDay" label="日Token软限" />
-        <el-table-column prop="hardTpmDay" label="日Token硬限" />
-        <el-table-column prop="rpm" label="RPM" width="80" />
-        <el-table-column prop="maxConcurrency" label="并发" width="80" />
-        <el-table-column prop="softReqDay" label="日请求软限" />
-        <el-table-column prop="hardReqDay" label="日请求硬限" />
-        <el-table-column label="操作" width="100">
-          <template #default="{ row }">
-            <el-button link type="primary" @click="openPolicyEdit(row)">编辑</el-button>
-          </template>
-        </el-table-column>
-      </el-table>
+      <el-button type="primary" :disabled="!policy" @click="openEdit">编辑上限</el-button>
     </div>
 
-    <div class="page-card">
-      <div class="head">
-        <h2 class="page-title" style="margin: 0">员工配额覆盖</h2>
-        <el-button type="primary" @click="openOverride">添加覆盖</el-button>
+    <div v-if="policy" class="policy-card">
+      <div class="limit-block">
+        <span>每名员工每日总 Token 上限</span>
+        <strong>{{ formatNumber(policy.dailyTokenLimit) }}</strong>
+        <el-tag v-if="policy.dailyTokenLimit === 0" type="danger" size="small">
+          当前禁止全部员工调用
+        </el-tag>
       </div>
-      <el-table :data="overrides" stripe empty-text="无单独覆盖，走默认策略">
-        <el-table-column prop="employeeName" label="姓名" width="100" />
-        <el-table-column prop="employeePhone" label="手机" width="120" />
-        <el-table-column prop="policyName" label="策略模板" width="120" />
-        <el-table-column prop="softTpmDay" label="日Token软限" />
-        <el-table-column prop="hardTpmDay" label="日Token硬限" />
-        <el-table-column prop="rpm" label="RPM" width="80" />
-        <el-table-column prop="maxConcurrency" label="并发" width="80" />
-        <el-table-column label="操作" width="100">
-          <template #default="{ row }">
-            <el-button link type="danger" @click="removeOverride(row.employeeId)">删除</el-button>
-          </template>
-        </el-table-column>
-      </el-table>
+      <dl class="policy-meta">
+        <div><dt>统计时区</dt><dd>{{ policy.timezone }}</dd></div>
+        <div><dt>下次重置</dt><dd>{{ formatDateTimeInTimeZone(policy.resetAt, policy.timezone) }}</dd></div>
+        <div><dt>策略类型</dt><dd>按员工 · 单日总 Token 硬上限</dd></div>
+      </dl>
     </div>
 
-    <el-dialog v-model="showPolicy" :title="policyForm.id ? '编辑策略' : '新建策略'" width="560px">
-      <el-form label-width="130px">
-        <el-form-item label="名称"><el-input v-model="policyForm.name" /></el-form-item>
-        <el-form-item label="日Token软限">
-          <el-input-number v-model="policyForm.softTpmDay" :min="0" :step="100000" />
-        </el-form-item>
-        <el-form-item label="日Token硬限">
-          <el-input-number v-model="policyForm.hardTpmDay" :min="0" :step="100000" placeholder="不限" />
-        </el-form-item>
-        <el-form-item label="RPM">
-          <el-input-number v-model="policyForm.rpm" :min="1" />
-        </el-form-item>
-        <el-form-item label="并发">
-          <el-input-number v-model="policyForm.maxConcurrency" :min="1" />
-        </el-form-item>
-        <el-form-item label="日请求软限">
-          <el-input-number v-model="policyForm.softReqDay" :min="0" />
-        </el-form-item>
-        <el-form-item label="日请求硬限">
-          <el-input-number v-model="policyForm.hardReqDay" :min="0" placeholder="不限" />
-        </el-form-item>
-        <el-form-item label="设为默认">
-          <el-switch v-model="policyForm.isDefault" />
+    <el-alert
+      title="RPM 与并发限制属于系统级稳定性保护，由部署环境配置，不属于业务配额。"
+      type="info"
+      :closable="false"
+      show-icon
+      class="safeguard-note"
+    />
+
+    <el-dialog v-model="showEdit" title="编辑单日 Token 上限" width="500px">
+      <el-form label-position="top">
+        <el-form-item label="每名员工每日总 Token 上限" required>
+          <el-input-number
+            v-model="dailyTokenLimit"
+            :min="0"
+            :max="Number.MAX_SAFE_INTEGER"
+            :step="1000000"
+            controls-position="right"
+            style="width: 100%"
+          />
+          <div class="form-help">非负整数；设为 0 会立即拒绝员工当日全部新请求。</div>
         </el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="showPolicy = false">取消</el-button>
-        <el-button type="primary" :loading="saving" @click="savePolicy">保存</el-button>
-      </template>
-    </el-dialog>
-
-    <el-dialog v-model="showOverride" title="员工配额覆盖" width="560px">
-      <el-form label-width="120px">
-        <el-form-item label="员工" required>
-          <el-select v-model="overrideForm.employeeId" filterable style="width: 100%">
-            <el-option
-              v-for="u in users"
-              :key="u.id"
-              :label="`${u.name} (${u.phone})`"
-              :value="u.id"
-            />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="策略模板">
-          <el-select v-model="overrideForm.policyId" clearable style="width: 100%">
-            <el-option v-for="p in policies" :key="p.id" :label="p.name" :value="p.id" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="日Token软限">
-          <el-input-number v-model="overrideForm.softTpmDay" :min="0" />
-        </el-form-item>
-        <el-form-item label="日Token硬限">
-          <el-input-number v-model="overrideForm.hardTpmDay" :min="0" placeholder="不限" />
-        </el-form-item>
-        <el-form-item label="RPM">
-          <el-input-number v-model="overrideForm.rpm" :min="1" />
-        </el-form-item>
-        <el-form-item label="并发">
-          <el-input-number v-model="overrideForm.maxConcurrency" :min="1" />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="showOverride = false">取消</el-button>
-        <el-button type="primary" :loading="saving" @click="saveOverride">保存</el-button>
+        <el-button @click="showEdit = false">取消</el-button>
+        <el-button type="primary" :loading="saving" @click="save">保存</el-button>
       </template>
     </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref } from "vue";
+import { onMounted, ref } from "vue";
 import { ElMessage } from "element-plus";
 import { http } from "@/api/http";
+import { formatDateTimeInTimeZone } from "@/lib/date-time";
 
-const policies = ref<any[]>([]);
-const overrides = ref<any[]>([]);
-const users = ref<any[]>([]);
-const showPolicy = ref(false);
-const showOverride = ref(false);
+type QuotaPolicy = {
+  dailyTokenLimit: number;
+  timezone: string;
+  resetAt: string;
+  description: string;
+};
+
+const policy = ref<QuotaPolicy | null>(null);
+const loading = ref(false);
 const saving = ref(false);
-
-const policyForm = reactive({
-  id: 0,
-  name: "",
-  softTpmDay: 2_000_000 as number | null,
-  hardTpmDay: null as number | null,
-  rpm: 60,
-  maxConcurrency: 5,
-  softReqDay: 2000 as number | null,
-  hardReqDay: null as number | null,
-  isDefault: false,
-});
-
-const overrideForm = reactive({
-  employeeId: undefined as number | undefined,
-  policyId: undefined as number | undefined,
-  softTpmDay: null as number | null,
-  hardTpmDay: null as number | null,
-  rpm: null as number | null,
-  maxConcurrency: null as number | null,
-});
+const showEdit = ref(false);
+const dailyTokenLimit = ref(0);
+const numberFormatter = new Intl.NumberFormat("zh-CN");
 
 async function load() {
-  const [p, o, u] = await Promise.all([
-    http.get("/api/admin/quota-policies"),
-    http.get("/api/admin/quota-overrides"),
-    http.get("/api/admin/users", { params: { limit: 200 } }),
-  ]);
-  if (p.data.success) policies.value = p.data.data;
-  if (o.data.success) overrides.value = o.data.data;
-  if (u.data.success) users.value = u.data.data;
-}
-
-function openPolicyCreate() {
-  policyForm.id = 0;
-  policyForm.name = "";
-  policyForm.softTpmDay = 2_000_000;
-  policyForm.hardTpmDay = null;
-  policyForm.rpm = 60;
-  policyForm.maxConcurrency = 5;
-  policyForm.softReqDay = 2000;
-  policyForm.hardReqDay = null;
-  policyForm.isDefault = false;
-  showPolicy.value = true;
-}
-
-function openPolicyEdit(row: any) {
-  Object.assign(policyForm, {
-    id: row.id,
-    name: row.name,
-    softTpmDay: row.softTpmDay,
-    hardTpmDay: row.hardTpmDay,
-    rpm: row.rpm,
-    maxConcurrency: row.maxConcurrency,
-    softReqDay: row.softReqDay,
-    hardReqDay: row.hardReqDay,
-    isDefault: row.isDefault,
-  });
-  showPolicy.value = true;
-}
-
-async function savePolicy() {
-  saving.value = true;
+  loading.value = true;
   try {
-    const payload = {
-      name: policyForm.name,
-      softTpmDay: policyForm.softTpmDay,
-      hardTpmDay: policyForm.hardTpmDay,
-      rpm: policyForm.rpm,
-      maxConcurrency: policyForm.maxConcurrency,
-      softReqDay: policyForm.softReqDay,
-      hardReqDay: policyForm.hardReqDay,
-      isDefault: policyForm.isDefault,
-    };
-    if (policyForm.id) {
-      await http.patch(`/api/admin/quota-policies/${policyForm.id}`, payload);
-    } else {
-      await http.post("/api/admin/quota-policies", payload);
-    }
-    ElMessage.success("已保存");
-    showPolicy.value = false;
-    await load();
-  } catch (e: any) {
-    ElMessage.error(e.response?.data?.message || "保存失败");
+    const { data } = await http.get("/api/admin/quota-policy");
+    if (data.success) policy.value = data.data;
+  } catch (error: any) {
+    ElMessage.error(error.response?.data?.message || "配额加载失败");
   } finally {
-    saving.value = false;
+    loading.value = false;
   }
 }
 
-function openOverride() {
-  overrideForm.employeeId = undefined;
-  overrideForm.policyId = policies.value.find((p) => p.isDefault)?.id;
-  overrideForm.softTpmDay = null;
-  overrideForm.hardTpmDay = null;
-  overrideForm.rpm = null;
-  overrideForm.maxConcurrency = null;
-  showOverride.value = true;
+function openEdit() {
+  if (!policy.value) return;
+  dailyTokenLimit.value = policy.value.dailyTokenLimit;
+  showEdit.value = true;
 }
 
-async function saveOverride() {
-  if (!overrideForm.employeeId) {
-    ElMessage.warning("请选择员工");
+async function save() {
+  if (!Number.isSafeInteger(dailyTokenLimit.value) || dailyTokenLimit.value < 0) {
+    ElMessage.warning("日 Token 上限必须是非负整数");
     return;
   }
   saving.value = true;
   try {
-    await http.put(`/api/admin/quota-overrides/${overrideForm.employeeId}`, {
-      policyId: overrideForm.policyId ?? null,
-      softTpmDay: overrideForm.softTpmDay,
-      hardTpmDay: overrideForm.hardTpmDay,
-      rpm: overrideForm.rpm,
-      maxConcurrency: overrideForm.maxConcurrency,
+    const { data } = await http.put("/api/admin/quota-policy", {
+      dailyTokenLimit: dailyTokenLimit.value,
     });
-    ElMessage.success("已保存");
-    showOverride.value = false;
-    await load();
-  } catch (e: any) {
-    ElMessage.error(e.response?.data?.message || "保存失败");
+    if (data.success) policy.value = data.data;
+    showEdit.value = false;
+    ElMessage.success("日 Token 上限已更新");
+  } catch (error: any) {
+    ElMessage.error(error.response?.data?.message || "保存失败");
   } finally {
     saving.value = false;
   }
 }
 
-async function removeOverride(employeeId: number) {
-  await http.delete(`/api/admin/quota-overrides/${employeeId}`);
-  ElMessage.success("已删除");
-  await load();
+function formatNumber(value: number): string {
+  return numberFormatter.format(value);
 }
 
 onMounted(load);
 </script>
 
 <style scoped>
-.head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 8px;
+.quota-page { min-height: 320px; }
+.head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.page-title { margin: 0; }
+.subtitle { margin: 6px 0 0; color: #64748b; font-size: 13px; }
+.policy-card {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.9fr) minmax(320px, 1.1fr);
+  gap: 24px;
+  margin-top: 22px;
+  padding: 22px;
+  border: 1px solid #bfdbfe;
+  border-radius: 12px;
+  background: #f8fbff;
+}
+.limit-block { display: flex; align-items: flex-start; flex-direction: column; }
+.limit-block span { color: #64748b; font-size: 13px; }
+.limit-block strong { margin: 7px 0; color: #1d4ed8; font-size: 34px; font-variant-numeric: tabular-nums; }
+.policy-meta { margin: 0; }
+.policy-meta div { display: grid; grid-template-columns: 90px 1fr; gap: 12px; padding: 9px 0; border-bottom: 1px solid #e5e7eb; }
+.policy-meta div:last-child { border-bottom: 0; }
+.policy-meta dt { color: #64748b; font-size: 12px; }
+.policy-meta dd { margin: 0; color: #1f2937; font-size: 13px; }
+.safeguard-note { margin-top: 16px; }
+.form-help { margin-top: 7px; color: #94a3b8; font-size: 12px; }
+@media (max-width: 760px) {
+  .policy-card { grid-template-columns: 1fr; }
 }
 </style>

@@ -15,6 +15,7 @@ import {
   inspectCredentialSecretDuplicates,
   shouldRejectExistingChannelForMetadataRequest,
 } from "../../lib/credential-bulk.js";
+import { effectiveCredentialStatus } from "../../lib/credential-status.js";
 import { decryptSecret, encryptSecret, secretSuffix } from "../../lib/crypto-secret.js";
 import { writeOpsAudit } from "../../lib/ops-audit.js";
 import {
@@ -521,6 +522,104 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
           })),
         };
       }),
+    };
+  });
+
+  app.get("/api/admin/product-lines/:id/summary", async (req, reply) => {
+    const params = z.object({ id: z.coerce.number().int().positive() }).safeParse(req.params);
+    if (!params.success) {
+      return reply.code(400).send({ success: false, message: "渠道 ID 无效" });
+    }
+
+    const [located] = await db
+      .select({ productLine: productLines, provider: providers })
+      .from(productLines)
+      .innerJoin(providers, eq(productLines.providerId, providers.id))
+      .where(eq(productLines.id, params.data.id))
+      .limit(1);
+    if (!located) {
+      return reply.code(404).send({ success: false, message: "渠道不存在" });
+    }
+
+    const credentialRows = await db
+      .select({
+        id: upstreamCredentials.id,
+        status: upstreamCredentials.status,
+        coolUntil: upstreamCredentials.coolUntil,
+        weight: upstreamCredentials.weight,
+        supportedProtocols: upstreamCredentials.supportedProtocols,
+      })
+      .from(upstreamCredentials)
+      .where(eq(upstreamCredentials.productLineId, located.productLine.id));
+    const credentialIds = credentialRows.map((row) => row.id);
+    const recentSince = new Date(Date.now() - RECENT_WINDOW_MS);
+    const [recent] = credentialIds.length
+      ? await db
+        .select({
+          recentSuccessCount: sql<number>`coalesce(sum(case when ${requestAudits.status} = 'success' then 1 else 0 end), 0)::int`,
+          recentErrorCount: sql<number>`coalesce(sum(case when ${requestAudits.status} <> 'success' then 1 else 0 end), 0)::int`,
+        })
+        .from(requestAudits)
+        .where(and(
+          inArray(requestAudits.credentialId, credentialIds),
+          gte(requestAudits.createdAt, recentSince),
+        ))
+      : [{ recentSuccessCount: 0, recentErrorCount: 0 }];
+
+    const now = new Date();
+    const effectiveStatuses = credentialRows.map((row) => ({
+      ...row,
+      effectiveStatus: effectiveCredentialStatus(row.status, row.coolUntil, now),
+    }));
+    const channelEnabled = located.provider.status === "active"
+      && located.productLine.status === "active";
+    const schedulableCount = channelEnabled
+      ? effectiveStatuses.filter((row) => row.effectiveStatus === "active" && row.weight > 0).length
+      : 0;
+    const coolingCount = effectiveStatuses.filter(
+      (row) => row.effectiveStatus === "cooling",
+    ).length;
+    const configured = configuredProtocols(
+      parseProductLineProtocolConfigs(located.productLine.protocolConfigs),
+    );
+    const supported = new Set(credentialRows.flatMap((row) => row.supportedProtocols));
+    const protocols = configured.length
+      ? configured
+      : RELAY_PROTOCOLS.filter((protocol) => supported.has(protocol));
+
+    return {
+      success: true,
+      data: {
+        id: located.productLine.id,
+        code: located.productLine.code,
+        name: located.productLine.name,
+        productType: located.productLine.productType,
+        shareMode: located.productLine.shareMode,
+        allowAutoRoute: located.productLine.allowAutoRoute,
+        status: located.productLine.status,
+        provider: {
+          id: located.provider.id,
+          code: located.provider.code,
+          name: located.provider.name,
+          status: located.provider.status,
+        },
+        baseUrl: located.productLine.baseUrlOverride || located.provider.defaultBaseUrl,
+        protocolConfigs: located.productLine.protocolConfigs,
+        configVersion: located.productLine.configVersion,
+        protocols,
+        stats: {
+          totalCount: credentialRows.length,
+          schedulableCount,
+          coolingCount,
+          unschedulableCount: Math.max(
+            0,
+            credentialRows.length - schedulableCount - coolingCount,
+          ),
+          recentWindowHours: 24,
+          recentSuccessCount: Number(recent?.recentSuccessCount) || 0,
+          recentErrorCount: Number(recent?.recentErrorCount) || 0,
+        },
+      },
     };
   });
 

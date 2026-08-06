@@ -43,12 +43,12 @@ async function seedMinimalSystemConfig() {
 
   if (!def) {
     await db.insert(quotaPolicies).values({
-      name: "default",
-      softTpmDay: 2_000_000,
-      hardTpmDay: null,
-      rpm: 60,
-      maxConcurrency: 5,
-      softReqDay: 2000,
+      name: "默认日 Token 配额",
+      softTpmDay: null,
+      hardTpmDay: 500_000_000,
+      rpm: env.RELAY_SAFEGUARD_RPM,
+      maxConcurrency: env.RELAY_SAFEGUARD_MAX_CONCURRENCY,
+      softReqDay: null,
       hardReqDay: null,
       isDefault: true,
     });

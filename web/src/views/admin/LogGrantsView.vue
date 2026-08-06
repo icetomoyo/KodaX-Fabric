@@ -15,8 +15,12 @@
           {{ formatScope(row) }}
         </template>
       </el-table-column>
-      <el-table-column prop="canReadBody" label="可读正文" width="90">
-        <template #default="{ row }">{{ row.canReadBody ? "是" : "否" }}</template>
+      <el-table-column prop="canReadBody" label="正文权限" width="120">
+        <template #default="{ row }">
+          <el-tooltip content="v0.0.3 起审计员不再可读管理端日志正文；历史值仅保留兼容。">
+            <el-tag type="info" size="small">已弃用（{{ row.canReadBody ? "原是" : "原否" }}）</el-tag>
+          </el-tooltip>
+        </template>
       </el-table-column>
       <el-table-column prop="status" label="状态" width="90" />
       <el-table-column label="过期时间" width="210">
@@ -85,8 +89,16 @@
           </el-select>
         </el-form-item>
         <el-form-item label="可读正文">
-          <el-switch v-model="form.canReadBody" />
+          <el-tooltip content="该字段只为兼容旧授权结构保留，不再授予管理端正文权限。">
+            <el-switch v-model="form.canReadBody" disabled />
+          </el-tooltip>
         </el-form-item>
+        <el-alert
+          title="v0.0.3 起审计员仅可读取授权范围内的元数据，正文权限字段已弃用。"
+          type="info"
+          :closable="false"
+          show-icon
+        />
         <el-form-item label="过期时间">
           <el-date-picker
             v-model="form.expiresAt"
@@ -121,7 +133,7 @@ const form = reactive({
   scopeType: "all" as "all" | "dept" | "employees",
   depts: [] as string[],
   employeeIds: [] as number[],
-  canReadBody: true,
+  canReadBody: false,
   expiresAt: null as string | null,
 });
 
@@ -148,7 +160,7 @@ function openCreate() {
   form.scopeType = "all";
   form.depts = [];
   form.employeeIds = [];
-  form.canReadBody = true;
+  form.canReadBody = false;
   form.expiresAt = null;
   show.value = true;
 }

@@ -378,8 +378,6 @@ export async function v1RelayRoutes(app: FastifyInstance) {
           | "clientIp"
           | "userAgent"
           | "requestPath"
-          | "quota"
-          | "softLimitHit"
         >,
       ) => {
         if (auditWritten) return;
@@ -397,8 +395,6 @@ export async function v1RelayRoutes(app: FastifyInstance) {
           clientIp: req.ip,
           userAgent: requestUserAgent(req),
           requestPath: req.url,
-          quota: lease?.effective,
-          softLimitHit: lease?.softLimitHit,
         });
       };
 

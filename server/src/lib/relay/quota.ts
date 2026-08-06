@@ -1,26 +1,21 @@
 import { randomUUID } from "node:crypto";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { env } from "../../config.js";
 import { db } from "../../db/client.js";
 import {
-  employeeQuotaOverrides,
   quotaPolicies,
   usageCountersDaily,
 } from "../../db/schema/index.js";
+import { quotaDayAt } from "../quota-time.js";
 import { redis } from "../../redis.js";
 
 export type EffectiveRelayQuota = {
-  softTpmDay: number | null;
-  hardTpmDay: number | null;
+  dailyTokenLimit: number;
   rpm: number;
   maxConcurrency: number;
-  softReqDay: number | null;
-  hardReqDay: number | null;
 };
 
 export type RelayQuotaLease = {
-  effective: EffectiveRelayQuota;
-  softLimitHit: boolean;
   release: () => Promise<void>;
 };
 
@@ -36,46 +31,26 @@ export class RelayLimitError extends Error {
   }
 }
 
-const DEFAULT_QUOTA: EffectiveRelayQuota = {
-  softTpmDay: 2_000_000,
-  hardTpmDay: null,
-  rpm: 60,
-  maxConcurrency: 5,
-  softReqDay: 2_000,
-  hardReqDay: null,
-};
+export function assertDailyTokenLimit(totalTokens: number, dailyTokenLimit: number): void {
+  if (totalTokens >= dailyTokenLimit) {
+    throw new RelayLimitError("今日 Token 配额已用尽", "daily_token_limit_exceeded");
+  }
+}
 
-export async function getEffectiveRelayQuota(employeeId: number): Promise<EffectiveRelayQuota> {
-  const [override] = await db
-    .select()
-    .from(employeeQuotaOverrides)
-    .where(eq(employeeQuotaOverrides.employeeId, employeeId))
+export async function getEffectiveRelayQuota(_employeeId: number): Promise<EffectiveRelayQuota> {
+  const [policy] = await db
+    .select({ dailyTokenLimit: quotaPolicies.hardTpmDay })
+    .from(quotaPolicies)
+    .where(eq(quotaPolicies.isDefault, true))
     .limit(1);
-
-  let policy: typeof quotaPolicies.$inferSelect | undefined;
-  if (override?.policyId) {
-    [policy] = await db
-      .select()
-      .from(quotaPolicies)
-      .where(eq(quotaPolicies.id, override.policyId))
-      .limit(1);
-  }
-  if (!policy) {
-    [policy] = await db
-      .select()
-      .from(quotaPolicies)
-      .where(eq(quotaPolicies.isDefault, true))
-      .limit(1);
+  if (policy?.dailyTokenLimit === null || policy?.dailyTokenLimit === undefined) {
+    throw new Error("默认日 Token 配额未初始化，请先执行 v0.0.3 数据库迁移");
   }
 
-  const base = policy ?? DEFAULT_QUOTA;
   return {
-    softTpmDay: override?.softTpmDay ?? base.softTpmDay,
-    hardTpmDay: override?.hardTpmDay ?? base.hardTpmDay,
-    rpm: override?.rpm ?? base.rpm,
-    maxConcurrency: override?.maxConcurrency ?? base.maxConcurrency,
-    softReqDay: base.softReqDay,
-    hardReqDay: base.hardReqDay,
+    dailyTokenLimit: policy.dailyTokenLimit,
+    rpm: env.RELAY_SAFEGUARD_RPM,
+    maxConcurrency: env.RELAY_SAFEGUARD_MAX_CONCURRENCY,
   };
 }
 
@@ -159,37 +134,27 @@ async function acquireConcurrency(employeeId: number, limit: number): Promise<()
 
 export async function acquireRelayQuota(employeeId: number): Promise<RelayQuotaLease> {
   const effective = await getEffectiveRelayQuota(employeeId);
+  const quotaDay = quotaDayAt(new Date(), env.QUOTA_TIMEZONE);
   const [daily] = await db
     .select({
       totalTokens: usageCountersDaily.totalTokens,
-      requestCount: usageCountersDaily.requestCount,
     })
     .from(usageCountersDaily)
     .where(
       and(
         eq(usageCountersDaily.employeeId, employeeId),
-        sql`${usageCountersDaily.day} = current_date`,
+        eq(usageCountersDaily.day, quotaDay),
       ),
     )
     .limit(1);
 
   const totalTokens = daily?.totalTokens ?? 0;
-  const requestCount = daily?.requestCount ?? 0;
 
-  if (effective.hardTpmDay !== null && totalTokens >= effective.hardTpmDay) {
-    throw new RelayLimitError("今日 Token 配额已用尽", "daily_token_limit_exceeded");
-  }
-  if (effective.hardReqDay !== null && requestCount >= effective.hardReqDay) {
-    throw new RelayLimitError("今日请求配额已用尽", "daily_request_limit_exceeded");
-  }
-
-  const softLimitHit =
-    (effective.softTpmDay !== null && totalTokens >= effective.softTpmDay) ||
-    (effective.softReqDay !== null && requestCount >= effective.softReqDay);
+  assertDailyTokenLimit(totalTokens, effective.dailyTokenLimit);
 
   await ensureRedisReady();
   await acquireRpm(employeeId, effective.rpm);
   const release = await acquireConcurrency(employeeId, effective.maxConcurrency);
 
-  return { effective, softLimitHit, release };
+  return { release };
 }

@@ -3,6 +3,15 @@ import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 
+function isValidIanaTimeZone(value: string): boolean {
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: value }).format(new Date(0));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 loadEnv({ path: resolve(rootDir, ".env") });
 loadEnv({ path: resolve(dirname(fileURLToPath(import.meta.url)), "../.env") });
@@ -18,6 +27,12 @@ const envSchema = z.object({
   RELAY_UPSTREAM_TIMEOUT_MS: z.coerce.number().int().min(1_000).default(300_000),
   RELAY_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(10).default(3),
   RELAY_COOLDOWN_SECONDS: z.coerce.number().int().min(1).max(3_600).default(60),
+  RELAY_SAFEGUARD_RPM: z.coerce.number().int().min(1).default(60),
+  RELAY_SAFEGUARD_MAX_CONCURRENCY: z.coerce.number().int().min(1).default(5),
+  QUOTA_TIMEZONE: z
+    .string()
+    .default("Asia/Shanghai")
+    .refine(isValidIanaTimeZone, "必须是有效的 IANA 时区名"),
   RELAY_RESPONSE_MAX_BYTES: z.coerce
     .number()
     .int()

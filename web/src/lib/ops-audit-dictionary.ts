@@ -38,6 +38,7 @@ export const OPS_AUDIT_ACTION_LABELS: Record<string, string> = {
   "quota_override.upsert": "设置员工配额",
   "quota_override.delete": "删除员工配额",
   "log.read_body": "查看调用正文",
+  "log.read_context": "查看结构化调用上下文",
 };
 
 export const OPS_AUDIT_TARGET_LABELS: Record<string, string> = {
@@ -108,6 +109,7 @@ export const OPS_AUDIT_DETAIL_KEY_LABELS: Record<string, string> = {
   isDefault: "默认策略",
   softTpmDay: "日 Token 软限",
   hardTpmDay: "日 Token 硬限",
+  dailyTokenLimit: "单日 Token 上限",
   rpm: "RPM",
   maxConcurrency: "并发",
   softReqDay: "日请求软限",

@@ -62,6 +62,12 @@ export const router = createRouter({
           meta: { roles: ["admin"] },
         },
         {
+          path: "users/:id",
+          name: "admin-user-detail",
+          component: () => import("@/views/admin/UserDetailView.vue"),
+          meta: { roles: ["admin"] },
+        },
+        {
           path: "providers",
           redirect: "/admin/credentials",
           meta: { roles: ["admin", "auditor"] },

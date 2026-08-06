@@ -33,8 +33,9 @@
           {{ formatDateTime(row.lastLoginAt) }}
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="250">
+      <el-table-column label="操作" width="300">
         <template #default="{ row }">
+          <el-button link type="primary" @click="openDetail(row)">详情</el-button>
           <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
           <el-button
             v-if="row.id !== auth.user?.id"
@@ -169,6 +170,7 @@
 
 <script setup lang="ts">
 import { onMounted, reactive, ref } from "vue";
+import { useRouter } from "vue-router";
 import { ElMessage } from "element-plus";
 import { http } from "@/api/http";
 import { formatDateTime } from "@/lib/date-time";
@@ -185,6 +187,7 @@ type UserRow = {
 };
 
 const rows = ref<UserRow[]>([]);
+const router = useRouter();
 const auth = useAuthStore();
 const q = ref("");
 const showCreate = ref(false);
@@ -234,6 +237,10 @@ function openCreate() {
   form.dept = "";
   form.role = "employee";
   showCreate.value = true;
+}
+
+function openDetail(row: UserRow) {
+  router.push(`/admin/users/${row.id}`);
 }
 
 async function createOne() {

@@ -237,7 +237,10 @@ export const usageCountersDaily = pgTable(
     errorCount: bigint("error_count", { mode: "number" }).notNull().default(0),
     softLimitHit: boolean("soft_limit_hit").notNull().default(false),
   },
-  (t) => [uniqueIndex("usage_counters_daily_uidx").on(t.day, t.employeeId)],
+  (t) => [
+    uniqueIndex("usage_counters_daily_uidx").on(t.day, t.employeeId),
+    index("usage_counters_daily_employee_day_idx").on(t.employeeId, t.day),
+  ],
 );
 
 export const requestAudits = pgTable(

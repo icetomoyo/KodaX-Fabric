@@ -15,6 +15,13 @@
       "when": 1785921579351,
       "tag": "0001_youthful_mercury",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1785976500439,
+      "tag": "0002_needy_ultimates",
+      "breakpoints": true
     }
   ]
 }

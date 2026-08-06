@@ -1,0 +1,287 @@
+/**
+ * Explicit v0.0.3 database/API integration test.
+ *
+ * Run only against a migrated development/test database. Every fixture is
+ * uniquely tagged and cleanup deletes only IDs created by this run.
+ */
+import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
+import { and, eq, inArray, sql as dsql } from "drizzle-orm";
+import Fastify, { type LightMyRequestResponse } from "fastify";
+
+const [
+  { env },
+  { db, sql },
+  schema,
+  { hashPassword },
+  { signSession },
+  { quotaDayAt },
+  { adminUserRoutes },
+  { adminLogRoutes },
+  { adminQuotaRoutes },
+] = await Promise.all([
+  import("../src/config.js"),
+  import("../src/db/client.js"),
+  import("../src/db/schema/index.js"),
+  import("../src/lib/password.js"),
+  import("../src/lib/jwt.js"),
+  import("../src/lib/quota-time.js"),
+  import("../src/routes/admin/users.js"),
+  import("../src/routes/admin/logs.js"),
+  import("../src/routes/admin/quota.js"),
+]);
+
+const {
+  employees,
+  opsAuditLogs,
+  requestAuditBodies,
+  requestAudits,
+  usageCountersDaily,
+} = schema;
+
+type Role = "employee" | "admin" | "auditor";
+type User = { id: number; role: Role; token: string };
+
+const marker = `v3_${randomUUID().replaceAll("-", "").slice(0, 8)}`;
+const employeeIds: number[] = [];
+const requestIds = [`${marker}_known`, `${marker}_unknown`];
+const users = new Map<Role, User>();
+const app = Fastify({ logger: false });
+
+function json<T>(response: LightMyRequestResponse): T {
+  assert.match(String(response.headers["content-type"] ?? ""), /application\/json/i);
+  return response.json<T>();
+}
+
+function auth(role: Role) {
+  const user = users.get(role);
+  assert(user);
+  return { authorization: `Bearer ${user.token}` };
+}
+
+function assertNoSensitiveEmployeeUsage(value: unknown) {
+  const forbidden = new Set([
+    "apiKey",
+    "apiKeys",
+    "keyPrefix",
+    "keyHash",
+    "keyEncrypted",
+    "secret",
+    "secretSuffix",
+  ]);
+  const visit = (candidate: unknown): void => {
+    if (Array.isArray(candidate)) return void candidate.forEach(visit);
+    if (!candidate || typeof candidate !== "object") return;
+    for (const [key, child] of Object.entries(candidate as Record<string, unknown>)) {
+      assert.equal(forbidden.has(key), false, `usage response leaked ${key}`);
+      visit(child);
+    }
+  };
+  visit(value);
+}
+
+async function createFixtures() {
+  const passwordHash = await hashPassword("V003Integration@123");
+  for (const role of ["employee", "admin", "auditor"] as const) {
+    const [row] = await db
+      .insert(employees)
+      .values({
+        name: `${role}-${marker}`,
+        phone: `${role.slice(0, 3)}_${marker}`,
+        passwordHash,
+        dept: `dept-${marker}`,
+        role,
+        status: "active",
+        mustChangePassword: false,
+      })
+      .returning({ id: employees.id });
+    employeeIds.push(row.id);
+    users.set(role, {
+      id: row.id,
+      role,
+      token: await signSession({
+        sub: String(row.id),
+        role,
+        phone: `${role.slice(0, 3)}_${marker}`,
+        name: `${role}-${marker}`,
+        mustChangePassword: false,
+      }),
+    });
+  }
+
+  const employee = users.get("employee")!;
+  const day = quotaDayAt(new Date(), env.QUOTA_TIMEZONE);
+  await db.insert(usageCountersDaily).values({
+    day,
+    employeeId: employee.id,
+    promptTokens: 7,
+    completionTokens: 3,
+    totalTokens: 10,
+    requestCount: 2,
+    errorCount: 1,
+    softLimitHit: false,
+  });
+  await db.insert(requestAudits).values([
+    {
+      requestId: requestIds[0],
+      employeeId: employee.id,
+      protocol: "openai_chat",
+      clientModel: "v003-model-a",
+      upstreamModel: "v003-upstream-a",
+      providerCode: "v003-provider",
+      status: "success",
+      promptTokens: 7,
+      completionTokens: 3,
+      totalTokens: 10,
+      usageSource: "upstream",
+    },
+    {
+      requestId: requestIds[1],
+      employeeId: employee.id,
+      protocol: "openai_responses",
+      clientModel: "v003-model-b",
+      providerCode: "v003-provider",
+      status: "upstream_error",
+      totalTokens: null,
+      usageSource: "none",
+    },
+  ]);
+  await db.insert(requestAuditBodies).values({
+    requestId: requestIds[0],
+    requestHeaders: { authorization: "should-not-be-returned" },
+    requestBody: {
+      messages: [{ role: "user", content: "integration prompt" }],
+      headers: { Authorization: "nested-secret" },
+      api_key: "nested-api-key",
+      tools: [{ type: "function", function: { name: "lookup" } }],
+    },
+    responseBody: {
+      choices: [{ message: { role: "assistant", content: "integration response" } }],
+    },
+    requestBodySize: 128,
+    responseBodySize: 96,
+    truncated: false,
+  });
+  return day;
+}
+
+async function cleanup() {
+  if (employeeIds.length) {
+    await db.delete(opsAuditLogs).where(inArray(opsAuditLogs.actorEmployeeId, employeeIds));
+  }
+  await db.delete(requestAuditBodies).where(inArray(requestAuditBodies.requestId, requestIds));
+  await db.delete(requestAudits).where(inArray(requestAudits.requestId, requestIds));
+  if (employeeIds.length) {
+    await db.delete(usageCountersDaily).where(inArray(usageCountersDaily.employeeId, employeeIds));
+    await db.delete(employees).where(inArray(employees.id, employeeIds));
+  }
+}
+
+async function main() {
+  let day = "";
+  try {
+    day = await createFixtures();
+    await app.register(adminUserRoutes);
+    await app.register(adminLogRoutes);
+    await app.register(adminQuotaRoutes);
+    await app.ready();
+
+    const employee = users.get("employee")!;
+    const deniedUsage = await app.inject({
+      method: "GET",
+      url: `/api/admin/users/${employee.id}/usage?from=${day}&to=${day}`,
+      headers: auth("auditor"),
+    });
+    assert.equal(deniedUsage.statusCode, 403);
+
+    const usageResponse = await app.inject({
+      method: "GET",
+      url: `/api/admin/users/${employee.id}/usage?from=${day}&to=${day}`,
+      headers: auth("admin"),
+    });
+    assert.equal(usageResponse.statusCode, 200);
+    const usage = json<{ data: any }>(usageResponse).data;
+    assert.equal(usage.summary.totalTokens, 10);
+    assert.equal(usage.summary.requestCount, 2);
+    assert.equal(usage.summary.errorCount, 1);
+    assert.equal(usage.daily.reduce((sum: number, row: any) => sum + row.totalTokens, 0), 10);
+    assert.equal(usage.unknownUsageCount, 1);
+    assertNoSensitiveEmployeeUsage(usage);
+
+    const deniedContext = await app.inject({
+      method: "GET",
+      url: `/api/admin/logs/${requestIds[0]}/context`,
+      headers: auth("auditor"),
+    });
+    assert.equal(deniedContext.statusCode, 403);
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const contextResponse = await app.inject({
+        method: "GET",
+        url: `/api/admin/logs/${requestIds[0]}/context`,
+        headers: auth("admin"),
+      });
+      assert.equal(contextResponse.statusCode, 200);
+      const serialized = JSON.stringify(json(contextResponse));
+      assert.equal(serialized.includes("nested-secret"), false);
+      assert.equal(serialized.includes("nested-api-key"), false);
+      assert.equal(serialized.toLowerCase().includes("authorization"), false);
+    }
+
+    const [dedupCount] = await db
+      .select({ count: dsql<number>`count(*)::int` })
+      .from(opsAuditLogs)
+      .where(and(
+        eq(opsAuditLogs.actorEmployeeId, users.get("admin")!.id),
+        eq(opsAuditLogs.action, "log.read_context"),
+        eq(opsAuditLogs.targetId, requestIds[0]),
+      ));
+    assert.equal(dedupCount.count, 1);
+
+    const legacyBody = await app.inject({
+      method: "GET",
+      url: `/api/admin/logs/${requestIds[0]}?includeBody=true`,
+      headers: auth("admin"),
+    });
+    const legacyPayload = json<{ deprecated: boolean; data: { body: unknown } }>(legacyBody);
+    assert.equal(legacyPayload.deprecated, true);
+    assert.equal(legacyPayload.data.body, null);
+
+    const quotaPolicy = await app.inject({
+      method: "GET",
+      url: "/api/admin/quota-policy",
+      headers: auth("admin"),
+    });
+    assert.equal(quotaPolicy.statusCode, 200);
+    assert.equal(typeof json<{ data: { dailyTokenLimit: number } }>(quotaPolicy).data.dailyTokenLimit, "number");
+
+    const invalidQuota = await app.inject({
+      method: "PUT",
+      url: "/api/admin/quota-policy",
+      headers: auth("admin"),
+      payload: { dailyTokenLimit: -1 },
+    });
+    assert.equal(invalidQuota.statusCode, 400);
+    assert.equal(json<{ code: string }>(invalidQuota).code, "quota_policy_invalid");
+
+    const legacyQuotaWrite = await app.inject({
+      method: "POST",
+      url: "/api/admin/quota-policies",
+      headers: auth("admin"),
+      payload: { name: "must-not-be-created" },
+    });
+    assert.equal(legacyQuotaWrite.statusCode, 410);
+    assert.equal(json<{ code: string }>(legacyQuotaWrite).code, "quota_policy_deprecated");
+
+    console.log("v0.0.3 integration checks passed");
+  } finally {
+    await app.close().catch(() => undefined);
+    await cleanup();
+    await sql.end({ timeout: 5 });
+  }
+}
+
+main().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});
