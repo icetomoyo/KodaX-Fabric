@@ -37,7 +37,7 @@ TokenHub 面向公司内部员工，不提供外部注册、API 转售、充值�
 
 1. **统一接入**：员工使用统一 Base URL 和内部 API Key 接入多家官方模型服务。
 2. **凭证池化**：在员工选择的上游渠道内调度多条可用凭证，提高采购利用率。
-3. **渠道隔离**：每把员工 Key 固定绑定一个上游渠道和一种兼容协议，模型解析、重试和亲和均不得跨渠道。
+3. **渠道隔离**：每把员工 Key 固定绑定一个上游渠道和一种兼容协议，模型解析和重试均不得跨渠道。
 4. **权限治理**：公共渠道面向员工共享，授权渠道按凭证授权范围开放。
 5. **调用审计**：记录调用主体、模型、渠道、用量、终态及经过安全处理的请求和响应正文。
 6. **不计费治理**：通过单日总 Token 硬上限与系统级 RPM/并发 safeguard 控制资源使用，不建立商业计费体系。
@@ -48,7 +48,7 @@ TokenHub 面向公司内部员工，不提供外部注册、API 转售、充值�
 |---|---|
 | 接入 | 员工只需配置 TokenHub Base URL、内部 API Key 和模型名即可调用 |
 | 共享 | 一个渠道可托管多条上游凭证，并在该渠道内按策略共享额度 |
-| 隔离 | 绑定渠道 A 的 Key 在模型查询、调用、重试和亲和场景中均不能命中渠道 B |
+| 隔离 | 绑定渠道 A 的 Key 在模型查询、调用和重试场景中均不能命中渠道 B |
 | 权限 | 公共池和授权池均在每次请求时校验，不因持有 Key 获得额外权限 |
 | 审计 | 通过 API Key 鉴权后的所有终态均可追溯到员工、内部 Key、客户端模型和结果；选出候选后记录渠道、凭证和上游模型，选出候选前记录该 Key 的绑定渠道 |
 | 管控 | 支持按员工的单日总 Token 硬上限，以及系统级 RPM、并发 safeguard |
@@ -63,7 +63,7 @@ TokenHub 面向公司内部员工，不提供外部注册、API 转售、充值�
 
 1. 集中托管公司采购的官方 API Key 和受控套餐凭证。
 2. 支持智谱国内/国际、MiniMax、Kimi、DeepSeek 等官方供应商扩展。
-3. 支持 OpenAI Chat Completions、OpenAI Responses 和 Anthropic Messages 三类原生协议。
+3. 支持 OpenAI Chat Completions 和 Anthropic Messages 两种原生 API 转发，不做协议转换。
 4. 支持公共池与授权池两种共享模式。
 5. 提供管理员和员工相互隔离的工作入口。
 6. 提供员工自助 Key、个人用量和个人调用记录。
@@ -78,9 +78,8 @@ TokenHub 面向公司内部员工，不提供外部注册、API 转售、充值�
 | 充值、套餐、余额、预扣费、退款和倍率计费 | 产品只做用量治理，不做商业计费 |
 | 员工自助注册 | 账号仅由管理员创建或导入 |
 | 海量供应商通用中转 | 仅接入公司实际采购且经过验证的官方服务 |
-| 跨协议转换 | Key 绑定的协议与上游原生协议一致，不做 Chat、Responses、Messages 互转 |
+| 跨协议转换 | Key 绑定的协议与上游原生协议一致，不做 Chat Completions 与 Messages 互转 |
 | 跨渠道容灾 | 员工 Key 的所有候选始终限定在绑定渠道内 |
-| Responses 后台任务与 Conversation 托管 | 当前只支持同步原生透传和流式透传 |
 | 网页聊天工作台 | 员工调用入口为 IDE、CLI 或脚本；网页 Playground 属于后续能力 |
 | 替代公司 SSO | 当前使用手机号和密码，SSO/OIDC 属于后续能力 |
 
@@ -203,15 +202,14 @@ TokenHub 面向公司内部员工，不提供外部注册、API 转售、充值�
 | F-10 | P0 | Provider × ProductLine × Credential 三层渠道模型 | 支持 API、Coding Plan、多供应商和一渠道多凭证 | ✅ 当前可用 |
 | F-11 | P0 | 上游凭证管理 | 加密录入、批量管理、连接测试、模型发现、状态、优先级和权重 | ✅ 当前可用 |
 | F-12 | P0 | 凭证授权 | `grant_only` 渠道按员工授权可用凭证，支持创建和撤销授权关系 | ✅ 当前可用 |
-| F-13 | P0 | 原生协议代理 | 支持 Chat、Responses、Responses compact、Messages、Messages count_tokens 和模型列表 | ✅ 当前可用 |
+| F-13 | P0 | 原生协议代理 | 支持 Chat Completions、Messages、Messages count_tokens 和模型列表 | ✅ 当前可用 |
 | F-14 | P0 | 流式与非流式透传 | JSON 与 SSE 原生透传；首字节后不切换凭证；客户端断开取消上游 | ✅ 当前可用 |
 | F-15 | P0 | 凭证候选调度 | 按路由优先级、凭证优先级和组合权重选择，不重复尝试同一凭证 | ✅ 当前可用 |
 | F-16 | P0 | 故障处理 | 401/403 自动停用、429 冷却、5xx/网络错误切换、400 不重试 | ✅ 当前可用 |
 | F-17 | P0 | 显式路由与模型发现 | 支持显式模型路由和 `allow_auto_route + discoveredModels` 自动发现 | ✅ 当前可用 |
 | F-18 | P0 | 绑定渠道内模型解析 | 显式路由判定、自动发现、凭证选择和错误结果均限定在绑定 ProductLine | ✅ 当前可用 |
 | F-19 | P0 | 绑定渠道内模型列表 | `/ai/models` 只返回该 Key 当前可调用的绑定渠道模型 | ✅ 当前可用 |
-| F-20 | P0 | 绑定渠道内重试与亲和 | 所有重试和 Responses `previous_response_id` 亲和不得跨渠道 | ✅ 当前可用 |
-| F-21 | P1 | Responses 严格亲和 | `previous_response_id` 必须命中原凭证、ProductLine 和上游模型；记录缺失或原候选不可用时返回确定错误 | ✅ 当前可用 |
+| F-20 | P0 | 绑定渠道内重试 | 所有重试均不得跨渠道 | ✅ 当前可用 |
 
 ### 5.4 配额、审计与管理
 
@@ -238,7 +236,6 @@ TokenHub 面向公司内部员工，不提供外部注册、API 转售、充值�
 | F-44 | SSO/OIDC | 对接公司统一身份 | ⬜ 后续规划 |
 | F-45 | 上游余额同步 | 在供应商提供稳定接口时同步余额或套餐状态 | ⬜ 后续规划 |
 | F-46 | 网页 Playground | 提供受控的内网试聊入口 | ⬜ 后续规划 |
-| F-47 | 通用会话亲和 | 为 Chat 或其他协议提供可识别会话的凭证亲和 | ⬜ 后续规划 |
 
 ---
 
@@ -257,7 +254,7 @@ API Key 页面遵循以下交互：
 
 - 未选择渠道时不能选择协议或提交；
 - 切换渠道时丢弃上一渠道的协议值，并默认选中新渠道兼容协议列表中的第一项；
-- 协议按 `openai_chat`、`openai_responses`、`anthropic_messages` 固定排序；
+- 协议按 `openai_chat`、`anthropic_messages` 固定排序；
 - 创建结果只向发起创建的员工本人显示完整 Key 并提供复制按钮；员工确认已保存后才能关闭，关闭后列表不提供再次读取；
 - 列表展示绑定渠道和协议，不展示上游凭证信息。
 
@@ -294,8 +291,6 @@ API Key 页面遵循以下交互：
 |---|---|---|
 | 模型列表 | `GET /ai/models` | 只返回当前 Key 在绑定渠道和协议下真实可调用的模型 |
 | OpenAI Chat | `POST /ai/chat/completions` | OpenAI Chat Completions 原生透传 |
-| OpenAI Responses | `POST /ai/responses` | Responses 原生 JSON/SSE 透传 |
-| OpenAI Responses | `POST /ai/responses/compact` | Responses compact 原生透传 |
 | Anthropic Messages | `POST /ai/v1/messages` | Messages 原生 JSON/SSE 透传 |
 | Anthropic Messages | `POST /ai/v1/messages/count_tokens` | Anthropic token count 原生透传 |
 
@@ -381,7 +376,7 @@ EmployeeApiKey（员工内部 Key）
 4. 不存在 enabled 显式路由时，只有在绑定 ProductLine 开启 `allow_auto_route` 且 `discoveredModels` 包含该模型时，才允许自动路由；
 5. 其他 ProductLine 的同名显式路由和发现结果不得影响当前 Key。
 
-### 8.7 凭证选择、重试与亲和
+### 8.7 凭证选择与重试
 
 1. 候选先按模型路由 priority，再按凭证 priority 分层。
 2. 同一优先级内按 `routeWeight × credentialWeight` 加权选择。
@@ -389,8 +384,6 @@ EmployeeApiKey（员工内部 Key）
 4. 401/403 将凭证标记为 `auto_disabled`；429 进入冷却；5xx 和首字节前的网络错误切换候选；400 直接返回。
 5. 流式响应首字节发出后不再切换凭证；客户端断开时取消上游请求。
 6. 所有候选和重试都限定在绑定 ProductLine。
-7. Responses `previous_response_id` 必须严格匹配记录中的 credential、ProductLine 和 upstream model，不重新分配凭证，并且记录必须与 Key 的绑定 ProductLine 一致。
-8. 亲和记录不存在时返回 `409 response_affinity_not_found`；记录对应候选当前不可用时返回 `503 response_affinity_unavailable`。
 
 ### 8.8 模型列表一致性
 
@@ -407,8 +400,6 @@ EmployeeApiKey（员工内部 Key）
 | 绑定渠道内不存在目标模型 | 404 | `model_not_found` |
 | 匹配凭证全部处于有效冷却期 | 429 | `model_channels_cooling`，响应带 `Retry-After` |
 | 模型已配置但无可用匹配凭证 | 503 | `model_unavailable` |
-| `previous_response_id` 亲和记录不存在 | 409 | `response_affinity_not_found` |
-| 亲和记录对应候选当前不可用 | 503 | `response_affinity_unavailable` |
 
 错误响应使用请求协议对应的 OpenAI 或 Anthropic 原生 envelope，不暴露上游 Secret、Base URL、未授权渠道和凭证细节。
 
@@ -438,7 +429,6 @@ EmployeeApiKey（员工内部 Key）
 ### 9.2 终态覆盖
 
 - 通过 API Key 鉴权后，成功、上游失败、参数错误、配额拒绝、绑定渠道凭证池不可用和客户端取消均记录审计；
-- Responses 流以 `response.completed`、`response.failed`、`response.incomplete` 或 `error` 判定终态；
 - Messages 流以 `message_stop` 或 `error` 判定终态；
 - 工具调用和增量参数保持上游原生事件结构。
 
@@ -490,7 +480,7 @@ Coding Plan 默认使用 `grant_only`。多账号、多终端或共享套餐凭�
 | 后端 | Node.js + TypeScript + Fastify |
 | ORM | Drizzle |
 | 主库 | PostgreSQL 16 |
-| 缓存 | Redis 7，用于限流、并发租约、冷却和 Responses 亲和 |
+| 缓存 | Redis 7，用于限流、并发租约和冷却 |
 | 包管理 | npm workspaces |
 
 ### 10.3 开发环境约定
@@ -539,7 +529,7 @@ Coding Plan 默认使用 `grant_only`。多账号、多终端或共享套餐凭�
 |---|---|
 | 规模 | 一期约 50 名员工；单节点 4C8G 可作为起步规格 |
 | 可用性 | PostgreSQL/Redis 健康可观测；凭证故障可自动停用或冷却 |
-| 渠道隔离 | 模型列表、模型解析、凭证选择、重试和亲和共用同一绑定边界 |
+| 渠道隔离 | 模型列表、模型解析、凭证选择和重试共用同一绑定边界 |
 | 权限实时性 | grant、共享模式、渠道/凭证状态、权重和协议调整在后续请求中生效 |
 | 流式性能 | 低缓冲转发；首字节后不重试；客户端断开及时取消上游 |
 | 数据一致性 | 审计终态和日用量在明确事务边界内写入，失败可追踪 |
@@ -558,7 +548,7 @@ Coding Plan 默认使用 `grant_only`。多账号、多终端或共享套餐凭�
 |---|---|---|
 | M0 产品与架构 | 产品定位、角色、渠道模型、审计和技术方案 | ✅ 完成 |
 | M1 工程基础 | Monorepo、PostgreSQL/Redis、表结构、登录改密、基础页面和种子 | ✅ 完成 |
-| M2 代理闭环 | 三协议代理、模型列表、调度重试、配额、审计和用量 | ✅ 完成 |
+| M2 代理闭环 | 两种原生 API 转发、模型列表、调度重试、配额、审计和用量 | ✅ 完成 |
 | M3 管理后台 | 员工、渠道凭证、测试发现、授权、日志、配额、概览和操作审计 | ✅ 完成 |
 | M4 v0.0.1 | 员工 Key 渠道绑定、严格角色边界、一次性明文和全链路渠道隔离 | ✅ 开发与隔离验收完成；未发布 |
 | M5 v0.0.3 | 员工用量详情、渠道信息分层、管理员结构化上下文、单一日 Token 配额 | ✅ 功能实现与本地验证完成；待发布 |
@@ -576,11 +566,11 @@ Coding Plan 默认使用 `grant_only`。多账号、多终端或共享套餐凭�
 
 - Provider、ProductLine、UpstreamCredential 三层结构；
 - 上游凭证批量录入、加密存储、连接测试、模型发现、协议、状态、优先级、权重和员工授权；
-- 绑定渠道内的 `GET /ai/models`、Chat Completions、Responses、Responses compact、Messages 和 Messages count_tokens；
+- 绑定渠道内的 `GET /ai/models`、Chat Completions、Messages 和 Messages count_tokens；
 - 显式模型路由与已发现模型自动路由；
 - JSON 与 SSE 原生透传、首字节前重试、客户端断开取消上游；
 - 401/403 自动停用、429 冷却、5xx/网络错误切换和 400 不重试；
-- 绑定渠道内重试与 Responses `previous_response_id` 严格凭证亲和。
+- 所有请求和重试均限定在员工 Key 绑定的渠道内。
 
 **治理与审计**
 
@@ -596,8 +586,8 @@ Coding Plan 默认使用 `grant_only`。多账号、多终端或共享套餐凭�
 - employee、admin 的页面和接口边界；
 - 员工明文仅在创建时向本人展示一次，管理员员工列表不返回任何 Key 信息，也不能列出、查看或复制员工 Key；
 - 用户离开 employee 角色时 revoke active Key；
-- `/ai/models` 和五个原生调用入口的绑定渠道隔离；
-- 绑定渠道内显式路由、自动发现、凭证选择、重试和 Responses 亲和；
+- `/ai/models` 和三个原生调用入口的绑定渠道隔离；
+- 绑定渠道内显式路由、自动发现、凭证选择和重试；
 - 固定错误状态、错误码、审计字段和管理列表渠道信息；
 
 ### 13.4 验证基线
@@ -606,14 +596,14 @@ Coding Plan 默认使用 `grant_only`。多账号、多终端或共享套餐凭�
 
 | 验证项 | 结果 |
 |---|---|
-| 服务端默认单元测试 | 84/84 通过；包含时区日界线、零额度硬限、用量强一致、三协议上下文解析、敏感字段移除和管理员正文权限守卫 |
+| 服务端默认单元测试 | 包含时区日界线、零额度硬限、用量强一致、两协议上下文解析、敏感字段移除和管理员正文权限守卫 |
 | Workspace 生产构建 | Server 与 Web 构建通过 |
-| Migration | PostgreSQL 16 实际执行至 `0003_motionless_reptil.sql`；配额收敛为单行 `quota_policy`，多策略/员工覆盖与无效字段已删除，员工日索引存在 |
+| Migration | 当前干净数据库基线为 `0000_melodic_mattie_franklin.sql`；`relay_protocol` 仅含 `openai_chat`、`anthropic_messages`，配额为单行 `quota_policy` |
 | v0.0.3 API/数据库集成 | employee 访问管理端用量/context 均 403；用量 counters 汇总强一致、缺失 usage 计数正确；context 去除 Header/Secret；同一管理员 5 分钟重复读取仅一条 `log.read_context`；元数据响应不含正文 |
 | v0.0.1 API/数据库集成 | 严格角色、渠道可见性与防泄漏、创建校验、本人一次性明文、管理端无 Key 列表/reveal 路由、NOT NULL/FK、角色吊销全部通过 |
 | 隔离 Mock | 401 换凭证、400 不重试、429 冷却换凭证、500 首字节前切换 SSE 全部通过 |
-| 原生协议 Mock | Responses JSON/SSE/compact、Messages JSON/SSE、协议 Key、Header 透传、usage 和审计全部通过 |
-| v0.0.1 渠道隔离矩阵 | `test:v001:binding` 通过：五个调用入口均绑定 A，401/429/500/网络错误只在 A 内重试，B 调用数为 0；`/ai/models` 隔离、跨渠道 Responses 亲和阻断和停用 A 后的审计归属均通过 |
+| 原生协议 Mock | Messages JSON/SSE、协议 Key、Header 透传、usage 和审计全部通过 |
+| v0.0.1 渠道隔离矩阵 | `test:v001:binding` 通过：三个调用入口均绑定 A，401/429/500/网络错误只在 A 内重试，B 调用数为 0；`/ai/models` 隔离和停用 A 后的审计归属均通过 |
 
 默认单元测试不覆盖真实上游、浏览器交互和生产发布环境；这些场景仍需按部署清单执行验收。
 
@@ -627,7 +617,7 @@ Coding Plan 默认使用 `grant_only`。多账号、多终端或共享套餐凭�
 4. 员工明文只在创建响应中向本人出现一次；员工无明文找回接口；管理员员工列表不返回任何 Key 信息，且员工 Key 列表与明文读取接口均不可达。
 5. admin 不能访问 `/me` 或创建调用 Key；employee 不能访问管理端。
 6. employee 角色退出时 active Key 全部 revoke，再次成为 employee 时不自动生效。
-7. 两个渠道配置同名模型时，绑定渠道 A 的 Key 在所有协议入口、重试和 affinity 场景中均不能命中渠道 B。
+7. 两个渠道配置同名模型时，绑定渠道 A 的 Key 在所有协议入口和重试场景中均不能命中渠道 B。
 8. `/ai/models` 只列绑定渠道中当前可调用的模型，列表与实际请求结果使用相同过滤口径，并且查询不回写凭证状态。
 9. 显式路由和绑定渠道内自动发现的优先关系符合第 8.6 节。
 10. grant 撤销、共享模式调整、渠道/凭证停用、权重归零和协议移除在后续请求中生效，且不跨渠道。
@@ -635,7 +625,7 @@ Coding Plan 默认使用 `grant_only`。多账号、多终端或共享套餐凭�
 12. 员工渠道接口不解密或泄露 Secret、上游 Base URL和未授权凭证数量。
 13. 所有 Key 必须关联 ProductLine；被 Key 引用的 ProductLine 不能被删除或置空。
 14. 渠道列表返回后发生授权、状态或协议变化时，创建接口重新校验并返回第 7.3 节定义的错误，不创建失效绑定。
-15. Chat、Responses、Responses compact、Messages、Messages count_tokens 和 `/ai/models` 全部通过渠道隔离验收。
+15. Chat Completions、Messages、Messages count_tokens 和 `/ai/models` 全部通过渠道隔离验收。
 
 ---
 
@@ -650,7 +640,7 @@ Coding Plan 默认使用 `grant_only`。多账号、多终端或共享套餐凭�
 | 审计数据持续增长 | 存储压力与查询下降 | 单条容量上限、索引治理、归档和对象存储 |
 | 上游协议与错误语义差异 | 兼容性和可用性下降 | 官方协议直通、模板化适配、连接测试、确定性错误契约 |
 | 渠道配置或授权实时变化 | 已签发 Key 暂时不可用 | 每次请求复核，返回稳定错误，管理端提供状态与审计定位 |
-| 渠道隔离回归 | 请求命中错误采购渠道 | 全协议隔离矩阵、同名模型测试、重试与亲和测试 |
+| 渠道隔离回归 | 请求命中错误采购渠道 | 全协议隔离矩阵、同名模型测试和重试测试 |
 | 单节点故障 | 服务中断 | 健康检查、数据库备份和生产加固计划 |
 
 ### 15.2 外部依赖
@@ -681,8 +671,8 @@ Coding Plan 默认使用 `grant_only`。多账号、多终端或共享套餐凭�
 | ProductLine / 上游渠道 | 同一供应商下独立配置、授权和调度的 API 或 Coding Plan 产品线 |
 | UpstreamCredential | 上游官方 API Key 或套餐访问凭证 |
 | 员工 API Key | TokenHub 签发给员工的内部调用令牌 |
-| 兼容协议 | `openai_chat`、`openai_responses` 或 `anthropic_messages` |
-| 硬绑定 | 一把员工 Key 的模型、凭证、重试和亲和范围固定在一个 ProductLine |
+| 兼容协议 | `openai_chat` 或 `anthropic_messages` |
+| 硬绑定 | 一把员工 Key 的模型、凭证和重试范围固定在一个 ProductLine |
 | public_pool | 对 active 员工开放渠道内符合条件凭证的共享模式 |
 | grant_only | 只向被授权员工开放指定凭证的共享模式 |
 | 软上限 | 超额后继续放行并记录标记 |

@@ -46,8 +46,6 @@ export type SendRelayUpstreamChatInput = {
 export type RelayUpstreamOperation =
   | "models"
   | "chat_completions"
-  | "responses"
-  | "responses_compact"
   | "messages"
   | "messages_count_tokens";
 
@@ -81,11 +79,6 @@ const OPERATION_PATHS: Record<
   openai_chat: {
     models: "models",
     chat_completions: "chat/completions",
-  },
-  openai_responses: {
-    models: "models",
-    responses: "responses",
-    responses_compact: "responses/compact",
   },
   anthropic_messages: {
     models: "v1/models",

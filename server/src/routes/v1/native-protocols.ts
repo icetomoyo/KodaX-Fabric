@@ -23,11 +23,6 @@ import {
   RelayLimitError,
   type RelayQuotaLease,
 } from "../../lib/relay/quota.js";
-import {
-  candidateMatchesResponseAffinity,
-  findRelayResponseAffinity,
-  rememberRelayResponseAffinity,
-} from "../../lib/relay/response-affinity.js";
 import { resolveRelayCandidates } from "../../lib/relay/routing.js";
 import type {
   RelayCandidate,
@@ -48,10 +43,7 @@ import {
   toFastifyReadable,
 } from "./chat-completions.js";
 
-type NativeProtocol = Extract<
-  RelayProtocol,
-  "openai_responses" | "anthropic_messages"
->;
+type NativeProtocol = Extract<RelayProtocol, "anthropic_messages">;
 type JsonObject = Record<string, unknown>;
 type NativeRequestBody = JsonObject & {
   model: string;
@@ -60,33 +52,18 @@ type NativeRequestBody = JsonObject & {
 
 type NativeRouteConfig = {
   path:
-    | typeof RELAY_ENDPOINTS.responses
-    | typeof RELAY_ENDPOINTS.responsesCompact
     | typeof RELAY_ENDPOINTS.messages
     | typeof RELAY_ENDPOINTS.messagesCountTokens;
   protocol: NativeProtocol;
   operation: Extract<
     RelayUpstreamOperation,
-    "responses" | "responses_compact" | "messages" | "messages_count_tokens"
+    "messages" | "messages_count_tokens"
   >;
   schema: z.ZodType;
   validationMessage: string;
   supportsStream: boolean;
   requiresAnthropicVersion: boolean;
 };
-
-const responsesSchema = z
-  .object({
-    model: z.string().trim().min(1).max(128),
-    stream: z.boolean().optional().default(false),
-  })
-  .passthrough();
-
-const responsesCompactSchema = z
-  .object({
-    model: z.string().trim().min(1).max(128),
-  })
-  .passthrough();
 
 const messagesSchema = z
   .object({
@@ -105,24 +82,6 @@ const messagesCountTokensSchema = z
   .passthrough();
 
 const routeConfigs: NativeRouteConfig[] = [
-  {
-    path: RELAY_ENDPOINTS.responses,
-    protocol: "openai_responses",
-    operation: "responses",
-    schema: responsesSchema,
-    validationMessage: "请求参数无效：model 为必填项",
-    supportsStream: true,
-    requiresAnthropicVersion: false,
-  },
-  {
-    path: RELAY_ENDPOINTS.responsesCompact,
-    protocol: "openai_responses",
-    operation: "responses_compact",
-    schema: responsesCompactSchema,
-    validationMessage: "请求参数无效：model 为必填项",
-    supportsStream: false,
-    requiresAnthropicVersion: false,
-  },
   {
     path: RELAY_ENDPOINTS.messages,
     protocol: "anthropic_messages",
@@ -209,40 +168,26 @@ function anthropicQuery(req: FastifyRequest): Record<string, string> | undefined
 }
 
 function nativeError(
-  protocol: NativeProtocol,
   requestId: string,
   message: string,
   type: string,
   code: string,
 ): JsonObject {
-  if (protocol === "anthropic_messages") {
-    return {
-      type: "error",
-      error: { type, message, code },
-      request_id: requestId,
-    };
-  }
   return {
-    error: { message, type, param: null, code },
+    type: "error",
+    error: { type, message, code },
+    request_id: requestId,
   };
 }
 
-function isNativeErrorPayload(value: unknown, protocol: NativeProtocol): boolean {
+function isNativeErrorPayload(value: unknown): boolean {
   if (!isJsonObject(value)) return false;
-  if (protocol === "anthropic_messages") {
-    return value.type === "error" && isJsonObject(value.error);
-  }
-  return typeof value.error === "string" || isJsonObject(value.error);
+  return value.type === "error" && isJsonObject(value.error);
 }
 
 function originalModel(body: unknown): string {
   if (!isJsonObject(body) || typeof body.model !== "string") return "(invalid)";
   return body.model.slice(0, 128) || "(invalid)";
-}
-
-function responseId(value: unknown): string | null {
-  if (!isJsonObject(value) || typeof value.id !== "string") return null;
-  return value.id.trim() || null;
 }
 
 function requestUserAgent(req: FastifyRequest): string | undefined {
@@ -398,11 +343,7 @@ async function handleNativeRequest(
   let auditWritten = false;
 
   reply.header("x-tokenhub-request-id", requestId);
-  if (config.protocol === "anthropic_messages") {
-    reply.header("request-id", requestId);
-  } else {
-    reply.header("x-request-id", requestId);
-  }
+  reply.header("request-id", requestId);
 
   const finalizeAudit = async (input: FinalizeAuditInput) => {
     if (auditWritten) return;
@@ -429,7 +370,7 @@ async function handleNativeRequest(
     message: string,
     type: string,
     code: string,
-  ) => nativeError(config.protocol, requestId, message, type, code);
+  ) => nativeError(requestId, message, type, code);
 
   try {
     const anthropicVersion = headerValue(req, "anthropic-version");
@@ -478,122 +419,53 @@ async function handleNativeRequest(
       return reply.code(429).send(payload);
     }
 
-    if (
-      config.protocol === "openai_responses" &&
-      config.operation === "responses" &&
-      (body.background === true || body.conversation !== undefined)
-    ) {
-      const payload = sendError(
-        400,
-        "TokenHub 当前未开放 Responses background/conversation 配套路由",
-        "invalid_request_error",
-        "unsupported_stateful_response",
-      );
-      await finalizeAudit({
-        candidate: null,
-        status: "client_error",
-        httpStatus: 400,
-        upstreamStatus: null,
-        errorCode: "unsupported_stateful_response",
-        errorMessage: "Responses background/conversation 尚未开放",
-        usage: emptyRelayUsage(),
-        responseBody: payload,
-      });
-      return reply.code(400).send(payload);
-    }
-
     const resolution = await resolveRelayCandidates(
       principal.employeeId,
       body.model,
       config.protocol,
       principal.productLineId,
     );
-    let candidates = resolution.candidates;
-    const previousResponseId = config.operation === "responses" &&
-      typeof body.previous_response_id === "string"
-      ? body.previous_response_id.trim()
-      : "";
-    let affinityRequired = false;
-    const boundChannelUnavailable =
-      resolution.unavailableReason === "bound_channel_unavailable";
-    if (previousResponseId && !boundChannelUnavailable) {
-      const affinity = await findRelayResponseAffinity(
-        principal.employeeId,
-        previousResponseId,
-      );
-      if (!affinity) {
-        const payload = sendError(
-          409,
-          "无法确定 previous_response_id 对应的原生上游，请从 TokenHub 重新开始会话",
-          "invalid_request_error",
-          "response_affinity_not_found",
-        );
-        await finalizeAudit({
-          candidate: null,
-          status: "client_error",
-          httpStatus: 409,
-          upstreamStatus: null,
-          errorCode: "response_affinity_not_found",
-          errorMessage: "previous_response_id 的上游亲和记录不存在",
-          usage: emptyRelayUsage(),
-          responseBody: payload,
-        });
-        return reply.code(409).send(payload);
-      }
-      affinityRequired = true;
-      candidates = candidates.filter((candidate) =>
-        candidateMatchesResponseAffinity(candidate, affinity));
-    }
+    const candidates = resolution.candidates;
     if (candidates.length === 0) {
-      // Once an affinity record exists, this request must use that exact
-      // upstream credential. A cross-channel record or a credential that is
-      // no longer eligible is unavailable; it must never fall back.
-      const affinityUnavailable = affinityRequired;
-      const boundUnavailable = boundChannelUnavailable;
+      const boundUnavailable = resolution.unavailableReason === "bound_channel_unavailable";
       const cooling = resolution.unavailableReason === "cooling";
       const unavailable = resolution.unavailableReason === "unavailable";
-      const httpStatus = affinityUnavailable || boundUnavailable || unavailable
+      const httpStatus = boundUnavailable || unavailable
         ? 503
         : cooling
           ? 429
           : 404;
-      const errorCode = affinityUnavailable
-        ? "response_affinity_unavailable"
-        : boundUnavailable
-          ? "bound_channel_unavailable"
-          : cooling
-            ? "model_channels_cooling"
-            : unavailable
-              ? "model_unavailable"
-              : "model_not_found";
-      const errorMessage = affinityUnavailable
-        ? "previous_response_id 对应的原生上游当前不可用"
-        : boundUnavailable
-          ? "当前 Key 绑定的上游渠道不可用"
-          : cooling
-            ? "该模型的上游渠道正在冷却，请稍后重试"
-            : unavailable
-              ? "该模型已配置，但当前没有支持此协议的可用上游渠道"
-              : "当前 Key 绑定的上游渠道不支持该模型和协议";
-      const errorType = affinityUnavailable || boundUnavailable || unavailable
+      const errorCode = boundUnavailable
+        ? "bound_channel_unavailable"
+        : cooling
+          ? "model_channels_cooling"
+          : unavailable
+            ? "model_unavailable"
+            : "model_not_found";
+      const errorMessage = boundUnavailable
+        ? "当前 Key 绑定的上游渠道不可用"
+        : cooling
+          ? "该模型的上游渠道正在冷却，请稍后重试"
+          : unavailable
+            ? "该模型已配置，但当前没有支持此协议的可用上游渠道"
+            : "当前 Key 绑定的上游渠道不支持该模型和协议";
+      const errorType = boundUnavailable || unavailable
         ? "api_error"
         : cooling
           ? "rate_limit_error"
-          : config.protocol === "anthropic_messages"
-            ? "not_found_error"
-            : "invalid_request_error";
+          : "not_found_error";
       const payload = sendError(
         httpStatus,
         errorMessage,
         errorType,
         errorCode,
       );
-      if (!affinityUnavailable && resolution.retryAfterSeconds !== null) {
+      if (resolution.retryAfterSeconds !== null) {
         reply.header("retry-after", String(resolution.retryAfterSeconds));
       }
       await finalizeAudit({
         candidate: null,
-        status: affinityUnavailable || boundUnavailable || cooling || unavailable
+        status: boundUnavailable || cooling || unavailable
           ? "upstream_error"
           : "client_error",
         httpStatus,
@@ -620,7 +492,7 @@ async function handleNativeRequest(
         protocol: config.protocol,
         operation: config.operation,
         body,
-        query: config.protocol === "anthropic_messages" ? anthropicQuery(req) : undefined,
+        query: anthropicQuery(req),
         forwardHeaders: req.headers,
         requestId,
         signal: req.signal,
@@ -718,23 +590,6 @@ async function handleNativeRequest(
         const usage = config.operation !== "messages_count_tokens" && isJsonObject(responseJson)
           ? parseRelayUsage(responseJson.usage)
           : emptyRelayUsage();
-        const completedResponseId = config.operation === "responses"
-          ? responseId(responseJson)
-          : null;
-        if (completedResponseId) {
-          try {
-            await rememberRelayResponseAffinity(
-              principal.employeeId,
-              completedResponseId,
-              candidate,
-            );
-          } catch (error) {
-            app.log.error(
-              { err: error, requestId, responseId: completedResponseId },
-              "failed to persist Responses upstream affinity",
-            );
-          }
-        }
         retryTrace.push(traceItem(index + 1, candidate, result, "success"));
         result.cleanup();
         activeAttempt = null;
@@ -873,8 +728,7 @@ async function handleNativeRequest(
 
         const handoffFailed = streamHandoffError !== null;
         const protocolCompleted = completion.audit.upstreamError === null &&
-          (completion.audit.terminalKind === "completed" ||
-            completion.audit.terminalKind === "incomplete");
+          completion.audit.terminalKind === "completed";
         const cancelled = !handoffFailed &&
           !protocolCompleted &&
           completion.state === "cancelled";
@@ -883,26 +737,6 @@ async function handleNativeRequest(
             (completion.state === "errored" ||
               completion.audit.upstreamError !== null ||
               !completion.audit.terminalSeen));
-        if (
-          protocolCompleted &&
-          completion.audit.assembled.protocol === "openai_responses"
-        ) {
-          const completedResponseId = responseId(completion.audit.assembled.response);
-          if (completedResponseId) {
-            try {
-              await rememberRelayResponseAffinity(
-                principal.employeeId,
-                completedResponseId,
-                candidate,
-              );
-            } catch (error) {
-              app.log.error(
-                { err: error, requestId, responseId: completedResponseId },
-                "failed to persist streamed Responses upstream affinity",
-              );
-            }
-          }
-        }
         const status = cancelled
           ? "cancelled"
           : streamFailed
@@ -1006,7 +840,7 @@ async function handleNativeRequest(
       }
       const responseJson = parseJson(raw);
       const status = failure.status ?? (failure.kind === "client_error" ? 400 : 502);
-      if (isNativeErrorPayload(responseJson, config.protocol)) {
+      if (isNativeErrorPayload(responseJson)) {
         await finalizeAudit({
           candidate,
           status: failure.kind === "client_error" ? "client_error" : "upstream_error",
@@ -1105,12 +939,6 @@ async function handleNativeRequest(
   }
 }
 
-function nativeProtocolForPath(url: string): NativeProtocol {
-  return url.split("?", 1)[0]?.startsWith(RELAY_ENDPOINTS.messages)
-    ? "anthropic_messages"
-    : "openai_responses";
-}
-
 async function handleNativeParsingError(
   app: FastifyInstance,
   error: unknown,
@@ -1118,7 +946,7 @@ async function handleNativeParsingError(
   reply: FastifyReply,
 ) {
   if (reply.sent) return reply;
-  const protocol = nativeProtocolForPath(req.url);
+  const protocol: NativeProtocol = "anthropic_messages";
   const suppliedStatus = typeof (error as { statusCode?: unknown })?.statusCode === "number"
     ? (error as { statusCode: number }).statusCode
     : undefined;
@@ -1134,17 +962,13 @@ async function handleNativeParsingError(
       : clientError
         ? "invalid_request"
         : "relay_internal_error";
-  const type = protocol === "anthropic_messages"
-    ? status === 413
-      ? "request_too_large"
-      : status === 404
-        ? "not_found_error"
-        : clientError
-          ? "invalid_request_error"
-          : "api_error"
-    : clientError
-      ? "invalid_request_error"
-      : "internal_error";
+  const type = status === 413
+    ? "request_too_large"
+    : status === 404
+      ? "not_found_error"
+      : clientError
+        ? "invalid_request_error"
+        : "api_error";
   const message = status === 413
     ? "请求正文超过网关允许的 32 MiB"
     : status === 415
@@ -1152,14 +976,10 @@ async function handleNativeParsingError(
       : clientError
         ? "请求正文不是有效的 JSON"
         : "TokenHub 处理请求时发生内部错误";
-  const payload = nativeError(protocol, requestId, message, type, code);
+  const payload = nativeError(requestId, message, type, code);
 
   reply.header("x-tokenhub-request-id", requestId);
-  if (protocol === "anthropic_messages") {
-    reply.header("request-id", requestId);
-  } else {
-    reply.header("x-request-id", requestId);
-  }
+  reply.header("request-id", requestId);
 
   if (req.relayPrincipal) {
     await persistAudit(app, {

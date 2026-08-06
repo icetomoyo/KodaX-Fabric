@@ -86,7 +86,7 @@ test("usage breakdown keeps Top N shape and folds the remainder into other", () 
   );
 });
 
-test("context normalization handles Chat, Responses and Anthropic without headers or secrets", () => {
+test("context normalization handles Chat and Anthropic without headers or secrets", () => {
   const chat = normalizeAuditContext({
     requestId: "req-chat",
     protocol: "openai_chat",
@@ -111,20 +111,6 @@ test("context normalization handles Chat, Responses and Anthropic without header
   assert.equal(JSON.stringify(chat).includes("hidden"), false);
   assert.equal(JSON.stringify(chat).toLowerCase().includes("authorization"), false);
   assert.equal(JSON.stringify(chat).toLowerCase().includes("headers"), false);
-
-  const responses = normalizeAuditContext({
-    requestId: "req-responses",
-    protocol: "openai_responses",
-    clientModel: "model",
-    upstreamModel: null,
-    requestBody: { input: "hello" },
-    responseBody: { output: [{ type: "message", content: [{ type: "output_text", text: "hi" }] }] },
-    requestBodySize: null,
-    responseBodySize: null,
-    truncated: false,
-  });
-  assert.deepEqual(responses.tabs.userPrompt.messages, [{ role: "user", content: "hello" }]);
-  assert.equal(responses.tabs.response.content.length, 1);
 
   const anthropic = normalizeAuditContext({
     requestId: "req-anthropic",

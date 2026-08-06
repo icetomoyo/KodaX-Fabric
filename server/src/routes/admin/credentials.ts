@@ -324,7 +324,6 @@ function resolveTestProtocol(
   }
 
   if (supported.includes("anthropic_messages")) return "anthropic_messages";
-  if (supported.includes("openai_responses")) return "openai_responses";
   return supported.includes(DEFAULT_RELAY_PROTOCOL)
     ? DEFAULT_RELAY_PROTOCOL
     : supported[0];

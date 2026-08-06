@@ -137,7 +137,7 @@ async function createFixtures() {
     {
       requestId: requestIds[1],
       employeeId: employee.id,
-      protocol: "openai_responses",
+      protocol: "anthropic_messages",
       clientModel: "v003-model-b",
       providerCode: "v003-provider",
       status: "upstream_error",

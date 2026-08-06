@@ -1,14 +1,13 @@
 import { z } from "zod";
 import {
-  CONFIGURABLE_RELAY_PROTOCOLS,
   RELAY_PROTOCOLS,
   type RelayProtocol,
 } from "./relay/protocol.js";
 
 export const configurableSupportedProtocolsSchema = z
-  .array(z.enum(CONFIGURABLE_RELAY_PROTOCOLS))
+  .array(z.enum(RELAY_PROTOCOLS))
   .min(1, "至少选择一个支持协议")
-  .max(CONFIGURABLE_RELAY_PROTOCOLS.length)
+  .max(RELAY_PROTOCOLS.length)
   .refine((protocols) => new Set(protocols).size === protocols.length, {
     message: "支持协议不能重复",
   });

@@ -14,8 +14,8 @@ import {
 } from "../db/schema/index.js";
 import { encryptEmployeeApiKey, generateApiKey } from "../lib/api-key.js";
 import {
-  CONFIGURABLE_RELAY_PROTOCOLS,
   RELAY_BASE_PATH,
+  RELAY_PROTOCOLS,
 } from "../lib/relay/protocol.js";
 import {
   getEmployeeUpstreamChannel,
@@ -30,7 +30,7 @@ import {
 const createApiKeySchema = z.object({
   name: z.string().trim().min(1).max(100),
   productLineId: z.number().int().positive(),
-  protocol: z.enum(CONFIGURABLE_RELAY_PROTOCOLS),
+  protocol: z.enum(RELAY_PROTOCOLS),
 });
 
 export async function meRoutes(app: FastifyInstance) {

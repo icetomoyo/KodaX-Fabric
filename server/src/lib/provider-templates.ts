@@ -1,7 +1,4 @@
-import type {
-  ConfigurableRelayProtocol,
-  RelayProtocol,
-} from "./relay/protocol.js";
+import type { RelayProtocol } from "./relay/protocol.js";
 import type {
   ProductLineProtocolConfigs,
   ProtocolUpstreamConfig,
@@ -33,7 +30,7 @@ export type ProviderTemplate = {
   description: string;
   baseUrls: ProviderBaseUrlOption[];
   authStyle: "bearer" | "x-api-key";
-  defaultProtocols: ConfigurableRelayProtocol[];
+  defaultProtocols: RelayProtocol[];
   defaultLabel: string;
   color: string;
 };
@@ -226,14 +223,12 @@ export function resolveTemplateProtocolConfigs(
   const configs: ProductLineProtocolConfigs = {};
   const unsupportedProtocols: RelayProtocol[] = [];
   for (const protocol of protocols) {
-    const config = option.protocolConfigs[protocol as ConfigurableRelayProtocol] as
-      | ProtocolUpstreamConfig
-      | undefined;
+    const config = option.protocolConfigs[protocol] as ProtocolUpstreamConfig | undefined;
     if (!config) {
       unsupportedProtocols.push(protocol);
       continue;
     }
-    configs[protocol as ConfigurableRelayProtocol] = { ...config };
+    configs[protocol] = { ...config };
   }
   return unsupportedProtocols.length > 0
     ? { ok: false, reason: "protocol_unsupported", unsupportedProtocols }

@@ -35,7 +35,6 @@ const [
   schema,
   { encryptEmployeeApiKey, generateApiKey },
   { encryptSecret, secretSuffix },
-  { relayResponseAffinityKey },
   { redis },
 ] = await Promise.all([
   import("../src/app.js"),
@@ -43,7 +42,6 @@ const [
   import("../src/db/schema/index.js"),
   import("../src/lib/api-key.js"),
   import("../src/lib/crypto-secret.js"),
-  import("../src/lib/relay/response-affinity.js"),
   import("../src/redis.js"),
 ]);
 
@@ -60,7 +58,7 @@ const {
   usageCountersDaily,
 } = schema;
 
-type Protocol = "openai_chat" | "openai_responses" | "anthropic_messages";
+type Protocol = "openai_chat" | "anthropic_messages";
 type Channel = "A" | "B";
 type CredentialKind = "first" | "second" | "only";
 type RetryTrap = "http_401" | "http_429" | "http_500" | "network";
@@ -95,12 +93,8 @@ const sharedModel = `shared-client-${marker}`;
 const bOnlyModel = `b-only-client-${marker}`;
 const upstreamModelA = `upstream-a-${marker}`;
 const upstreamModelB = `upstream-b-${marker}`;
-const responseIdA = `resp_a_${runId.slice(0, 20)}`;
-const crossBAffinityId = `resp_b_${runId.slice(0, 20)}`;
-
 const allProtocols: Protocol[] = [
   "openai_chat",
-  "openai_responses",
   "anthropic_messages",
 ];
 
@@ -212,24 +206,6 @@ function successPayload(path: string): unknown {
         },
       ],
       usage: { prompt_tokens: 3, completion_tokens: 4, total_tokens: 7 },
-    };
-  }
-  if (path === "/v1/responses") {
-    return {
-      id: responseIdA,
-      object: "response",
-      model: upstreamModelA,
-      status: "completed",
-      output: [],
-      usage: { input_tokens: 5, output_tokens: 6, total_tokens: 11 },
-    };
-  }
-  if (path === "/v1/responses/compact") {
-    return {
-      id: `compact_${marker}`,
-      object: "response.compaction",
-      output: [{ type: "compaction", encrypted_content: `compact_${marker}` }],
-      usage: { input_tokens: 2, output_tokens: 1, total_tokens: 3 },
     };
   }
   if (path === "/v1/messages") {
@@ -578,7 +554,7 @@ async function waitForAudit(requestId: string): Promise<AuditRow> {
   throw new Error(`request audit ${requestId} was not persisted`);
 }
 
-async function assertFiveProtocolEntrypoints(baseUrl: string): Promise<ApiResult[]> {
+async function assertProtocolEntrypoints(baseUrl: string): Promise<ApiResult[]> {
   firstCredentialTrap = "http_500";
   const chat = await callApi(
     baseUrl,
@@ -592,30 +568,6 @@ async function assertFiveProtocolEntrypoints(baseUrl: string): Promise<ApiResult
   );
   assert.equal(chat.status, 200);
   assert.equal((JSON.parse(chat.text) as { model?: string }).model, upstreamModelA);
-
-  const responses = await callApi(
-    baseUrl,
-    "/ai/responses",
-    "openai_responses",
-    { model: sharedModel, input: "hard binding responses" },
-  );
-  assert.equal(responses.status, 200);
-  const responsesBody = JSON.parse(responses.text) as { id?: string; model?: string };
-  assert.equal(responsesBody.id, responseIdA);
-  assert.equal(responsesBody.model, upstreamModelA);
-  trackedRedisKeys.add(relayResponseAffinityKey(requireEmployeeId(), responseIdA));
-
-  const compact = await callApi(
-    baseUrl,
-    "/ai/responses/compact",
-    "openai_responses",
-    { model: sharedModel, input: [{ role: "user", content: "compact" }] },
-  );
-  assert.equal(compact.status, 200);
-  assert.equal(
-    (JSON.parse(compact.text) as { object?: string }).object,
-    "response.compaction",
-  );
 
   const messages = await callApi(
     baseUrl,
@@ -644,13 +596,13 @@ async function assertFiveProtocolEntrypoints(baseUrl: string): Promise<ApiResult
   assert.equal(countTokens.status, 200);
   assert.equal((JSON.parse(countTokens.text) as { input_tokens?: number }).input_tokens, 19);
 
-  assert.equal(countCalls("A", "first"), 5, "A/first did not receive all retry traps");
-  assert.equal(countCalls("A", "second"), 5, "A/second did not complete all retries");
-  assertChannelBWasNeverCalled("the five protocol entrypoints");
+  assert.equal(countCalls("A", "first"), 3, "A/first did not receive all retry traps");
+  assert.equal(countCalls("A", "second"), 3, "A/second did not complete all retries");
+  assertChannelBWasNeverCalled("the protocol entrypoints");
   assert.deepEqual(mockFailures, [], "local mock upstream observed invalid relay requests");
 
   const audits = await Promise.all(
-    [chat, responses, compact, messages, countTokens].map((result) =>
+    [chat, messages, countTokens].map((result) =>
       waitForAudit(result.requestId)),
   );
   for (const audit of audits) {
@@ -661,7 +613,7 @@ async function assertFiveProtocolEntrypoints(baseUrl: string): Promise<ApiResult
     assert.equal(audit.retryCount, 1);
   }
 
-  return [chat, responses, compact, messages, countTokens];
+  return [chat, messages, countTokens];
 }
 
 async function restoreFirstCredential(): Promise<void> {
@@ -715,44 +667,6 @@ async function assertRetryFailureClassesStayBound(baseUrl: string): Promise<void
   assertChannelBWasNeverCalled("401/429/5xx/network retry matrix");
 }
 
-async function assertCrossChannelAffinityCannotEscape(baseUrl: string): Promise<void> {
-  const key = relayResponseAffinityKey(requireEmployeeId(), crossBAffinityId);
-  trackedRedisKeys.add(key);
-  await redis.set(
-    key,
-    JSON.stringify({
-      credentialId: requireCredential("B-only"),
-      productLineId: requireProductLine("B"),
-      upstreamModel: upstreamModelB,
-      configurationFingerprint: "0".repeat(64),
-    }),
-    "EX",
-    300,
-  );
-
-  const callsBefore = upstreamCalls.length;
-  const result = await callApi(
-    baseUrl,
-    "/ai/responses",
-    "openai_responses",
-    {
-      model: sharedModel,
-      previous_response_id: crossBAffinityId,
-      input: "must not continue on B",
-    },
-  );
-  assert.equal(result.status, 503);
-  assert.equal(errorCode(result), "response_affinity_unavailable");
-  assert.equal(upstreamCalls.length, callsBefore, "cross-B affinity reached an upstream");
-  assertChannelBWasNeverCalled("cross-channel Responses affinity");
-
-  const audit = await waitForAudit(result.requestId);
-  assert.equal(audit.productLineId, requireProductLine("A"));
-  assert.equal(audit.credentialId, null);
-  assert.equal(audit.errorCode, "response_affinity_unavailable");
-  assert.equal(audit.status, "upstream_error");
-}
-
 async function assertDisabledBoundChannel(baseUrl: string): Promise<void> {
   const productLineA = requireProductLine("A");
   await db
@@ -770,12 +684,6 @@ async function assertDisabledBoundChannel(baseUrl: string): Promise<void> {
         model: sharedModel,
         messages: [{ role: "user", content: "disabled A chat" }],
       },
-    ),
-    callApi(
-      baseUrl,
-      "/ai/responses",
-      "openai_responses",
-      { model: sharedModel, input: "disabled A responses" },
     ),
     callApi(
       baseUrl,
@@ -809,9 +717,8 @@ async function assertDisabledBoundChannel(baseUrl: string): Promise<void> {
 
 async function runAssertions(baseUrl: string): Promise<void> {
   await assertBoundModelLists(baseUrl);
-  await assertFiveProtocolEntrypoints(baseUrl);
+  await assertProtocolEntrypoints(baseUrl);
   await assertRetryFailureClassesStayBound(baseUrl);
-  await assertCrossChannelAffinityCannotEscape(baseUrl);
   await assertDisabledBoundChannel(baseUrl);
   assertChannelBWasNeverCalled("the complete hard-binding test");
   assert.deepEqual(mockFailures, []);
@@ -821,11 +728,10 @@ async function runAssertions(baseUrl: string): Promise<void> {
     productLineA: requireProductLine("A"),
     productLineB: requireProductLine("B"),
     modelIsolation: true,
-    fiveEntrypointsBoundToA: true,
+    protocolEntrypointsBoundToA: true,
     retryFailureClassesBoundToA: [401, 429, 500, "network"],
     aLocalRetries: countCalls("A", "first"),
     bCalls: countCalls("B"),
-    crossChannelAffinityBlocked: true,
     disabledChannelAuditedToA: true,
   }, null, 2));
 }

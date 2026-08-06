@@ -29,6 +29,8 @@ docker compose ps
 
 v0.0.4 采用干净数据库基线：全新环境执行迁移与最小种子即可。本地开发重建数据库会清空业务数据。
 
+如果本地开发库执行过仍含 `openai_responses` 的旧版 `0000`，仅运行 `db:migrate` 不会重放已经登记的基线；需在确认无须保留业务数据后重建该隔离开发库，再执行 `npm run db:setup`。不要直接重建含有需要保留数据的环境。
+
 ## 快速开始
 
 ```sh
@@ -103,11 +105,11 @@ docker compose exec -T postgres psql -U app -d postgres -c "CREATE DATABASE toke
 
 管理后台菜单：概览 · 员工管理 · 上游渠道 · 调用日志 · 配额策略 · 操作审计 · 个人中心。供应商、产品线和模型路由保留为内部数据结构，不再暴露独立页面。
 
-模型代理已启用，员工统一使用 `/ai` Base URL。原生支持 `/ai/chat/completions`、`/ai/responses`、`/ai/responses/compact`、`/ai/v1/messages` 与 `/ai/v1/messages/count_tokens`（员工 API Key）；网页 Chat 非一期范围。
+模型代理已启用，员工统一使用 `/ai` Base URL。支持 OpenAI Chat Completions 和 Anthropic Messages 两种原生 API 转发，不做协议转换。当前入口为 `/ai/chat/completions`、`/ai/v1/messages` 与 `/ai/v1/messages/count_tokens`（员工 API Key）；网页 Chat 非一期范围。
 
 ## 模型代理使用
 
-员工首次登录并完成改密后，在 Web 的「API Key」页面（`/me/keys`）依次选择上游渠道、该渠道的兼容协议并填写名称。每把员工 Key 固定绑定一个上游渠道和一种协议：OpenAI Chat Completions、OpenAI Responses 或 Anthropic Messages；模型查询、调用、重试和 Responses 亲和都不会跨出绑定渠道。完整明文仅在创建成功时向创建员工本人展示一次，关闭后员工和管理员均不能再次查看或复制；管理员的「员工管理」列表不显示或返回任何员工 Key 信息。以下示例中的值仅为占位符，不是真实 Key：
+员工首次登录并完成改密后，在 Web 的「API Key」页面（`/me/keys`）依次选择上游渠道、该渠道的兼容协议并填写名称。每把员工 Key 固定绑定一个上游渠道和一种协议：OpenAI Chat Completions 或 Anthropic Messages；模型查询、调用和重试都不会跨出绑定渠道。完整明文仅在创建成功时向创建员工本人展示一次，关闭后员工和管理员均不能再次查看或复制；管理员的「员工管理」列表不显示或返回任何员工 Key 信息。以下示例中的值仅为占位符，不是真实 Key：
 
 ```sh
 export TOKENHUB_API_KEY="th_replace_with_your_employee_key"
@@ -116,7 +118,7 @@ export TOKENHUB_BASE_URL="http://127.0.0.1:3100/ai"
 
 原员工入口 `/v1/*` 已移除；已有客户端需要将 TokenHub Base URL 更新为 `/ai`。
 
-生产或内网部署时，将 `TOKENHUB_BASE_URL` 替换为实际 TokenHub 地址。OpenAI Chat 与 Responses 使用 Bearer；Anthropic Messages 同时接受原生 `x-api-key` 和 Bearer（若两者并存，值必须一致）：
+生产或内网部署时，将 `TOKENHUB_BASE_URL` 替换为实际 TokenHub 地址。OpenAI Chat Completions 使用 Bearer；Anthropic Messages 同时接受原生 `x-api-key` 和 Bearer（若两者并存，值必须一致）：
 
 ```text
 Authorization: Bearer <员工 API Key>
@@ -166,24 +168,6 @@ curl -N "${TOKENHUB_BASE_URL}/chat/completions" \
   }'
 ```
 
-### 原生 OpenAI Responses
-
-Responses 使用绑定“OpenAI Responses”协议的员工 Key。请求、响应、工具调用与语义化 SSE 事件按原生格式直通，不转换为 Chat Completions：
-
-```sh
-curl -N "${TOKENHUB_BASE_URL}/responses" \
-  -H "Authorization: Bearer ${TOKENHUB_API_KEY}" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "YOUR_MODEL_ID",
-    "input": "请用一句话介绍 TokenHub。",
-    "stream": true
-  }'
-```
-
-Codex 长任务需要的 `POST /ai/responses/compact` 也按相同协议和鉴权原生直通。
-`previous_response_id` 会通过 Redis 维持原生上游凭证亲和；当前未开放需要额外查询/取消接口的 `background` 和 `conversation` 模式，网关会明确返回 `unsupported_stateful_response`，不会随机发送到错误上游。
-
 ### 原生 Anthropic Messages
 
 Messages 使用绑定“Anthropic Messages”协议的员工 Key；`anthropic-version` 必填，`anthropic-beta` 会安全透传：
@@ -219,7 +203,6 @@ Claude Code 的 `ANTHROPIC_BASE_URL` 与其他员工客户端统一填写 TokenH
 | 员工 Key 协议 | CC Switch API 格式 | Base URL | 实际入口 |
 |---|---|---|---|
 | OpenAI Chat Completions | OpenAI Chat Completions | `http://127.0.0.1:3100/ai` | `/ai/chat/completions` |
-| OpenAI Responses | OpenAI Responses API | `http://127.0.0.1:3100/ai` | `/ai/responses` |
 | Anthropic Messages | Anthropic Messages | `http://127.0.0.1:3100/ai` | `/ai/v1/messages` |
 
 如果 CC Switch 分别要求 Host 和接口路径，按上表填写。不要把上游供应商 Key 配入 CC Switch。
@@ -243,11 +226,11 @@ npm run db:migrate      # 执行迁移
 npm run db:seed         # 仅种子管理员 + 最小系统配置（无演示供应商/凭证）
 npm run db:cleanup-demo # 事务清理 Key、渠道和业务数据（保留员工账号与系统基线）
 npm run db:generate     # 改 schema 后生成迁移
-npm test --workspace=@tokenhub/server # 服务端默认单元测试（84 项）
+npm test --workspace=@tokenhub/server # 服务端默认单元测试（89 项）
 npm run test:relay:mock --workspace=@tokenhub/server # 本地 PG/Redis + Mock 上游集成测试
-npm run test:relay:native:mock --workspace=@tokenhub/server # Responses/Messages 原生协议集成测试
+npm run test:relay:native:mock --workspace=@tokenhub/server # Anthropic Messages 原生转发集成测试
 npm run test:v001:api --workspace=@tokenhub/server # v0.0.1 Key/权限/数据库约束集成测试
-npm run test:v001:binding --workspace=@tokenhub/server # v0.0.1 全协议 A/B 渠道硬绑定集成测试
+npm run test:v001:binding --workspace=@tokenhub/server # v0.0.1 两种 API 的 A/B 渠道硬绑定集成测试
 npm run test:v003:integration --workspace=@tokenhub/server # v0.0.3 用量、权限、正文脱敏与审计去重集成测试
 ```
 

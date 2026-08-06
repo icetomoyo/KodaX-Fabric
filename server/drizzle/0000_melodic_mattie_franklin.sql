@@ -5,7 +5,7 @@ CREATE TYPE "public"."credential_status" AS ENUM('active', 'disabled', 'auto_dis
 CREATE TYPE "public"."employee_role" AS ENUM('employee', 'admin');--> statement-breakpoint
 CREATE TYPE "public"."employee_status" AS ENUM('active', 'disabled');--> statement-breakpoint
 CREATE TYPE "public"."product_type" AS ENUM('api', 'coding_plan');--> statement-breakpoint
-CREATE TYPE "public"."relay_protocol" AS ENUM('openai_chat', 'openai_responses', 'anthropic_messages');--> statement-breakpoint
+CREATE TYPE "public"."relay_protocol" AS ENUM('openai_chat', 'anthropic_messages');--> statement-breakpoint
 CREATE TYPE "public"."share_mode" AS ENUM('public_pool', 'grant_only', 'disabled');--> statement-breakpoint
 CREATE TYPE "public"."usage_source" AS ENUM('upstream', 'estimated', 'none');--> statement-breakpoint
 CREATE TABLE "credential_employee_grants" (

@@ -244,7 +244,6 @@
           v-model:supported-protocols="channelEditForm.supportedProtocols"
           v-model:status="channelEditForm.status"
           :protocol-configs="channelEditProtocolConfigs"
-          :legacy-protocols="channelEditLegacyProtocols"
           :protocols-touched="channelEditProtocolsTouched"
           :routing-config-drift="channelEditRoutingConfigDrift"
           :routing-upgrade-requested="channelEditRoutingUpgradeRequested"
@@ -826,7 +825,6 @@ const bulkSaving = ref(false);
 const showChannelEdit = ref(false);
 const channelEditSaving = ref(false);
 const channelEditProtocolConfigs = ref<RelayProtocolConfigs>({});
-const channelEditLegacyProtocols = ref<RelayProtocol[]>([]);
 const channelEditProtocolsTouched = ref(false);
 const channelEditRoutingConfigDrift = ref(false);
 const channelEditRoutingUpgradeRequested = ref(false);
@@ -1086,13 +1084,6 @@ function configurableProtocols(protocols: readonly RelayProtocol[]): RelayProtoc
   return relayProtocolOptions
     .map((option) => option.value)
     .filter((protocol) => configured.has(protocol));
-}
-
-function legacyProtocols(protocols: readonly RelayProtocol[]): RelayProtocol[] {
-  const selectable = new Set(relayProtocolOptions.map((option) => option.value));
-  return RELAY_PROTOCOLS.filter(
-    (protocol) => protocols.includes(protocol) && !selectable.has(protocol),
-  );
 }
 
 function isValidProtocolConfig(
@@ -1423,7 +1414,6 @@ function openEditChannel(channel: ChannelGroup) {
   channelEditProtocolConfigs.value = Object.keys(templateConfigs).length
     ? templateConfigs
     : { ...channel.protocolConfigs };
-  channelEditLegacyProtocols.value = legacyProtocols(channel.protocols);
   channelEditProtocolsTouched.value = false;
   channelEditRoutingUpgradeRequested.value = false;
   channelEditRoutingConfigDrift.value = Boolean(
@@ -1471,12 +1461,9 @@ async function saveChannelEdit() {
   const originalSelectableProtocols = configurableProtocols(original.supportedProtocols);
   const selectableProtocolsChanged = protocolSignature(channelEditForm.supportedProtocols)
     !== protocolSignature(originalSelectableProtocols);
-  const shouldRemoveLegacy = channelEditLegacyProtocols.value.length > 0
-    && (channelEditProtocolsTouched.value || channelEditRoutingUpgradeRequested.value);
   const explicitlyUpgradingDrift = channelEditRoutingConfigDrift.value
     && (channelEditProtocolsTouched.value || channelEditRoutingUpgradeRequested.value);
   const shouldSendProtocols = selectableProtocolsChanged
-    || shouldRemoveLegacy
     || explicitlyUpgradingDrift;
   if (shouldSendProtocols && !channelEditForm.supportedProtocols.length) {
     ElMessage.warning("请至少选择一种支持协议");

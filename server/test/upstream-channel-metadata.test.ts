@@ -51,7 +51,7 @@ test("public channels aggregate eligible credential protocols in fixed order", (
   const channels = collectEmployeeUpstreamChannels(
     [
       row(1, { supportedProtocols: ["anthropic_messages", "openai_chat"] }),
-      row(2, { supportedProtocols: ["openai_responses"] }),
+      row(2, { supportedProtocols: ["anthropic_messages"] }),
       row(3, { supportedProtocols: [], credentialStatus: "cooling" }),
       row(4, { credentialStatus: "disabled" }),
       row(5, { credentialStatus: "auto_disabled" }),
@@ -62,11 +62,7 @@ test("public channels aggregate eligible credential protocols in fixed order", (
 
   assert.equal(channels.length, 1);
   assert.equal(channels[0].credentialCount, 2);
-  assert.deepEqual(channels[0].compatibleProtocols, [
-    "openai_chat",
-    "openai_responses",
-    "anthropic_messages",
-  ]);
+  assert.deepEqual(channels[0].compatibleProtocols, ["openai_chat", "anthropic_messages"]);
 });
 
 test("explicit channel protocol configs hide drifted credential-only protocols", () => {

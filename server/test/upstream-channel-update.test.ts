@@ -73,22 +73,17 @@ test("channel update validation rejects empty, duplicate, and unknown protocol s
   );
 });
 
-test("protocol plan reports removals in stable order and detects credential drift", () => {
+test("protocol plan reports supported-protocol removals and detects credential drift", () => {
   const plan = planChannelProtocolUpdate(
     [
       { supportedProtocols: ["anthropic_messages", "openai_chat"] },
-      { supportedProtocols: ["openai_responses"] },
     ],
-    ["openai_chat", "anthropic_messages"],
+    ["openai_chat"],
   );
 
-  assert.deepEqual(plan.currentProtocols, [
-    "openai_chat",
-    "openai_responses",
-    "anthropic_messages",
-  ]);
-  assert.deepEqual(plan.nextProtocols, ["openai_chat", "anthropic_messages"]);
-  assert.deepEqual(plan.removedProtocols, ["openai_responses"]);
+  assert.deepEqual(plan.currentProtocols, ["openai_chat", "anthropic_messages"]);
+  assert.deepEqual(plan.nextProtocols, ["openai_chat"]);
+  assert.deepEqual(plan.removedProtocols, ["anthropic_messages"]);
   assert.equal(plan.protocolsChanged, true);
 });
 
@@ -110,7 +105,7 @@ test("removed protocol usage only counts bindings that would be broken", () => {
         { protocol: "anthropic_messages" },
         { protocol: "anthropic_messages" },
       ],
-      ["openai_responses", "anthropic_messages"],
+      ["anthropic_messages"],
     ),
     [{ protocol: "anthropic_messages", activeKeyCount: 2 }],
   );

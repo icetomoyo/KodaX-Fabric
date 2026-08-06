@@ -1,5 +1,5 @@
 /**
- * End-to-end native Responses and Anthropic Messages relay test.
+ * End-to-end Anthropic Messages relay test.
  *
  * Uses only local PostgreSQL, Redis and a temporary node:http mock upstream.
  * All fixture rows and quota keys are removed in finally.
@@ -26,7 +26,6 @@ const [
   schema,
   { encryptEmployeeApiKey, generateApiKey },
   { encryptSecret, secretSuffix },
-  { relayResponseAffinityKey },
   { redis },
 ] = await Promise.all([
   import("../src/app.js"),
@@ -34,7 +33,6 @@ const [
   import("../src/db/schema/index.js"),
   import("../src/lib/api-key.js"),
   import("../src/lib/crypto-secret.js"),
-  import("../src/lib/relay/response-affinity.js"),
   import("../src/redis.js"),
 ]);
 
@@ -51,7 +49,7 @@ const {
   usageCountersDaily,
 } = schema;
 
-type ProtocolName = "openai_responses" | "anthropic_messages";
+type ProtocolName = "anthropic_messages";
 type Fixture = {
   protocol: ProtocolName;
   clientModel: string;
@@ -139,90 +137,6 @@ function requiredFixture(protocol: ProtocolName): Fixture {
   const fixture = fixtures.get(protocol);
   assert(fixture, `missing ${protocol} fixture`);
   return fixture;
-}
-
-async function handleResponses(req: IncomingMessage, res: ServerResponse): Promise<void> {
-  const fixture = requiredFixture("openai_responses");
-  if (req.headers.authorization !== `Bearer ${fixture.upstreamSecret}`) {
-    mockFailures.push("Responses upstream did not receive its Bearer credential");
-  }
-  if (req.headers["openai-beta"] !== "responses-test=v1") {
-    mockFailures.push("Responses upstream did not receive openai-beta");
-  }
-  const body = await readJson(req);
-  if (body.model !== fixture.upstreamModel) {
-    mockFailures.push("Responses model mapping was not applied");
-  }
-
-  if (req.url === "/v1/responses/compact") {
-    sendJson(res, 200, {
-      id: "resp_compact_1",
-      object: "response.compaction",
-      output: [{ type: "compaction", encrypted_content: "local-mock" }],
-      usage: { input_tokens: 2, output_tokens: 1, total_tokens: 3 },
-    });
-    return;
-  }
-  if (req.url !== "/v1/responses") {
-    mockFailures.push(`unexpected Responses path ${req.url}`);
-    sendJson(res, 404, { error: { message: "not found" } });
-    return;
-  }
-
-  if (body.stream === true) {
-    await sendEvents(res, [
-      event("response.created", {
-        type: "response.created",
-        response: {
-          id: "resp_stream_1",
-          object: "response",
-          model: fixture.upstreamModel,
-          status: "in_progress",
-          output: [],
-        },
-      }),
-      event("response.output_text.delta", {
-        type: "response.output_text.delta",
-        item_id: "msg_1",
-        output_index: 0,
-        content_index: 0,
-        delta: "native responses ok",
-      }),
-      event("response.completed", {
-        type: "response.completed",
-        response: {
-          id: "resp_stream_1",
-          object: "response",
-          model: fixture.upstreamModel,
-          status: "completed",
-          output: [],
-          usage: { input_tokens: 7, output_tokens: 5, total_tokens: 12 },
-        },
-      }),
-    ]);
-    return;
-  }
-
-  sendJson(
-    res,
-    200,
-    {
-      id: "resp_json_1",
-      object: "response",
-      model: fixture.upstreamModel,
-      status: "completed",
-      output: [
-        {
-          id: "msg_1",
-          type: "message",
-          role: "assistant",
-          content: [{ type: "output_text", text: "native responses json ok" }],
-        },
-      ],
-      usage: { input_tokens: 3, output_tokens: 4, total_tokens: 7 },
-    },
-    { "x-ratelimit-remaining-requests": "42", "x-request-id": "up_resp_1" },
-  );
 }
 
 async function handleMessages(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -334,11 +248,9 @@ async function handleMessages(req: IncomingMessage, res: ServerResponse): Promis
 
 function createMockUpstream(): Server {
   return createServer((req, res) => {
-    const handler = req.method === "POST" && req.url?.startsWith("/v1/responses")
-      ? handleResponses
-      : req.method === "POST" && req.url?.startsWith("/v1/messages")
-        ? handleMessages
-        : null;
+    const handler = req.method === "POST" && req.url?.startsWith("/v1/messages")
+      ? handleMessages
+      : null;
     if (!handler) {
       mockFailures.push(`unexpected mock request ${req.method} ${req.url}`);
       sendJson(res, 404, { error: { message: "not found" } });
@@ -367,8 +279,8 @@ async function insertFixtures(upstreamBaseUrl: string): Promise<void> {
     .returning({ id: employees.id });
   created.employeeId = employee.id;
 
-  for (const protocol of ["openai_responses", "anthropic_messages"] as const) {
-    const tag = protocol === "openai_responses" ? "responses" : "messages";
+  for (const protocol of ["anthropic_messages"] as const) {
+    const tag = "messages";
     const clientModel = `${tag}-client-${marker}`;
     const upstreamModel = `${tag}-upstream-${marker}`;
     const generated = generateApiKey();
@@ -377,10 +289,8 @@ async function insertFixtures(upstreamBaseUrl: string): Promise<void> {
       .values({
         code: `${tag}_${marker}`,
         name: `Native ${tag} Provider ${marker}`,
-        defaultBaseUrl: protocol === "openai_responses"
-          ? `${upstreamBaseUrl}/v1`
-          : upstreamBaseUrl,
-        authStyle: protocol === "openai_responses" ? "bearer" : "x-api-key",
+        defaultBaseUrl: upstreamBaseUrl,
+        authStyle: "x-api-key",
         openaiCompatLevel: "full",
         status: "active",
       })
@@ -511,17 +421,13 @@ async function waitForAudit(requestId: string) {
 }
 
 async function assertModels(baseUrl: string, fixture: Fixture): Promise<void> {
-  const headers = fixture.protocol === "anthropic_messages"
-    ? { "x-api-key": fixture.employeeKey }
-    : { Authorization: `Bearer ${fixture.employeeKey}` };
+  const headers = { "x-api-key": fixture.employeeKey };
   const response = await fetch(`${baseUrl}/ai/models`, { headers });
   assert.equal(response.status, 200);
   const requestId = response.headers.get("x-tokenhub-request-id");
   assert.match(requestId ?? "", /^threq_[a-f0-9]{32}$/);
   assert.equal(
-    response.headers.get(
-      fixture.protocol === "anthropic_messages" ? "request-id" : "x-request-id",
-    ),
+    response.headers.get("request-id"),
     requestId,
   );
   const payload = await response.json() as { data?: Array<{ id?: string }> };
@@ -581,40 +487,16 @@ async function assertAnthropicModelsAuthErrors(
 }
 
 async function runAssertions(baseUrl: string): Promise<void> {
-  const responses = requiredFixture("openai_responses");
   const messages = requiredFixture("anthropic_messages");
-  await assertModels(baseUrl, responses);
   await assertModels(baseUrl, messages);
   await assertAnthropicModelsAuthErrors(baseUrl, messages);
 
-  const mismatchedResponses = await call(
-    baseUrl,
-    "/ai/responses",
-    { Authorization: `Bearer ${messages.employeeKey}` },
-    { model: responses.clientModel, input: "test" },
-  );
-  assert.equal(mismatchedResponses.response.status, 401);
-  assert(isRecord(JSON.parse(mismatchedResponses.text).error));
-
-  const mismatchedMessages = await call(
-    baseUrl,
-    "/ai/v1/messages",
-    {
-      Authorization: `Bearer ${responses.employeeKey}`,
-      "anthropic-version": "2023-06-01",
-    },
-    { model: messages.clientModel, max_tokens: 32, messages: [{ role: "user", content: "x" }] },
-  );
-  assert.equal(mismatchedMessages.response.status, 401);
-  const mismatchedMessagesBody = JSON.parse(mismatchedMessages.text) as {
-    type?: string;
-    request_id?: string;
-    error?: { code?: string };
-  };
-  assert.equal(mismatchedMessagesBody.type, "error");
-  assert.equal(mismatchedMessagesBody.error?.code, "invalid_api_key");
-  assert.equal(mismatchedMessagesBody.request_id, mismatchedMessages.requestId);
-  assert.equal(mismatchedMessages.response.headers.get("request-id"), mismatchedMessages.requestId);
+  const removedResponses = await fetch(`${baseUrl}/ai/responses`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ model: messages.clientModel, input: "not supported" }),
+  });
+  assert.equal(removedResponses.status, 404);
 
   const missingVersion = await call(
     baseUrl,
@@ -659,91 +541,6 @@ async function runAssertions(baseUrl: string): Promise<void> {
   const malformedAudit = await waitForAudit(malformedRequestId);
   assert.equal(malformedAudit.protocol, "anthropic_messages");
   assert.equal(malformedAudit.status, "client_error");
-
-  const responseJson = await call(
-    baseUrl,
-    "/ai/responses",
-    {
-      Authorization: `Bearer ${responses.employeeKey}`,
-      "openai-beta": "responses-test=v1",
-    },
-    { model: responses.clientModel, input: "hello" },
-  );
-  assert.equal(responseJson.response.status, 200);
-  assert.equal((JSON.parse(responseJson.text) as { object?: string }).object, "response");
-  assert.equal(responseJson.response.headers.get("x-ratelimit-remaining-requests"), "42");
-  assert.equal(responseJson.response.headers.get("x-tokenhub-upstream-request-id"), "up_resp_1");
-  assert(responseJson.requestId);
-  assert(created.employeeId !== null);
-  trackedRedisKeys.add(relayResponseAffinityKey(created.employeeId, "resp_json_1"));
-
-  const responseContinuation = await call(
-    baseUrl,
-    "/ai/responses",
-    {
-      Authorization: `Bearer ${responses.employeeKey}`,
-      "openai-beta": "responses-test=v1",
-    },
-    {
-      model: responses.clientModel,
-      previous_response_id: "resp_json_1",
-      input: "continue",
-    },
-  );
-  assert.equal(responseContinuation.response.status, 200);
-  assert(responseContinuation.requestId);
-
-  const missingAffinity = await call(
-    baseUrl,
-    "/ai/responses",
-    { Authorization: `Bearer ${responses.employeeKey}` },
-    {
-      model: responses.clientModel,
-      previous_response_id: "resp_unknown",
-      input: "continue",
-    },
-  );
-  assert.equal(missingAffinity.response.status, 409);
-  assert.equal(
-    (JSON.parse(missingAffinity.text) as { error?: { code?: string } }).error?.code,
-    "response_affinity_not_found",
-  );
-
-  const unsupportedBackground = await call(
-    baseUrl,
-    "/ai/responses",
-    { Authorization: `Bearer ${responses.employeeKey}` },
-    { model: responses.clientModel, input: "background", background: true },
-  );
-  assert.equal(unsupportedBackground.response.status, 400);
-
-  const responseStream = await call(
-    baseUrl,
-    "/ai/responses",
-    {
-      Authorization: `Bearer ${responses.employeeKey}`,
-      "openai-beta": "responses-test=v1",
-    },
-    { model: responses.clientModel, input: "stream", stream: true },
-  );
-  assert.equal(responseStream.response.status, 200);
-  assert.match(responseStream.text, /event: response\.completed/);
-  assert.equal(responseStream.text.includes("[DONE]"), false);
-  assert(responseStream.requestId);
-  trackedRedisKeys.add(relayResponseAffinityKey(created.employeeId, "resp_stream_1"));
-
-  const compact = await call(
-    baseUrl,
-    "/ai/responses/compact",
-    {
-      Authorization: `Bearer ${responses.employeeKey}`,
-      "openai-beta": "responses-test=v1",
-    },
-    { model: responses.clientModel, input: [{ role: "user", content: "compact" }] },
-  );
-  assert.equal(compact.response.status, 200);
-  assert.equal((JSON.parse(compact.text) as { object?: string }).object, "response.compaction");
-  assert(compact.requestId);
 
   const messageJson = await call(
     baseUrl,
@@ -828,10 +625,6 @@ async function runAssertions(baseUrl: string): Promise<void> {
   assert(messageOverload.requestId);
 
   const audited = await Promise.all([
-    waitForAudit(responseJson.requestId),
-    waitForAudit(responseContinuation.requestId),
-    waitForAudit(responseStream.requestId),
-    waitForAudit(compact.requestId),
     waitForAudit(messageJson.requestId),
     waitForAudit(messageStream.requestId),
     waitForAudit(countTokens.requestId),
@@ -840,10 +633,6 @@ async function runAssertions(baseUrl: string): Promise<void> {
   assert.deepEqual(
     audited.map((item) => item.protocol),
     [
-      "openai_responses",
-      "openai_responses",
-      "openai_responses",
-      "openai_responses",
       "anthropic_messages",
       "anthropic_messages",
       "anthropic_messages",
@@ -852,19 +641,15 @@ async function runAssertions(baseUrl: string): Promise<void> {
   );
   assert.deepEqual(
     audited.map((item) => item.totalTokens),
-    [7, 7, 12, 3, 14, 19, null, null],
+    [14, 19, null, null],
   );
   assert.deepEqual(
     audited.map((item) => item.isStream),
-    [false, false, true, false, false, true, false, false],
+    [false, true, false, false],
   );
   assert.deepEqual(
     audited.map((item) => item.status),
     [
-      "success",
-      "success",
-      "success",
-      "success",
       "success",
       "success",
       "success",
@@ -876,23 +661,19 @@ async function runAssertions(baseUrl: string): Promise<void> {
     assert.equal(serialized.toLowerCase().includes("authorization"), false);
     assert.equal(serialized.toLowerCase().includes("x-api-key"), false);
   }
-  for (const index of [2, 5]) {
-    assert(isRecord(audited[index].responseBody));
-    assert.equal(audited[index].responseBody.terminalSeen, true);
-  }
+  assert(isRecord(audited[1].responseBody));
+  assert.equal(audited[1].responseBody.terminalSeen, true);
   assert.deepEqual(mockFailures, []);
 
   console.log(JSON.stringify({
     ok: true,
     endpoints: [
-      "/ai/responses",
-      "/ai/responses/compact",
       "/ai/v1/messages",
       "/ai/v1/messages/count_tokens",
     ],
     modelIsolation: true,
     protocolBoundKeys: true,
-    streamAudits: [audited[2].totalTokens, audited[5].totalTokens],
+    streamAudits: [audited[1].totalTokens],
   }, null, 2));
 }
 

@@ -1,6 +1,5 @@
 import {
-  CONFIGURABLE_RELAY_PROTOCOLS,
-  type ConfigurableRelayProtocol,
+  RELAY_PROTOCOLS,
   type RelayProtocol,
 } from "./relay/protocol.js";
 
@@ -13,7 +12,7 @@ export type ProtocolUpstreamConfig = {
 };
 
 export type ProductLineProtocolConfigs = Partial<
-  Record<ConfigurableRelayProtocol, ProtocolUpstreamConfig>
+  Record<RelayProtocol, ProtocolUpstreamConfig>
 >;
 
 export function normalizeUpstreamBaseUrl(value: string): string {
@@ -32,7 +31,7 @@ export function parseProductLineProtocolConfigs(
 
   const source = value as Record<string, unknown>;
   const parsed: ProductLineProtocolConfigs = {};
-  for (const protocol of CONFIGURABLE_RELAY_PROTOCOLS) {
+  for (const protocol of RELAY_PROTOCOLS) {
     const candidate = source[protocol];
     if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) continue;
     const config = candidate as Record<string, unknown>;
@@ -51,9 +50,9 @@ export function parseProductLineProtocolConfigs(
 
 export function configuredProtocols(
   configs: ProductLineProtocolConfigs | null,
-): ConfigurableRelayProtocol[] {
+): RelayProtocol[] {
   if (!configs) return [];
-  return CONFIGURABLE_RELAY_PROTOCOLS.filter((protocol) => configs[protocol] !== undefined);
+  return RELAY_PROTOCOLS.filter((protocol) => configs[protocol] !== undefined);
 }
 
 export function resolveProtocolUpstreamConfig(input: {
@@ -70,10 +69,7 @@ export function resolveProtocolUpstreamConfig(input: {
       authStyle: input.legacyAuthStyle,
     };
   }
-  if (!CONFIGURABLE_RELAY_PROTOCOLS.includes(input.protocol as ConfigurableRelayProtocol)) {
-    return null;
-  }
-  return configs[input.protocol as ConfigurableRelayProtocol] ?? null;
+  return configs[input.protocol] ?? null;
 }
 
 export function effectiveProtocolConfigs(input: {

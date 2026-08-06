@@ -18,7 +18,7 @@ const {
 } = await import("../src/routes/v1/chat-completions.js");
 const { nativeProtocolRoutes } = await import("../src/routes/v1/native-protocols.js");
 
-test("employee relay uses one /ai base and no legacy /v1 entrypoints", async () => {
+test("employee relay exposes only Chat Completions and Anthropic Messages under /ai", async () => {
   const app = Fastify();
   await app.register(relayRoutes);
   await app.register(nativeProtocolRoutes);
@@ -27,8 +27,6 @@ test("employee relay uses one /ai base and no legacy /v1 entrypoints", async () 
     { method: "GET", url: "/ai/models" },
     { method: "GET", url: "/ai/v1/models" },
     { method: "POST", url: "/ai/chat/completions" },
-    { method: "POST", url: "/ai/responses" },
-    { method: "POST", url: "/ai/responses/compact" },
     { method: "POST", url: "/ai/v1/messages" },
     { method: "POST", url: "/ai/v1/messages/count_tokens" },
   ] as const;
@@ -37,15 +35,17 @@ test("employee relay uses one /ai base and no legacy /v1 entrypoints", async () 
     assert.equal(response.statusCode, 401, `${route.method} ${route.url} is not registered`);
   }
 
-  const legacyRoutes = [
+  const unregisteredRoutes = [
     { method: "GET", url: "/v1/models" },
     { method: "POST", url: "/v1/chat/completions" },
     { method: "POST", url: "/v1/responses" },
     { method: "POST", url: "/v1/responses/compact" },
     { method: "POST", url: "/v1/messages" },
     { method: "POST", url: "/v1/messages/count_tokens" },
+    { method: "POST", url: "/ai/responses" },
+    { method: "POST", url: "/ai/responses/compact" },
   ] as const;
-  for (const route of legacyRoutes) {
+  for (const route of unregisteredRoutes) {
     const response = await app.inject(route);
     assert.equal(response.statusCode, 404, `${route.method} ${route.url} is still exposed`);
   }

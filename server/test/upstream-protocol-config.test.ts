@@ -87,12 +87,12 @@ test("protocol config resolution uses explicit config and legacy fallback only f
   );
   assert.deepEqual(
     resolveProtocolUpstreamConfig({
-      protocol: "openai_responses",
+      protocol: "anthropic_messages",
       protocolConfigs: null,
       legacyBaseUrl: "https://legacy.example.test/v1/",
-      legacyAuthStyle: "bearer",
+      legacyAuthStyle: "x-api-key",
     }),
-    { baseUrl: "https://legacy.example.test/v1", authStyle: "bearer" },
+    { baseUrl: "https://legacy.example.test/v1", authStyle: "x-api-key" },
   );
 });
 

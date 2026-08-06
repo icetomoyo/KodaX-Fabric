@@ -46,7 +46,7 @@ const {
 } = schema;
 
 type Role = "employee" | "admin" ;
-type Protocol = "openai_chat" | "openai_responses" | "anthropic_messages";
+type Protocol = "openai_chat" | "anthropic_messages";
 type CredentialStatus = "active" | "cooling" | "disabled" | "auto_disabled";
 
 type UserFixture = {
@@ -361,7 +361,7 @@ async function createChannelFixtures(): Promise<void> {
     protocols: ["openai_chat"],
   });
   await createCredential("public-cooling", publicLine, {
-    protocols: ["openai_responses"],
+    protocols: ["anthropic_messages"],
     status: "cooling",
     coolUntil: new Date(Date.now() + 60 * 60_000),
   });
@@ -382,8 +382,8 @@ async function createChannelFixtures(): Promise<void> {
   const granted = await createCredential("grant-authorized", grantLine, {
     protocols: ["openai_chat"],
   });
-  await createCredential("grant-unauthorized-responses", grantLine, {
-    protocols: ["openai_responses"],
+  await createCredential("grant-unauthorized-chat", grantLine, {
+    protocols: ["openai_chat"],
   });
   await createCredential("grant-unauthorized-messages", grantLine, {
     protocols: ["anthropic_messages"],
@@ -498,7 +498,7 @@ async function assertUpstreamChannelMetadata(): Promise<void> {
   assert(publicChannel, "enabled public channel was not visible");
   assert.equal("shareMode" in publicChannel, false, "legacy shareMode leaked into employee DTO");
   assert.equal(publicChannel.credentialCount, 2, "invalid-status/weight credentials were counted");
-  assert.deepEqual(publicChannel.compatibleProtocols, ["openai_chat", "openai_responses"]);
+  assert.deepEqual(publicChannel.compatibleProtocols, ["openai_chat", "anthropic_messages"]);
 
   const grantChannel = body.data.find(
     (channel) => channel.productLineId === requiredProductLine("grant"),
@@ -508,7 +508,7 @@ async function assertUpstreamChannelMetadata(): Promise<void> {
   assert.equal(grantChannel.credentialCount, 3, "credential grants still restricted channel metadata");
   assert.deepEqual(
     grantChannel.compatibleProtocols,
-    ["openai_chat", "openai_responses", "anthropic_messages"],
+    ["openai_chat", "anthropic_messages"],
     "ungranted credential protocols were still hidden",
   );
 
@@ -599,7 +599,7 @@ async function assertCreateValidationAndBinding(): Promise<void> {
     headers,
     payload: {
       name: `mismatch ${marker}`,
-      productLineId: requiredProductLine("public"),
+      productLineId: requiredProductLine("grant-invisible"),
       protocol: "anthropic_messages",
     },
   });

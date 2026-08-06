@@ -4,28 +4,10 @@ import type { RelayUsage } from "./types.js";
 export const DEFAULT_NATIVE_SSE_AUDIT_MAX_BYTES = 20 * 1024 * 1024;
 export const DEFAULT_NATIVE_SSE_EVENT_MAX_BYTES = 20 * 1024 * 1024;
 
-export type NativeSseProtocol = "openai_responses" | "anthropic_messages";
-export type NativeSseTerminalKind = "completed" | "incomplete" | "error";
+export type NativeSseProtocol = "anthropic_messages";
+export type NativeSseTerminalKind = "completed" | "error";
 
 type JsonObject = Record<string, unknown>;
-
-export type OpenAiResponsesAuditFunctionCall = {
-  index: number;
-  itemId?: string;
-  id?: string;
-  callId?: string;
-  name?: string;
-  arguments: string;
-};
-
-export type OpenAiResponsesSseAssembly = {
-  protocol: "openai_responses";
-  /** Latest complete response object retained within the audit byte budget. */
-  response: JsonObject | null;
-  outputText: string;
-  refusal: string | null;
-  functionCalls: OpenAiResponsesAuditFunctionCall[];
-};
 
 export type AnthropicAuditTextBlock = {
   index: number;
@@ -70,9 +52,7 @@ export type AnthropicMessagesSseAssembly = {
   message: AnthropicAuditMessage;
 };
 
-export type NativeSseAssembly =
-  | OpenAiResponsesSseAssembly
-  | AnthropicMessagesSseAssembly;
+export type NativeSseAssembly = AnthropicMessagesSseAssembly;
 
 export type NativeSseAuditSnapshot = {
   protocol: NativeSseProtocol;
@@ -107,16 +87,6 @@ type MutableAnthropicBlock = {
   textParts: string[];
   inputJsonParts: string[];
   inputJsonSeen: boolean;
-};
-
-type MutableResponseFunctionCall = {
-  index: number;
-  itemId?: string;
-  id?: string;
-  callId?: string;
-  name?: string;
-  argumentParts: string[];
-  finalArguments?: string;
 };
 
 function asObject(value: unknown): JsonObject | null {
@@ -174,41 +144,10 @@ function normalizedLimit(value: number | undefined, fallback: number, allowZero 
   return integer;
 }
 
-function responseFunctionKey(
-  source: JsonObject,
-  fallbackIndex: number,
-): { key: string; index: number } {
-  const itemId = stringValue(source.item_id);
-  const callId = stringValue(source.call_id);
-  const suppliedIndex = asNonNegativeInteger(source.output_index);
-  const index = suppliedIndex ?? fallbackIndex;
-  if (itemId !== undefined) return { key: `item:${itemId}`, index };
-  if (callId !== undefined) return { key: `call:${callId}`, index };
-  return { key: `index:${index}`, index };
-}
-
-function extractResponseContent(item: JsonObject): { text: string; refusal: string } {
-  const text: string[] = [];
-  const refusal: string[] = [];
-  if (!Array.isArray(item.content)) return { text: "", refusal: "" };
-
-  for (const value of item.content) {
-    const content = asObject(value);
-    if (!content) continue;
-    if (content.type === "output_text" && typeof content.text === "string") {
-      text.push(content.text);
-    }
-    if (content.type === "refusal" && typeof content.refusal === "string") {
-      refusal.push(content.refusal);
-    }
-  }
-  return { text: text.join(""), refusal: refusal.join("") };
-}
-
 /**
- * Incrementally observes native Responses or Anthropic Messages SSE without
- * changing the bytes. UTF-8 code points, CRLF pairs, lines, and events may all
- * be split at arbitrary network chunk boundaries.
+ * Incrementally observes Anthropic Messages SSE without changing the bytes.
+ * UTF-8 code points, CRLF pairs, lines, and events may all be split at
+ * arbitrary network chunk boundaries.
  */
 export class NativeSseAuditInspector {
   readonly protocol: NativeSseProtocol;
@@ -240,16 +179,6 @@ export class NativeSseAuditInspector {
   private terminalKind: NativeSseTerminalKind | null = null;
   private lastUsage: RelayUsage = emptyUsage();
   private lastUpstreamError: unknown | null = null;
-
-  private responseObject: JsonObject | null = null;
-  private responseId?: string;
-  private responseModel?: string;
-  private responseStatus?: string;
-  private readonly responseTextParts: string[] = [];
-  private readonly responseRefusalParts: string[] = [];
-  private readonly responseFinalText = new Map<number, string>();
-  private readonly responseFinalRefusal = new Map<number, string>();
-  private readonly responseFunctionCalls = new Map<string, MutableResponseFunctionCall>();
 
   private anthropicId?: string;
   private anthropicRole = "assistant";
@@ -315,49 +244,8 @@ export class NativeSseAuditInspector {
         totalTokens: this.lastUsage.totalTokens,
         raw: this.lastUsage.raw,
       },
-      assembled:
-        this.protocol === "openai_responses"
-          ? this.snapshotResponses()
-          : this.snapshotAnthropic(),
+      assembled: this.snapshotAnthropic(),
       upstreamError: this.lastUpstreamError,
-    };
-  }
-
-  private snapshotResponses(): OpenAiResponsesSseAssembly {
-    const finalText = [...this.responseFinalText.entries()]
-      .sort(([left], [right]) => left - right)
-      .map(([, value]) => value)
-      .join("");
-    const finalRefusal = [...this.responseFinalRefusal.entries()]
-      .sort(([left], [right]) => left - right)
-      .map(([, value]) => value)
-      .join("");
-
-    let response = this.responseObject;
-    if (!response && (this.responseId || this.responseModel || this.responseStatus)) {
-      response = {
-        ...(this.responseId !== undefined ? { id: this.responseId } : {}),
-        object: "response",
-        ...(this.responseModel !== undefined ? { model: this.responseModel } : {}),
-        ...(this.responseStatus !== undefined ? { status: this.responseStatus } : {}),
-      };
-    }
-
-    return {
-      protocol: "openai_responses",
-      response,
-      outputText: finalText || this.responseTextParts.join(""),
-      refusal: finalRefusal || this.responseRefusalParts.join("") || null,
-      functionCalls: [...this.responseFunctionCalls.values()]
-        .sort((left, right) => left.index - right.index)
-        .map((call) => ({
-          index: call.index,
-          ...(call.itemId !== undefined ? { itemId: call.itemId } : {}),
-          ...(call.id !== undefined ? { id: call.id } : {}),
-          ...(call.callId !== undefined ? { callId: call.callId } : {}),
-          ...(call.name !== undefined ? { name: call.name } : {}),
-          arguments: call.finalArguments ?? call.argumentParts.join(""),
-        })),
     };
   }
 
@@ -535,11 +423,7 @@ export class NativeSseAuditInspector {
     }
     this.retainedAuditBytes += dataBytes;
 
-    if (this.protocol === "openai_responses") {
-      this.applyResponsesEvent(eventType, payload);
-    } else {
-      this.applyAnthropicEvent(eventType, payload);
-    }
+    this.applyAnthropicEvent(eventType, payload);
   }
 
   private resetEvent(): void {
@@ -551,16 +435,6 @@ export class NativeSseAuditInspector {
   }
 
   private observeOversizedEvent(eventType: string): void {
-    if (this.protocol === "openai_responses") {
-      if (eventType === "response.completed") this.markTerminal(eventType, "completed");
-      if (eventType === "response.incomplete") this.markTerminal(eventType, "incomplete");
-      if (eventType === "response.failed" || eventType === "error") {
-        this.markTerminal(eventType, "error");
-        this.lastUpstreamError = { type: eventType, message: "Oversized SSE error event" };
-      }
-      return;
-    }
-
     if (eventType === "message_stop") this.markTerminal(eventType, "completed");
     if (eventType === "error") {
       this.markTerminal(eventType, "error");
@@ -569,31 +443,6 @@ export class NativeSseAuditInspector {
   }
 
   private observeEssential(eventType: string, payload: JsonObject): void {
-    if (this.protocol === "openai_responses") {
-      const response = asObject(payload.response);
-      this.lastUsage = mergeNativeUsage(
-        this.lastUsage,
-        response?.usage ?? payload.usage,
-      );
-
-      if (eventType === "response.completed") {
-        this.markTerminal(eventType, "completed");
-      } else if (eventType === "response.incomplete") {
-        this.markTerminal(eventType, "incomplete");
-      } else if (eventType === "response.failed" || eventType === "error") {
-        this.markTerminal(eventType, "error");
-        this.lastUpstreamError =
-          (response && response.error !== undefined ? response.error : undefined) ??
-          payload.error ??
-          {
-            type: eventType,
-            ...(typeof payload.code === "string" ? { code: payload.code } : {}),
-            ...(typeof payload.message === "string" ? { message: payload.message } : {}),
-          };
-      }
-      return;
-    }
-
     const message = asObject(payload.message);
     this.lastUsage = mergeNativeUsage(
       this.lastUsage,
@@ -614,86 +463,6 @@ export class NativeSseAuditInspector {
     if (this.terminalKind === "error" && kind !== "error") return;
     this.terminalEvent = eventType;
     this.terminalKind = kind;
-  }
-
-  private applyResponsesEvent(eventType: string, payload: JsonObject): void {
-    const response = asObject(payload.response);
-    if (response) this.applyResponseObject(response);
-
-    if (eventType === "response.output_text.delta" && typeof payload.delta === "string") {
-      this.responseTextParts.push(payload.delta);
-    }
-    if (eventType === "response.refusal.delta" && typeof payload.delta === "string") {
-      this.responseRefusalParts.push(payload.delta);
-    }
-    if (eventType === "response.output_item.added" || eventType === "response.output_item.done") {
-      this.applyResponseOutputItem(payload, eventType === "response.output_item.done");
-    }
-    if (eventType === "response.function_call_arguments.delta") {
-      const call = this.getResponseFunctionCall(payload);
-      if (typeof payload.delta === "string") call.argumentParts.push(payload.delta);
-    }
-    if (eventType === "response.function_call_arguments.done") {
-      const call = this.getResponseFunctionCall(payload);
-      if (typeof payload.arguments === "string") call.finalArguments = payload.arguments;
-    }
-  }
-
-  private applyResponseObject(response: JsonObject): void {
-    this.responseObject = response;
-    this.responseId = stringValue(response.id) ?? this.responseId;
-    this.responseModel = stringValue(response.model) ?? this.responseModel;
-    this.responseStatus = stringValue(response.status) ?? this.responseStatus;
-
-    if (!Array.isArray(response.output)) return;
-    for (let index = 0; index < response.output.length; index += 1) {
-      const item = asObject(response.output[index]);
-      if (!item) continue;
-      this.applyFinalResponseItem(item, index, true);
-    }
-  }
-
-  private applyResponseOutputItem(payload: JsonObject, final: boolean): void {
-    const item = asObject(payload.item);
-    if (!item) return;
-    const index = asNonNegativeInteger(payload.output_index) ?? 0;
-    this.applyFinalResponseItem(item, index, final);
-  }
-
-  private applyFinalResponseItem(item: JsonObject, index: number, final: boolean): void {
-    const type = stringValue(item.type);
-    if (type === "function_call") {
-      const source: JsonObject = {
-        ...item,
-        output_index: index,
-        item_id: item.id,
-      };
-      const call = this.getResponseFunctionCall(source);
-      call.id = stringValue(item.id) ?? call.id;
-      call.callId = stringValue(item.call_id) ?? call.callId;
-      call.name = stringValue(item.name) ?? call.name;
-      if (final && typeof item.arguments === "string") call.finalArguments = item.arguments;
-      return;
-    }
-
-    if (!final) return;
-    const content = extractResponseContent(item);
-    if (content.text !== "") this.responseFinalText.set(index, content.text);
-    if (content.refusal !== "") this.responseFinalRefusal.set(index, content.refusal);
-  }
-
-  private getResponseFunctionCall(source: JsonObject): MutableResponseFunctionCall {
-    const fallbackIndex = this.responseFunctionCalls.size;
-    const { key, index } = responseFunctionKey(source, fallbackIndex);
-    let call = this.responseFunctionCalls.get(key);
-    if (!call) {
-      call = { index, argumentParts: [] };
-      this.responseFunctionCalls.set(key, call);
-    }
-    call.itemId = stringValue(source.item_id) ?? call.itemId;
-    call.callId = stringValue(source.call_id) ?? call.callId;
-    call.name = stringValue(source.name) ?? call.name;
-    return call;
   }
 
   private applyAnthropicEvent(eventType: string, payload: JsonObject): void {

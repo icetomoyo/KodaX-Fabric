@@ -15,13 +15,6 @@ const {
   resolveRelayCandidatesFromSnapshot,
 } = await import("../src/lib/relay/routing.js");
 const { isValidRelayProductLineId } = await import("../src/lib/relay/types.js");
-const {
-  candidateMatchesResponseAffinity,
-  relayCandidateConfigurationFingerprint,
-} = await import(
-  "../src/lib/relay/response-affinity.js"
-);
-
 function credential(
   credentialId: number,
   productLineId: number,
@@ -41,7 +34,7 @@ function credential(
     retryPolicy: null,
     providerCode: `provider-${productLineId}`,
     authStyle: "bearer",
-    supportedProtocols: ["openai_chat", "openai_responses"],
+    supportedProtocols: ["openai_chat", "anthropic_messages"],
     baseUrl: `https://pl-${productLineId}.example.test/v1`,
     ...overrides,
   };
@@ -236,87 +229,4 @@ test("transparent fallback includes every active positive compatible credential"
     new Set([11, 12]),
   );
   assert.ok(result.candidates.every((candidate) => candidate.upstreamModel === "glm-5.2"));
-});
-
-test("Responses affinity cannot cross the Key-bound channel", () => {
-  const result = resolveRelayCandidatesFromSnapshot(
-    [credential(11, 1)],
-    [],
-    "shared-model",
-    "openai_responses",
-    1,
-  );
-  const selected = result.candidates[0]!;
-  const configurationFingerprint = relayCandidateConfigurationFingerprint(selected);
-
-  assert.equal(
-    candidateMatchesResponseAffinity(selected, {
-      productLineId: 2,
-      credentialId: selected.credentialId,
-      upstreamModel: selected.upstreamModel,
-      configurationFingerprint,
-    }),
-    false,
-  );
-  assert.equal(
-    candidateMatchesResponseAffinity(selected, {
-      productLineId: 1,
-      credentialId: selected.credentialId,
-      upstreamModel: selected.upstreamModel,
-      configurationFingerprint,
-    }),
-    true,
-  );
-});
-
-test("Responses affinity fails closed after routing-sensitive configuration changes", () => {
-  const result = resolveRelayCandidatesFromSnapshot(
-    [credential(11, 1)],
-    [],
-    "shared-model",
-    "openai_responses",
-    1,
-  );
-  const selected = result.candidates[0]!;
-  const affinity = {
-    productLineId: selected.productLineId,
-    credentialId: selected.credentialId,
-    upstreamModel: selected.upstreamModel,
-    configurationFingerprint: relayCandidateConfigurationFingerprint(selected),
-  };
-
-  assert.equal(
-    candidateMatchesResponseAffinity(
-      selected,
-      {
-        productLineId: selected.productLineId,
-        credentialId: selected.credentialId,
-        upstreamModel: selected.upstreamModel,
-      } as typeof affinity,
-    ),
-    false,
-  );
-
-  assert.equal(
-    candidateMatchesResponseAffinity({ ...selected, baseUrl: `${selected.baseUrl}/changed` }, affinity),
-    false,
-  );
-  assert.equal(
-    candidateMatchesResponseAffinity({ ...selected, authStyle: "x-api-key" }, affinity),
-    false,
-  );
-  assert.equal(
-    candidateMatchesResponseAffinity(
-      { ...selected, upstreamProtocol: "anthropic_messages" },
-      affinity,
-    ),
-    false,
-  );
-  assert.equal(
-    candidateMatchesResponseAffinity(
-      { ...selected, secretEncrypted: "rotated-encrypted-secret" },
-      affinity,
-    ),
-    false,
-  );
 });

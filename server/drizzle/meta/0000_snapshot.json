@@ -1692,7 +1692,6 @@
       "schema": "public",
       "values": [
         "openai_chat",
-        "openai_responses",
         "anthropic_messages"
       ]
     },

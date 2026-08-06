@@ -6,6 +6,7 @@ import { employeeApiKeys, employees } from "../db/schema/index.js";
 import { hashApiKey } from "../lib/api-key.js";
 import {
   DEFAULT_RELAY_PROTOCOL,
+  isRelayProtocol,
   type RelayProtocol,
 } from "../lib/relay/protocol.js";
 import { isValidRelayProductLineId } from "../lib/relay/types.js";
@@ -144,11 +145,12 @@ async function authenticateRelayApiKey(
     principal.employeeStatus !== "active" ||
     principal.employeeRole !== "employee" ||
     principal.mustChangePassword ||
+    !isRelayProtocol(principal.protocol) ||
     !isValidRelayProductLineId(principal.productLineId)
   ) {
     return relayError(
       reply,
-      principal?.protocol ?? errorProtocol,
+      principal && isRelayProtocol(principal.protocol) ? principal.protocol : errorProtocol,
       401,
       "无效的 TokenHub API Key",
       "authentication_error",

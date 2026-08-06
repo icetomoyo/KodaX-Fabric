@@ -18,7 +18,6 @@ export const employeeStatusEnum = pgEnum("employee_status", ["active", "disabled
 export const apiKeyStatusEnum = pgEnum("api_key_status", ["active", "revoked"]);
 export const relayProtocolEnum = pgEnum("relay_protocol", [
   "openai_chat",
-  "openai_responses",
   "anthropic_messages",
 ]);
 export const productTypeEnum = pgEnum("product_type", ["api", "coding_plan"]);

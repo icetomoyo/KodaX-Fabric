@@ -36,15 +36,6 @@
       </div>
     </el-form-item>
 
-    <el-alert
-      v-if="legacyProtocols.length"
-      class="legacy-alert"
-      :type="legacyRemovalPending ? 'warning' : 'info'"
-      :closable="false"
-      show-icon
-      :title="legacyAlertTitle"
-    />
-
     <el-form-item :label="protocolRouteLabel" required>
       <div v-if="selectedConfigRows.length" class="protocol-config-list">
         <div
@@ -122,14 +113,12 @@ type ChannelStatus = "active" | "disabled";
 
 const props = withDefaults(defineProps<{
   protocolConfigs: RelayProtocolConfigs;
-  legacyProtocols?: RelayProtocol[];
   protocolsTouched?: boolean;
   routingConfigDrift?: boolean;
   routingUpgradeRequested?: boolean;
   disabled?: boolean;
   showChangeRisk?: boolean;
 }>(), {
-  legacyProtocols: () => [],
   protocolsTouched: false,
   routingConfigDrift: false,
   routingUpgradeRequested: false,
@@ -171,17 +160,6 @@ const missingProtocolLabels = computed(() => missingProtocols.value
 const routingUpgradePending = computed(() => (
   props.protocolsTouched || props.routingUpgradeRequested
 ));
-
-const legacyRemovalPending = computed(() => routingUpgradePending.value);
-
-const legacyAlertTitle = computed(() => {
-  const labels = props.legacyProtocols
-    .map((protocol) => relayProtocolLabel(protocol, true))
-    .join("、");
-  return legacyRemovalPending.value
-    ? `本次协议路由升级将移除旧协议 ${labels}；仍在使用的员工 Key 会阻止保存。`
-    : `该渠道仍包含 ${labels}；仅修改其他字段时会继续保留，主动调整协议后才会移除。`;
-});
 
 const changeRiskTitle = computed(() => props.routingConfigDrift
   ? "检测到旧的 URL / 鉴权配置，保存后协议路由将更新；请重新测试连接。"
@@ -269,7 +247,6 @@ function protocolOptionLabel(option: RelayProtocolOption): string {
   line-height: 1.5;
 }
 
-.legacy-alert,
 .change-risk-alert {
   margin: -4px 0 18px;
 }

@@ -208,14 +208,6 @@ test("upstream chat URL preserves provider version paths", () => {
 
 test("protocol operation URLs preserve base paths and avoid duplicate Anthropic v1", () => {
   assert.equal(
-    buildRelayUpstreamUrl(
-      "https://api.openai.com/v1",
-      "openai_responses",
-      "responses_compact",
-    ).toString(),
-    "https://api.openai.com/v1/responses/compact",
-  );
-  assert.equal(
     buildRelayUpstreamUrl("https://api.anthropic.com", "anthropic_messages", "messages")
       .toString(),
     "https://api.anthropic.com/v1/messages",
@@ -266,8 +258,8 @@ test("protocol filtering rejects credentials without an explicit protocol", () =
   assert.equal(credentialSupportsProtocol({}, "anthropic_messages"), false);
   assert.equal(
     credentialSupportsProtocol(
-      { supportedProtocols: ["openai_chat", "openai_responses"] },
-      "openai_responses",
+      { supportedProtocols: ["openai_chat", "anthropic_messages"] },
+      "anthropic_messages",
     ),
     true,
   );
@@ -293,7 +285,7 @@ test("protocol API-key extraction accepts Anthropic aliases and rejects conflict
     { ok: false, reason: "conflict" },
   );
   assert.deepEqual(
-    extractRelayApiKey({ "x-api-key": "th_only" }, "openai_responses"),
+    extractRelayApiKey({ "x-api-key": "th_only" }, "openai_chat"),
     { ok: false, reason: "missing" },
   );
   assert.deepEqual(extractAnyRelayApiKey({ "x-api-key": "th_models" }), {
