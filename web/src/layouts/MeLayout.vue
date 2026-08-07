@@ -6,6 +6,7 @@
         <el-menu-item index="/me">工作台</el-menu-item>
         <el-menu-item index="/me/keys">API Key</el-menu-item>
         <el-menu-item index="/me/logs">我的调用</el-menu-item>
+        <el-menu-item index="/me/tickets">我的工单</el-menu-item>
       </el-menu>
     </el-aside>
     <el-container>

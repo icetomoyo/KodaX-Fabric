@@ -8,6 +8,7 @@
         <el-menu-item index="/admin/credentials">上游渠道</el-menu-item>
         <el-menu-item index="/admin/logs">调用日志</el-menu-item>
         <el-menu-item index="/admin/quota">配额策略</el-menu-item>
+        <el-menu-item index="/admin/tickets">工单管理</el-menu-item>
         <el-menu-item index="/admin/ops-audit">操作审计</el-menu-item>
         <el-menu-item index="/admin/profile">个人中心</el-menu-item>
       </el-menu>

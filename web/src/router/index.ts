@@ -43,6 +43,11 @@ export const router = createRouter({
           name: "me-logs",
           component: () => import("@/views/me/LogsView.vue"),
         },
+        {
+          path: "tickets",
+          name: "me-tickets",
+          component: () => import("@/views/me/TicketsView.vue"),
+        },
       ],
     },
     {
@@ -92,6 +97,11 @@ export const router = createRouter({
           path: "ops-audit",
           name: "admin-ops-audit",
           component: () => import("@/views/admin/OpsAuditView.vue"),
+        },
+        {
+          path: "tickets",
+          name: "admin-tickets",
+          component: () => import("@/views/admin/TicketsView.vue"),
         },
         {
           path: "profile",

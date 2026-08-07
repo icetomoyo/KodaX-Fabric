@@ -57,6 +57,25 @@ export const employees = pgTable(
   (t) => [uniqueIndex("employees_phone_uidx").on(t.phone)],
 );
 
+export const tickets = pgTable(
+  "tickets",
+  {
+    id: bigint("id", { mode: "number" }).generatedAlwaysAsIdentity().primaryKey(),
+    ticketNo: varchar("ticket_no", { length: 32 }).notNull(),
+    employeeId: bigint("employee_id", { mode: "number" })
+      .notNull()
+      .references(() => employees.id),
+    subject: varchar("subject", { length: 100 }).notNull(),
+    content: text("content").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("tickets_ticket_no_uidx").on(t.ticketNo),
+    index("tickets_employee_created_idx").on(t.employeeId, t.createdAt),
+    index("tickets_created_idx").on(t.createdAt),
+  ],
+);
+
 export const employeeApiKeys = pgTable(
   "employee_api_keys",
   {

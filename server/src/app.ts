@@ -4,6 +4,7 @@ import { env } from "./config.js";
 import { healthRoutes } from "./routes/health.js";
 import { authRoutes } from "./routes/auth.js";
 import { meRoutes } from "./routes/me.js";
+import { meTicketRoutes } from "./routes/me-tickets.js";
 import { adminUserRoutes } from "./routes/admin/users.js";
 import { adminOverviewRoutes } from "./routes/admin/overview.js";
 import { adminProviderRoutes } from "./routes/admin/providers.js";
@@ -12,6 +13,7 @@ import { adminModelRouteRoutes } from "./routes/admin/model-routes.js";
 import { adminLogRoutes } from "./routes/admin/logs.js";
 import { adminQuotaRoutes } from "./routes/admin/quota.js";
 import { adminOpsAuditRoutes } from "./routes/admin/ops-audit.js";
+import { adminTicketRoutes } from "./routes/admin/tickets.js";
 import { chatCompletionRoutes } from "./routes/relay/chat-completions.js";
 import { anthropicMessageRoutes } from "./routes/relay/anthropic-messages.js";
 
@@ -30,6 +32,7 @@ export async function buildApp() {
   await app.register(healthRoutes);
   await app.register(authRoutes);
   await app.register(meRoutes);
+  await app.register(meTicketRoutes);
   await app.register(adminUserRoutes);
   await app.register(adminOverviewRoutes);
   await app.register(adminProviderRoutes);
@@ -38,6 +41,7 @@ export async function buildApp() {
   await app.register(adminLogRoutes);
   await app.register(adminQuotaRoutes);
   await app.register(adminOpsAuditRoutes);
+  await app.register(adminTicketRoutes);
   await app.register(chatCompletionRoutes);
   await app.register(anthropicMessageRoutes);
 

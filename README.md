@@ -2,7 +2,7 @@
 
 公司内网 LLM 统一出口：官方供应商 Key 池共享、员工级全文审计、不计费。
 
-> v0.0.4 功能实现与本地验证已完成；生产环境尚未部署。
+> v0.0.5 功能实现与本地验证已完成；生产环境尚未部署。
 
 📄 **产品需求文档（PRD）**：[docs/PRD.md](./docs/PRD.md)
 
@@ -100,10 +100,10 @@ docker compose exec -T postgres psql -U app -d postgres -c "CREATE DATABASE toke
 
 | 角色 | 路径 | 能力 |
 |---|---|---|
-| 员工 | `/me/*` | 改密、API Key、自己的用量与日志 |
-| 管理员 | `/admin/*` only | 概览、员工、上游渠道、调用日志、配额、操作审计（不进入员工端） |
+| 员工 | `/me/*` | 改密、API Key、自己的用量与日志、提交和查看自己的工单 |
+| 管理员 | `/admin/*` only | 概览、员工、上游渠道、调用日志、配额、工单、操作审计（不进入员工端） |
 
-管理后台菜单：概览 · 员工管理 · 上游渠道 · 调用日志 · 配额策略 · 操作审计 · 个人中心。供应商、产品线和模型路由保留为内部数据结构，不再暴露独立页面。
+管理后台菜单：概览 · 员工管理 · 上游渠道 · 调用日志 · 配额策略 · 工单管理 · 操作审计 · 个人中心。供应商、产品线和模型路由保留为内部数据结构，不再暴露独立页面。
 
 模型代理已启用，员工统一使用 `/ai` Base URL。支持 OpenAI Chat Completions 和 Anthropic Messages 两种原生 API 转发，不做协议转换。当前入口为 `/ai/chat/completions`、`/ai/v1/messages` 与 `/ai/v1/messages/count_tokens`（员工 API Key）；网页 Chat 非一期范围。
 
@@ -226,12 +226,13 @@ npm run db:migrate      # 执行迁移
 npm run db:seed         # 仅种子管理员 + 最小系统配置（无演示供应商/凭证）
 npm run db:cleanup-demo # 事务清理 Key、渠道和业务数据（保留员工账号与系统基线）
 npm run db:generate     # 改 schema 后生成迁移
-npm test --workspace=@tokenhub/server # 服务端默认单元测试（89 项）
+npm test --workspace=@tokenhub/server # 服务端默认单元测试（93 项）
 npm run test:relay:mock --workspace=@tokenhub/server # 本地 PG/Redis + Mock 上游集成测试
 npm run test:relay:native:mock --workspace=@tokenhub/server # Anthropic Messages 原生转发集成测试
 npm run test:v001:api --workspace=@tokenhub/server # v0.0.1 Key/权限/数据库约束集成测试
 npm run test:v001:binding --workspace=@tokenhub/server # v0.0.1 两种 API 的 A/B 渠道硬绑定集成测试
 npm run test:v003:integration --workspace=@tokenhub/server # v0.0.3 用量、权限、正文脱敏与审计去重集成测试
+npm run test:v005:integration --workspace=@tokenhub/server # v0.0.5 工单、员工隔离与角色权限集成测试
 ```
 
 `test:relay:*` 和 `test:v001:*` 会使用当前配置的 PostgreSQL/Redis；只能在已完成 Migration 的隔离开发或测试环境运行，不要直接指向生产数据库。
