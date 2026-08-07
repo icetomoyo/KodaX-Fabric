@@ -12,16 +12,18 @@ const {
   RelayResponseTooLargeError,
   readBoundedBody,
   readFirstNonEmptyChunk,
-  relayRoutes,
+  chatCompletionRoutes,
   settleFailedAttempt,
   toFastifyReadable,
-} = await import("../src/routes/v1/chat-completions.js");
-const { nativeProtocolRoutes } = await import("../src/routes/v1/native-protocols.js");
+} = await import("../src/routes/relay/chat-completions.js");
+const { anthropicMessageRoutes } = await import(
+  "../src/routes/relay/anthropic-messages.js"
+);
 
 test("employee relay exposes only Chat Completions and Anthropic Messages under /ai", async () => {
   const app = Fastify();
-  await app.register(relayRoutes);
-  await app.register(nativeProtocolRoutes);
+  await app.register(chatCompletionRoutes);
+  await app.register(anthropicMessageRoutes);
 
   const currentRoutes = [
     { method: "GET", url: "/ai/models" },

@@ -284,7 +284,7 @@ function noRouteError(message = "当前账户没有可用于该模型的渠道")
   );
 }
 
-export async function relayRoutes(app: FastifyInstance) {
+export async function chatCompletionRoutes(app: FastifyInstance) {
   for (const path of [RELAY_ENDPOINTS.models, RELAY_ENDPOINTS.anthropicModels]) {
     app.get(
       path,

@@ -1011,7 +1011,7 @@ async function handleNativeParsingError(
   return reply.code(status).type("application/json; charset=utf-8").send(payload);
 }
 
-export async function nativeProtocolRoutes(app: FastifyInstance) {
+export async function anthropicMessageRoutes(app: FastifyInstance) {
   app.setErrorHandler((error, req, reply) =>
     handleNativeParsingError(app, error, req, reply));
   for (const config of routeConfigs) {
