@@ -13,16 +13,25 @@ http://10.10.0.144 {
 https://10.10.0.144 {
 	tls internal
 
-	route {
-		encode zstd gzip
-
-		@backend path /api/* /ai/* /health
-		reverse_proxy @backend api:3100 {
-			flush_interval -1
-		}
-
-		root * /srv
-		try_files {path} /index.html
+	handle /caddy-root-ca.crt {
+		header Content-Disposition "attachment; filename=caddy-root-ca.crt"
+		rewrite * /root.crt
+		root * /data/caddy/pki/authorities/local
 		file_server
+	}
+
+	handle {
+		route {
+			encode zstd gzip
+
+			@backend path /api/* /ai/* /health
+			reverse_proxy @backend api:3100 {
+				flush_interval -1
+			}
+
+			root * /srv
+			try_files {path} /index.html
+			file_server
+		}
 	}
 }

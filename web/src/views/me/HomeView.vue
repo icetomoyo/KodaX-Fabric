@@ -13,7 +13,10 @@
       </el-col>
     </el-row>
     <el-divider />
-    <h3 class="guide-title">接入说明</h3>
+    <div class="guide-heading">
+      <h3 class="guide-title">接入说明</h3>
+      <router-link class="guide-link" to="/me/guide">查看完整接入教程 →</router-link>
+    </div>
     <el-descriptions :column="1" border>
       <el-descriptions-item label="Base URL">
         <code>{{ clientBaseUrl }}</code>
@@ -49,7 +52,19 @@ onMounted(async () => {
 
 <style scoped>
 .guide-title {
-  margin: 0 0 12px;
+  margin: 0;
+}
+.guide-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+.guide-link {
+  color: #2563eb;
+  font-size: 13px;
+  font-weight: 600;
 }
 code {
   overflow-wrap: anywhere;
