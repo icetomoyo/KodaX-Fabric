@@ -49,7 +49,7 @@
       <el-pagination
         v-model:current-page="page"
         background
-        small
+        size="small"
         layout="total, prev, pager, next"
         :total="total"
         :page-size="limit"

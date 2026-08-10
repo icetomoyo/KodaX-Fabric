@@ -125,7 +125,7 @@
     <div class="pager">
       <el-pagination
         background
-        small
+        size="small"
         layout="total, prev, pager, next"
         :total="total"
         :page-size="limit"
