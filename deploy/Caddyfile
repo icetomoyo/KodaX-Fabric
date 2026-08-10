@@ -1,24 +1,17 @@
 {
 	admin off
-	default_sni 10.10.0.144
+	default_sni tokenhub.haizhi.com
 	servers :443 {
 		protocols h1 h2
 	}
 }
 
-http://10.10.0.144 {
-	redir https://10.10.0.144{uri} permanent
+http://tokenhub.haizhi.com, http://10.10.0.144 {
+	redir https://tokenhub.haizhi.com{uri} permanent
 }
 
-https://10.10.0.144 {
-	tls internal
-
-	handle /caddy-root-ca.crt {
-		header Content-Disposition "attachment; filename=caddy-root-ca.crt"
-		rewrite * /root.crt
-		root * /data/caddy/pki/authorities/local
-		file_server
-	}
+https://tokenhub.haizhi.com {
+	tls /etc/caddy/certs/haizhi.com_cert_chain.pem /etc/caddy/certs/haizhi.com_key.key
 
 	handle {
 		route {

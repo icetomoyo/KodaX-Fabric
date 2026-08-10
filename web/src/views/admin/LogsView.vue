@@ -4,26 +4,21 @@
 
     <el-form :inline="true" size="small" class="filters" @keyup.enter="search">
       <el-form-item>
-        <el-input v-model="filters.employeeId" clearable placeholder="员工ID" style="width: 90px" />
-      </el-form-item>
-      <el-form-item>
-        <el-input v-model="filters.model" clearable placeholder="模型" style="width: 110px" />
-      </el-form-item>
-      <el-form-item>
-        <el-input v-model="filters.providerCode" clearable placeholder="供应商" style="width: 110px" />
-      </el-form-item>
-      <el-form-item>
-        <el-select v-model="filters.status" clearable placeholder="状态" style="width: 120px">
+        <el-select
+          v-model="filters.employeeId"
+          clearable
+          filterable
+          :loading="employeesLoading"
+          placeholder="全部员工"
+          style="width: 220px"
+        >
           <el-option
-            v-for="option in statusOptions"
-            :key="option.value"
-            :label="option.label"
-            :value="option.value"
+            v-for="employee in employees"
+            :key="employee.id"
+            :label="employeeOptionText(employee)"
+            :value="employee.id"
           />
         </el-select>
-      </el-form-item>
-      <el-form-item>
-        <el-input v-model="filters.requestId" clearable placeholder="Request ID" style="width: 180px" />
       </el-form-item>
       <el-form-item>
         <el-button type="primary" @click="search">查询</el-button>
@@ -311,6 +306,12 @@ interface LogDetail {
   meta: LogRow;
 }
 
+interface EmployeeOption {
+  id: number;
+  name: string;
+  phone: string;
+}
+
 interface AuditContext {
   requestId: string;
   truncated: boolean;
@@ -328,13 +329,6 @@ interface AuditContext {
   };
 }
 
-const statusOptions: Array<{ label: string; value: LogStatus }> = [
-  { label: "成功", value: "success" },
-  { label: "上游错误", value: "upstream_error" },
-  { label: "请求错误", value: "client_error" },
-  { label: "已取消", value: "cancelled" },
-];
-
 const providerNames: Record<string, string> = {
   glm: "智谱/GLM",
   kimi: "月之暗面/Kimi",
@@ -345,12 +339,10 @@ const providerNames: Record<string, string> = {
 const numberFormatter = new Intl.NumberFormat("zh-CN");
 
 const filters = reactive({
-  employeeId: "",
-  model: "",
-  providerCode: "",
-  status: "",
-  requestId: "",
+  employeeId: undefined as number | undefined,
 });
+const employees = ref<EmployeeOption[]>([]);
+const employeesLoading = ref(false);
 const items = ref<LogRow[]>([]);
 const total = ref(0);
 const page = ref(1);
@@ -402,6 +394,10 @@ function formatLatency(value: number | null | undefined): string {
 function employeeText(row: LogRow): string {
   const phoneSuffix = row.employeePhone.slice(-4);
   return phoneSuffix ? `${row.employeeName} · ${phoneSuffix}` : row.employeeName;
+}
+
+function employeeOptionText(employee: EmployeeOption): string {
+  return employee.phone ? `${employee.name} · ${employee.phone}` : employee.name;
 }
 
 function modelTooltip(row: LogRow): string {
@@ -479,11 +475,7 @@ async function load() {
       params: {
         limit,
         offset: (page.value - 1) * limit,
-        employeeId: filters.employeeId || undefined,
-        model: filters.model || undefined,
-        providerCode: filters.providerCode || undefined,
-        status: filters.status || undefined,
-        requestId: filters.requestId || undefined,
+        employeeId: filters.employeeId,
       },
     });
     if (data.success) {
@@ -497,19 +489,25 @@ async function load() {
   }
 }
 
+async function loadEmployees() {
+  employeesLoading.value = true;
+  try {
+    const { data } = await http.get("/api/admin/users", { params: { limit: 200 } });
+    if (data.success) employees.value = data.data;
+  } catch (e: any) {
+    ElMessage.error(e.response?.data?.message || "员工列表加载失败");
+  } finally {
+    employeesLoading.value = false;
+  }
+}
+
 function search() {
   page.value = 1;
   load();
 }
 
 function resetFilters() {
-  Object.assign(filters, {
-    employeeId: "",
-    model: "",
-    providerCode: "",
-    status: "",
-    requestId: "",
-  });
+  filters.employeeId = undefined;
   page.value = 1;
   load();
 }
@@ -550,7 +548,10 @@ async function openDetail(requestId: string) {
   }
 }
 
-onMounted(load);
+onMounted(() => {
+  void load();
+  void loadEmployees();
+});
 </script>
 
 <style scoped>

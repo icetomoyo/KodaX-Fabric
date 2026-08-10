@@ -8,9 +8,11 @@ dist
 coverage
 backups
 deploy/runtime
+deploy/certs/
 .turbo
 *.tsbuildinfo
 web/dist
 .idea
 .vscode/*
 !.vscode/extensions.json
+.agent/

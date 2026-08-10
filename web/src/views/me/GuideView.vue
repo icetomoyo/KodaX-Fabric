@@ -5,7 +5,7 @@
         <p class="eyebrow">员工接入</p>
         <h2 class="page-title">接入教程</h2>
         <p class="page-subtitle">
-          首次使用需要完成一次证书信任，之后客户端只需配置 Base URL 和自己的 TokenHub API Key。
+          TokenHub 使用公网受信任的 HTTPS 证书；客户端只需配置 Base URL 和自己的 TokenHub API Key。
         </p>
       </div>
       <div class="hero-actions">
@@ -16,15 +16,13 @@
 
     <el-alert
       class="security-alert"
-      title="内网 HTTPS 提示"
-      type="warning"
+      title="HTTPS 已就绪"
+      type="success"
       :closable="false"
       show-icon
     >
       <template #default>
-        当前使用公司内网 IP 和私有 CA。每台电脑只需安装一次
-        <code>caddy-root-ca.crt</code>；不要关闭 TLS 校验，也不要使用
-        <code>NODE_TLS_REJECT_UNAUTHORIZED=0</code> 或 <code>curl -k</code> 绕过证书检查。
+        此地址使用公网受信任的证书，无需下载或安装本地根证书。请保持客户端的 TLS 证书校验开启，勿使用不安全模式绕过校验。
       </template>
     </el-alert>
 
@@ -35,22 +33,8 @@
         <el-button link type="primary" @click="copyValue('Base URL', clientBaseUrl)">复制</el-button>
       </article>
       <article class="summary-card">
-        <span class="summary-label">根证书文件</span>
-        <code class="summary-value">caddy-root-ca.crt</code>
-        <el-button
-          link
-          type="primary"
-          tag="a"
-          href="/caddy-root-ca.crt"
-          download="caddy-root-ca.crt"
-        >
-          下载证书
-        </el-button>
-      </article>
-      <article class="summary-card fingerprint-card">
-        <span class="summary-label">证书 SHA-256 指纹</span>
-        <code class="summary-value fingerprint">{{ caFingerprint }}</code>
-        <el-button link type="primary" @click="copyValue('证书指纹', caFingerprint)">复制</el-button>
+        <span class="summary-label">HTTPS</span>
+        <span class="summary-value">公网受信任证书（无需本地安装）</span>
       </article>
     </section>
 
@@ -58,54 +42,15 @@
       <div class="section-heading">
         <span class="step-index">1</span>
         <div>
-          <h3>安装并信任内网根证书</h3>
-          <p>这是每台电脑的一次性操作。只安装公开的 <code>.crt</code> 文件，不要接收或安装任何 CA 私钥。</p>
+          <h3>验证 HTTPS 连接</h3>
+          <p>无需安装本地证书；先确认设备能够正常打开 TokenHub 健康检查地址。</p>
         </div>
       </div>
 
-      <el-tabs v-model="osTab" class="guide-tabs">
-        <el-tab-pane label="macOS" name="macos">
-          <ol class="instruction-list">
-            <li>点击页面上方“下载证书”，保存 <code>caddy-root-ca.crt</code>，并核对 SHA-256 指纹。</li>
-            <li>
-              双击证书导入“钥匙串访问”，选择“登录”钥匙串；打开证书详情，在“信任”中将 SSL 设置为“始终信任”。
-            </li>
-            <li>也可以在终端执行下面的命令，路径按实际下载位置修改。</li>
-          </ol>
-          <SnippetBlock
-            :value="macInstallCommand"
-            language="Shell"
-            @copy="copyValue('macOS 安装命令', macInstallCommand)"
-          />
-          <p class="inline-note">
-            安装后必须完全退出并重新打开 CC Switch、Claude Code 和其他调用客户端，让它们重新加载系统信任库。
-          </p>
-        </el-tab-pane>
-
-        <el-tab-pane label="Windows" name="windows">
-          <ol class="instruction-list">
-            <li>点击页面上方“下载证书”，保存 <code>caddy-root-ca.crt</code>，并核对 SHA-256 指纹。</li>
-            <li>
-              双击证书，选择“安装证书” → “当前用户” → “将所有证书放入下列存储” →
-              “受信任的根证书颁发机构”。
-            </li>
-            <li>也可以在 PowerShell 中执行下面的命令。</li>
-          </ol>
-          <SnippetBlock
-            :value="windowsInstallCommand"
-            language="PowerShell"
-            @copy="copyValue('Windows 安装命令', windowsInstallCommand)"
-          />
-          <p class="inline-note">
-            安装后必须完全退出并重新打开 CC Switch、Claude Code 和其他调用客户端。
-          </p>
-        </el-tab-pane>
-      </el-tabs>
-
       <div class="verify-strip">
         <div>
-          <strong>先验证 HTTPS</strong>
-          <p>浏览器打开健康检查地址，不应再出现红色“不安全”提示。</p>
+          <strong>打开健康检查</strong>
+          <p>浏览器应可直接打开且不出现证书警告。</p>
         </div>
         <code>{{ healthUrl }}</code>
         <el-button link type="primary" tag="a" :href="healthUrl" target="_blank" rel="noopener noreferrer">
@@ -164,8 +109,7 @@
             @copy="copyValue('Claude Code 配置', claudeSettingsSnippet)"
           />
           <p class="inline-note">
-            如果使用 Node.js 运行版 Claude Code，且系统证书已经安装但仍提示 TLS 错误，再加入
-            <code>NODE_EXTRA_CA_CERTS=/证书的绝对路径/caddy-root-ca.crt</code>。配置后重新启动 Claude Code。
+            修改配置后，请完全退出并重新启动 Claude Code，使环境变量重新加载。
           </p>
         </el-tab-pane>
 
@@ -174,7 +118,6 @@
             <span>Claude Code</span><b>→</b><span>CC Switch 本地代理</span><b>→</b><span>TokenHub</span>
           </div>
           <ol class="instruction-list">
-            <li>先完成根证书安装，再完全退出并重新打开 CC Switch。</li>
             <li>在 CC Switch 中新增或编辑供应商，API 格式选择与员工 Key 完全一致的协议。</li>
             <li>上游 Base URL 填写 <code>{{ clientBaseUrl }}</code>，API Key 填写员工自己的 <code>th_...</code> Key。</li>
             <li>
@@ -284,11 +227,8 @@ const SnippetBlock = defineComponent({
 });
 
 const router = useRouter();
-const osTab = ref("macos");
 const clientTab = ref("claude");
 const relayUrl = ref("");
-
-const caFingerprint = "FE:DC:BF:30:A0:4A:25:7E:83:12:C1:42:8D:50:75:8C:83:D2:6B:E3:4A:87:05:6A:A4:6E:5F:F2:24:3D:BE:0D";
 
 const clientBaseUrl = computed(() => relayClientBaseUrl(
   relayUrl.value || `${window.location.origin}${RELAY_BASE_PATH}`,
@@ -303,14 +243,6 @@ const publicOrigin = computed(() => {
 });
 
 const healthUrl = computed(() => `${publicOrigin.value}/health`);
-
-const macInstallCommand = `security add-trusted-cert \\
-  -r trustRoot \\
-  -p ssl \\
-  -k "$HOME/Library/Keychains/login.keychain-db" \\
-  "$HOME/Downloads/caddy-root-ca.crt"`;
-
-const windowsInstallCommand = "certutil -user -addstore -f Root \"$env:USERPROFILE\\Downloads\\caddy-root-ca.crt\"";
 
 const claudeSettingsSnippet = computed(() => JSON.stringify({
   env: {
@@ -330,8 +262,8 @@ const modelListCommand = computed(() => `curl -sS "${clientBaseUrl.value}/models
 const troubleshootingItems = computed(() => [
   {
     title: "Connection failed / TLS / 证书错误",
-    cause: "请求没有到达 TokenHub，通常是根证书未安装，或客户端仍在使用安装证书前加载的信任库。",
-    resolution: "重新安装并核对根证书，随后完全退出并重启 CC Switch、Claude Code 或对应客户端。",
+    cause: "请求没有到达 TokenHub，通常是 Base URL、DNS、网络、代理设置或设备系统时间异常。",
+    resolution: `先在浏览器打开 ${healthUrl.value}；确认客户端 Base URL 使用 ${clientBaseUrl.value}，随后完全退出并重启客户端。`,
   },
   {
     title: "地址中出现 :3100",
@@ -350,7 +282,7 @@ const troubleshootingItems = computed(() => [
   },
   {
     title: "CC Switch 持续 API error / Retrying",
-    cause: "CC Switch 没有重新加载证书，或把本地代理地址误填成了上游地址。",
+    cause: "CC Switch 的上游配置没有重新加载，或把本地代理地址误填成了上游地址。",
     resolution: `重启 CC Switch；确认其上游地址是 ${clientBaseUrl.value}，而不是 127.0.0.1:15721。`,
   },
 ]);
@@ -437,7 +369,7 @@ onMounted(loadRelayUrl);
 
 .summary-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1.1fr) minmax(220px, 0.7fr) minmax(0, 1.5fr);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
 }
 
@@ -471,11 +403,6 @@ onMounted(loadRelayUrl);
 .summary-note {
   color: #64748b;
   font-size: 12px;
-}
-
-.fingerprint {
-  font-size: 11px;
-  line-height: 1.55;
 }
 
 .guide-section {

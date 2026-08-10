@@ -17,10 +17,20 @@ docker compose up -d
 `bootstrap-admin.sh` is intentionally a one-shot action. Do not put
 `SEED_ADMIN_*` in `.env`, as the account may be renamed after first login.
 
-The current IP-only deployment uses Caddy's internal certificate authority.
-Install `caddy-root-ca.crt` from the server (or the generated local runtime
-copy) in each browser/CLI trust store before connecting to
-`https://10.10.0.144`; do not work around certificate verification in clients.
+Production is served at `https://tokenhub.haizhi.com` with a CA-trusted
+certificate. Before starting the `web` service, provision these files directly
+on the target host under `/etc/tokenhub/tls/`, outside the source tree:
+
+```text
+/etc/tokenhub/tls/haizhi.com_cert_chain.pem
+/etc/tokenhub/tls/haizhi.com_key.key
+```
+
+The certificate must cover `tokenhub.haizhi.com`; make the directory root-owned
+with mode `0700` and both files root-owned with mode `0600`. Never commit,
+copy into an image, or log the private key. A publicly trusted chain lets
+browsers and supported API clients validate TLS without installing a
+TokenHub-specific root certificate.
 
 Run `sh backup.sh` for a verified PostgreSQL dump. The deployment creates a
 daily local schedule, but copy the resulting `backups/` files to independent

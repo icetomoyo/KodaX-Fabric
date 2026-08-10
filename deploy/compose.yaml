@@ -62,7 +62,7 @@ services:
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
       PORT: "3100"
       HOST: 0.0.0.0
-      CORS_ORIGIN: https://10.10.0.144
+      CORS_ORIGIN: https://tokenhub.haizhi.com
       JWT_SECRET: ${JWT_SECRET}
       CREDENTIAL_ENCRYPT_KEY: ${CREDENTIAL_ENCRYPT_KEY}
       RELAY_UPSTREAM_TIMEOUT_MS: "300000"
@@ -106,6 +106,7 @@ services:
       - "10.10.0.144:443:443"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - /etc/tokenhub/tls:/etc/caddy/certs:ro
       - caddy_data:/data
       - caddy_config:/config
     logging:
