@@ -13,6 +13,13 @@
         <el-input v-model="q" placeholder="姓名/手机号" clearable @clear="load" />
       </el-form-item>
       <el-form-item>
+        <el-select v-model="statusFilter" placeholder="全部状态" clearable style="width: 120px" @change="load">
+          <el-option label="待审核" value="pending" />
+          <el-option label="正常" value="active" />
+          <el-option label="已停用" value="disabled" />
+        </el-select>
+      </el-form-item>
+      <el-form-item>
         <el-button type="primary" @click="load">搜索</el-button>
       </el-form-item>
     </el-form>
@@ -23,9 +30,17 @@
       <el-table-column prop="dept" label="部门" width="240" />
       <el-table-column label="状态" width="100">
         <template #default="{ row }">
-          <el-tag :type="row.status === 'active' ? 'success' : 'danger'" size="small">
+          <el-tag
+            :type="row.status === 'active' ? 'success' : row.status === 'pending' ? 'warning' : 'danger'"
+            size="small"
+          >
             {{ statusLabel(row.status) }}
           </el-tag>
+        </template>
+      </el-table-column>
+      <el-table-column label="申请/创建时间" min-width="180">
+        <template #default="{ row }">
+          {{ formatDateTime(row.createdAt) }}
         </template>
       </el-table-column>
       <el-table-column label="最近登录" min-width="210">
@@ -35,32 +50,44 @@
       </el-table-column>
       <el-table-column label="操作" width="300">
         <template #default="{ row }">
-          <el-button link type="primary" @click="openDetail(row)">详情</el-button>
-          <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
-          <el-button
-            v-if="row.id !== auth.user?.id"
-            link
-            type="warning"
-            @click="openResetPassword(row)"
-          >
-            重置密码
-          </el-button>
-          <el-button
-            v-if="row.id !== auth.user?.id && row.status === 'active'"
-            link
-            type="danger"
-            @click="setStatus(row.id, 'disabled')"
-          >
-            停用
-          </el-button>
-          <el-button
-            v-else-if="row.id !== auth.user?.id"
-            link
-            type="primary"
-            @click="setStatus(row.id, 'active')"
-          >
-            启用
-          </el-button>
+          <template v-if="row.status === 'pending'">
+            <el-button
+              link
+              type="success"
+              :loading="approvingId === row.id"
+              @click="approveRegistration(row)"
+            >
+              审核通过
+            </el-button>
+          </template>
+          <template v-else>
+            <el-button link type="primary" @click="openDetail(row)">详情</el-button>
+            <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
+            <el-button
+              v-if="row.id !== auth.user?.id"
+              link
+              type="warning"
+              @click="openResetPassword(row)"
+            >
+              重置密码
+            </el-button>
+            <el-button
+              v-if="row.id !== auth.user?.id && row.status === 'active'"
+              link
+              type="danger"
+              @click="setStatus(row.id, 'disabled')"
+            >
+              停用
+            </el-button>
+            <el-button
+              v-else-if="row.id !== auth.user?.id"
+              link
+              type="primary"
+              @click="setStatus(row.id, 'active')"
+            >
+              启用
+            </el-button>
+          </template>
         </template>
       </el-table-column>
     </el-table>
@@ -169,7 +196,7 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from "vue";
 import { useRouter } from "vue-router";
-import { ElMessage } from "element-plus";
+import { ElMessage, ElMessageBox } from "element-plus";
 import { http } from "@/api/http";
 import { formatDateTime } from "@/lib/date-time";
 import { useAuthStore } from "@/stores/auth";
@@ -180,7 +207,8 @@ type UserRow = {
   phone: string;
   dept: string | null;
   role: "employee" | "admin";
-  status: "active" | "disabled";
+  status: "pending" | "active" | "disabled";
+  createdAt: string;
   lastLoginAt: string | null;
 };
 
@@ -188,6 +216,7 @@ const rows = ref<UserRow[]>([]);
 const router = useRouter();
 const auth = useAuthStore();
 const q = ref("");
+const statusFilter = ref<"" | UserRow["status"]>("");
 const showCreate = ref(false);
 const showImport = ref(false);
 const showEdit = ref(false);
@@ -196,6 +225,7 @@ const saving = ref(false);
 const importing = ref(false);
 const updating = ref(false);
 const resetting = ref(false);
+const approvingId = ref<number | null>(null);
 const editUser = ref<UserRow | null>(null);
 const resetUser = ref<UserRow | null>(null);
 const importText = ref("");
@@ -219,12 +249,15 @@ const editForm = reactive({
 });
 
 const statusLabels: Record<UserRow["status"], string> = {
+  pending: "待审核",
   active: "正常",
   disabled: "已停用",
 };
 
 async function load() {
-  const { data } = await http.get("/api/admin/users", { params: { q: q.value || undefined } });
+  const { data } = await http.get("/api/admin/users", {
+    params: { q: q.value || undefined, status: statusFilter.value || undefined },
+  });
   if (data.success) rows.value = data.data;
 }
 
@@ -239,6 +272,32 @@ function openCreate() {
 
 function openDetail(row: UserRow) {
   router.push(`/admin/users/${row.id}`);
+}
+
+async function approveRegistration(row: UserRow) {
+  try {
+    await ElMessageBox.confirm(
+      `确认审核通过 ${row.name} 的注册申请？账号将使用初始密码 Hz@123456，首次登录后需要修改密码。`,
+      "审核通过",
+      { confirmButtonText: "确认通过", cancelButtonText: "取消", type: "warning" },
+    );
+  } catch {
+    return;
+  }
+
+  approvingId.value = row.id;
+  try {
+    const { data } = await http.post(`/api/admin/users/${row.id}/approve`);
+    if (!data.success) throw new Error(data.message);
+    ElMessage.success("审核已通过，初始密码为 Hz@123456");
+    await load();
+  } catch (e: unknown) {
+    const message = (e as { response?: { data?: { message?: string } } })
+      .response?.data?.message;
+    ElMessage.error(message || (e as Error).message || "审核失败");
+  } finally {
+    approvingId.value = null;
+  }
 }
 
 async function createOne() {

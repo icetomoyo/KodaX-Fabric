@@ -19,8 +19,10 @@
           <div>
             <div class="profile-title-row">
               <h2 class="page-title">{{ usage.employee.name }}</h2>
-              <el-tag :type="usage.employee.status === 'active' ? 'success' : 'danger'">
-                {{ usage.employee.status === "active" ? "正常" : "已停用" }}
+              <el-tag
+                :type="usage.employee.status === 'active' ? 'success' : usage.employee.status === 'pending' ? 'warning' : 'danger'"
+              >
+                {{ employeeStatusLabel(usage.employee.status) }}
               </el-tag>
             </div>
             <p class="profile-meta">
@@ -141,7 +143,7 @@ type UsageResponse = {
     phone: string;
     dept: string | null;
     role: "employee" | "admin";
-    status: "active" | "disabled";
+    status: "pending" | "active" | "disabled";
     lastLoginAt: string | null;
   };
   range: { from: string; to: string; timezone: string };
@@ -171,6 +173,10 @@ const from = ref("");
 const to = ref("");
 let requestSequence = 0;
 const numberFormatter = new Intl.NumberFormat("zh-CN");
+
+function employeeStatusLabel(status: UsageResponse["employee"]["status"]) {
+  return status === "pending" ? "待审核" : status === "active" ? "正常" : "已停用";
+}
 
 function dateOnlyInTimeZone(timeZone: string): string {
   const parts = new Intl.DateTimeFormat("en-US", {

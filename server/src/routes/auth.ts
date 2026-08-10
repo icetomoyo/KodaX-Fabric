@@ -4,7 +4,12 @@ import { z } from "zod";
 import { db } from "../db/client.js";
 import { employees } from "../db/schema/index.js";
 import { isSessionRole, signSession } from "../lib/jwt.js";
-import { hashPassword, validateNewPassword, verifyPassword } from "../lib/password.js";
+import {
+  hashPassword,
+  REGISTRATION_INITIAL_PASSWORD,
+  validateNewPassword,
+  verifyPassword,
+} from "../lib/password.js";
 import { writeOpsAudit } from "../lib/ops-audit.js";
 import { requireSession } from "../middleware/auth.js";
 
@@ -22,6 +27,58 @@ function publicEmployee(row: typeof employees.$inferSelect) {
 }
 
 export async function authRoutes(app: FastifyInstance) {
+  app.post("/api/auth/register", async (req, reply) => {
+    const body = z
+      .object({
+        name: z.string().trim().min(1).max(100),
+        dept: z.string().trim().min(1).max(100),
+        phone: z.string().trim().min(5).max(20),
+      })
+      .safeParse(req.body);
+
+    if (!body.success) {
+      return reply.code(400).send({ success: false, message: "请完整填写姓名、部门和手机号" });
+    }
+
+    try {
+      const passwordHash = await hashPassword(REGISTRATION_INITIAL_PASSWORD);
+      const [employee] = await db
+        .insert(employees)
+        .values({
+          name: body.data.name,
+          dept: body.data.dept,
+          phone: body.data.phone,
+          passwordHash,
+          role: "employee",
+          status: "pending",
+          mustChangePassword: true,
+        })
+        .returning({
+          id: employees.id,
+          name: employees.name,
+          dept: employees.dept,
+          phone: employees.phone,
+          status: employees.status,
+        });
+
+      await writeOpsAudit({
+        action: "auth.register_application",
+        targetType: "employee",
+        targetId: String(employee.id),
+        detail: { name: employee.name, dept: employee.dept, phone: employee.phone },
+        ip: req.ip,
+      });
+
+      return { success: true, data: employee };
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      if (message.includes("employees_phone_uidx") || message.includes("unique")) {
+        return reply.code(409).send({ success: false, message: "该手机号已提交申请或已注册" });
+      }
+      throw e;
+    }
+  });
+
   app.post("/api/auth/login", async (req, reply) => {
     const body = z
       .object({
@@ -40,12 +97,24 @@ export async function authRoutes(app: FastifyInstance) {
       .where(eq(employees.phone, body.data.phone))
       .limit(1);
 
-    if (!user || user.status !== "active" || !isSessionRole(user.role)) {
+    if (!user || !isSessionRole(user.role)) {
       return reply.code(401).send({ success: false, message: "手机号或密码错误" });
     }
 
     const ok = await verifyPassword(body.data.password, user.passwordHash);
     if (!ok) {
+      return reply.code(401).send({ success: false, message: "手机号或密码错误" });
+    }
+
+    if (user.status === "pending") {
+      return reply.code(403).send({
+        success: false,
+        code: "REGISTRATION_PENDING",
+        message: "注册申请待审核，请等待管理员审核",
+      });
+    }
+
+    if (user.status !== "active") {
       return reply.code(401).send({ success: false, message: "手机号或密码错误" });
     }
 

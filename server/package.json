@@ -14,6 +14,7 @@
     "test:v001:binding": "tsx test/v001-hard-binding-integration.ts",
     "test:v003:integration": "tsx test/v003-integration.ts",
     "test:v005:integration": "tsx test/v005-integration.ts",
+    "test:registration": "tsx test/registration-approval.integration.ts",
     "start": "node dist/index.js",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx src/db/migrate.ts",

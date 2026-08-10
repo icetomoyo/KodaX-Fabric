@@ -14,7 +14,7 @@ import {
 } from "drizzle-orm/pg-core";
 
 export const employeeRoleEnum = pgEnum("employee_role", ["employee", "admin"]);
-export const employeeStatusEnum = pgEnum("employee_status", ["active", "disabled"]);
+export const employeeStatusEnum = pgEnum("employee_status", ["pending", "active", "disabled"]);
 export const apiKeyStatusEnum = pgEnum("api_key_status", ["active", "revoked"]);
 export const relayProtocolEnum = pgEnum("relay_protocol", [
   "openai_chat",

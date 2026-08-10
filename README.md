@@ -233,6 +233,7 @@ npm run test:v001:api --workspace=@tokenhub/server # v0.0.1 Key/权限/数据库
 npm run test:v001:binding --workspace=@tokenhub/server # v0.0.1 两种 API 的 A/B 渠道硬绑定集成测试
 npm run test:v003:integration --workspace=@tokenhub/server # v0.0.3 用量、权限、正文脱敏与审计去重集成测试
 npm run test:v005:integration --workspace=@tokenhub/server # v0.0.5 工单、员工隔离与角色权限集成测试
+npm run test:registration --workspace=@tokenhub/server # 注册申请、管理员审核与首次登录集成测试
 ```
 
 `test:relay:*` 和 `test:v001:*` 会使用当前配置的 PostgreSQL/Redis；只能在已完成 Migration 的隔离开发或测试环境运行，不要直接指向生产数据库。

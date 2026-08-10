@@ -2,6 +2,7 @@ import { formatDateTime } from "@/lib/date-time";
 
 export const OPS_AUDIT_ACTION_LABELS: Record<string, string> = {
   "auth.login": "登录系统",
+  "auth.register_application": "提交注册申请",
   "auth.change_password": "修改密码",
   "api_key.create": "创建个人 API Key",
   "api_key.reveal": "复制个人 API Key",
@@ -10,6 +11,7 @@ export const OPS_AUDIT_ACTION_LABELS: Record<string, string> = {
   "employee_api_key.reveal": "复制员工 API Key",
   "employee_api_key.create_for_employee": "为员工生成 API Key",
   "user.create": "新建员工",
+  "user.registration_approve": "审核通过注册申请",
   "user.import": "批量导入员工",
   "user.update": "编辑员工信息",
   "user.status": "更新员工状态",
@@ -102,6 +104,7 @@ export const OPS_AUDIT_DETAIL_KEY_LABELS: Record<string, string> = {
 const OPS_AUDIT_VALUE_LABELS: Record<string, string> = {
   employee: "员工",
   admin: "管理员",
+  pending: "待审核",
   active: "启用",
   disabled: "停用",
   auto_disabled: "自动停用",

@@ -3,6 +3,9 @@ import bcrypt from "bcryptjs";
 const ROUNDS = 10;
 const MAX_PASSWORD_BYTES = 72;
 
+/** 新注册员工在管理员审核通过后的首次登录密码。 */
+export const REGISTRATION_INITIAL_PASSWORD = "Hz@123456";
+
 function passwordBytes(password: string): number {
   return new TextEncoder().encode(password).length;
 }

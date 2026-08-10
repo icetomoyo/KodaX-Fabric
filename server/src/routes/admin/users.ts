@@ -10,7 +10,12 @@ import {
   requestAudits,
   usageCountersDaily,
 } from "../../db/schema/index.js";
-import { hashPassword, validateNewPassword, verifyPassword } from "../../lib/password.js";
+import {
+  hashPassword,
+  REGISTRATION_INITIAL_PASSWORD,
+  validateNewPassword,
+  verifyPassword,
+} from "../../lib/password.js";
 import { writeOpsAudit } from "../../lib/ops-audit.js";
 import {
   inclusiveDayCount,
@@ -52,6 +57,7 @@ type AdminUserListQuery = {
   limit: number;
   offset: number;
   q?: string;
+  status?: "pending" | "active" | "disabled";
 };
 
 export function buildAdminUserListQuery(query: AdminUserListQuery) {
@@ -64,12 +70,16 @@ export function buildAdminUserListQuery(query: AdminUserListQuery) {
       role: employees.role,
       status: employees.status,
       lastLoginAt: employees.lastLoginAt,
+      createdAt: employees.createdAt,
     })
     .from(employees)
     .where(
-      query.q
-        ? sql`(${employees.name} ilike ${"%" + query.q + "%"} or ${employees.phone} ilike ${"%" + query.q + "%"})`
-        : sql`true`,
+      and(
+        query.q
+          ? sql`(${employees.name} ilike ${"%" + query.q + "%"} or ${employees.phone} ilike ${"%" + query.q + "%"})`
+          : sql`true`,
+        query.status ? eq(employees.status, query.status) : sql`true`,
+      ),
     )
     .orderBy(desc(employees.id))
     .limit(query.limit)
@@ -87,6 +97,7 @@ export async function adminUserRoutes(app: FastifyInstance) {
         limit: z.coerce.number().min(1).max(200).default(50),
         offset: z.coerce.number().min(0).default(0),
         q: z.string().optional(),
+        status: z.enum(["pending", "active", "disabled"]).optional(),
       })
       .parse(req.query);
 
@@ -260,6 +271,76 @@ export async function adminUserRoutes(app: FastifyInstance) {
     };
   });
 
+  app.post("/api/admin/users/:id/approve", async (req, reply) => {
+    const params = z.object({ id: z.coerce.number().int().positive() }).safeParse(req.params);
+    if (!params.success) {
+      return reply.code(400).send({ success: false, message: "参数无效" });
+    }
+
+    const result = await db.transaction(async (tx) => {
+      const [application] = await tx
+        .select({
+          id: employees.id,
+          name: employees.name,
+          phone: employees.phone,
+          dept: employees.dept,
+          status: employees.status,
+        })
+        .from(employees)
+        .where(eq(employees.id, params.data.id))
+        .limit(1)
+        .for("update");
+
+      if (!application) return { outcome: "not_found" } as const;
+      if (application.status !== "pending") return { outcome: "already_processed" } as const;
+
+      const passwordHash = await hashPassword(REGISTRATION_INITIAL_PASSWORD);
+      const [employee] = await tx
+        .update(employees)
+        .set({
+          status: "active",
+          role: "employee",
+          passwordHash,
+          mustChangePassword: true,
+          passwordChangedAt: null,
+          updatedAt: new Date(),
+        })
+        .where(eq(employees.id, application.id))
+        .returning({
+          id: employees.id,
+          name: employees.name,
+          dept: employees.dept,
+          phone: employees.phone,
+          status: employees.status,
+          mustChangePassword: employees.mustChangePassword,
+        });
+
+      return { outcome: "approved", employee } as const;
+    });
+
+    if (result.outcome === "not_found") {
+      return reply.code(404).send({ success: false, message: "注册申请不存在" });
+    }
+    if (result.outcome === "already_processed") {
+      return reply.code(409).send({ success: false, message: "该注册申请已审核" });
+    }
+
+    await writeOpsAudit({
+      actorEmployeeId: req.employeeId,
+      action: "user.registration_approve",
+      targetType: "employee",
+      targetId: String(result.employee.id),
+      detail: {
+        name: result.employee.name,
+        dept: result.employee.dept,
+        phone: result.employee.phone,
+      },
+      ip: req.ip,
+    });
+
+    return { success: true, data: result.employee };
+  });
+
   app.post("/api/admin/users", async (req, reply) => {
     const body = createUserSchema.safeParse(req.body);
     if (!body.success) {
@@ -405,6 +486,13 @@ export async function adminUserRoutes(app: FastifyInstance) {
         }
 
         if (
+          targetUser.status === "pending" &&
+          (body.data.status !== undefined || body.data.role !== undefined)
+        ) {
+          return { outcome: "pending_review" } as const;
+        }
+
+        if (
           params.data.id === req.employeeId &&
           ((body.data.status !== undefined && body.data.status !== targetUser.status) ||
             (body.data.role !== undefined && body.data.role !== targetUser.role))
@@ -457,6 +545,12 @@ export async function adminUserRoutes(app: FastifyInstance) {
       if (result.outcome === "not_found") {
         return reply.code(404).send({ success: false, message: "用户不存在" });
       }
+      if (result.outcome === "pending_review") {
+        return reply.code(400).send({
+          success: false,
+          message: "待审核注册申请请使用“审核通过”操作",
+        });
+      }
       if (result.outcome === "self_role_or_status") {
         return reply.code(400).send({ success: false, message: "不能修改自己的角色或状态" });
       }
@@ -496,15 +590,27 @@ export async function adminUserRoutes(app: FastifyInstance) {
       return reply.code(400).send({ success: false, message: "不能停用自己" });
     }
 
+    const [targetUser] = await db
+      .select({ id: employees.id, status: employees.status })
+      .from(employees)
+      .where(eq(employees.id, params.data.id))
+      .limit(1);
+
+    if (!targetUser) {
+      return reply.code(404).send({ success: false, message: "用户不存在" });
+    }
+    if (targetUser.status === "pending") {
+      return reply.code(400).send({
+        success: false,
+        message: "待审核注册申请请使用“审核通过”操作",
+      });
+    }
+
     const [row] = await db
       .update(employees)
       .set({ status: body.data.status, updatedAt: new Date() })
       .where(eq(employees.id, params.data.id))
       .returning({ id: employees.id, status: employees.status });
-
-    if (!row) {
-      return reply.code(404).send({ success: false, message: "用户不存在" });
-    }
 
     await writeOpsAudit({
       actorEmployeeId: req.employeeId,

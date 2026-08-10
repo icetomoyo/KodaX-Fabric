@@ -46,6 +46,12 @@ export const useAuthStore = defineStore("auth", () => {
     return data.data.user as User;
   }
 
+  async function register(name: string, dept: string, phone: string) {
+    const { data } = await http.post("/api/auth/register", { name, dept, phone });
+    if (!data.success) throw new Error(data.message || "提交申请失败");
+    return data.data;
+  }
+
   async function changePassword(oldPassword: string, newPassword: string) {
     const { data } = await http.post("/api/auth/change-password", {
       oldPassword,
@@ -72,6 +78,7 @@ export const useAuthStore = defineStore("auth", () => {
     setSession,
     logout,
     login,
+    register,
     changePassword,
     fetchMe,
   };
