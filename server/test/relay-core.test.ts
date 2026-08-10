@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import Fastify from "fastify";
 import type { RelayCandidate } from "../src/lib/relay/types.js";
 
 process.env.DATABASE_URL ??= "postgresql://test:test@127.0.0.1:5432/test";
@@ -28,6 +29,7 @@ const { extractAnyRelayApiKey, extractRelayApiKey } = await import(
 const { getProviderTemplate, PROVIDER_TEMPLATES } = await import(
   "../src/lib/provider-templates.js"
 );
+const { buildRelayBaseUrl } = await import("../src/routes/me.js");
 
 function candidate(
   credentialId: number,
@@ -59,6 +61,32 @@ function candidate(
 test("upstream channel templates do not expose Anthropic as a provider option", () => {
   assert.equal(getProviderTemplate("anthropic"), undefined);
   assert.equal(PROVIDER_TEMPLATES.some((template) => template.code === "anthropic"), false);
+});
+
+test("relay base URL uses the proxy-facing host instead of the API listener port", async () => {
+  const app = Fastify({ trustProxy: true });
+  app.get("/relay-url", (request) => ({ baseUrl: buildRelayBaseUrl(request) }));
+
+  try {
+    const response = await app.inject({
+      method: "GET",
+      url: "/relay-url",
+      headers: {
+        host: "tokenhub:3100",
+        "x-forwarded-host": "10.10.0.144",
+        "x-forwarded-proto": "https",
+      },
+    });
+    assert.equal(response.statusCode, 200);
+    assert.deepEqual(response.json(), { baseUrl: "https://10.10.0.144/ai" });
+  } finally {
+    await app.close();
+  }
+
+  assert.equal(
+    buildRelayBaseUrl({ protocol: "https", host: "gateway.example.test:8443" }),
+    "https://gateway.example.test:8443/ai",
+  );
 });
 
 test("upstream channel templates use 公司/模型 naming", async () => {

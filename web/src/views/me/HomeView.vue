@@ -37,7 +37,7 @@ const usage = ref<{
 } | null>(null);
 
 const relayBaseUrl = computed(
-  () => usage.value?.relay?.baseUrl || `http://127.0.0.1:3100${RELAY_BASE_PATH}`,
+  () => usage.value?.relay?.baseUrl || `${window.location.origin}${RELAY_BASE_PATH}`,
 );
 const clientBaseUrl = computed(() => relayClientBaseUrl(relayBaseUrl.value));
 

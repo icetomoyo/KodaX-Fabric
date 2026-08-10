@@ -50,7 +50,7 @@ services:
         max-file: "3"
 
   api:
-    image: tokenhub-api:0.0.5
+    image: tokenhub-api:0.0.5-relay-url-20260810
     pull_policy: never
     build:
       context: ..
@@ -91,7 +91,7 @@ services:
         max-file: "5"
 
   web:
-    image: tokenhub-web:0.0.5
+    image: tokenhub-web:0.0.5-relay-url-20260810
     pull_policy: never
     build:
       context: ..

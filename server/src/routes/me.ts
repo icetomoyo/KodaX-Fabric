@@ -1,4 +1,4 @@
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyRequest } from "fastify";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db, sql as querySql } from "../db/client.js";
@@ -32,6 +32,16 @@ const createApiKeySchema = z.object({
   productLineId: z.number().int().positive(),
   protocol: z.enum(RELAY_PROTOCOLS),
 });
+
+/**
+ * `host` retains the client-facing port and, with Fastify's `trustProxy`, the
+ * proxy-provided public host. Never derive this URL from the API listener port.
+ */
+export function buildRelayBaseUrl(
+  request: Pick<FastifyRequest, "protocol" | "host">,
+): string {
+  return `${request.protocol}://${request.host}${RELAY_BASE_PATH}`;
+}
 
 export async function meRoutes(app: FastifyInstance) {
   app.addHook("preHandler", requireSession);
@@ -308,7 +318,7 @@ export async function meRoutes(app: FastifyInstance) {
           requestCount: Number(month?.requestCount ?? 0),
         },
         relay: {
-          baseUrl: `${req.protocol}://${req.hostname}:${process.env.PORT ?? 3100}${RELAY_BASE_PATH}`,
+          baseUrl: buildRelayBaseUrl(req),
           note: "Authorization: Bearer <your employee API key>",
         },
       },
