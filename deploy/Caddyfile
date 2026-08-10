@@ -1,0 +1,28 @@
+{
+	admin off
+	default_sni 10.10.0.144
+	servers :443 {
+		protocols h1 h2
+	}
+}
+
+http://10.10.0.144 {
+	redir https://10.10.0.144{uri} permanent
+}
+
+https://10.10.0.144 {
+	tls internal
+
+	route {
+		encode zstd gzip
+
+		@backend path /api/* /ai/* /health
+		reverse_proxy @backend api:3100 {
+			flush_interval -1
+		}
+
+		root * /srv
+		try_files {path} /index.html
+		file_server
+	}
+}

@@ -6,6 +6,8 @@ dist
 .env.local
 .env.*.local
 coverage
+backups
+deploy/runtime
 .turbo
 *.tsbuildinfo
 web/dist

@@ -3,7 +3,7 @@ import { sql } from "../db/client.js";
 import { pingRedis } from "../redis.js";
 
 export async function healthRoutes(app: FastifyInstance) {
-  app.get("/health", async () => {
+  app.get("/health", async (_request, reply) => {
     let postgres = false;
     let redis = false;
     let postgresError: string | undefined;
@@ -23,14 +23,19 @@ export async function healthRoutes(app: FastifyInstance) {
     }
 
     const ok = postgres && redis;
-    return {
+    if (!ok) {
+      app.log.warn(
+        { postgresError, redisError },
+        "Health check dependency failure",
+      );
+    }
+
+    return reply.code(ok ? 200 : 503).send({
       ok,
       service: "tokenhub-api",
       postgres,
       redis,
-      postgresError,
-      redisError,
       time: new Date().toISOString(),
-    };
+    });
   });
 }
