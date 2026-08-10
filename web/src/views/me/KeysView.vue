@@ -68,17 +68,17 @@
 
     <el-dialog
       v-model="showCreate"
-      :title="createdResult ? '保存 API Key' : '创建 API Key'"
+      :title="createdResult ? '复制新 API Key' : '创建 API Key'"
       width="560px"
       destroy-on-close
-      :close-on-click-modal="!createdResult"
-      :close-on-press-escape="!createdResult"
+      :close-on-click-modal="!creating"
+      :close-on-press-escape="!creating"
       :before-close="handleCreateBeforeClose"
       @closed="onCreateClosed"
     >
       <div v-if="createdResult" class="create-result">
         <el-alert
-          title="API Key 已创建，关闭后员工端无法再次查看"
+          title="API Key 已创建，请立即复制；关闭后无法再次查看"
           type="warning"
           :closable="false"
           show-icon
@@ -99,14 +99,13 @@
           </div>
         </dl>
 
-        <div class="secret-label">完整 API Key</div>
+        <div class="secret-label">API Key（仅显示一次）</div>
         <div class="secret-box">
           <el-input
             :model-value="createdResult.key"
             readonly
-            type="textarea"
-            :autosize="{ minRows: 2, maxRows: 4 }"
             class="secret-input"
+            aria-label="新创建的 API Key，仅显示一次"
             @focus="selectSecretInput"
           />
           <el-button
@@ -114,15 +113,12 @@
             :loading="copyingCreatedKey"
             @click="copyCreatedKey"
           >
-            复制 Key
+            复制 API Key
           </el-button>
         </div>
         <p class="result-tip">
-          请立即保存到密码管理器或客户端配置中。列表仅保留前缀，之后不能从员工端找回明文。
+          请立即复制并保存到密码管理器或客户端配置中；关闭后无法再次查看。
         </p>
-        <el-checkbox v-model="savedConfirmed" class="saved-confirmation">
-          我已将 API Key 保存到安全位置
-        </el-checkbox>
       </div>
 
       <div v-else class="create-form-state">
@@ -248,10 +244,9 @@
         <template v-if="createdResult">
           <el-button
             type="primary"
-            :disabled="!savedConfirmed"
             @click="requestCreateClose"
           >
-            已保存，关闭
+            完成，关闭
           </el-button>
         </template>
         <template v-else>
@@ -331,7 +326,6 @@ const submitError = ref("");
 const upstreamChannels = ref<UpstreamChannel[]>([]);
 const createdResult = ref<CreatedKeyResult | null>(null);
 const copyingCreatedKey = ref(false);
-const savedConfirmed = ref(false);
 const createForm = reactive({
   name: "",
   productLineId: null as number | null,
@@ -433,7 +427,6 @@ function resetCreateState() {
   channelsError.value = "";
   submitError.value = "";
   createdResult.value = null;
-  savedConfirmed.value = false;
   copyingCreatedKey.value = false;
   channelsLoading.value = false;
 }
@@ -486,20 +479,12 @@ function requestCreateClose() {
     ElMessage.warning("API Key 正在创建，请稍候");
     return;
   }
-  if (createdResult.value && !savedConfirmed.value) {
-    ElMessage.warning("请确认已安全保存 API Key 后再关闭");
-    return;
-  }
   showCreate.value = false;
 }
 
 function handleCreateBeforeClose(done: () => void) {
   if (creating.value) {
     ElMessage.warning("API Key 正在创建，请稍候");
-    return;
-  }
-  if (createdResult.value && !savedConfirmed.value) {
-    ElMessage.warning("请确认已安全保存 API Key 后再关闭");
     return;
   }
   done();
@@ -556,7 +541,6 @@ async function createKey() {
           ? data.data.providerName
           : channel.providerName,
     };
-    savedConfirmed.value = false;
     void load();
   } catch (error) {
     const errorCode = (error as {
@@ -890,20 +874,26 @@ onMounted(load);
   min-width: 0;
 }
 
-.secret-input :deep(.el-textarea__inner) {
-  min-height: 72px;
-  border-color: #fbbf24;
+.secret-input :deep(.el-input__wrapper) {
+  background: #fffbeb;
+  box-shadow: 0 0 0 1px #fbbf24 inset;
+}
+
+.secret-input :deep(.el-input__wrapper.is-focus) {
+  box-shadow:
+    0 0 0 1px var(--el-color-primary) inset,
+    0 0 0 3px rgb(64 158 255 / 20%);
+}
+
+.secret-input :deep(.el-input__inner) {
   background: #fffbeb;
   color: #92400e;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 13px;
-  line-height: 1.6;
-  word-break: break-all;
 }
 
 .secret-box .el-button {
-  height: auto;
-  align-self: stretch;
+  min-width: 116px;
 }
 
 .result-tip {
@@ -911,13 +901,6 @@ onMounted(load);
   color: #64748b;
   font-size: 12px;
   line-height: 1.6;
-}
-
-.saved-confirmation {
-  align-items: flex-start;
-  padding: 10px 12px;
-  border: 1px solid #cbd5e1;
-  border-radius: 8px;
 }
 
 </style>
