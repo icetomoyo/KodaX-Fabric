@@ -4,6 +4,13 @@ This directory is designed for an offline image import on the target host. The
 runtime `.env` holds only long-lived service secrets; it must not contain the
 initial administrator password.
 
+**Operator runbook (Chinese, E1/E2):** see
+[`docs/runbook-release.md`](../docs/runbook-release.md)
+for upgrade, rollback, backup, restore drill, and evidence tables.
+Public pilot policy: [`docs/pilot-charter.md`](../docs/pilot-charter.md).
+
+## First boot
+
 After importing the four `tokenhub-*` images and creating `deploy/.env`:
 
 ```sh
@@ -16,6 +23,11 @@ docker compose up -d
 
 `bootstrap-admin.sh` is intentionally a one-shot action. Do not put
 `SEED_ADMIN_*` in `.env`, as the account may be renamed after first login.
+
+The `api` container runs database migrations on every start
+(`migrate.js` then `index.js`). Do not re-run bootstrap seed on routine upgrades.
+
+## TLS
 
 Production is served at `https://tokenhub.haizhi.com` with a CA-trusted
 certificate. Before starting the `web` service, provision these files directly
@@ -32,6 +44,29 @@ copy into an image, or log the private key. A publicly trusted chain lets
 browsers and supported API clients validate TLS without installing a
 TokenHub-specific root certificate.
 
-Run `sh backup.sh` for a verified PostgreSQL dump. The deployment creates a
-daily local schedule, but copy the resulting `backups/` files to independent
-storage for disaster recovery.
+## Backup and restore
+
+From the repository root:
+
+```sh
+sh deploy/backup.sh
+ls -lah backups/tokenhub-*.sql.gz | tail -5
+```
+
+- Produces `backups/tokenhub-YYYYMMDD-HHMMSS.sql.gz` (local retention ~14 days).
+- Copy archives to **independent** storage for disaster recovery.
+- Redis is not included in the dump (rate-limit state only).
+- Full restore and non-destructive drill steps: `docs/runbook-release.md` §7–§8.
+
+## Upgrade (short form)
+
+```sh
+sh deploy/backup.sh
+# load new images; update image tags in compose.yaml
+cd deploy
+docker compose up -d api web
+curl -fsS https://tokenhub.haizhi.com/health
+```
+
+On failure, roll back image tags and `docker compose up -d api web`.
+Details and migration caveats: `docs/runbook-release.md` §5–§6.
