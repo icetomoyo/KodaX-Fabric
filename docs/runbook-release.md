@@ -303,4 +303,5 @@ curl -fsS https://tokenhub.haizhi.com/health
 | E1 | §2–§3、§5–§6、§9 | [pilot-charter §10](pilot-charter.md) |
 | E2 | §4、§7–§8 | 同上 |
 
-员工接入与故障一页纸见 Ticket #3 / #4，不在本文展开。
+员工接入见员工端 `/me/guide`（Ticket #3）。  
+值班故障排查见 [runbook-troubleshoot.md](runbook-troubleshoot.md)（Ticket #4）。

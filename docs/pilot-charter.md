@@ -237,16 +237,16 @@ Provider（供应商）
 
 ## 9. 故障感知（最低配指针） {#e6-ops}
 
-完整一页排查见后续 **Ticket #4** runbook。章程级最低要求：
+值班操作一页纸：**[runbook-troubleshoot.md](runbook-troubleshoot.md)**（E6/E7）。
 
 | 手段 | 用途 |
 |------|------|
-| `GET /health`（或站点提供的健康 URL） | 进程与依赖是否存活 |
+| `GET /health`（`https://tokenhub.haizhi.com/health`） | Postgres/Redis/API 是否存活（`ok: true`） |
 | 管理端 **调用日志** / 员工 **我的调用** | 单请求终态、错误与审计 |
 | 管理端 **概览** | 当日失败与渠道异常线索 |
-| 工单 | 用户侧问题入口 |
+| 工单 + 对接人 | 用户侧入口（§8）；管理员在 `/admin/tickets` 处理 |
 
-发布与备份恢复步骤见 **Ticket #2**（`deploy/README.md` / runbook），不在本章程展开操作细节。
+发布与备份恢复见 **[runbook-release.md](runbook-release.md)**；员工客户端自助见 **`/me/guide`**。
 
 ---
 
@@ -266,6 +266,8 @@ Provider（供应商）
 | 文档 | 用途 |
 |------|------|
 | [deploy/README.md](../deploy/README.md) | 部署、TLS、bootstrap、备份入口 |
+| [runbook-release.md](runbook-release.md) | 发布、回滚、备份恢复（E1/E2） |
+| [runbook-troubleshoot.md](runbook-troubleshoot.md) | 值班故障排查（E6/E7） |
 | [TokenHub_PRD.md](TokenHub_PRD.md) | 产品规则全文 |
 | [features/v0.1.0.md](features/v0.1.0.md) | v0.1.0 / FEATURE_001 设计与票 |
 | [FEATURE_LIST.md](FEATURE_LIST.md) | Feature 状态 |
@@ -285,8 +287,8 @@ Provider（供应商）
 | **E3** | 渠道策略成文 | **本文 §4** | ☑ 本文 |
 | **E4** | 账号生命周期 | **本文 §3** | ☑ 本文 |
 | **E5** | 配额默认合理 | **本文 §5** + 评审表签字 | ☑ 本文骨架；☐ 评审值 |
-| **E6** | 故障可感知 | **本文 §9** + 故障 runbook | ☑ 指针；☐ 待 #4 一页纸 |
-| **E7** | 问题有入口 | **本文 §8** | ☑ 本文；☐ 对接人姓名 |
+| **E6** | 故障可感知 | **本文 §9** + [runbook-troubleshoot.md](runbook-troubleshoot.md) | ☑ 文档；☐ 值班按页走过一次 |
+| **E7** | 问题有入口 | **本文 §8** + 排障 runbook §4 | ☑ 文档；☐ 对接人姓名 |
 | **E8** | 安全底线 | **本文 §6** | ☑ 本文 |
 | **E9** | 接入可自助 | **本文 §7** + 员工端 `/me/guide`（Claude Code / Cursor 双页签） | ☑ 文档+UI；☐ 新人实走一遍可签字 |
 | **E10** | 核心路径不回退 | 本表标题 + 回归实跑勾选 | ☑ 标题；☐ 待 #5 实跑 |
