@@ -62,6 +62,8 @@ export type SseAuditSnapshot = {
   usage: RelayUsage;
   assembled: SseAssembledResponse;
   upstreamError: unknown | null;
+  /** Epoch ms of the first chunk containing output content (text/reasoning/refusal/tool-call). Null if no content was seen. */
+  firstTokenAt: number | null;
 };
 
 type MutableFunctionCall = {
@@ -185,6 +187,7 @@ export class SseAuditInspector {
   private serviceTier?: string | null;
   private lastUsage: RelayUsage = emptyUsage();
   private lastUpstreamError: unknown | null = null;
+  private firstTokenAt: number | null = null;
 
   private totalBytes = 0;
   private retainedAuditBytes = 0;
@@ -317,7 +320,12 @@ export class SseAuditInspector {
       },
       assembled,
       upstreamError: this.lastUpstreamError,
+      firstTokenAt: this.firstTokenAt,
     };
+  }
+
+  private markFirstToken(): void {
+    if (this.firstTokenAt === null) this.firstTokenAt = Date.now();
   }
 
   private consumeText(text: string): void {
@@ -506,15 +514,20 @@ export class SseAuditInspector {
     setString(delta, "name", (value) => {
       choice.name = value;
     });
+    let contentProduced = false;
     appendString(delta, "content", choice.contentParts, () => {
       choice.contentSeen = true;
+      contentProduced = true;
     });
     appendString(delta, "reasoning_content", choice.reasoningParts, () => {
       choice.reasoningSeen = true;
+      contentProduced = true;
     });
     appendString(delta, "refusal", choice.refusalParts, () => {
       choice.refusalSeen = true;
+      contentProduced = true;
     });
+    if (contentProduced) this.markFirstToken();
 
     const legacyFunction = asObject(delta.function_call);
     if (legacyFunction) {
@@ -525,7 +538,11 @@ export class SseAuditInspector {
       appendString(legacyFunction, "arguments", choice.functionCall.argumentParts, () => {});
     }
 
-    if (!Array.isArray(delta.tool_calls)) return;
+    if (!Array.isArray(delta.tool_calls)) {
+      if (contentProduced) this.markFirstToken();
+      return;
+    }
+    let toolCallSeen = false;
     for (let position = 0; position < delta.tool_calls.length; position += 1) {
       const sourceTool = asObject(delta.tool_calls[position]);
       if (!sourceTool) continue;
@@ -550,8 +567,11 @@ export class SseAuditInspector {
       setString(sourceFunction, "name", (value) => {
         tool!.functionCall!.name = value;
       });
-      appendString(sourceFunction, "arguments", tool.functionCall.argumentParts, () => {});
+      appendString(sourceFunction, "arguments", tool.functionCall.argumentParts, () => {
+        toolCallSeen = true;
+      });
     }
+    if (toolCallSeen || contentProduced) this.markFirstToken();
   }
 }
 

@@ -53,6 +53,8 @@ export type RelayAuditInput = {
   errorMessage?: string | null;
   usage?: RelayUsage | null;
   latencyMs: number;
+  ttftMs?: number | null;
+  generationMs?: number | null;
   retryTrace: RelayRetryTraceItem[];
   requestHeaders: Record<string, string>;
   requestBody: unknown;
@@ -241,6 +243,8 @@ export async function writeRelayAudit(input: RelayAuditInput): Promise<void> {
         usageSource: usage.raw ? "upstream" : "none",
         usageRaw: usage.raw,
         latencyMs: safeInteger(input.latencyMs),
+        ttftMs: safeInteger(input.ttftMs),
+        generationMs: safeInteger(input.generationMs),
         retryCount: Math.max(0, input.retryTrace.length - 1),
         retryTrace: input.retryTrace,
         clientIp: input.clientIp,

@@ -318,6 +318,8 @@ type FinalizeAuditInput = Omit<
   | "clientIp"
   | "userAgent"
   | "requestPath"
+  | "ttftMs"
+  | "generationMs"
 >;
 
 async function handleNativeRequest(
@@ -345,7 +347,10 @@ async function handleNativeRequest(
   reply.header("x-tokenhub-request-id", requestId);
   reply.header("request-id", requestId);
 
-  const finalizeAudit = async (input: FinalizeAuditInput) => {
+  const finalizeAudit = async (
+    input: FinalizeAuditInput,
+    timing?: { ttftMs?: number | null; generationMs?: number | null },
+  ) => {
     if (auditWritten) return;
     auditWritten = true;
     await persistAudit(app, {
@@ -356,6 +361,8 @@ async function handleNativeRequest(
       clientModel,
       isStream,
       latencyMs: Date.now() - startedAt,
+      ttftMs: timing?.ttftMs,
+      generationMs: timing?.generationMs,
       retryTrace,
       requestHeaders,
       requestBody,
@@ -754,43 +761,50 @@ async function handleNativeRequest(
                   ? "upstream_stream_missing_terminal"
                   : "upstream_stream_error";
         }
-        await finalizeAudit({
-          candidate,
-          status,
-          httpStatus: handoffFailed ? 500 : cancelled ? 499 : response.status,
-          upstreamStatus: response.status,
-          errorCode: cancelled
-            ? "request_cancelled"
-            : handoffFailed
-              ? "downstream_stream_handoff_error"
-              : streamFailed
-                ? "upstream_stream_error"
-                : null,
-          errorMessage: cancelled
-            ? "客户端取消了流式请求"
-            : handoffFailed
-              ? "网关无法向客户端发送流式响应"
-              : streamFailed
-                ? "上游流式响应中断或返回错误事件"
-                : null,
-          usage: completion.audit.usage,
-          responseBody: {
-            stream: true,
-            protocol: config.protocol,
-            state: completion.state,
-            bytesSeen: completion.audit.bytesSeen,
-            auditBytesCaptured: completion.audit.auditBytesCaptured,
-            truncated: completion.audit.truncated,
-            terminalSeen: completion.audit.terminalSeen,
-            terminalEvent: completion.audit.terminalEvent,
-            terminalKind: completion.audit.terminalKind,
-            eventCount: completion.audit.eventCount,
-            malformedEventCount: completion.audit.malformedEventCount,
-            oversizedEventCount: completion.audit.oversizedEventCount,
-            assembled: completion.audit.assembled,
-            upstreamError: completion.audit.upstreamError,
+        const firstTokenAt = completion.audit.firstTokenAt;
+        const streamEndAt = Date.now();
+        const ttftMs = firstTokenAt !== null ? firstTokenAt - startedAt : null;
+        const generationMs = firstTokenAt !== null ? streamEndAt - firstTokenAt : null;
+        await finalizeAudit(
+          {
+            candidate,
+            status,
+            httpStatus: handoffFailed ? 500 : cancelled ? 499 : response.status,
+            upstreamStatus: response.status,
+            errorCode: cancelled
+              ? "request_cancelled"
+              : handoffFailed
+                ? "downstream_stream_handoff_error"
+                : streamFailed
+                  ? "upstream_stream_error"
+                  : null,
+            errorMessage: cancelled
+              ? "客户端取消了流式请求"
+              : handoffFailed
+                ? "网关无法向客户端发送流式响应"
+                : streamFailed
+                  ? "上游流式响应中断或返回错误事件"
+                  : null,
+            usage: completion.audit.usage,
+            responseBody: {
+              stream: true,
+              protocol: config.protocol,
+              state: completion.state,
+              bytesSeen: completion.audit.bytesSeen,
+              auditBytesCaptured: completion.audit.auditBytesCaptured,
+              truncated: completion.audit.truncated,
+              terminalSeen: completion.audit.terminalSeen,
+              terminalEvent: completion.audit.terminalEvent,
+              terminalKind: completion.audit.terminalKind,
+              eventCount: completion.audit.eventCount,
+              malformedEventCount: completion.audit.malformedEventCount,
+              oversizedEventCount: completion.audit.oversizedEventCount,
+              assembled: completion.audit.assembled,
+              upstreamError: completion.audit.upstreamError,
+            },
           },
-        });
+          { ttftMs, generationMs },
+        );
       }).catch((error) => {
         app.log.error({ err: error, requestId }, "failed to finalize native relay stream");
       });

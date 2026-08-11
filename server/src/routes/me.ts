@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db, sql as querySql } from "../db/client.js";
 import {
@@ -74,7 +74,55 @@ export async function meRoutes(app: FastifyInstance) {
       .where(eq(employeeApiKeys.employeeId, req.employeeId!))
       .orderBy(desc(employeeApiKeys.id));
 
-    return { success: true, data: rows };
+    if (rows.length === 0) {
+      return { success: true, data: [] };
+    }
+
+    const keyIds = rows.map((row) => row.id);
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+
+    const metrics = await db
+      .select({
+        keyId: requestAudits.employeeApiKeyId,
+        requestCount: sql<number>`count(*)::int`,
+        avgTtftMs: sql<number>`coalesce(round(avg(${requestAudits.ttftMs})), 0)::int`,
+        avgTokensPerSecond: sql<number>`coalesce(
+          round(
+            avg(
+              ${requestAudits.completionTokens} * 1000.0 /
+              nullif(${requestAudits.generationMs}, 0)
+            )
+          ),
+          0
+        )::int`,
+      })
+      .from(requestAudits)
+      .where(
+        and(
+          inArray(requestAudits.employeeApiKeyId, keyIds),
+          eq(requestAudits.status, "success"),
+          eq(requestAudits.isStream, true),
+          gte(requestAudits.createdAt, sevenDaysAgo),
+        ),
+      )
+      .groupBy(requestAudits.employeeApiKeyId);
+
+    const metricsByKey = new Map(metrics.map((m) => [m.keyId, m]));
+    const data = rows.map((row) => {
+      const m = metricsByKey.get(row.id);
+      return {
+        ...row,
+        metrics: m
+          ? {
+              requestCount: m.requestCount,
+              avgTtftMs: m.avgTtftMs,
+              avgTokensPerSecond: m.avgTokensPerSecond,
+            }
+          : { requestCount: 0, avgTtftMs: 0, avgTokensPerSecond: 0 },
+      };
+    });
+
+    return { success: true, data };
   });
 
   app.post("/api/me/api-keys", async (req, reply) => {

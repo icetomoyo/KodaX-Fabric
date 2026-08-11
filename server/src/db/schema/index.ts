@@ -272,6 +272,8 @@ export const requestAudits = pgTable(
     latencyMs: integer("latency_ms"),
     retryCount: integer("retry_count").notNull().default(0),
     retryTrace: jsonb("retry_trace"),
+    ttftMs: integer("ttft_ms"),
+    generationMs: integer("generation_ms"),
     clientIp: varchar("client_ip", { length: 64 }),
     userAgent: text("user_agent"),
     requestPath: varchar("request_path", { length: 256 }),

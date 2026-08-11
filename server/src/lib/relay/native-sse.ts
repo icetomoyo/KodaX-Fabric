@@ -69,6 +69,8 @@ export type NativeSseAuditSnapshot = {
   usage: RelayUsage;
   assembled: NativeSseAssembly;
   upstreamError: unknown | null;
+  /** Epoch ms of the first content block delta (text_delta or input_json_delta). Null if no content delta was seen. */
+  firstTokenAt: number | null;
 };
 
 export type NativeSseAuditOptions = {
@@ -179,6 +181,7 @@ export class NativeSseAuditInspector {
   private terminalKind: NativeSseTerminalKind | null = null;
   private lastUsage: RelayUsage = emptyUsage();
   private lastUpstreamError: unknown | null = null;
+  private firstTokenAt: number | null = null;
 
   private anthropicId?: string;
   private anthropicRole = "assistant";
@@ -246,7 +249,12 @@ export class NativeSseAuditInspector {
       },
       assembled: this.snapshotAnthropic(),
       upstreamError: this.lastUpstreamError,
+      firstTokenAt: this.firstTokenAt,
     };
+  }
+
+  private markFirstToken(): void {
+    if (this.firstTokenAt === null) this.firstTokenAt = Date.now();
   }
 
   private snapshotAnthropic(): AnthropicMessagesSseAssembly {
@@ -554,13 +562,17 @@ export class NativeSseAuditInspector {
       this.anthropicBlocks.set(index, block);
     }
 
+    let contentProduced = false;
     if (deltaType === "text_delta" && typeof delta.text === "string") {
       block.textParts.push(delta.text);
+      contentProduced = true;
     }
     if (deltaType === "input_json_delta" && typeof delta.partial_json === "string") {
       block.inputJsonSeen = true;
       block.inputJsonParts.push(delta.partial_json);
+      contentProduced = true;
     }
+    if (contentProduced) this.markFirstToken();
   }
 }
 

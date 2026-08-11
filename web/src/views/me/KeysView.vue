@@ -15,11 +15,6 @@
             <span class="key-name">{{ row.name }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="Key" min-width="180">
-          <template #default="{ row }">
-            <code class="key-mask">{{ row.keyPrefix }}••••</code>
-          </template>
-        </el-table-column>
         <el-table-column label="协议" min-width="140">
           <template #default="{ row }">
             {{ relayProtocolLabel(row.protocol, true) }}
@@ -28,6 +23,22 @@
         <el-table-column label="上游渠道" min-width="210">
           <template #default="{ row }">
             {{ keyChannelLabel(row) }}
+          </template>
+        </el-table-column>
+        <el-table-column label="首Token延迟" min-width="120">
+          <template #default="{ row }">
+            <span v-if="row.metrics?.requestCount" class="metric-value">
+              {{ row.metrics.avgTtftMs }} ms
+            </span>
+            <span v-else class="metric-empty">—</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="生成速度" min-width="120">
+          <template #default="{ row }">
+            <span v-if="row.metrics?.requestCount" class="metric-value">
+              {{ row.metrics.avgTokensPerSecond }} tok/s
+            </span>
+            <span v-else class="metric-empty">—</span>
           </template>
         </el-table-column>
         <el-table-column label="状态" width="100">
@@ -39,16 +50,6 @@
             >
               {{ keyStatusLabel(row.status) }}
             </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="创建时间" min-width="170">
-          <template #default="{ row }">
-            {{ formatDateTime(row.createdAt) }}
-          </template>
-        </el-table-column>
-        <el-table-column label="最近使用" min-width="170">
-          <template #default="{ row }">
-            {{ formatDateTime(row.lastUsedAt) }}
           </template>
         </el-table-column>
         <el-table-column label="操作" width="90" fixed="right">
@@ -278,7 +279,6 @@ import { computed, onMounted, reactive, ref } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { http } from "@/api/http";
 import { copyText } from "@/lib/clipboard";
-import { formatDateTime } from "@/lib/date-time";
 import {
   relayProtocolLabel,
   relayProtocolOption,
@@ -298,6 +298,11 @@ type KeyRow = {
   status: string;
   createdAt: string;
   lastUsedAt?: string | null;
+  metrics?: {
+    requestCount: number;
+    avgTtftMs: number;
+    avgTokensPerSecond: number;
+  } | null;
 };
 
 type UpstreamChannel = {
@@ -670,9 +675,15 @@ onMounted(load);
   font-weight: 600;
 }
 
-.key-mask {
-  color: #475569;
+.metric-value {
+  color: #0f172a;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.metric-empty {
+  color: #94a3b8;
   font-size: 12px;
 }
 
