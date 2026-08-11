@@ -44,7 +44,7 @@ Last Updated: 2026-08-11
 
 - 服务端已有 `RelayLimitError("今日 Token 配额已用尽", "daily_token_limit_exceeded")`，并多以 **HTTP 429** + `rate_limit_error` 类 envelope 返回（见 `server/src/lib/relay/quota.ts` 与 chat/messages 路由）。
 - 问题更可能在于：**状态码/error type 与「日配额」语义不对齐**，导致 Claude Code 等客户端走通用 Retry 文案。
-- 公测配额基线已定为 5 万/人/日（见 pilot-charter §5）。
+- 公测配额基线已定为 5 亿/人/日（见 pilot-charter §5）。
 
 **Root Cause（初步）**
 
