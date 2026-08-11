@@ -32,7 +32,7 @@ export async function healthRoutes(app: FastifyInstance) {
 
     return reply.code(ok ? 200 : 503).send({
       ok,
-      service: "tokenhub-api",
+      service: "kodax-fabric-api",
       postgres,
       redis,
       time: new Date().toISOString(),

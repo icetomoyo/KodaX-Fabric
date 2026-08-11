@@ -1,4 +1,8 @@
-# TokenHub deployment
+# KodaX-Fabric deployment
+
+Deploy artifacts for **KodaX Fabric** (Token Hub module). Runtime hostnames,
+image names, and paths may still use the historical `tokenhub` prefix
+(e.g. `tokenhub.haizhi.com`, `tokenhub-*` images) until a dedicated infra rename.
 
 This directory is designed for an offline image import on the target host. The
 runtime `.env` holds only long-lived service secrets; it must not contain the

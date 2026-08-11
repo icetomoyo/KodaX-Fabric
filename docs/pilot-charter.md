@@ -3,8 +3,8 @@
 | 项 | 内容 |
 |----|------|
 | 文档状态 | FEATURE_001 **已收尾**（2026-08-11）；见 [v0.1.0-closeout.md](v0.1.0-closeout.md) |
-| 产品 | **KodaX Fabric** |
-| 本模块 | **Token Hub**（工程实现历史名 TokenHub，包名可暂留 `tokenhub`） |
+| 产品 / 仓库 | **KodaX Fabric**（npm：`kodax-fabric`、`@kodax-fabric/*`） |
+| 本模块 | **Token Hub**（核心模块；历史工程名 TokenHub；生产域名/DB/镜像可仍含 `tokenhub` 前缀） |
 | 运行/发布版本 | **v0.1.0**（公司内可大范围公测收口版） |
 | 此前工程基线 | v0.0.5 |
 | 服务地址 | `https://tokenhub.haizhi.com` |

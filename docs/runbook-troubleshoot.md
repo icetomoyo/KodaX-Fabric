@@ -37,7 +37,7 @@ curl -fsS https://tokenhub.haizhi.com/health
 ```json
 {
   "ok": true,
-  "service": "tokenhub-api",
+  "service": "kodax-fabric-api",
   "postgres": true,
   "redis": true,
   "time": "..."

@@ -5,7 +5,7 @@
         <p class="eyebrow">员工接入</p>
         <h2 class="page-title">接入教程</h2>
         <p class="page-subtitle">
-          Fabric · Token Hub（TokenHub）使用公网受信任的 HTTPS。员工用内部 API Key 接入；
+          <strong>KodaX Fabric</strong>（Token Hub 模块）使用公网受信任的 HTTPS。员工用内部 API Key 接入；
           <strong>Claude Code</strong> 与 <strong>Cursor</strong> 请各建一把协议匹配的 Key，不要混用。
         </p>
       </div>
@@ -58,7 +58,7 @@
         <span class="step-index">1</span>
         <div>
           <h3>验证 HTTPS 连接</h3>
-          <p>无需安装本地证书；先确认设备能够正常打开 TokenHub 健康检查地址。</p>
+          <p>无需安装本地证书；先确认设备能够正常打开 Fabric 健康检查地址。</p>
         </div>
       </div>
 
@@ -176,7 +176,7 @@
           </ol>
           <div class="field-table">
             <div><span>OpenAI Base URL</span><code>{{ clientBaseUrl }}</code></div>
-            <div><span>API Key</span><code>&lt;你的 TokenHub API Key&gt;</code></div>
+            <div><span>API Key</span><code>&lt;你的 KodaX Fabric API Key&gt;</code></div>
             <div><span>Key 协议</span><code>openai_chat / OpenAI Chat Completions</code></div>
           </div>
           <p class="tab-intro">也可用环境变量（适用于支持 OpenAI 环境变量的启动方式）：</p>
@@ -207,19 +207,19 @@
 
         <el-tab-pane label="CC Switch" name="cc-switch">
           <div class="cc-switch-flow" aria-label="CC Switch 请求链路">
-            <span>Claude Code</span><b>→</b><span>CC Switch 本地代理</span><b>→</b><span>TokenHub</span>
+            <span>Claude Code</span><b>→</b><span>CC Switch 本地代理</span><b>→</b><span>KodaX Fabric</span>
           </div>
           <ol class="instruction-list">
             <li>员工 Key 协议与 CC Switch 里配置的 API 格式必须一致（Claude 场景用 Anthropic Messages）。</li>
             <li>上游 Base URL 填写 <code>{{ clientBaseUrl }}</code>，API Key 填写自己的 <code>th_...</code> Key。</li>
             <li>
               若启用本地代理，Claude Code 可指向 <code>http://127.0.0.1:15721</code>；
-              CC Switch 的<strong>上游</strong>必须是 TokenHub，禁止填本地地址（防循环代理）。
+              CC Switch 的<strong>上游</strong>必须是 KodaX Fabric，禁止填本地地址（防循环代理）。
             </li>
           </ol>
           <div class="field-table">
             <div><span>CC Switch 上游 Base URL</span><code>{{ clientBaseUrl }}</code></div>
-            <div><span>API Key</span><code>&lt;你的 TokenHub API Key&gt;</code></div>
+            <div><span>API Key</span><code>&lt;你的 KodaX Fabric API Key&gt;</code></div>
             <div><span>API 格式</span><code>与创建 Key 时选择的协议一致</code></div>
           </div>
         </el-tab-pane>
@@ -324,27 +324,27 @@ const healthUrl = computed(() => `${publicOrigin.value}/health`);
 const claudeSettingsSnippet = computed(() => JSON.stringify({
   env: {
     ANTHROPIC_BASE_URL: clientBaseUrl.value,
-    ANTHROPIC_AUTH_TOKEN: "<你的 TokenHub API Key>",
+    ANTHROPIC_AUTH_TOKEN: "<你的 KodaX Fabric API Key>",
   },
 }, null, 2));
 
 const openAiSettingsSnippet = computed(() => [
   `export OPENAI_BASE_URL="${clientBaseUrl.value}"`,
-  'export OPENAI_API_KEY="<你的 TokenHub API Key>"',
+  'export OPENAI_API_KEY="<你的 KodaX Fabric API Key>"',
 ].join("\n"));
 
 const modelListCommand = computed(() => `curl -sS "${clientBaseUrl.value}/models" \\
-  -H "Authorization: Bearer <你的 TokenHub API Key>"`);
+  -H "Authorization: Bearer <你的 KodaX Fabric API Key>"`);
 
 const troubleshootingItems = computed(() => [
   {
     title: "Connection failed / TLS / 证书错误",
-    cause: "请求没有到达 TokenHub，通常是 Base URL、DNS、网络、代理设置或设备系统时间异常。",
+    cause: "请求没有到达 KodaX Fabric，通常是 Base URL、DNS、网络、代理设置或设备系统时间异常。",
     resolution: `先在浏览器打开 ${healthUrl.value}；确认客户端 Base URL 使用 ${clientBaseUrl.value}，随后完全退出并重启客户端。`,
   },
   {
     title: "地址中出现 :3100",
-    cause: "3100 是 TokenHub 容器内部端口，员工电脑无法直接访问。",
+    cause: "3100 是 KodaX Fabric 容器内部端口，员工电脑无法直接访问。",
     resolution: `Base URL 必须使用 ${clientBaseUrl.value}，不要添加 :3100。`,
   },
   {

@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 
 const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
-const workspaces = ["@tokenhub/server", "@tokenhub/web"];
+const workspaces = ["@kodax-fabric/server", "@kodax-fabric/web"];
 const children = workspaces.map((workspace) =>
   spawn(npmCommand, ["run", "dev", `--workspace=${workspace}`], {
     env: process.env,

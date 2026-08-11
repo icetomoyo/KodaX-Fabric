@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- 工程与 npm 包主体名称统一为 **KodaX-Fabric**（`kodax-fabric` / `@kodax-fabric/*`）；Token Hub 作为核心模块名保留
+
 ---
 
 ## [0.1.0] - 2026-08-11

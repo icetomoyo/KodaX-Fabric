@@ -1,8 +1,9 @@
-# Token Hub 发布与备份恢复 Runbook（E1 / E2）
+# KodaX Fabric · Token Hub 发布与备份恢复 Runbook（E1 / E2）
 
 | 项 | 内容 |
 |----|------|
-| 模块 | KodaX Fabric · **Token Hub**（部署名 TokenHub） |
+| 产品 | **KodaX Fabric**（仓库 / monorepo 名） |
+| 模块 | **Token Hub**（部署主机/镜像等可能仍带历史前缀 `tokenhub`） |
 | 对应门槛 | **E1** 可重复发布 · **E2** 数据可托底 |
 | 关联 | [公测章程](pilot-charter.md) · [deploy/README.md](../deploy/README.md) · [backup.sh](../deploy/backup.sh) |
 | 生产入口 | `https://tokenhub.haizhi.com` |

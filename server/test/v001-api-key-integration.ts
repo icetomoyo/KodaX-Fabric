@@ -5,7 +5,7 @@
  * for the server. It is intentionally not part of the default unit-test suite:
  * run it only against a migrated development/test database with:
  *
- *   npm run test:v001:api --workspace=@tokenhub/server
+ *   npm run test:v001:api --workspace=@kodax-fabric/server
  *
  * Every fixture is uniquely tagged and cleanup addresses only rows whose IDs
  * were returned while creating this run's fixtures.

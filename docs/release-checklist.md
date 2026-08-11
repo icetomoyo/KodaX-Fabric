@@ -70,15 +70,15 @@
 
 | # | 检查项 | 命令 | 通过标准 |
 |---|--------|------|----------|
-| R16 | 默认单测 | `npm test --workspace=@tokenhub/server` | 全部 pass |
-| R17 | Web 构建 | `npm run build --workspace=@tokenhub/web` | 成功 |
-| R18 | （可选）绑定隔离 | `npm run test:v001:binding --workspace=@tokenhub/server` | 需测试库；有环境时跑 |
+| R16 | 默认单测 | `npm test --workspace=@kodax-fabric/server` | 全部 pass |
+| R17 | Web 构建 | `npm run build --workspace=@kodax-fabric/web` | 成功 |
+| R18 | （可选）绑定隔离 | `npm run test:v001:binding --workspace=@kodax-fabric/server` | 需测试库；有环境时跑 |
 
 ```sh
 # R16 推荐在仓库根（单测不依赖真实 DB 时，部分文件需占位 env；已与 relay-core 对齐）
 cd /path/to/KodaX-Fabric
-npm test --workspace=@tokenhub/server
-npm run build --workspace=@tokenhub/web
+npm test --workspace=@kodax-fabric/server
+npm run build --workspace=@kodax-fabric/web
 ```
 
 ---

@@ -1,22 +1,22 @@
 {
-  "name": "tokenhub",
+  "name": "kodax-fabric",
   "private": true,
   "version": "0.1.0",
-  "description": "Internal LLM gateway: shared official keys, full audit, no billing",
+  "description": "KodaX Fabric — enterprise token access platform; Token Hub module provides shared official LLM keys, relay, and audit",
   "workspaces": [
     "server",
     "web"
   ],
   "scripts": {
     "dev": "node scripts/dev.mjs",
-    "dev:server": "npm run dev --workspace=@tokenhub/server",
-    "dev:web": "npm run dev --workspace=@tokenhub/web",
-    "build": "npm run build --workspace=@tokenhub/server && npm run build --workspace=@tokenhub/web",
-    "test:server": "npm test --workspace=@tokenhub/server",
-    "db:generate": "npm run db:generate --workspace=@tokenhub/server",
-    "db:migrate": "npm run db:migrate --workspace=@tokenhub/server",
-    "db:seed": "npm run db:seed --workspace=@tokenhub/server",
-    "db:cleanup-demo": "npm run db:cleanup-demo --workspace=@tokenhub/server",
+    "dev:server": "npm run dev --workspace=@kodax-fabric/server",
+    "dev:web": "npm run dev --workspace=@kodax-fabric/web",
+    "build": "npm run build --workspace=@kodax-fabric/server && npm run build --workspace=@kodax-fabric/web",
+    "test:server": "npm test --workspace=@kodax-fabric/server",
+    "db:generate": "npm run db:generate --workspace=@kodax-fabric/server",
+    "db:migrate": "npm run db:migrate --workspace=@kodax-fabric/server",
+    "db:seed": "npm run db:seed --workspace=@kodax-fabric/server",
+    "db:cleanup-demo": "npm run db:cleanup-demo --workspace=@kodax-fabric/server",
     "db:setup": "npm run db:migrate && npm run db:seed"
   },
   "engines": {
