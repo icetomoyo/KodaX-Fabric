@@ -1,6 +1,6 @@
 # FEATURE_LIST
 
-Last Updated: 2026-08-11 16:00
+Last Updated: 2026-08-11 16:15
 
 ## Version Info
 
@@ -46,7 +46,7 @@ Last Updated: 2026-08-11 16:00
 
 **第一刀（已对齐）**：S1 公测章程 + 配置基线成文；其后默认 S2 发布/备份 → S3 接入自助 → S4 故障怎么查；仅修复挡住公测的代码 P0。
 
-**构建状态**：已 Start；spec 已写入（T1）；**票已批准写入 §5**。下一步 `/implement`（前沿 **Ticket #1**）。
+**构建状态**：已 Start。**Ticket #1 Done**（`docs/pilot-charter.md`）。下一前沿：#2 / #3 / #4（可并行）→ 然后 #5。
 
 ## Summary
 
