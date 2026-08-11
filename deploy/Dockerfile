@@ -22,7 +22,7 @@ ENV NODE_ENV=production
 
 COPY package.json package-lock.json ./
 COPY server/package.json ./server/package.json
-RUN npm ci --omit=dev --workspace=@tokenhub/server
+RUN npm ci --omit=dev --workspace=@kodax-fabric/server
 
 COPY --from=build /app/server/dist ./server/dist
 COPY --from=build /app/server/drizzle ./server/drizzle
