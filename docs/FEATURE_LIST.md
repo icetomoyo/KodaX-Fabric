@@ -1,6 +1,6 @@
 # FEATURE_LIST
 
-Last Updated: 2026-08-11 15:31
+Last Updated: 2026-08-11 16:00
 
 ## Version Info
 
@@ -14,13 +14,13 @@ Last Updated: 2026-08-11 15:31
 | 版本 | 状态 | 进度 | 说明 |
 |------|------|------|------|
 | v0.0.5 | Released（基线） | — | Token Hub 切片已内网可用，同事可用 Key + Claude Code |
-| v0.1.0 | Planned | 0/1 Completed | Fabric 核心模块 Token Hub 达到公司内可大范围公测 |
+| v0.1.0 | In Progress | 0/1 Completed，1 In Progress | Fabric 核心模块 Token Hub 达到公司内可大范围公测 |
 
 ## Feature Index
 
 | ID | Title | Status | Priority | Category | Planned | Design |
 |----|-------|--------|----------|----------|---------|--------|
-| 001 | Token Hub 核心模块公测收口 | Planned | Critical | Enhancement | v0.1.0 | [设计](features/v0.1.0.md#feature_001) |
+| 001 | Token Hub 核心模块公测收口 | InProgress | Critical | Enhancement | v0.1.0 | [设计](features/v0.1.0.md#feature_001) |
 
 ## Feature Details
 
@@ -30,13 +30,13 @@ Last Updated: 2026-08-11 15:31
 |------|------|
 | ID | 001 |
 | Title | Token Hub 核心模块公测收口 |
-| Status | Planned |
+| Status | InProgress |
 | Priority | Critical |
 | Category | Enhancement |
 | Planned Version | v0.1.0 |
 | Released Version | — |
 | Created | 2026-08-11 |
-| Started | — |
+| Started | 2026-08-11 |
 | Completed | — |
 | Design | [docs/features/v0.1.0.md#feature_001](features/v0.1.0.md#feature_001) |
 
@@ -46,17 +46,20 @@ Last Updated: 2026-08-11 15:31
 
 **第一刀（已对齐）**：S1 公测章程 + 配置基线成文；其后默认 S2 发布/备份 → S3 接入自助 → S4 故障怎么查；仅修复挡住公测的代码 P0。
 
+**构建状态**：已 Start；spec 已写入（T1）；**票已批准写入 §5**。下一步 `/implement`（前沿 **Ticket #1**）。
+
 ## Summary
 
 | 指标 | 数量 |
 |------|------|
 | Total | 1 |
-| Planned | 1 |
-| In Progress | 0 |
+| Planned | 0 |
+| In Progress | 1 |
 | Completed | 0 |
 | Critical | 1 |
 | High | 0 |
 | Medium | 0 |
 | Low | 0 |
 
-Next Release (v0.1.0): 1 feature (0 in progress, 0 completed, 1 planned)
+Next Release (v0.1.0): 1 feature (1 in progress, 0 completed, 0 planned)
+Highest Priority InProgress: 001 (Token Hub 核心模块公测收口)
