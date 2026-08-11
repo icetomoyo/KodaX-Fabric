@@ -17,12 +17,12 @@
 | ID | 门槛 | 证据文档 | 文档已存在 | 运营签字项仍开放 |
 |----|------|----------|------------|------------------|
 | E1 | 可重复发布 | [runbook-release.md](runbook-release.md) | ☑ | 现场发布记录 §9 |
-| E2 | 数据可托底 | runbook-release §4/§7/§8 | ☑ | 服务器恢复演练一行「通过」 |
+| E2 | 数据可托底 | runbook-release §4/§7/§8 | ☑ | ☑ 张闯 2026-08-11 演练通过 |
 | E3 | 渠道策略 | [pilot-charter.md](pilot-charter.md) §4 | ☑ | — |
 | E4 | 账号生命周期 | pilot-charter §3 | ☑ | — |
-| E5 | 配额默认 | pilot-charter §5 | ☑ | §5.1 评审勾选 |
-| E6 | 故障可感知 | [runbook-troubleshoot.md](runbook-troubleshoot.md) | ☑ | 值班按页走过 |
-| E7 | 问题入口 | pilot-charter §8 + 排障 §4 | ☑ | 对接人姓名 |
+| E5 | 配额默认 | pilot-charter §5 | ☑ | ☑ 公测 5 万 Token/人/日 |
+| E6 | 故障可感知 | [runbook-troubleshoot.md](runbook-troubleshoot.md) | ☑ | — |
+| E7 | 问题入口 | pilot-charter §8 + 排障 §4 | ☑ | ☑ 张闯 / 18612243416 |
 | E8 | 安全底线 | pilot-charter §6 | ☑ | — |
 | E9 | 接入可自助 | `/me/guide` + charter §7 | ☑ | 新人实走 |
 | E10 | 本清单实跑 | **本文 §2 + §3** | ☑ | 完整勾选含真实客户端 |
@@ -121,7 +121,7 @@ npm run build --workspace=@tokenhub/web
 |------|------|
 | 自动化层 B | **可通过**（R16/R17） |
 | 生产核心路径人工 | **可通过**（R1 + R8 + R9 均通过） |
-| E10 核心路径 | **执行人+负责人已确认**（张闯）；运营项 E2/E5/E7 建议继续补齐 |
+| E10 核心路径 | **执行人+负责人已确认**（张闯）；E2/E5/E7 运营项已补齐 |
 
 #### 放行签字（扩大公司内公测）
 
@@ -130,7 +130,7 @@ npm run build --workspace=@tokenhub/web
 | 执行人 | 张闯 | 2026-08-11 | 已确认（R8/R9 双端通过） |
 | 负责人 | 张闯 | 2026-08-11 | 已确认（执行人兼负责人；R1/R8/R9/R16 通过） |
 
-放行说明：R1、R8、R9、R16 已通过并由负责人确认。E2 恢复演练表、E5 配额评审值、E7 对接人姓名等运营项仍建议尽快补齐（见 pilot-charter / runbook-release），不阻断本清单对核心路径的确认。
+放行说明：R1、R8、R9、R16 已通过；E2 演练、E5 配额（5 万/人/日）、E7 对接人（张闯 / 18612243416）已由负责人确认写入章程与 runbook。已知体验问题：日配额触顶时客户端易显示 Retry 而非明确「额度用尽」——见 [KNOWN_ISSUES 001](KNOWN_ISSUES.md)，后续优化。
 
 ---
 
