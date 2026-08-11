@@ -1,9 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import {
-  summarizeChannelOverview,
-  type ChannelCredentialRow,
-} from "../src/lib/channel-overview.js";
+import type { ChannelCredentialRow } from "../src/lib/channel-overview.js";
+
+// channel-overview imports db/client → config; unit tests only use pure summarize helpers.
+process.env.DATABASE_URL ??= "postgresql://test:test@127.0.0.1:5432/test";
+process.env.REDIS_URL ??= "redis://127.0.0.1:6379/15";
+process.env.JWT_SECRET ??= "unit-test-jwt-secret";
+process.env.CREDENTIAL_ENCRYPT_KEY ??= "unit-test-credential-secret";
+
+const { summarizeChannelOverview } = await import("../src/lib/channel-overview.js");
 
 const now = new Date("2026-08-06T12:00:00.000Z");
 

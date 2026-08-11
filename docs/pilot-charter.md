@@ -268,6 +268,7 @@ Provider（供应商）
 | [deploy/README.md](../deploy/README.md) | 部署、TLS、bootstrap、备份入口 |
 | [runbook-release.md](runbook-release.md) | 发布、回滚、备份恢复（E1/E2） |
 | [runbook-troubleshoot.md](runbook-troubleshoot.md) | 值班故障排查（E6/E7） |
+| [release-checklist.md](release-checklist.md) | E10 回归清单与实跑记录 |
 | [TokenHub_PRD.md](TokenHub_PRD.md) | 产品规则全文 |
 | [features/v0.1.0.md](features/v0.1.0.md) | v0.1.0 / FEATURE_001 设计与票 |
 | [FEATURE_LIST.md](FEATURE_LIST.md) | Feature 状态 |
@@ -277,7 +278,7 @@ Provider（供应商）
 
 ## 附录 A — 公测硬门槛 E1～E10 与证据 {#e10-titles}
 
-> **E10 回归清单的标题列表**如下；细项勾选与实跑记录在 Ticket #5（建议 `docs/release-checklist.md`）完成。  
+> **E10 回归清单全文与实跑记录**见 [release-checklist.md](release-checklist.md)。  
 > 本章程交付时：E3/E4/E5/E7/E8 以本文为证据主体；E5 须补齐 §5.1 评审表。
 
 | ID | 门槛 | 证据落点（预期） | 章程交付时 |
@@ -291,7 +292,7 @@ Provider（供应商）
 | **E7** | 问题有入口 | **本文 §8** + 排障 runbook §4 | ☑ 文档；☐ 对接人姓名 |
 | **E8** | 安全底线 | **本文 §6** | ☑ 本文 |
 | **E9** | 接入可自助 | **本文 §7** + 员工端 `/me/guide`（Claude Code / Cursor 双页签） | ☑ 文档+UI；☐ 新人实走一遍可签字 |
-| **E10** | 核心路径不回退 | 本表标题 + 回归实跑勾选 | ☑ 标题；☐ 待 #5 实跑 |
+| **E10** | 核心路径不回退 | [release-checklist.md](release-checklist.md) | ☑ 清单+自动化实跑；☐ R8/R9 人工与放行签字 |
 
 ### E10 回归检查项标题（供清单展开）
 
