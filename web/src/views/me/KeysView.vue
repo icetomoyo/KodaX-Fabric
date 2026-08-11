@@ -208,6 +208,10 @@
                 <el-tag size="small" effect="plain">已选协议</el-tag>
               </div>
               <div class="protocol-guide-row">
+                <span>适用客户端</span>
+                <span>{{ selectedProtocolGuide.recommendedClients.join("、") }}</span>
+              </div>
+              <div class="protocol-guide-row">
                 <span>请求接口</span>
                 <code>{{ selectedProtocolGuide.endpoint }}</code>
               </div>
@@ -220,6 +224,10 @@
                   >{{ line }}</code>
                 </div>
               </div>
+              <p class="protocol-guide-hint">
+                一种客户端建议一把 Key。完整步骤见
+                <router-link to="/me/guide">接入教程</router-link>。
+              </p>
             </div>
           </el-form-item>
 
@@ -807,6 +815,18 @@ onMounted(load);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 12px;
   line-height: 1.55;
+}
+
+.protocol-guide-hint {
+  margin: 10px 0 0;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.protocol-guide-hint a {
+  color: #2563eb;
+  font-weight: 600;
 }
 
 .protocol-guide-lines {

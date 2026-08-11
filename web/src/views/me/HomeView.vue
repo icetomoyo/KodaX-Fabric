@@ -21,6 +21,12 @@
       <el-descriptions-item label="Base URL">
         <code>{{ clientBaseUrl }}</code>
       </el-descriptions-item>
+      <el-descriptions-item label="Claude Code">
+        创建 Key 时选 <strong>Anthropic Messages</strong>，详见接入教程「Claude Code」页签
+      </el-descriptions-item>
+      <el-descriptions-item label="Cursor">
+        创建 Key 时选 <strong>OpenAI Chat Completions</strong>，与 Claude Code 请各用一把 Key
+      </el-descriptions-item>
     </el-descriptions>
   </div>
 </template>

@@ -23,6 +23,8 @@ export type RelayProtocolOption = {
   description: string;
   endpoint: string;
   authHeaders: readonly string[];
+  /** Typical employee clients; one Key per client/protocol. */
+  recommendedClients: readonly string[];
 };
 
 export const relayProtocolOptions: readonly RelayProtocolOption[] = [
@@ -33,6 +35,7 @@ export const relayProtocolOptions: readonly RelayProtocolOption[] = [
     description: "按 OpenAI Chat Completions 原生格式转发，不做协议转换",
     endpoint: `POST ${RELAY_BASE_PATH}/chat/completions`,
     authHeaders: ["Authorization: Bearer <你的 API Key>"],
+    recommendedClients: ["Cursor", "其他 OpenAI 兼容 SDK / CLI"],
   },
   {
     value: "anthropic_messages",
@@ -44,6 +47,7 @@ export const relayProtocolOptions: readonly RelayProtocolOption[] = [
       "x-api-key: <你的 API Key>",
       "anthropic-version: 2023-06-01",
     ],
+    recommendedClients: ["Claude Code", "CC Switch（上游协议选 Anthropic）"],
   },
 ];
 

@@ -187,7 +187,7 @@ Provider（供应商）
 
 ## 7. 接入与客户端（员工） {#e9-onboarding}
 
-详细步骤以 **`/me/guide` 接入教程** 为准。章程级约定：
+详细步骤以员工端 **`/me/guide` 接入教程** 为准（含可复制配置片段）。章程级约定：
 
 1. 浏览器打开 `https://tokenhub.haizhi.com`，确认 HTTPS 正常（可打开健康检查）  
 2. 登录并完成强制改密  
@@ -195,8 +195,13 @@ Provider（供应商）
 4. 在 Claude Code / Cursor 中配置 Base URL 与 Key（协议与客户端一致）  
 5. 调用后可在 **我的调用** 查看记录；问题走 §8  
 
-第二客户端（Cursor / `openai_chat`）与 Claude Code（`anthropic_messages`）**各建一把 Key**，不要混用协议。
+| 客户端 | Key 协议 | 配置要点 |
+|--------|----------|----------|
+| Claude Code | `anthropic_messages` | `ANTHROPIC_BASE_URL` + `ANTHROPIC_AUTH_TOKEN`（见教程） |
+| Cursor | `openai_chat` | OpenAI Base URL + API Key / `OPENAI_*` 环境变量 |
+| 其他 OpenAI 兼容 | `openai_chat` | 同上 |
 
+**一种客户端一把 Key**；不要把 Anthropic Key 配进 Cursor，或把 Chat Completions Key 配进 Claude Code。
 ---
 
 ## 8. 问题入口与响应预期 {#e7-support}
@@ -283,7 +288,7 @@ Provider（供应商）
 | **E6** | 故障可感知 | **本文 §9** + 故障 runbook | ☑ 指针；☐ 待 #4 一页纸 |
 | **E7** | 问题有入口 | **本文 §8** | ☑ 本文；☐ 对接人姓名 |
 | **E8** | 安全底线 | **本文 §6** | ☑ 本文 |
-| **E9** | 接入可自助 | **本文 §7** + `/me/guide` | ☑ 指针；☐ 待 #3 打磨验收 |
+| **E9** | 接入可自助 | **本文 §7** + 员工端 `/me/guide`（Claude Code / Cursor 双页签） | ☑ 文档+UI；☐ 新人实走一遍可签字 |
 | **E10** | 核心路径不回退 | 本表标题 + 回归实跑勾选 | ☑ 标题；☐ 待 #5 实跑 |
 
 ### E10 回归检查项标题（供清单展开）

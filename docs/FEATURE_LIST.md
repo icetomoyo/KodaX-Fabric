@@ -1,6 +1,6 @@
 # FEATURE_LIST
 
-Last Updated: 2026-08-11 16:30
+Last Updated: 2026-08-11 16:50
 
 ## Version Info
 
@@ -46,7 +46,7 @@ Last Updated: 2026-08-11 16:30
 
 **第一刀（已对齐）**：S1 公测章程 + 配置基线成文；其后默认 S2 发布/备份 → S3 接入自助 → S4 故障怎么查；仅修复挡住公测的代码 P0。
 
-**构建状态**：已 Start。**#1 Done**、**#2 Done**（`docs/runbook-release.md`）。下一前沿：#3 / #4 → 然后 #5。
+**构建状态**：已 Start。**#1–#3 Done**。下一前沿：**#4** → 然后 #5。
 
 ## Summary
 

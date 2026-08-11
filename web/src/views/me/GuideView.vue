@@ -5,7 +5,8 @@
         <p class="eyebrow">员工接入</p>
         <h2 class="page-title">接入教程</h2>
         <p class="page-subtitle">
-          TokenHub 使用公网受信任的 HTTPS 证书；客户端只需配置 Base URL 和自己的 TokenHub API Key。
+          Fabric · Token Hub（TokenHub）使用公网受信任的 HTTPS。员工用内部 API Key 接入；
+          <strong>Claude Code</strong> 与 <strong>Cursor</strong> 请各建一把协议匹配的 Key，不要混用。
         </p>
       </div>
       <div class="hero-actions">
@@ -23,6 +24,20 @@
     >
       <template #default>
         此地址使用公网受信任的证书，无需下载或安装本地根证书。请保持客户端的 TLS 证书校验开启，勿使用不安全模式绕过校验。
+      </template>
+    </el-alert>
+
+    <el-alert
+      class="security-alert"
+      title="一种客户端，一把 Key"
+      type="warning"
+      :closable="false"
+      show-icon
+    >
+      <template #default>
+        Key 创建时绑定<strong>上游渠道 + 协议</strong>，创建后不可改协议。
+        Claude Code 使用 <code>Anthropic Messages</code>；Cursor 使用 <code>OpenAI Chat Completions</code>。
+        两台工具请创建两把 Key，名称可写「本机 Claude Code」「本机 Cursor」便于区分。
       </template>
     </el-alert>
 
@@ -71,9 +86,12 @@
       <div class="two-column">
         <ol class="instruction-list compact-list">
           <li>进入“API Key”，选择需要使用的上游渠道。</li>
-          <li>根据客户端选择“Anthropic Messages”或“OpenAI Chat Completions”。</li>
-          <li>创建后立即复制完整 Key，并保存到密码管理器或客户端配置。</li>
-          <li>关闭创建窗口后，员工和管理员都无法再次查看 Key 明文。</li>
+          <li>
+            按客户端选协议：Claude Code → <strong>Anthropic Messages</strong>；
+            Cursor → <strong>OpenAI Chat Completions</strong>。
+          </li>
+          <li>创建后立即复制完整 Key（<code>th_...</code>），保存到密码管理器或客户端；关闭后无法再查看明文。</li>
+          <li>若同时使用 Claude Code 与 Cursor，请创建<strong>两把</strong> Key，不要共用一把。</li>
         </ol>
         <div class="key-safety-card">
           <strong>Key 安全</strong>
@@ -88,29 +106,103 @@
         <span class="step-index">3</span>
         <div>
           <h3>配置调用客户端</h3>
-          <p>客户端协议必须与创建 Key 时选择的协议一致；示例中的 Key 是占位符。</p>
+          <p>客户端协议必须与创建 Key 时选择的协议一致；示例中的 Key 是占位符 <code>th_...</code>。</p>
+        </div>
+      </div>
+
+      <div class="protocol-matrix" aria-label="客户端与协议对照">
+        <div class="protocol-matrix-row protocol-matrix-head">
+          <span>客户端</span>
+          <span>创建 Key 时选协议</span>
+          <span>主要配置项</span>
+        </div>
+        <div class="protocol-matrix-row">
+          <span>Claude Code</span>
+          <code>Anthropic Messages</code>
+          <span><code>ANTHROPIC_BASE_URL</code> + <code>ANTHROPIC_AUTH_TOKEN</code></span>
+        </div>
+        <div class="protocol-matrix-row">
+          <span>Cursor</span>
+          <code>OpenAI Chat Completions</code>
+          <span>OpenAI Base URL + API Key（或环境变量）</span>
+        </div>
+        <div class="protocol-matrix-row">
+          <span>其他 OpenAI 兼容工具</span>
+          <code>OpenAI Chat Completions</code>
+          <span><code>OPENAI_BASE_URL</code> + <code>OPENAI_API_KEY</code></span>
         </div>
       </div>
 
       <el-tabs v-model="clientTab" class="guide-tabs client-tabs">
         <el-tab-pane label="Claude Code" name="claude">
           <el-alert
-            title="Claude Code 需要使用 Anthropic Messages 协议的员工 Key"
+            title="必须使用「Anthropic Messages」协议的员工 Key"
             type="info"
             :closable="false"
             show-icon
           />
-          <p class="tab-intro">
-            将下面字段合并到 <code>~/.claude/settings.json</code> 的 <code>env</code> 中；不要覆盖文件里已有的其他配置。
-          </p>
+          <ol class="instruction-list compact-list tab-steps">
+            <li>在 API Key 页创建 Key：协议选 <strong>Anthropic Messages（Claude）</strong>。</li>
+            <li>将下列字段<strong>合并</strong>进 <code>~/.claude/settings.json</code> 的 <code>env</code>，不要整文件覆盖。</li>
+            <li>完全退出并重新打开 Claude Code，使环境变量生效。</li>
+            <li>模型名使用下一步 <code>/ai/models</code> 返回的 ID（以渠道实际为准）。</li>
+          </ol>
           <SnippetBlock
             :value="claudeSettingsSnippet"
             language="JSON"
             @copy="copyValue('Claude Code 配置', claudeSettingsSnippet)"
           />
           <p class="inline-note">
-            修改配置后，请完全退出并重新启动 Claude Code，使环境变量重新加载。
+            鉴权也可用客户端支持的 <code>x-api-key</code>；与 Bearer 二选一即可，Key 值相同。
           </p>
+        </el-tab-pane>
+
+        <el-tab-pane label="Cursor" name="cursor">
+          <el-alert
+            title="必须使用「OpenAI Chat Completions」协议的员工 Key"
+            type="info"
+            :closable="false"
+            show-icon
+          />
+          <ol class="instruction-list compact-list tab-steps">
+            <li>在 API Key 页创建 Key：协议选 <strong>OpenAI 对话（Chat Completions）</strong>。</li>
+            <li>打开 Cursor Settings → Models（或 OpenAI 兼容相关设置）。</li>
+            <li>
+              Override OpenAI Base URL 填 <code>{{ clientBaseUrl }}</code>
+              （不要加 <code>:3100</code>，不要漏协议）。
+            </li>
+            <li>OpenAI API Key 填员工 Key（<code>th_...</code>）。</li>
+            <li>模型选择与 <code>/ai/models</code> 返回一致；保存后新开对话验证。</li>
+          </ol>
+          <div class="field-table">
+            <div><span>OpenAI Base URL</span><code>{{ clientBaseUrl }}</code></div>
+            <div><span>API Key</span><code>&lt;你的 TokenHub API Key&gt;</code></div>
+            <div><span>Key 协议</span><code>openai_chat / OpenAI Chat Completions</code></div>
+          </div>
+          <p class="tab-intro">也可用环境变量（适用于支持 OpenAI 环境变量的启动方式）：</p>
+          <SnippetBlock
+            :value="openAiSettingsSnippet"
+            language="Shell"
+            @copy="copyValue('Cursor / OpenAI 环境变量', openAiSettingsSnippet)"
+          />
+        </el-tab-pane>
+
+        <el-tab-pane label="其他 OpenAI 兼容" name="openai">
+          <el-alert
+            title="仅使用 OpenAI Chat Completions 协议的员工 Key"
+            type="info"
+            :closable="false"
+            show-icon
+          />
+          <p class="tab-intro">
+            任意支持自定义 OpenAI Base URL 的 SDK / CLI 均可；客户端会自动请求
+            <code>/chat/completions</code>。请单独建一把 <code>openai_chat</code> Key。
+          </p>
+          <SnippetBlock
+            :value="openAiSettingsSnippet"
+            language="Shell"
+            @copy="copyValue('OpenAI 客户端配置', openAiSettingsSnippet)"
+          />
         </el-tab-pane>
 
         <el-tab-pane label="CC Switch" name="cc-switch">
@@ -118,11 +210,11 @@
             <span>Claude Code</span><b>→</b><span>CC Switch 本地代理</span><b>→</b><span>TokenHub</span>
           </div>
           <ol class="instruction-list">
-            <li>在 CC Switch 中新增或编辑供应商，API 格式选择与员工 Key 完全一致的协议。</li>
-            <li>上游 Base URL 填写 <code>{{ clientBaseUrl }}</code>，API Key 填写员工自己的 <code>th_...</code> Key。</li>
+            <li>员工 Key 协议与 CC Switch 里配置的 API 格式必须一致（Claude 场景用 Anthropic Messages）。</li>
+            <li>上游 Base URL 填写 <code>{{ clientBaseUrl }}</code>，API Key 填写自己的 <code>th_...</code> Key。</li>
             <li>
-              如果启用本地代理，Claude Code 的地址可以是 <code>http://127.0.0.1:15721</code>；但 CC Switch
-              的上游地址必须保持为 TokenHub，不能也填成本地地址，否则会形成循环代理。
+              若启用本地代理，Claude Code 可指向 <code>http://127.0.0.1:15721</code>；
+              CC Switch 的<strong>上游</strong>必须是 TokenHub，禁止填本地地址（防循环代理）。
             </li>
           </ol>
           <div class="field-table">
@@ -130,21 +222,6 @@
             <div><span>API Key</span><code>&lt;你的 TokenHub API Key&gt;</code></div>
             <div><span>API 格式</span><code>与创建 Key 时选择的协议一致</code></div>
           </div>
-        </el-tab-pane>
-
-        <el-tab-pane label="OpenAI 兼容客户端" name="openai">
-          <el-alert
-            title="仅使用 OpenAI Chat Completions 协议的员工 Key"
-            type="info"
-            :closable="false"
-            show-icon
-          />
-          <p class="tab-intro">支持自定义 OpenAI Base URL 的客户端可使用以下环境变量；客户端会自动追加调用路径。</p>
-          <SnippetBlock
-            :value="openAiSettingsSnippet"
-            language="Shell"
-            @copy="copyValue('OpenAI 客户端配置', openAiSettingsSnippet)"
-          />
         </el-tab-pane>
       </el-tabs>
     </section>
@@ -279,6 +356,11 @@ const troubleshootingItems = computed(() => [
     title: "能查询模型，但生成失败",
     cause: "客户端模型 ID、Key 协议或所选渠道不匹配，也可能是当前上游暂时不可用。",
     resolution: "使用 /ai/models 返回的模型 ID，确认协议一致，并在“我的调用”中查看具体错误。",
+  },
+  {
+    title: "Claude Code 正常但 Cursor 401 / 模型列表空（或相反）",
+    cause: "两套客户端共用了一把错误协议的 Key，或 Base URL / 鉴权字段不一致。",
+    resolution: "Claude Code 与 Cursor 各建一把 Key（Messages vs Chat Completions）；Cursor 使用 Bearer + OpenAI Base URL。",
   },
   {
     title: "CC Switch 持续 API error / Retrying",
@@ -467,6 +549,42 @@ onMounted(loadRelayUrl);
 
 .tab-intro {
   margin: 14px 0 10px;
+}
+
+.tab-steps {
+  margin: 12px 0 14px;
+}
+
+.protocol-matrix {
+  margin: 0 0 18px;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.protocol-matrix-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.7fr) minmax(160px, 1fr) minmax(0, 1.4fr);
+  gap: 12px;
+  padding: 11px 14px;
+  border-bottom: 1px solid #e2e8f0;
+  color: #334155;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.protocol-matrix-row:last-child {
+  border-bottom: none;
+}
+
+.protocol-matrix-head {
+  background: #f8fafc;
+  color: #64748b;
+  font-weight: 650;
+}
+
+.protocol-matrix-row code {
+  overflow-wrap: anywhere;
 }
 
 :deep(.snippet-block) {
@@ -710,7 +828,8 @@ onMounted(loadRelayUrl);
   }
 
   .field-table > div,
-  .troubleshooting-list article {
+  .troubleshooting-list article,
+  .protocol-matrix-row {
     grid-template-columns: 1fr;
     gap: 6px;
   }
