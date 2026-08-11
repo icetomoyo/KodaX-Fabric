@@ -1,7 +1,7 @@
 {
   "name": "tokenhub",
   "private": true,
-  "version": "0.0.5",
+  "version": "0.1.0",
   "description": "Internal LLM gateway: shared official keys, full audit, no billing",
   "workspaces": [
     "server",

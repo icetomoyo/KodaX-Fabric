@@ -6,15 +6,15 @@ Last Updated: 2026-08-11 18:00
 
 | 项 | 值 |
 |----|-----|
-| Current Release | v0.0.5（工程 package 版本号；公测能力收口已完成） |
-| Planned Version | v0.1.0（建议下一步 `/smart-release` 对齐版本号） |
+| Current Release | **v0.1.0** |
+| Planned Version | — |
 
 ## Version Summary
 
 | 版本 | 状态 | 进度 | 说明 |
 |------|------|------|------|
-| v0.0.5 | Released（基线） | — | 工程版本号仍为 0.0.5 |
-| v0.1.0 | **Feature 完成，待版本号发布** | 1/1 Completed | Token Hub 公测收口（FEATURE_001）已 Done |
+| v0.0.5 | Released（历史基线） | — | 公测收口前工程基线 |
+| v0.1.0 | **Released** | 1/1 Completed | Token Hub 公司内公测收口；package 已对齐 0.1.0 |
 
 ## Feature Index
 
@@ -34,7 +34,7 @@ Last Updated: 2026-08-11 18:00
 | Priority | Critical |
 | Category | Enhancement |
 | Planned Version | v0.1.0 |
-| Released Version | 能力已交付；package 版本待 `/smart-release` 升至 v0.1.0 |
+| Released Version | **v0.1.0** |
 | Created | 2026-08-11 |
 | Started | 2026-08-11 |
 | Completed | 2026-08-11 |
@@ -57,4 +57,4 @@ Last Updated: 2026-08-11 18:00
 | Completed | 1 |
 | Critical | 1 |
 
-Next：建议 `/smart-release` 将 package 版本与变更说明对齐到 **v0.1.0**。
+Released: **v0.1.0**（2026-08-11）。遗留：KNOWN_ISSUES 001（日配额触顶提示）。
