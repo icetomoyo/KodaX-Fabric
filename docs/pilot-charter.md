@@ -2,7 +2,7 @@
 
 | 项 | 内容 |
 |----|------|
-| 文档状态 | **S1 基线（Ticket #1）**；随 v0.1.0 收口持续修订 |
+| 文档状态 | FEATURE_001 **已收尾**（2026-08-11）；见 [v0.1.0-closeout.md](v0.1.0-closeout.md) |
 | 产品 | **KodaX Fabric** |
 | 本模块 | **Token Hub**（工程实现历史名 TokenHub，包名可暂留 `tokenhub`） |
 | 运行基线 | v0.0.5 |

@@ -1,26 +1,26 @@
 # FEATURE_LIST
 
-Last Updated: 2026-08-11 17:20
+Last Updated: 2026-08-11 18:00
 
 ## Version Info
 
 | 项 | 值 |
 |----|-----|
-| Current Release | v0.0.5 |
-| Planned Version | v0.1.0 |
+| Current Release | v0.0.5（工程 package 版本号；公测能力收口已完成） |
+| Planned Version | v0.1.0（建议下一步 `/smart-release` 对齐版本号） |
 
 ## Version Summary
 
 | 版本 | 状态 | 进度 | 说明 |
 |------|------|------|------|
-| v0.0.5 | Released（基线） | — | Token Hub 切片已内网可用，同事可用 Key + Claude Code |
-| v0.1.0 | In Progress | 0/1 Completed，1 In Progress | Fabric 核心模块 Token Hub 达到公司内可大范围公测 |
+| v0.0.5 | Released（基线） | — | 工程版本号仍为 0.0.5 |
+| v0.1.0 | **Feature 完成，待版本号发布** | 1/1 Completed | Token Hub 公测收口（FEATURE_001）已 Done |
 
 ## Feature Index
 
 | ID | Title | Status | Priority | Category | Planned | Design |
 |----|-------|--------|----------|----------|---------|--------|
-| 001 | Token Hub 核心模块公测收口 | InProgress | Critical | Enhancement | v0.1.0 | [设计](features/v0.1.0.md#feature_001) |
+| 001 | Token Hub 核心模块公测收口 | **Completed** | Critical | Enhancement | v0.1.0 | [设计](features/v0.1.0.md#feature_001) |
 
 ## Feature Details
 
@@ -30,23 +30,22 @@ Last Updated: 2026-08-11 17:20
 |------|------|
 | ID | 001 |
 | Title | Token Hub 核心模块公测收口 |
-| Status | InProgress |
+| Status | **Completed** |
 | Priority | Critical |
 | Category | Enhancement |
 | Planned Version | v0.1.0 |
-| Released Version | — |
+| Released Version | 能力已交付；package 版本待 `/smart-release` 升至 v0.1.0 |
 | Created | 2026-08-11 |
 | Started | 2026-08-11 |
-| Completed | — |
+| Completed | 2026-08-11 |
 | Design | [docs/features/v0.1.0.md#feature_001](features/v0.1.0.md#feature_001) |
+| Closeout | [docs/v0.1.0-closeout.md](v0.1.0-closeout.md) |
 
 **Description**
 
-将 KodaX Fabric 的核心模块 Token Hub（当前工程实现 / 历史名 TokenHub）从 v0.0.5「E1～E10 均为部分满足」收到 **公司内可大范围公测** 的 v0.1.0 完成态。以公测准入与现网补洞为主（M5 + L4），不纳入 ROI、组织层级、Commerce、SSO 等非本模块能力。
+将 KodaX Fabric 的核心模块 Token Hub 从 v0.0.5 收到公司内可大范围公测完成态（文档 + 运维 + 双端验证）。
 
-**第一刀（已对齐）**：S1 公测章程 + 配置基线成文；其后默认 S2 发布/备份 → S3 接入自助 → S4 故障怎么查；仅修复挡住公测的代码 P0。
-
-**构建状态**：已 Start。**#1–#5 Done**（E10 清单+自动化实跑）。**#6** 可跳过（无挡路 P0）。下一：**#7** 证据收口 / 或人工补 R8/R9 后放行。
+**构建状态**：全部票 #1–#5、#7 完成；#6 跳过。收尾见 `docs/v0.1.0-closeout.md`。遗留体验：KNOWN_ISSUES 001（日配额触顶提示）。
 
 ## Summary
 
@@ -54,12 +53,8 @@ Last Updated: 2026-08-11 17:20
 |------|------|
 | Total | 1 |
 | Planned | 0 |
-| In Progress | 1 |
-| Completed | 0 |
+| In Progress | 0 |
+| Completed | 1 |
 | Critical | 1 |
-| High | 0 |
-| Medium | 0 |
-| Low | 0 |
 
-Next Release (v0.1.0): 1 feature (1 in progress, 0 completed, 0 planned)
-Highest Priority InProgress: 001 (Token Hub 核心模块公测收口)
+Next：建议 `/smart-release` 将 package 版本与变更说明对齐到 **v0.1.0**。
