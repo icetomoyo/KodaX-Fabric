@@ -20,7 +20,7 @@
 | E2 | 数据可托底 | runbook-release §4/§7/§8 | ☑ | ☑ 张闯 2026-08-11 演练通过 |
 | E3 | 渠道策略 | [pilot-charter.md](pilot-charter.md) §4 | ☑ | — |
 | E4 | 账号生命周期 | pilot-charter §3 | ☑ | — |
-| E5 | 配额默认 | pilot-charter §5 | ☑ | ☑ 公测 5 万 Token/人/日 |
+| E5 | 配额默认 | pilot-charter §5 | ☑ | ☑ 公测 5 亿 Token/人/日 |
 | E6 | 故障可感知 | [runbook-troubleshoot.md](runbook-troubleshoot.md) | ☑ | — |
 | E7 | 问题入口 | pilot-charter §8 + 排障 §4 | ☑ | ☑ 张闯 / 18612243416 |
 | E8 | 安全底线 | pilot-charter §6 | ☑ | — |
