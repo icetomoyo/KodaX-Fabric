@@ -1,0 +1,71 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: tokenhub
+      POSTGRES_PASSWORD: tokenhub
+      POSTGRES_DB: tokenhub
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tokenhub -d tokenhub"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+    ports:
+      - "15432:5432"
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+    ports:
+      - "16379:6379"
+
+  bootstrap:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    entrypoint: ["/usr/local/bin/bootstrap"]
+    environment:
+      DATABASE_URL: postgres://tokenhub:tokenhub@postgres:5432/tokenhub?sslmode=disable
+      CREDENTIAL_ENCRYPT_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
+      DEEPSEEK_BASE_URL: https://api.deepseek.com
+      ADMIN_PHONE: "18612243416"
+      ADMIN_PASSWORD: "Hz@123456"
+      BOOTSTRAP_VIRTUAL_KEY: fab-local-bootstrap-01
+      BOOTSTRAP_VK_FILE: /data/virtual-key.txt
+    volumes:
+      - vkdata:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  gateway:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    environment:
+      LISTEN_ADDR: ":8080"
+      DATABASE_URL: postgres://tokenhub:tokenhub@postgres:5432/tokenhub?sslmode=disable
+      CREDENTIAL_ENCRYPT_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      REDIS_URL: redis://redis:6379
+    ports:
+      - "18080:8080"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/health"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      bootstrap:
+        condition: service_completed_successfully
+
+volumes:
+  vkdata:

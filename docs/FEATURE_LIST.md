@@ -53,7 +53,7 @@ Last Updated: 2026-08-13 04:40
 
 Token Hub 按 `docs/PRD.md` §3 从 0 重开的第一刀：OpenAI / Anthropic 双端点零转换透传 + SSE。数据模型预留 VK → 池，即使本版池里只有一条路上游。
 
-**Spec**：已综合（T1）。**Tickets**：#1–#4 已批准。下一步 `/implement`（从 #1）。
+**Spec**：已综合（T1）。**Tickets**：#1–#4 **Done**。Go 网关 + compose 可独立拉起。
 
 ## Summary
 
