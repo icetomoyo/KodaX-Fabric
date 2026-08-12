@@ -704,4 +704,4 @@ Coding Plan 默认使用 `grant_only`。多账号、多终端或共享套餐凭�
 | `/README.md` | 工程说明、运行方式与当前接口概览 |
 | [history/v0.0.1.md](history/v0.0.1.md) | v0.0.1 渠道绑定工程交付规格与测试矩阵 |
 | [TokenHub_PRD.md](TokenHub_PRD.md) | 本文：Token Hub 已落地产品规则 |
-| [../fabric/PRD.md](../fabric/PRD.md) | Fabric 整机愿景（未全部落地） |
+| [../../fabric/PRD.md](../../fabric/PRD.md) | Fabric 整机愿景（未全部落地） |

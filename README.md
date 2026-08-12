@@ -2,16 +2,16 @@
 
 企业级 **Token 统一接入与效能管理** 平台（工作名 / 仓库名：**KodaX-Fabric**）。
 
-当前已落地的核心模块是 **Token Hub**（内网 LLM 统一网关、官方凭证池、员工级调用审计）。  
-历史工程名 TokenHub 仅保留在生产域名、数据库名、Docker 镜像等**运行时标识**中，产品与仓库主体名称均为 **KodaX-Fabric**。
+**Token Hub** 按 [docs/fabric/PRD.md](docs/fabric/PRD.md) §3 从 0 重开（独立网关模块：VK、渠道池、限流熔断）。  
+`https://tokenhub.haizhi.com` 是 2026 公司内试点，模型与文档已归档，不是模块基线。
 
 | 项 | 说明 |
 |----|------|
 | 产品 | KodaX Fabric |
-| 核心模块 | Token Hub |
-| 版本 | 见根目录 `package.json` / `CHANGELOG.md` |
-| 公测说明 | [docs/token-hub/v0.1.0-closeout.md](docs/token-hub/v0.1.0-closeout.md) · [docs/token-hub/pilot-charter.md](docs/token-hub/pilot-charter.md) |
-| 生产入口（现状） | `https://tokenhub.haizhi.com`（主机名历史沿用，产品名仍是 Fabric） |
+| 核心模块 | Token Hub（重开中，尚未登记 0.0.1） |
+| 版本 | 新序列待定；试点包版本见 `package.json` / `CHANGELOG.md` |
+| 愿景 | [docs/fabric/PRD.md](docs/fabric/PRD.md) · [docs/fabric/TokenHub_VISION.md](docs/fabric/TokenHub_VISION.md) |
+| 试点现网 | `https://tokenhub.haizhi.com`（运维见 [归档 runbook](docs/archive/tokenhub-pilot/runbook-release.md)） |
 
 ## 开发
 
@@ -29,7 +29,7 @@ Workspaces：
 
 ## 部署
 
-见 [deploy/README.md](deploy/README.md) 与 [docs/token-hub/runbook-release.md](docs/token-hub/runbook-release.md)。
+见 [deploy/README.md](deploy/README.md)。试点现网发布步骤：[docs/archive/tokenhub-pilot/runbook-release.md](docs/archive/tokenhub-pilot/runbook-release.md)。
 
 ## 文档
 
@@ -37,8 +37,8 @@ Workspaces：
 
 | 文档 | 用途 |
 |------|------|
-| [docs/README.md](docs/README.md) | 怎么看、按角色阅读顺序 |
-| [docs/fabric/PRD.md](docs/fabric/PRD.md) | Fabric 整机产品需求（愿景，未全部落地） |
-| [docs/token-hub/TokenHub_PRD.md](docs/token-hub/TokenHub_PRD.md) | Token Hub 模块规则（已落地） |
-| [docs/FEATURE_LIST.md](docs/FEATURE_LIST.md) | Feature 进度 |
-| [docs/KNOWN_ISSUES.md](docs/KNOWN_ISSUES.md) | 已知问题 |
+| [docs/README.md](docs/README.md) | 怎么看 |
+| [docs/fabric/PRD.md](docs/fabric/PRD.md) | 原始产品需求（`main`） |
+| [docs/fabric/TokenHub_VISION.md](docs/fabric/TokenHub_VISION.md) | Token Hub 愿景功能表 + 人话版 |
+| [docs/FEATURE_LIST.md](docs/FEATURE_LIST.md) | 新基线 Feature 进度 |
+| [docs/archive/tokenhub-pilot/](docs/archive/tokenhub-pilot/README.md) | 公司内试点归档 |

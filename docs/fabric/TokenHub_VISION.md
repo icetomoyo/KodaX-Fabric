@@ -1,7 +1,8 @@
 # Token Hub 愿景功能表
 
 > **来源**：[PRD.md](PRD.md) §3「Token Hub 接入管理」及 §11.1 对该模块的定义。  
-> **性质**：Fabric 整机里的 Token Hub **愿景**，不是现网。现网规则看 [../token-hub/TokenHub_PRD.md](../token-hub/TokenHub_PRD.md) 和 [../token-hub/pilot-charter.md](../token-hub/pilot-charter.md)。  
+> **性质**：Fabric 整机里的 Token Hub **愿景**，也是重开后的需求源。  
+> 公司内试点（旧模型）已归档：[../archive/tokenhub-pilot/](../archive/tokenhub-pilot/README.md)。  
 > **怎么读**：先看「能力块」，再按需翻功能总表。人话版按「谁发起 → Fabric 干什么 → 请求落到谁」来写。
 
 愿景一句话：**所有 LLM 调用进一个网关，统一路由、限流、故障转移。**

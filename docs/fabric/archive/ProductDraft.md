@@ -1,7 +1,7 @@
 # KodaX Fabric 产品完整设计
 
 > **归档。** 本文是早期「AI 产能控制平面」设想，和现行 [../PRD.md](../PRD.md) 不是同一套定义（本文反对「数 Token」，现行 PRD 以 Token 效能为主）。  
-> **不要当入门、当合同、当实现依据。** 现网看 [../../token-hub/](../../token-hub/README.md)。阅读地图：[../../README.md](../../README.md)。
+> **不要当入门、当合同、当实现依据。** 阅读地图：[../../README.md](../../README.md)。试点归档：[../../archive/tokenhub-pilot/](../../archive/tokenhub-pilot/README.md)。
 
 ---
 

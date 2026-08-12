@@ -5,7 +5,7 @@
 | 产品 | **KodaX Fabric**（仓库 / monorepo 名） |
 | 模块 | **Token Hub**（部署主机/镜像等可能仍带历史前缀 `tokenhub`） |
 | 对应门槛 | **E1** 可重复发布 · **E2** 数据可托底 |
-| 关联 | [公测章程](pilot-charter.md) · [deploy/README.md](../../deploy/README.md) · [backup.sh](../../deploy/backup.sh) |
+| 关联 | [公测章程](pilot-charter.md) · [deploy/README.md](../../../deploy/README.md) · [backup.sh](../../../deploy/backup.sh) |
 | 生产入口 | `https://tokenhub.haizhi.com` |
 | 工作目录 | 目标机上的仓库根目录；compose 在 `deploy/` |
 

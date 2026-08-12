@@ -44,4 +44,4 @@ Fabric · **Token Hub** 公司内可大范围公测收口版（FEATURE_001）。
 ### Added
 
 - 基础工单（员工提交/自查，管理员查询）
-- 注册审核、部署与接入相关能力（详见 `docs/token-hub/history/v0.0.5.md` / TokenHub_PRD）
+- 注册审核、部署与接入相关能力（详见 `docs/archive/tokenhub-pilot/history/v0.0.5.md` / TokenHub_PRD）

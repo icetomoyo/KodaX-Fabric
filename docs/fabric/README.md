@@ -1,7 +1,7 @@
 # Fabric 整机愿景
 
-这里是 **KodaX Fabric** 尚未全部落地的设计：Token Hub + Token ROI + 可选计费。  
-**不是现网说明书。** 现网看 [../token-hub/](../token-hub/README.md)。
+`main` 上的原始设计：Token Hub + Token ROI + 可选计费。  
+Token Hub 按 §3 从 0 重开。公司内试点见 [../archive/tokenhub-pilot/](../archive/tokenhub-pilot/README.md)，不当基线。
 
 | 文档 | 用途 |
 |------|------|
