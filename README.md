@@ -27,11 +27,12 @@ Workspaces：
 
 ## 文档
 
-`docs/` 仅保留 `main` 上的四篇原始设计：
-
 | 文档 | 用途 |
 |------|------|
-| [docs/PRD.md](docs/PRD.md) | 产品需求（Token Hub 见 §3） |
+| [docs/PRD.md](docs/PRD.md) | 原始需求（Token Hub 见 §3） |
+| [docs/token-hub-slices.md](docs/token-hub-slices.md) | 0.0.1～0.1.0 切片（已冻结） |
+| [docs/TokenHub_VISION.md](docs/TokenHub_VISION.md) | 57 点 + 人话版（手测依据） |
+| [docs/FEATURE_LIST.md](docs/FEATURE_LIST.md) | 当前 feature（只登 0.0.1） |
 | [docs/HLD.md](docs/HLD.md) | 高层设计 |
 | [docs/UI_DESIGN.md](docs/UI_DESIGN.md) | 控制台线框 |
-| [docs/ProductDraft.md](docs/ProductDraft.md) | 早期完整设想；与 PRD 用词不同，不要当入门 |
+| [docs/ProductDraft.md](docs/ProductDraft.md) | 早期设想；不要当入门 |
