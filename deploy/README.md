@@ -8,10 +8,7 @@ This directory is designed for an offline image import on the target host. The
 runtime `.env` holds only long-lived service secrets; it must not contain the
 initial administrator password.
 
-**Operator runbook (Chinese, E1/E2):** see
-[`docs/archive/tokenhub-pilot/runbook-release.md`](../docs/archive/tokenhub-pilot/runbook-release.md)
-for upgrade, rollback, backup, restore drill, and evidence tables.
-Public pilot policy (legacy): [`docs/archive/tokenhub-pilot/pilot-charter.md`](../docs/archive/tokenhub-pilot/pilot-charter.md).
+Pilot-era operator runbooks were removed from the repo; this directory is the remaining deploy surface.
 
 ## First boot
 
@@ -60,7 +57,7 @@ ls -lah backups/tokenhub-*.sql.gz | tail -5
 - Produces `backups/tokenhub-YYYYMMDD-HHMMSS.sql.gz` (local retention ~14 days).
 - Copy archives to **independent** storage for disaster recovery.
 - Redis is not included in the dump (rate-limit state only).
-- Full restore and non-destructive drill steps: `docs/archive/tokenhub-pilot/runbook-release.md` §7–§8.
+- Full restore: restore the gzip dump into a throwaway database first, then cut over.
 
 ## Upgrade (short form)
 
@@ -73,4 +70,4 @@ curl -fsS https://tokenhub.haizhi.com/health
 ```
 
 On failure, roll back image tags and `docker compose up -d api web`.
-Details and migration caveats: `docs/archive/tokenhub-pilot/runbook-release.md` §5–§6.
+On schema changes, confirm `api` finished `migrate` before sending traffic.
