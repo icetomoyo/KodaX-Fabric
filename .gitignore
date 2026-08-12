@@ -7,8 +7,6 @@ dist
 .env.*.local
 coverage
 backups
-deploy/runtime
-deploy/certs/
 .turbo
 *.tsbuildinfo
 web/dist
