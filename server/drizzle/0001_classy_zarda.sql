@@ -1,1 +1,0 @@
-ALTER TYPE "public"."employee_status" ADD VALUE 'pending' BEFORE 'active';
