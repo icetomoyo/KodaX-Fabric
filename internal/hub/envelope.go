@@ -53,6 +53,59 @@ func writeUnavailable(w http.ResponseWriter, protocol string) {
 	})
 }
 
+func writeRateLimited(w http.ResponseWriter, protocol string) {
+	if protocol == store.ProtocolAnthropic {
+		writeJSON(w, http.StatusTooManyRequests, map[string]any{
+			"type": "error",
+			"error": map[string]any{
+				"type":    "rate_limit_error",
+				"message": "virtual key RPM limit exceeded",
+			},
+		})
+		return
+	}
+	writeJSON(w, http.StatusTooManyRequests, map[string]any{
+		"error": map[string]any{
+			"message": "virtual key RPM limit exceeded",
+			"type":    "rate_limit_error",
+			"code":    "rate_limit_exceeded",
+		},
+	})
+}
+
+func writeBudgetExceeded(w http.ResponseWriter, protocol string) {
+	if protocol == store.ProtocolAnthropic {
+		writeJSON(w, http.StatusPaymentRequired, map[string]any{
+			"type": "error",
+			"error": map[string]any{
+				"type":    "invalid_request_error",
+				"message": "virtual key monthly token budget exceeded",
+			},
+		})
+		return
+	}
+	writeJSON(w, http.StatusPaymentRequired, map[string]any{
+		"error": map[string]any{
+			"message": "virtual key monthly token budget exceeded",
+			"type":    "insufficient_quota",
+			"code":    "budget_exceeded",
+		},
+	})
+}
+
+func writeForbidden(w http.ResponseWriter, protocol, msg string) {
+	if protocol == store.ProtocolAnthropic {
+		writeJSON(w, http.StatusForbidden, map[string]any{
+			"type": "error",
+			"error": map[string]any{"type": "permission_error", "message": msg},
+		})
+		return
+	}
+	writeJSON(w, http.StatusForbidden, map[string]any{
+		"error": map[string]any{"message": msg, "type": "invalid_request_error", "code": "model_not_allowed"},
+	})
+}
+
 func extractCallerKey(r *http.Request) string {
 	if k := r.Header.Get("X-Api-Key"); k != "" {
 		return k

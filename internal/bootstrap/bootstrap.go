@@ -73,6 +73,14 @@ ON CONFLICT (phone) DO UPDATE SET password_hash = EXCLUDED.password_hash
 		return fmt.Errorf("operator: %w", err)
 	}
 
+	if _, err := db.ExecContext(ctx, `
+INSERT INTO providers (code, name, default_base_url)
+VALUES ('deepseek', 'DeepSeek', $1)
+ON CONFLICT (code) DO UPDATE SET default_base_url = EXCLUDED.default_base_url
+`, cfg.DeepSeekBase); err != nil {
+		return fmt.Errorf("provider: %w", err)
+	}
+
 	var poolID int64
 	if err := db.QueryRowContext(ctx, `
 INSERT INTO channel_pools (name, group_name)

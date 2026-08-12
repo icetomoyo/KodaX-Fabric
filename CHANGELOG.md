@@ -2,4 +2,6 @@
 
 ## [Unreleased]
 
-Token Hub 按 PRD §3 + HLD 从 0 重建（Go 网关）。尚未发布版本。
+### Added
+
+- Token Hub 0.1.0 收口：同协议 failover、VK RPM/预算硬拒绝、渠道熔断、管理 API 与 `/admin` `/me` 页面、发布备份说明。

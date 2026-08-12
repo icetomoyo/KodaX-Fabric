@@ -17,7 +17,10 @@ go run ./cmd/gateway
 # GET http://127.0.0.1:8080/health
 ```
 
-`/v1/chat/completions` 与 `/v1/messages` 尚未实现，见票 #1。
+页面：`/admin` 管理后台，`/me` 开发者申请 VK。  
+Cursor / Claude Code 的 Base URL 填网关 Origin（本机 `http://127.0.0.1:18080`），同一把 `fab-` 钥匙两个端点都能用。
+
+发布 / 备份见 [deploy/runbook.md](deploy/runbook.md)。
 
 ## 文档
 

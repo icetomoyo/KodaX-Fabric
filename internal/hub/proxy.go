@@ -2,6 +2,7 @@ package hub
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
 	"net/http"
 	"strings"
@@ -9,11 +10,18 @@ import (
 	"kodax-fabric/internal/store"
 )
 
-func (s *Server) proxy(w http.ResponseWriter, r *http.Request, ch *store.Channel, path string, body []byte, stream bool) error {
+type attemptResult struct {
+	status    int
+	retryable bool
+	err       error
+	tokens    int64
+}
+
+func (s *Server) proxy(w http.ResponseWriter, r *http.Request, ch *store.Channel, path string, body []byte, stream bool) attemptResult {
 	url := strings.TrimRight(ch.BaseURL, "/") + path
 	upReq, err := http.NewRequestWithContext(r.Context(), http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
-		return err
+		return attemptResult{status: 0, retryable: true, err: err}
 	}
 	upReq.Header.Set("Content-Type", "application/json")
 	if ch.Protocol == store.ProtocolAnthropic {
@@ -28,32 +36,19 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request, ch *store.Channel
 
 	resp, err := s.Client.Do(upReq)
 	if err != nil {
-		return err
+		return attemptResult{status: 0, retryable: true, err: err}
 	}
 	defer resp.Body.Close()
 
-	for k, vals := range resp.Header {
-		lk := strings.ToLower(k)
-		if lk == "x-ratelimit-limit-requests" ||
-			lk == "x-ratelimit-remaining-requests" ||
-			lk == "x-ratelimit-limit-tokens" ||
-			lk == "x-ratelimit-remaining-tokens" ||
-			lk == "x-ratelimit-reset-requests" ||
-			lk == "x-ratelimit-reset-tokens" ||
-			strings.HasPrefix(lk, "x-ratelimit-") ||
-			lk == "retry-after" ||
-			lk == "anthropic-ratelimit-requests-limit" ||
-			lk == "anthropic-ratelimit-requests-remaining" ||
-			lk == "content-type" {
-			for _, v := range vals {
-				w.Header().Add(k, v)
-			}
-		}
+	if resp.StatusCode >= 500 {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		return attemptResult{status: resp.StatusCode, retryable: true, err: nil}
 	}
+
+	copyPassHeaders(w, resp)
 	if stream && w.Header().Get("Content-Type") == "" {
 		w.Header().Set("Content-Type", "text/event-stream")
 	}
-
 	w.WriteHeader(resp.StatusCode)
 	if stream {
 		flusher, _ := w.(http.Flusher)
@@ -62,7 +57,7 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request, ch *store.Channel
 			n, readErr := resp.Body.Read(buf)
 			if n > 0 {
 				if _, werr := w.Write(buf[:n]); werr != nil {
-					return werr
+					return attemptResult{status: resp.StatusCode, err: werr}
 				}
 				if flusher != nil {
 					flusher.Flush()
@@ -70,12 +65,52 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request, ch *store.Channel
 			}
 			if readErr != nil {
 				if readErr == io.EOF {
-					return nil
+					return attemptResult{status: resp.StatusCode}
 				}
-				return readErr
+				return attemptResult{status: resp.StatusCode, err: readErr}
 			}
 		}
 	}
-	_, err = io.Copy(w, resp.Body)
-	return err
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return attemptResult{status: resp.StatusCode, err: err}
+	}
+	_, _ = w.Write(raw)
+	return attemptResult{status: resp.StatusCode, tokens: parseUsageTokens(raw)}
+}
+
+func parseUsageTokens(raw []byte) int64 {
+	var u struct {
+		Usage struct {
+			TotalTokens      int64 `json:"total_tokens"`
+			PromptTokens     int64 `json:"prompt_tokens"`
+			CompletionTokens int64 `json:"completion_tokens"`
+			InputTokens      int64 `json:"input_tokens"`
+			OutputTokens     int64 `json:"output_tokens"`
+		} `json:"usage"`
+	}
+	if json.Unmarshal(raw, &u) != nil {
+		return 0
+	}
+	if u.Usage.TotalTokens > 0 {
+		return u.Usage.TotalTokens
+	}
+	if u.Usage.PromptTokens+u.Usage.CompletionTokens > 0 {
+		return u.Usage.PromptTokens + u.Usage.CompletionTokens
+	}
+	return u.Usage.InputTokens + u.Usage.OutputTokens
+}
+
+func copyPassHeaders(w http.ResponseWriter, resp *http.Response) {
+	for k, vals := range resp.Header {
+		lk := strings.ToLower(k)
+		if strings.HasPrefix(lk, "x-ratelimit-") ||
+			lk == "retry-after" ||
+			strings.HasPrefix(lk, "anthropic-ratelimit-") ||
+			lk == "content-type" {
+			for _, v := range vals {
+				w.Header().Add(k, v)
+			}
+		}
+	}
 }

@@ -6,14 +6,15 @@ Last Updated: 2026-08-13 04:40
 
 | 项 | 值 |
 |----|-----|
-| Current Release | — |
-| Planned Version | **v0.0.1** |
+| Current Release | **v0.1.0**（能力收口中） |
+| Planned Version | — |
 
 ## Version Summary
 
 | 版本 | 状态 | 进度 | 说明 |
 |------|------|------|------|
-| v0.0.1 | **In Progress** | 0/1 | 最小双端点网关（本表只登这一版） |
+| v0.0.1 | Released | 1/1 | 最小双端点网关 |
+| v0.1.0 | **In Progress** | 能力收口 | 独立部署：failover + 硬拒绝 + 管理/申请页 + compose |
 | v0.0.2 | — | — | 上游钥匙柜（切法已冻，完成后登记） |
 | v0.0.3 | — | — | 虚拟钥匙，一把两端口 |
 | v0.0.4 | — | — | 渠道池 + 简单路由 |
@@ -29,7 +30,7 @@ Last Updated: 2026-08-13 04:40
 
 | ID | Title | Status | Priority | Category | Planned | Design |
 |----|-------|--------|----------|----------|---------|--------|
-| 001 | 最小双端点网关 | **InProgress** | Critical | New | v0.0.1 | [设计](features/v0.0.1.md#feature_001) |
+| 001 | 最小双端点网关 | **Completed** | Critical | New | v0.0.1 | [设计](features/v0.0.1.md#feature_001) |
 
 ## Feature Details
 
@@ -39,14 +40,14 @@ Last Updated: 2026-08-13 04:40
 |------|------|
 | ID | 001 |
 | Title | 最小双端点网关 |
-| Status | **InProgress** |
+| Status | **Completed** |
 | Priority | Critical |
 | Category | New |
 | Planned Version | v0.0.1 |
 | Released Version | — |
 | Created | 2026-08-13 |
 | Started | 2026-08-13 |
-| Completed | — |
+| Completed | 2026-08-13 |
 | Design | [docs/features/v0.0.1.md#feature_001](features/v0.0.1.md#feature_001) |
 
 **Description**

@@ -330,3 +330,148 @@ func TestHealth(t *testing.T) {
 		t.Fatalf("health %s", raw)
 	}
 }
+
+func TestSameProtocolFailover(t *testing.T) {
+	var hits1, hits2 int32
+	bad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits1, 1)
+		w.WriteHeader(500)
+		_, _ = w.Write([]byte(`{"error":"down"}`))
+	}))
+	t.Cleanup(bad.Close)
+	good := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits2, 1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(openaiUsageBody()))
+	}))
+	t.Cleanup(good.Close)
+
+	gw := newGateway(t, []store.Channel{
+		{ID: 1, Protocol: store.ProtocolOpenAI, BaseURL: bad.URL, Secret: "sk-a", Priority: 10, Weight: 100, Status: "active"},
+		{ID: 2, Protocol: store.ProtocolOpenAI, BaseURL: good.URL, Secret: "sk-b", Priority: 1, Weight: 100, Status: "active"},
+	})
+	t.Cleanup(gw.Close)
+	req, _ := http.NewRequest(http.MethodPost, gw.URL+"/v1/chat/completions", strings.NewReader(`{"model":"gpt-4"}`))
+	req.Header.Set("Authorization", "Bearer "+testVK)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status %d %s", resp.StatusCode, b)
+	}
+	if atomic.LoadInt32(&hits1) == 0 || atomic.LoadInt32(&hits2) == 0 {
+		t.Fatalf("expected both channels tried, hits %d %d", hits1, hits2)
+	}
+}
+
+func TestRateLimitHardReject(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(openaiUsageBody()))
+	}))
+	t.Cleanup(up.Close)
+	st := &store.Memory{ByRawKey: map[string]*store.ResolvedVK{
+		testVK: {VirtualKeyID: 9, PoolID: 1, RPMLimit: 1, Channels: []store.Channel{
+			{ID: 1, Protocol: store.ProtocolOpenAI, BaseURL: up.URL, Secret: "sk", Status: "active"},
+		}},
+	}}
+	h := hub.New(st, http.DefaultClient)
+	gw := httptest.NewServer(h.Handler())
+	t.Cleanup(gw.Close)
+	do := func() *http.Response {
+		req, _ := http.NewRequest(http.MethodPost, gw.URL+"/v1/chat/completions", strings.NewReader(`{"model":"x"}`))
+		req.Header.Set("Authorization", "Bearer "+testVK)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return resp
+	}
+	r1 := do()
+	_, _ = io.Copy(io.Discard, r1.Body)
+	_ = r1.Body.Close()
+	if r1.StatusCode != 200 {
+		t.Fatalf("first %d", r1.StatusCode)
+	}
+	r2 := do()
+	defer r2.Body.Close()
+	if r2.StatusCode != 429 {
+		t.Fatalf("second %d", r2.StatusCode)
+	}
+	raw, _ := io.ReadAll(r2.Body)
+	if !strings.Contains(string(raw), "rate_limit") {
+		t.Fatalf("body %s", raw)
+	}
+}
+
+func TestBudgetHardReject(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(openaiUsageBody()))
+	}))
+	t.Cleanup(up.Close)
+	st := &store.Memory{ByRawKey: map[string]*store.ResolvedVK{
+		testVK: {VirtualKeyID: 3, PoolID: 1, MonthlyTokenLimit: 5, MonthlyTokensUsed: 0, Channels: []store.Channel{
+			{ID: 1, Protocol: store.ProtocolOpenAI, BaseURL: up.URL, Secret: "sk", Status: "active"},
+		}},
+	}}
+	h := hub.New(st, http.DefaultClient)
+	gw := httptest.NewServer(h.Handler())
+	t.Cleanup(gw.Close)
+	do := func() *http.Response {
+		req, _ := http.NewRequest(http.MethodPost, gw.URL+"/v1/chat/completions", strings.NewReader(`{"model":"x"}`))
+		req.Header.Set("Authorization", "Bearer "+testVK)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return resp
+	}
+	r1 := do()
+	_, _ = io.Copy(io.Discard, r1.Body)
+	_ = r1.Body.Close()
+	if r1.StatusCode != 200 {
+		t.Fatalf("first %d", r1.StatusCode)
+	}
+	r2 := do()
+	defer r2.Body.Close()
+	if r2.StatusCode != 402 {
+		b, _ := io.ReadAll(r2.Body)
+		t.Fatalf("second %d %s", r2.StatusCode, b)
+	}
+}
+
+func TestCircuitOpenHardReject(t *testing.T) {
+	var hits int32
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		http.Error(w, "boom", 500)
+	}))
+	t.Cleanup(up.Close)
+	gw := newGateway(t, []store.Channel{{
+		ID: 77, Protocol: store.ProtocolOpenAI, BaseURL: up.URL, Secret: "sk", Status: "active",
+	}})
+	t.Cleanup(gw.Close)
+	do := func() int {
+		req, _ := http.NewRequest(http.MethodPost, gw.URL+"/v1/chat/completions", strings.NewReader(`{"model":"x"}`))
+		req.Header.Set("Authorization", "Bearer "+testVK)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+		return resp.StatusCode
+	}
+	_ = do()
+	_ = do()
+	before := atomic.LoadInt32(&hits)
+	code := do()
+	if code != 503 {
+		t.Fatalf("want circuit 503, got %d", code)
+	}
+	if atomic.LoadInt32(&hits) != before {
+		t.Fatalf("circuit still hitting upstream")
+	}
+}

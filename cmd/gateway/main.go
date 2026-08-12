@@ -10,10 +10,12 @@ import (
 	"strings"
 	"time"
 
+	"kodax-fabric/internal/admin"
 	"kodax-fabric/internal/bootstrap"
 	"kodax-fabric/internal/hub"
 	"kodax-fabric/internal/secret"
 	"kodax-fabric/internal/store"
+	"kodax-fabric/internal/webui"
 )
 
 func main() {
@@ -53,7 +55,17 @@ func run() error {
 	}
 
 	h := hub.New(pg, nil)
+	api := &admin.API{Cat: &admin.Catalog{DB: db, EncryptKey: key}, Sessions: admin.NewSessions()}
+	ui := webui.Handler()
+
 	mux := http.NewServeMux()
+	mux.Handle("/api/", api.Handler())
+	mux.Handle("/admin", ui)
+	mux.Handle("/admin/", ui)
+	mux.Handle("/me", ui)
+	mux.Handle("/me/", ui)
+	mux.Handle("/ui/", ui)
+	mux.Handle("GET /{$}", ui)
 	mux.Handle("/", h.Handler())
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		pgOK := db.PingContext(r.Context()) == nil

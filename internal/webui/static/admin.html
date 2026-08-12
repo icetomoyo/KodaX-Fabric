@@ -1,0 +1,44 @@
+<!doctype html><meta charset="utf-8"><title>Token Hub Admin</title>
+<style>body{font-family:sans-serif;max-width:980px;margin:24px auto}input,select,button{margin:2px}table{border-collapse:collapse;width:100%}td,th{border:1px solid #ccc;padding:4px 6px;font-size:13px}section{margin:20px 0}pre{background:#f6f6f6;padding:8px}</style>
+<h1>管理后台</h1>
+<div id="login">
+  手机 <input id="phone" value="18612243416"> 密码 <input id="pw" type="password" value="Hz@123456">
+  <button onclick="login()">登录</button> <span id="lmsg"></span>
+</div>
+<div id="app" style="display:none">
+<p>已登录 <b id="who"></b> · Origin <code id="orig"></code></p>
+<section>
+<h2>Providers</h2>
+<div>code <input id="pcode"> name <input id="pname"> base <input id="pbase" size="40"> <button onclick="addP()">添加</button></div>
+<table id="pt"></table>
+</section>
+<section>
+<h2>上游 Key（密文不回显）</h2>
+<div>provider <input id="kcode"> label <input id="klabel"> secret <input id="ksec" size="40"> <button onclick="addK()">添加</button></div>
+<table id="kt"></table>
+</section>
+<section>
+<h2>渠道池</h2>
+<div>name <input id="pname2"> group <select id="pgrp"><option>standard</option><option>premium</option><option>bulk</option></select> <button onclick="addPool()">添加</button></div>
+<table id="pot"></table>
+</section>
+<section>
+<h2>渠道</h2>
+<div>pool_id <input id="cpid" size="4"> key_id <input id="ckid" size="4">
+协议 <select id="cproto"><option value="openai_chat">openai_chat</option><option value="anthropic_messages">anthropic_messages</option></select>
+base <input id="cbase" size="36"> pri <input id="cpri" size="3" value="0"> w <input id="cw" size="4" value="100">
+<button onclick="addCh()">添加</button></div>
+<table id="ct"></table>
+</section>
+<section>
+<h2>Virtual Keys</h2>
+<div>name <input id="vn"> pool_id <input id="vpid" size="4"> rpm <input id="vrpm" size="4" value="60"> budget <input id="vbud" size="8" value="0"> models <input id="vmod"> <button onclick="addVK()">签发</button></div>
+<pre id="vonce"></pre>
+<table id="vt"></table>
+</section>
+<section>
+<h2>VK 申请</h2>
+<table id="at"></table>
+</section>
+</div>
+<script src="/ui/admin.js"></script>
