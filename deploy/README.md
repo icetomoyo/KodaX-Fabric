@@ -9,9 +9,9 @@ runtime `.env` holds only long-lived service secrets; it must not contain the
 initial administrator password.
 
 **Operator runbook (Chinese, E1/E2):** see
-[`docs/runbook-release.md`](../docs/runbook-release.md)
+[`docs/token-hub/runbook-release.md`](../docs/token-hub/runbook-release.md)
 for upgrade, rollback, backup, restore drill, and evidence tables.
-Public pilot policy: [`docs/pilot-charter.md`](../docs/pilot-charter.md).
+Public pilot policy: [`docs/token-hub/pilot-charter.md`](../docs/token-hub/pilot-charter.md).
 
 ## First boot
 
@@ -60,7 +60,7 @@ ls -lah backups/tokenhub-*.sql.gz | tail -5
 - Produces `backups/tokenhub-YYYYMMDD-HHMMSS.sql.gz` (local retention ~14 days).
 - Copy archives to **independent** storage for disaster recovery.
 - Redis is not included in the dump (rate-limit state only).
-- Full restore and non-destructive drill steps: `docs/runbook-release.md` §7–§8.
+- Full restore and non-destructive drill steps: `docs/token-hub/runbook-release.md` §7–§8.
 
 ## Upgrade (short form)
 
@@ -73,4 +73,4 @@ curl -fsS https://tokenhub.haizhi.com/health
 ```
 
 On failure, roll back image tags and `docker compose up -d api web`.
-Details and migration caveats: `docs/runbook-release.md` §5–§6.
+Details and migration caveats: `docs/token-hub/runbook-release.md` §5–§6.

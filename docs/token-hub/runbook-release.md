@@ -5,7 +5,7 @@
 | 产品 | **KodaX Fabric**（仓库 / monorepo 名） |
 | 模块 | **Token Hub**（部署主机/镜像等可能仍带历史前缀 `tokenhub`） |
 | 对应门槛 | **E1** 可重复发布 · **E2** 数据可托底 |
-| 关联 | [公测章程](pilot-charter.md) · [deploy/README.md](../deploy/README.md) · [backup.sh](../deploy/backup.sh) |
+| 关联 | [公测章程](pilot-charter.md) · [deploy/README.md](../../deploy/README.md) · [backup.sh](../../deploy/backup.sh) |
 | 生产入口 | `https://tokenhub.haizhi.com` |
 | 工作目录 | 目标机上的仓库根目录；compose 在 `deploy/` |
 
@@ -157,7 +157,7 @@ curl -fsS https://tokenhub.haizhi.com/health
 - [ ] 员工可登录 `/me`；抽查创建 Key 页可打开  
 - [ ] 抽查一条真实调用或管理端日志列表可加载（维护窗口允许的范围内）  
 
-更完整的 E10 清单见后续 `docs/release-checklist.md`（Ticket #5）。
+更完整的 E10 清单见后续 [release-checklist.md](release-checklist.md)（Ticket #5）。
 
 ---
 

@@ -8,7 +8,7 @@
 | 运行/发布版本 | **v0.1.0**（公司内可大范围公测收口版） |
 | 此前工程基线 | v0.0.5 |
 | 服务地址 | `https://tokenhub.haizhi.com` |
-| 关联 | [FEATURE_001](features/v0.1.0.md#feature_001) · [TokenHub PRD](TokenHub_PRD.md) · [部署说明](../deploy/README.md) |
+| 关联 | [FEATURE_001](../features/v0.1.0.md#feature_001) · [TokenHub PRD](TokenHub_PRD.md) · [部署说明](../../deploy/README.md) |
 
 > **本文是管理员与负责人的唯一配置/边界口径。**  
 > 员工日常接入步骤以网页 **「接入教程」**（`/me/guide`）为准；若与本文冲突，以**更新时间较新**的文档为准，并应回写对齐。
@@ -255,7 +255,7 @@ Provider（供应商）
 
 | 门槛 | 状态 | 文档 |
 |------|------|------|
-| E1 可重复发布 | 操作说明已成文 → 扩大公测前按表做一次发布/演练并留档 | [runbook-release.md](runbook-release.md) §2–§6、§9 · [deploy/README.md](../deploy/README.md) |
+| E1 可重复发布 | 操作说明已成文 → 扩大公测前按表做一次发布/演练并留档 | [runbook-release.md](runbook-release.md) §2–§6、§9 · [deploy/README.md](../../deploy/README.md) |
 | E2 备份与恢复演练 | 备份命令与恢复步骤已成文 → **须在服务器填写一次演练记录** | [runbook-release.md](runbook-release.md) §4、§7–§8 · `deploy/backup.sh` |
 
 扩大公测签字前，E1/E2 证据须在附录 A 勾选完成（含 runbook §8 演练表至少一行「通过」）。
@@ -266,13 +266,13 @@ Provider（供应商）
 
 | 文档 | 用途 |
 |------|------|
-| [deploy/README.md](../deploy/README.md) | 部署、TLS、bootstrap、备份入口 |
+| [deploy/README.md](../../deploy/README.md) | 部署、TLS、bootstrap、备份入口 |
 | [runbook-release.md](runbook-release.md) | 发布、回滚、备份恢复（E1/E2） |
 | [runbook-troubleshoot.md](runbook-troubleshoot.md) | 值班故障排查（E6/E7） |
 | [release-checklist.md](release-checklist.md) | E10 回归清单与实跑记录 |
 | [TokenHub_PRD.md](TokenHub_PRD.md) | 产品规则全文 |
-| [features/v0.1.0.md](features/v0.1.0.md) | v0.1.0 / FEATURE_001 设计与票 |
-| [FEATURE_LIST.md](FEATURE_LIST.md) | Feature 状态 |
+| [features/v0.1.0.md](../features/v0.1.0.md) | v0.1.0 / FEATURE_001 设计与票 |
+| [FEATURE_LIST.md](../FEATURE_LIST.md) | Feature 状态 |
 | 员工端 `/me/guide` | 接入教程（操作级） |
 
 ---

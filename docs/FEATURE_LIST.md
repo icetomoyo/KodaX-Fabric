@@ -39,13 +39,13 @@ Last Updated: 2026-08-11 18:00
 | Started | 2026-08-11 |
 | Completed | 2026-08-11 |
 | Design | [docs/features/v0.1.0.md#feature_001](features/v0.1.0.md#feature_001) |
-| Closeout | [docs/v0.1.0-closeout.md](v0.1.0-closeout.md) |
+| Closeout | [docs/token-hub/v0.1.0-closeout.md](token-hub/v0.1.0-closeout.md) |
 
 **Description**
 
 将 KodaX Fabric 的核心模块 Token Hub 从 v0.0.5 收到公司内可大范围公测完成态（文档 + 运维 + 双端验证）。
 
-**构建状态**：全部票 #1–#5、#7 完成；#6 跳过。收尾见 `docs/v0.1.0-closeout.md`。遗留体验：KNOWN_ISSUES 001（日配额触顶提示）。
+**构建状态**：全部票 #1–#5、#7 完成；#6 跳过。收尾见 `docs/token-hub/v0.1.0-closeout.md`。遗留体验：KNOWN_ISSUES 001（日配额触顶提示）。
 
 ## Summary
 

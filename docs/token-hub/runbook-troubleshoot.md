@@ -5,7 +5,7 @@
 | 读者 | 管理员 / 值班（不是员工日常接入） |
 | 门槛 | **E6** 故障可感知 · **E7** 问题入口（操作侧） |
 | 生产 | `https://tokenhub.haizhi.com` |
-| 关联 | [公测章程](pilot-charter.md) · [发布/备份](runbook-release.md) · 员工 [接入教程](../web 不适用，见 `/me/guide`) |
+| 关联 | [公测章程](pilot-charter.md) · [发布/备份](runbook-release.md) · 员工接入教程见网页 `/me/guide` |
 
 > **目标**：接到报障后，按固定顺序 5 分钟内判断「全站 / 单人 / 上游 / 配额 / 配置」，并知道下一步动作。  
 > 员工侧自助排障仍以 **`/me/guide` → 常见问题** 为准；本文不替代发布回滚（见 runbook-release）。
