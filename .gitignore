@@ -1,15 +1,21 @@
-node_modules
-dist
-.DS_Store
-*.log
+# Go
+/bin/
+/dist/
+vendor/
+*.exe
+*.test
+*.out
+coverage.out
+
+# Env & local
 .env
 .env.local
 .env.*.local
-coverage
-backups
-.turbo
-*.tsbuildinfo
-web/dist
+*.log
+backups/
+
+# OS / IDE
+.DS_Store
 .idea
 .vscode/*
 !.vscode/extensions.json
