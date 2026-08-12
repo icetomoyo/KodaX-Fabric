@@ -1,12 +1,13 @@
 # Token Hub 版本切片（已冻结）
 
-冻结日期：2026-08-13。改切法必须先改本文，再动 `FEATURE_LIST`。
+冻结日期：2026-08-13。**2026-08-13 修订**：按 CTO 口径同时遵守 [PRD.md](PRD.md) 与 [HLD.md](HLD.md)。改切法必须先改本文，再动 `FEATURE_LIST`。
 
-- 需求源：[PRD.md](PRD.md) §3
-- 功能点与**手测依据**：[TokenHub_VISION.md](TokenHub_VISION.md)（57 点 + 人话版）
+- 产品行为：[PRD.md](PRD.md) §3（Token Hub）
+- 架构与已定技术决策：[HLD.md](HLD.md) §1、§3、附录 B（网关 Go、零转换、V1 单进程、PG + Redis）
+- 功能点与**手测依据**：[TokenHub_VISION.md](TokenHub_VISION.md)（从 PRD §3 抽出的 57 点 + 人话版）
 - 进度：[FEATURE_LIST.md](FEATURE_LIST.md)（当前只登记 0.0.1）
 
-现网 `tokenhub.haizhi.com` / 仓库里的旧实现按**试点**冻住：员工 Key 硬绑渠道 + 协议。新序列从 `0.0.1` 重开，第一天数据模型就是 **VK → 池**（池里暂时可以只有一条路）。
+现网 Node 试点按**对照实现**冻住，不是 HLD 基线。新序列从 `0.0.1` 按 HLD 实体 **VirtualKey → ChannelPool → Channel** 重开（本版池里可以只有一条渠）。
 
 ---
 
@@ -14,14 +15,14 @@
 
 到 `0.1.0` 必须同时成立（不再加新能力点，只收口）：
 
-1. 只依赖 PG + Redis，不依赖 ROI / Commerce / Space  
-2. 对外：双端点 + VK；调用方碰不到上游 Key  
-3. VK → 池 → 多渠；同协议内可 failover；**禁止** Key 硬绑单渠  
-4. 限流 + 熔断 + VK 预算，至少各有一种硬拒绝  
-5. 能发布/回滚/备份，`/health`，管理员能配厂商 / 渠 / VK  
+1. **HLD V1 形态**：Go 单进程承载 Gateway（可同进程挂尚未做满的 Admin/Metering 模块位）；依赖 **PostgreSQL + Redis**。ClickHouse / S3 / 计费引擎属 PRD §4–§5 / HLD §4–§5，**不进 Token Hub 0.1.0**  
+2. 对外：双端点 + `fab-` VK；调用方碰不到 Provider Key（HLD §3.2 / §7.1）  
+3. VirtualKey → ChannelPool → Channel；同协议内可 failover；**禁止**调用方钥匙硬绑单渠  
+4. 限流 + 熔断 + VK 预算，至少各有一种硬拒绝（HLD §3.5 / §3.6）  
+5. 能发布/回滚/备份，`/health`，管理员能配 Provider / Channel / Pool / VK  
 6. Claude Code 与 Cursor 用**同一把** VK 走通  
 
-`0.1.0` = PRD Phase 1 + Phase 2（最小网关 + 池化 + VK + 预算闸）。ROI / Commerce / SSO 不进本模块 0.1.0。
+`0.1.0` = PRD Phase 1 + Phase 2 = HLD §3 网关层可独立部署。Token ROI、Commerce、多租户控制台全量（HLD §4–§6、React 控制台）不挡本模块 0.1.0。
 
 ---
 
