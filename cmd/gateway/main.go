@@ -14,6 +14,7 @@ import (
 	"kodax-fabric/internal/hub"
 	"kodax-fabric/internal/secret"
 	"kodax-fabric/internal/store"
+	"kodax-fabric/internal/webui"
 )
 
 func main() {
@@ -53,6 +54,9 @@ func run() error {
 	}
 
 	h := hub.New(pg, nil)
+	h.Console = pg
+	h.Sessions = hub.NewSessions()
+	h.UI = webui.Handler()
 	mux := http.NewServeMux()
 	mux.Handle("/", h.Handler())
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {

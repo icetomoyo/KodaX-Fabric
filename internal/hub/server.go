@@ -12,8 +12,11 @@ import (
 )
 
 type Server struct {
-	Store  store.Store
-	Client *http.Client
+	Store    store.Store
+	Console  store.Console
+	Sessions *Sessions
+	UI       http.Handler
+	Client   *http.Client
 
 	mu sync.Mutex
 	rr map[string]uint64
@@ -31,6 +34,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /health", s.handleHealth)
 	mux.HandleFunc("POST /v1/chat/completions", s.handleChatCompletions)
 	mux.HandleFunc("POST /v1/messages", s.handleMessages)
+	s.mountConsole(mux)
+	if s.UI != nil {
+		mux.Handle("/", s.UI)
+	}
 	return mux
 }
 

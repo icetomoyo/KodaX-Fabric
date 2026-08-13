@@ -11,7 +11,7 @@ services:
       timeout: 3s
       retries: 20
     ports:
-      - "15432:5432"
+      - "5432:5432"
 
   redis:
     image: redis:7-alpine
@@ -21,7 +21,7 @@ services:
       timeout: 3s
       retries: 20
     ports:
-      - "16379:6379"
+      - "6379:6379"
 
   bootstrap:
     build:
@@ -53,7 +53,7 @@ services:
       CREDENTIAL_ENCRYPT_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
       REDIS_URL: redis://redis:6379
     ports:
-      - "3000:8080"
+      - "8080:8080"
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/health"]
       interval: 2s

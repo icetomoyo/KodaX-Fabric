@@ -1,0 +1,32 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  color: #f6f1e8;
+  background:
+    radial-gradient(1000px 520px at 8% -12%, rgba(232, 160, 76, 0.12), transparent 55%),
+    radial-gradient(800px 420px at 100% 0%, rgba(120, 150, 200, 0.06), transparent 50%),
+    #0a0b0e;
+  font-family: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+}
+
+::selection {
+  background: rgba(232, 160, 76, 0.35);
+}
+
+input:-webkit-autofill {
+  -webkit-text-fill-color: #f6f1e8;
+  transition: background-color 9999s ease-in-out 0s;
+}

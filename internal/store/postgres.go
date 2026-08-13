@@ -34,8 +34,14 @@ CREATE TABLE IF NOT EXISTS operators (
   id bigserial PRIMARY KEY,
   phone varchar(20) NOT NULL UNIQUE,
   password_hash text NOT NULL,
-  role varchar(32) NOT NULL DEFAULT 'admin'
+  role varchar(32) NOT NULL DEFAULT 'admin',
+  name varchar(100) NOT NULL DEFAULT '',
+  status varchar(32) NOT NULL DEFAULT 'active',
+  created_at timestamptz NOT NULL DEFAULT now()
 );
+ALTER TABLE operators ADD COLUMN IF NOT EXISTS name varchar(100) NOT NULL DEFAULT '';
+ALTER TABLE operators ADD COLUMN IF NOT EXISTS status varchar(32) NOT NULL DEFAULT 'active';
+ALTER TABLE operators ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now();
 CREATE TABLE IF NOT EXISTS channel_pools (
   id bigserial PRIMARY KEY,
   name varchar(100) NOT NULL,
@@ -60,8 +66,10 @@ CREATE TABLE IF NOT EXISTS virtual_keys (
   key_hash varchar(64) NOT NULL UNIQUE,
   key_prefix varchar(16) NOT NULL,
   pool_id bigint NOT NULL REFERENCES channel_pools(id),
-  status varchar(32) NOT NULL DEFAULT 'active'
+  status varchar(32) NOT NULL DEFAULT 'active',
+  owner_id bigint REFERENCES operators(id)
 );
+ALTER TABLE virtual_keys ADD COLUMN IF NOT EXISTS owner_id bigint REFERENCES operators(id);
 `
 	_, err := p.DB.ExecContext(ctx, ddl)
 	return err

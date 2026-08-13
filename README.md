@@ -1,24 +1,28 @@
 # KodaX-Fabric
 
-企业级 Token 统一接入与效能管理。当前从 0 重建核心模块 **Token Hub**（HLD：Go 单进程网关）。
+企业级 Token 统一接入与效能管理。当前模块 **Token Hub**（HLD：Go 单进程网关）。发布 **v0.0.2**。
 
-遵守 [docs/PRD.md](docs/PRD.md) 与 [docs/HLD.md](docs/HLD.md)。仓库里不再保留 Node 试点实现。
+遵守 [docs/PRD.md](docs/PRD.md) 与 [docs/HLD.md](docs/HLD.md)。
 
 | 项 | 说明 |
 |----|------|
-| 产品 | KodaX Fabric |
-| 模块 | Token Hub（FEATURE_001 / v0.0.1 进行中） |
-| 栈 | Go 1.22+；V1 依赖 PostgreSQL + Redis（业务接上后再用） |
+| 对外 | `POST /v1/chat/completions`、`POST /v1/messages`，调用方持 `fab-` VK |
+| 控制台 | `/` 登录；管理员 `/admin`；开发者 `/app` |
+| 健康 | `GET /health` |
 
-## 开发
+## 本地启动
 
 ```sh
-go run ./cmd/gateway
-# 进程默认 :8080；compose 对外 API：http://127.0.0.1:3000
-# GET http://127.0.0.1:3000/health
+cd deploy
+docker compose -f compose.yaml up --build --wait
 ```
 
-`/v1/chat/completions` 与 `/v1/messages` 尚未实现，见票 #1。
+- Origin：http://127.0.0.1:8080
+- 登录：http://127.0.0.1:8080/
+- 管理员：`18612243416` / `Hz@123456`
+- 开发者：`13800138000` / `Dev@123456`
+
+官方 Key 可在管理后台「上游钥匙」加密入库。未配置 `DEEPSEEK_API_KEY` 时仍能登录控制台。
 
 ## 文档
 
