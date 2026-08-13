@@ -4,6 +4,18 @@
 
 ---
 
+## [0.0.5] - 2026-08-13
+
+KodaX-Fabric。落地模块仍是 Token Hub。
+
+### Added
+
+- VK 绑项目/团队/池：两把 `fab-` 走不同池，互不串线
+- 查询层团队隔离：错挂的跨团队官方 Key 不会被选中；伪造 team/pool 头无效；无归属 VK 打不到有团队的 Key
+- 池分组 `premium` / `standard` / `bulk` 写入 `X-Fabric-Pool-Group` 与路由审计
+
+---
+
 ## [0.0.4] - 2026-08-13
 
 KodaX-Fabric。落地模块仍是 Token Hub。
@@ -31,4 +43,4 @@ KodaX-Fabric 首次按切法发布。当前落地模块是 Token Hub（Go 单进
 
 - 控制台 TypeScript 路径配置，去掉已弃用的 `baseUrl`
 
-<!-- last-sync: 2c5c722 -->
+<!-- last-sync: f90ddfe -->
