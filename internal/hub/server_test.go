@@ -371,6 +371,63 @@ func TestChatCompletionsInvalidKey401(t *testing.T) {
 	}
 }
 
+func TestSameVKBothEndpoints(t *testing.T) {
+	const oaiBody = `{"model":"gpt-4","messages":[{"role":"user","content":"x"}]}`
+	const anthBody = `{"model":"claude-3","messages":[{"role":"user","content":"hi"}]}`
+	var oaiHits, anthHits int32
+	oai := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/chat/completions" {
+			t.Errorf("openai path %s", r.URL.Path)
+		}
+		atomic.AddInt32(&oaiHits, 1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(openaiUsageBody()))
+	}))
+	t.Cleanup(oai.Close)
+	anth := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/messages" {
+			t.Errorf("anthropic path %s", r.URL.Path)
+		}
+		atomic.AddInt32(&anthHits, 1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"msg_1","type":"message","role":"assistant","content":[{"type":"text","text":"ok"}]}`))
+	}))
+	t.Cleanup(anth.Close)
+
+	gw := newGateway(t, []store.Channel{
+		{ID: 1, Protocol: store.ProtocolOpenAI, BaseURL: oai.URL, Secret: "sk-oai"},
+		{ID: 2, Protocol: store.ProtocolAnthropic, BaseURL: anth.URL, Secret: "sk-anth"},
+	})
+	t.Cleanup(gw.Close)
+
+	req, _ := http.NewRequest(http.MethodPost, gw.URL+"/v1/chat/completions", strings.NewReader(oaiBody))
+	req.Header.Set("Authorization", "Bearer "+testVK)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("chat status %d", resp.StatusCode)
+	}
+
+	req, _ = http.NewRequest(http.MethodPost, gw.URL+"/v1/messages", strings.NewReader(anthBody))
+	req.Header.Set("X-Api-Key", testVK)
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("messages status %d", resp.StatusCode)
+	}
+	if atomic.LoadInt32(&oaiHits) != 1 || atomic.LoadInt32(&anthHits) != 1 {
+		t.Fatalf("hits oai=%d anth=%d", oaiHits, anthHits)
+	}
+}
+
 func TestMessagesPassThroughSameVK(t *testing.T) {
 	const want = `{"model":"claude-3","messages":[{"role":"user","content":"hi"}],"thinking":{"type":"enabled"}}`
 	const upResp = `{"id":"msg_1","type":"message","role":"assistant","content":[{"type":"text","text":"ok-fixed"}],"usage":{"input_tokens":4,"output_tokens":1}}`

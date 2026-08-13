@@ -11,7 +11,7 @@ import (
 )
 
 type Postgres struct {
-	DB        *sql.DB
+	DB         *sql.DB
 	EncryptKey []byte
 }
 
@@ -70,6 +70,8 @@ CREATE TABLE IF NOT EXISTS virtual_keys (
   owner_id bigint REFERENCES operators(id)
 );
 ALTER TABLE virtual_keys ADD COLUMN IF NOT EXISTS owner_id bigint REFERENCES operators(id);
+ALTER TABLE virtual_keys ADD COLUMN IF NOT EXISTS expires_at timestamptz;
+ALTER TABLE virtual_keys ADD COLUMN IF NOT EXISTS model_scope text NOT NULL DEFAULT '';
 `
 	_, err := p.DB.ExecContext(ctx, ddl)
 	return err
@@ -79,9 +81,11 @@ func (p *Postgres) ResolveVK(ctx context.Context, rawKey string) (*ResolvedVK, e
 	hash := secret.HashVK(rawKey)
 	var vkID, poolID int64
 	var status string
+	var expires sql.NullTime
+	var scope string
 	err := p.DB.QueryRowContext(ctx, `
-SELECT id, pool_id, status FROM virtual_keys WHERE key_hash = $1
-`, hash).Scan(&vkID, &poolID, &status)
+SELECT id, pool_id, status, expires_at, COALESCE(model_scope,'') FROM virtual_keys WHERE key_hash = $1
+`, hash).Scan(&vkID, &poolID, &status, &expires, &scope)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -102,7 +106,11 @@ ORDER BY c.id
 		return nil, err
 	}
 	defer rows.Close()
-	out := &ResolvedVK{VirtualKeyID: vkID, PoolID: poolID}
+	out := &ResolvedVK{VirtualKeyID: vkID, PoolID: poolID, ModelScope: parseModelScope(scope)}
+	if expires.Valid {
+		t := expires.Time.UTC()
+		out.ExpiresAt = &t
+	}
 	for rows.Next() {
 		var ch Channel
 		var enc string

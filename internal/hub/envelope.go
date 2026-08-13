@@ -33,6 +33,26 @@ func writeUnauthorized(w http.ResponseWriter, protocol string) {
 	})
 }
 
+func writeModelNotAllowed(w http.ResponseWriter, protocol string) {
+	if protocol == store.ProtocolAnthropic {
+		writeJSON(w, http.StatusForbidden, map[string]any{
+			"type": "error",
+			"error": map[string]any{
+				"type":    "permission_error",
+				"message": "model not allowed",
+			},
+		})
+		return
+	}
+	writeJSON(w, http.StatusForbidden, map[string]any{
+		"error": map[string]any{
+			"message": "model not allowed",
+			"type":    "invalid_request_error",
+			"code":    "model_not_allowed",
+		},
+	})
+}
+
 func writeUnavailable(w http.ResponseWriter, protocol string) {
 	if protocol == store.ProtocolAnthropic {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{

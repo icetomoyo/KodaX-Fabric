@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"kodax-fabric/internal/store"
 )
@@ -17,6 +18,8 @@ type Server struct {
 	Sessions *Sessions
 	UI       http.Handler
 	Client   *http.Client
+
+	Now func() time.Time
 
 	mu sync.Mutex
 	rr map[string]uint64
@@ -56,10 +59,6 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 	s.relay(w, r, store.ProtocolAnthropic, "/v1/messages")
 }
 
-type streamFlag struct {
-	Stream bool `json:"stream"`
-}
-
 func (s *Server) relay(w http.ResponseWriter, r *http.Request, protocol, upstreamPath string) {
 	rawKey := extractCallerKey(r)
 	if rawKey == "" || !strings.HasPrefix(rawKey, "fab-") {
@@ -75,9 +74,12 @@ func (s *Server) relay(w http.ResponseWriter, r *http.Request, protocol, upstrea
 		writeUnauthorized(w, protocol)
 		return
 	}
-	ch := s.nextChannel(resolved.VirtualKeyID, protocol, resolved.Channels)
-	if ch == nil {
-		writeUnavailable(w, protocol)
+	now := time.Now()
+	if s.Now != nil {
+		now = s.Now()
+	}
+	if resolved.ExpiresAt != nil && !now.Before(*resolved.ExpiresAt) {
+		writeUnauthorized(w, protocol)
 		return
 	}
 
@@ -88,12 +90,25 @@ func (s *Server) relay(w http.ResponseWriter, r *http.Request, protocol, upstrea
 	}
 	_ = r.Body.Close()
 
-	var flag streamFlag
-	_ = json.Unmarshal(body, &flag)
+	var reqMeta struct {
+		Stream bool   `json:"stream"`
+		Model  string `json:"model"`
+	}
+	_ = json.Unmarshal(body, &reqMeta)
+	if !store.ModelAllowed(resolved.ModelScope, reqMeta.Model) {
+		writeModelNotAllowed(w, protocol)
+		return
+	}
 
-	status, err := s.proxy(w, r, ch, upstreamPath, body, flag.Stream)
+	ch := s.nextChannel(resolved.VirtualKeyID, protocol, resolved.Channels)
+	if ch == nil {
+		writeUnavailable(w, protocol)
+		return
+	}
+
+	status, err := s.proxy(w, r, ch, upstreamPath, body, reqMeta.Stream)
 	if err != nil {
-		if !flag.Stream {
+		if !reqMeta.Stream {
 			writeJSON(w, http.StatusBadGateway, map[string]any{
 				"error": map[string]any{
 					"message": "upstream request failed",
