@@ -4,6 +4,23 @@
 
 ---
 
+## [0.0.6] - 2026-08-13
+
+KodaX-Fabric。落地模块仍是 Token Hub。
+
+### Added
+
+- VK / Provider 两维令牌桶：超 RPM 硬拒绝 429，允许约 1.2 倍突发
+- 渠熔断：连续失败摘病路、冷却后半开探测，流量留在同池健康渠
+- 控制台：团队 / 项目编目，池与官方 Key 可绑团队，VK 可绑项目，路由审计页
+- 控制台品牌改为 KodaX-Fabric
+
+### Changed
+
+- 管理后台与开发者工作台样式整理
+
+---
+
 ## [0.0.5] - 2026-08-13
 
 KodaX-Fabric。落地模块仍是 Token Hub。
@@ -43,4 +60,4 @@ KodaX-Fabric 首次按切法发布。当前落地模块是 Token Hub（Go 单进
 
 - 控制台 TypeScript 路径配置，去掉已弃用的 `baseUrl`
 
-<!-- last-sync: f90ddfe -->
+<!-- last-sync: b66797f -->
