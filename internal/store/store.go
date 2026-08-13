@@ -2,8 +2,17 @@ package store
 
 import (
 	"context"
+	"errors"
 	"sort"
 	"time"
+)
+
+var (
+	ErrAlreadyDecided          = errors.New("application already decided")
+	ErrKeyNotFound             = errors.New("provider key not found")
+	ErrNoReplacement           = errors.New("no replacement staged")
+	ErrRotationConflict        = errors.New("rotation already pending")
+	ErrInvalidRotationSchedule = errors.New("invalid rotation schedule")
 )
 
 const (
@@ -12,20 +21,25 @@ const (
 )
 
 type Channel struct {
-	ID            int64
-	Protocol      string
-	BaseURL       string
-	Secret        string
-	Status        string
-	Priority      int
-	Weight        int
-	Models        []string
-	PoolID        int64
-	TeamID        int64
-	KeyTeamID     int64
-	ProviderCode  string
-	ProviderRPM   int
-	ProviderBurst int
+	ID             int64
+	Protocol       string
+	BaseURL        string
+	Secret         string
+	Status         string
+	Priority       int
+	Weight         int
+	Models         []string
+	PoolID         int64
+	TeamID         int64
+	KeyTeamID      int64
+	ProviderCode   string
+	ProviderRPM    int
+	ProviderBurst  int
+	ProviderKeyID  int64
+	Replacement    string
+	ActivateAt     *time.Time
+	RetireAt       *time.Time
+	FallbackSecret string
 }
 
 type ResolvedVK struct {
@@ -43,6 +57,7 @@ type ResolvedVK struct {
 	RPMBurst     int
 	MonthlyHard  int64
 	MonthlySoft  int64
+	IPAllow      []string
 	Channels     []Channel
 }
 
@@ -64,6 +79,42 @@ type RouteDecision struct {
 	BudgetSoft     bool
 	BudgetMonth    string
 	BudgetOver     bool
+	CacheStatus    string
+	CachedTokens   int64
+}
+
+const (
+	AppPending  = "pending"
+	AppApproved = "approved"
+	AppRejected = "rejected"
+)
+
+type VKApplication struct {
+	ID           int64      `json:"id"`
+	TeamID       int64      `json:"team_id"`
+	ProjectID    int64      `json:"project_id"`
+	PoolID       int64      `json:"pool_id"`
+	Purpose      string     `json:"purpose"`
+	MonthlyHard  int64      `json:"monthly_hard"`
+	MonthlySoft  int64      `json:"monthly_soft"`
+	ModelScope   []string   `json:"model_scope"`
+	ExpiresAt    *time.Time `json:"expires_at,omitempty"`
+	IPAllow      []string   `json:"ip_allow"`
+	Status       string     `json:"status"`
+	RejectReason string     `json:"reject_reason,omitempty"`
+	VirtualKeyID int64      `json:"virtual_key_id,omitempty"`
+	KeyPrefix    string     `json:"key_prefix,omitempty"`
+	KeyMasked    string     `json:"key_masked,omitempty"`
+	CreatedAt    time.Time  `json:"created_at"`
+}
+
+type ProviderKeyView struct {
+	ID             int64      `json:"id"`
+	ProviderCode   string     `json:"provider_code"`
+	Status         string     `json:"status"`
+	HasReplacement bool       `json:"has_replacement"`
+	ActivateAt     *time.Time `json:"activate_at,omitempty"`
+	RetireAt       *time.Time `json:"retire_at,omitempty"`
 }
 
 // IsolateChannels drops channels/keys that do not belong to the VK.
@@ -104,6 +155,14 @@ type Store interface {
 	LookupAlias(ctx context.Context, model string) ([]string, error)
 	RecordRoute(ctx context.Context, d RouteDecision) error
 	RecentRoutes(ctx context.Context, vkID int64) ([]RouteDecision, error)
+	CreateVKApplication(ctx context.Context, app VKApplication) (*VKApplication, error)
+	GetVKApplication(ctx context.Context, id int64) (*VKApplication, error)
+	ListVKApplications(ctx context.Context) ([]VKApplication, error)
+	ApproveVKApplication(ctx context.Context, id int64, now time.Time) (*VKApplication, string, error)
+	RejectVKApplication(ctx context.Context, id int64, reason string) (*VKApplication, error)
+	StageProviderRotation(ctx context.Context, keyID int64, secret string, activate, retire *time.Time, now time.Time) error
+	ActivateProviderRotation(ctx context.Context, keyID int64, now time.Time) error
+	ListProviderKeys(ctx context.Context) ([]ProviderKeyView, error)
 }
 
 // Rank: smaller priority wins (1 primary, 2 backup). 0/negative = unset, after any explicit 1/2.

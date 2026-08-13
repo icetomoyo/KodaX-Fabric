@@ -7,6 +7,20 @@ import (
 	"time"
 )
 
+func TestAnthropicCacheTokensSplit(t *testing.T) {
+	u := extractUsage([]byte(`{"usage":{"input_tokens":10,"output_tokens":5,"cache_creation_input_tokens":20,"cache_read_input_tokens":8}}`))
+	if u.tokens() != 43 {
+		t.Fatalf("anthropic total %d", u.tokens())
+	}
+	if extractCachedTokens(u) != 8 {
+		t.Fatalf("hit savings %d", extractCachedTokens(u))
+	}
+	oai := extractUsage([]byte(`{"usage":{"prompt_tokens":10,"completion_tokens":2,"total_tokens":12,"prompt_tokens_details":{"cached_tokens":9}}}`))
+	if extractCachedTokens(oai) != 9 || oai.tokens() != 12 {
+		t.Fatalf("openai %+v", oai)
+	}
+}
+
 func TestParseUsageOpenAIAndAnthropic(t *testing.T) {
 	if n := parseUsageTokens([]byte(`{"usage":{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5}}`)); n != 5 {
 		t.Fatalf("openai total %d", n)

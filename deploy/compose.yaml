@@ -52,6 +52,7 @@ services:
       DATABASE_URL: postgres://tokenhub:tokenhub@postgres:5432/tokenhub?sslmode=disable
       CREDENTIAL_ENCRYPT_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
       REDIS_URL: redis://redis:6379
+      CACHE_TTL: 1h
     ports:
       - "3000:8080"
     healthcheck:

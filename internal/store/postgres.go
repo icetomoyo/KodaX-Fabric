@@ -121,6 +121,30 @@ CREATE TABLE IF NOT EXISTS virtual_keys (
 		`ALTER TABLE route_decisions ADD COLUMN IF NOT EXISTS budget_soft boolean NOT NULL DEFAULT false`,
 		`ALTER TABLE route_decisions ADD COLUMN IF NOT EXISTS budget_month varchar(7) NOT NULL DEFAULT ''`,
 		`ALTER TABLE route_decisions ADD COLUMN IF NOT EXISTS budget_over boolean NOT NULL DEFAULT false`,
+		`ALTER TABLE virtual_keys ADD COLUMN IF NOT EXISTS ip_allow text NOT NULL DEFAULT ''`,
+		`ALTER TABLE provider_keys ADD COLUMN IF NOT EXISTS replacement_encrypted text NOT NULL DEFAULT ''`,
+		`ALTER TABLE provider_keys ADD COLUMN IF NOT EXISTS replacement_activate_at timestamptz`,
+		`ALTER TABLE provider_keys ADD COLUMN IF NOT EXISTS retire_at timestamptz`,
+		`ALTER TABLE route_decisions ADD COLUMN IF NOT EXISTS cache_status varchar(16) NOT NULL DEFAULT ''`,
+		`ALTER TABLE route_decisions ADD COLUMN IF NOT EXISTS cached_tokens bigint NOT NULL DEFAULT 0`,
+		`CREATE TABLE IF NOT EXISTS vk_applications (
+  id bigserial PRIMARY KEY,
+  team_id bigint,
+  project_id bigint,
+  pool_id bigint,
+  purpose text NOT NULL DEFAULT '',
+  monthly_token_hard bigint NOT NULL DEFAULT 0,
+  monthly_token_soft bigint NOT NULL DEFAULT 0,
+  model_scope text NOT NULL DEFAULT '',
+  expires_at timestamptz,
+  ip_allow text NOT NULL DEFAULT '',
+  status varchar(16) NOT NULL DEFAULT 'pending',
+  reject_reason text NOT NULL DEFAULT '',
+  virtual_key_id bigint,
+  key_prefix varchar(16) NOT NULL DEFAULT '',
+  key_masked varchar(64) NOT NULL DEFAULT '',
+  created_at timestamptz NOT NULL DEFAULT now()
+)`,
 	} {
 		if _, err := p.DB.ExecContext(ctx, q); err != nil {
 			return err
@@ -135,12 +159,14 @@ func (p *Postgres) ResolveVK(ctx context.Context, rawKey string) (*ResolvedVK, e
 	var status, models string
 	var rpm, burst int
 	var monthlyHard, monthlySoft int64
+	var ipAllow string
 	var expires sql.NullTime
 	var projectID, teamID, poolTeam sql.NullInt64
 	var projectName, teamName, poolName, poolGroup sql.NullString
 	err := p.DB.QueryRowContext(ctx, `
 SELECT vk.id, vk.pool_id, vk.status, vk.expires_at, vk.model_scope,
        vk.rpm_limit, vk.rpm_burst, vk.monthly_token_hard, vk.monthly_token_soft,
+       vk.ip_allow,
        vk.project_id, pr.name, pr.team_id, t.name,
        p.name, p.group_name, p.team_id
 FROM virtual_keys vk
@@ -148,7 +174,7 @@ LEFT JOIN projects pr ON pr.id = vk.project_id
 LEFT JOIN teams t ON t.id = pr.team_id
 LEFT JOIN channel_pools p ON p.id = vk.pool_id
 WHERE vk.key_hash = $1
-`, hash).Scan(&vkID, &poolID, &status, &expires, &models, &rpm, &burst, &monthlyHard, &monthlySoft,
+`, hash).Scan(&vkID, &poolID, &status, &expires, &models, &rpm, &burst, &monthlyHard, &monthlySoft, &ipAllow,
 		&projectID, &projectName, &teamID, &teamName,
 		&poolName, &poolGroup, &poolTeam)
 	if err == sql.ErrNoRows {
@@ -165,13 +191,14 @@ WHERE vk.key_hash = $1
 			VirtualKeyID: vkID, PoolID: poolID, PoolName: poolName.String, PoolGroup: poolGroup.String,
 			TeamID: teamID.Int64, TeamName: teamName.String, ProjectID: projectID.Int64, ProjectName: projectName.String,
 			ModelScope: splitCSV(models), RPMLimit: rpm, RPMBurst: burst,
-			MonthlyHard: monthlyHard, MonthlySoft: monthlySoft,
+			MonthlyHard: monthlyHard, MonthlySoft: monthlySoft, IPAllow: splitCSV(ipAllow),
 		}, nil
 	}
 	const chSelect = `
 SELECT c.id, c.protocol, c.base_url, pk.secret_encrypted, c.priority, c.weight, c.models,
        c.pool_id, COALESCE(p.team_id, 0), COALESCE(pk.team_id, 0),
-       pk.provider_code, pk.rpm_limit, pk.rpm_burst
+       pk.provider_code, pk.rpm_limit, pk.rpm_burst, pk.id,
+       COALESCE(pk.replacement_encrypted, ''), pk.replacement_activate_at, pk.retire_at
 FROM channels c
 JOIN provider_keys pk ON pk.id = c.provider_key_id
 JOIN channel_pools p ON p.id = c.pool_id
@@ -196,7 +223,7 @@ ORDER BY CASE WHEN c.priority <= 0 THEN 1000000 ELSE c.priority END, c.id`
 		VirtualKeyID: vkID, PoolID: poolID, PoolName: poolName.String, PoolGroup: poolGroup.String,
 		TeamID: teamID.Int64, TeamName: teamName.String, ProjectID: projectID.Int64, ProjectName: projectName.String,
 		ModelScope: splitCSV(models), RPMLimit: rpm, RPMBurst: burst,
-		MonthlyHard: monthlyHard, MonthlySoft: monthlySoft,
+		MonthlyHard: monthlyHard, MonthlySoft: monthlySoft, IPAllow: splitCSV(ipAllow),
 	}
 	if expires.Valid {
 		t := expires.Time
@@ -204,9 +231,11 @@ ORDER BY CASE WHEN c.priority <= 0 THEN 1000000 ELSE c.priority END, c.id`
 	}
 	for rows.Next() {
 		var ch Channel
-		var enc, modelsCSV string
+		var enc, modelsCSV, replEnc string
+		var act, ret sql.NullTime
 		if err := rows.Scan(&ch.ID, &ch.Protocol, &ch.BaseURL, &enc, &ch.Priority, &ch.Weight, &modelsCSV,
-			&ch.PoolID, &ch.TeamID, &ch.KeyTeamID, &ch.ProviderCode, &ch.ProviderRPM, &ch.ProviderBurst); err != nil {
+			&ch.PoolID, &ch.TeamID, &ch.KeyTeamID, &ch.ProviderCode, &ch.ProviderRPM, &ch.ProviderBurst,
+			&ch.ProviderKeyID, &replEnc, &act, &ret); err != nil {
 			return nil, err
 		}
 		plain, err := secret.Decrypt(p.EncryptKey, enc)
@@ -214,6 +243,21 @@ ORDER BY CASE WHEN c.priority <= 0 THEN 1000000 ELSE c.priority END, c.id`
 			return nil, fmt.Errorf("decrypt provider key: %w", err)
 		}
 		ch.Secret = plain
+		if replEnc != "" {
+			rp, err := secret.Decrypt(p.EncryptKey, replEnc)
+			if err != nil {
+				return nil, fmt.Errorf("decrypt replacement key: %w", err)
+			}
+			ch.Replacement = rp
+		}
+		if act.Valid {
+			t := act.Time
+			ch.ActivateAt = &t
+		}
+		if ret.Valid {
+			t := ret.Time
+			ch.RetireAt = &t
+		}
 		ch.Models = splitCSV(modelsCSV)
 		out.Channels = append(out.Channels, ch)
 	}
@@ -256,11 +300,13 @@ func (p *Postgres) RecordRoute(ctx context.Context, d RouteDecision) error {
 INSERT INTO route_decisions (
   virtual_key_id, protocol, requested_model, upstream_model,
   channel_id, tried_ids, reason, fallback, status, created_at,
-  team_id, pool_id, pool_group, budget_used, budget_soft, budget_month, budget_over
-) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,COALESCE($10, now()),$11,$12,$13,$14,$15,$16,$17)
+  team_id, pool_id, pool_group, budget_used, budget_soft, budget_month, budget_over,
+  cache_status, cached_tokens
+) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,COALESCE($10, now()),$11,$12,$13,$14,$15,$16,$17,$18,$19)
 `, d.VirtualKeyID, d.Protocol, d.RequestedModel, d.UpstreamModel,
 		d.ChannelID, strings.Join(tried, ","), d.Reason, d.Fallback, d.Status, nullTime(d.At),
-		d.TeamID, d.PoolID, d.PoolGroup, d.BudgetUsed, d.BudgetSoft, d.BudgetMonth, d.BudgetOver)
+		d.TeamID, d.PoolID, d.PoolGroup, d.BudgetUsed, d.BudgetSoft, d.BudgetMonth, d.BudgetOver,
+		d.CacheStatus, d.CachedTokens)
 	return err
 }
 
@@ -270,7 +316,7 @@ SELECT virtual_key_id, protocol, requested_model, upstream_model, channel_id,
        tried_ids, reason, fallback, status, created_at,
        COALESCE(team_id, 0), COALESCE(pool_id, 0), COALESCE(pool_group, ''),
        COALESCE(budget_used, 0), COALESCE(budget_soft, false), COALESCE(budget_month, ''),
-       COALESCE(budget_over, false)
+       COALESCE(budget_over, false), COALESCE(cache_status, ''), COALESCE(cached_tokens, 0)
 FROM route_decisions
 WHERE ($1 = 0 OR virtual_key_id = $1)
 ORDER BY id
@@ -287,7 +333,7 @@ ORDER BY id
 		if err := rows.Scan(&d.VirtualKeyID, &d.Protocol, &d.RequestedModel, &d.UpstreamModel,
 			&d.ChannelID, &tried, &d.Reason, &d.Fallback, &d.Status, &at,
 			&d.TeamID, &d.PoolID, &d.PoolGroup,
-			&d.BudgetUsed, &d.BudgetSoft, &d.BudgetMonth, &d.BudgetOver); err != nil {
+			&d.BudgetUsed, &d.BudgetSoft, &d.BudgetMonth, &d.BudgetOver, &d.CacheStatus, &d.CachedTokens); err != nil {
 			return nil, err
 		}
 		d.Tried = parseIDs(tried)

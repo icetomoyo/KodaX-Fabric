@@ -35,6 +35,25 @@ func (s *Server) fetchUpstream(r *http.Request, ch *store.Channel, path string, 
 	return s.Client.Do(upReq)
 }
 
+func (s *Server) fetchWithAuthFallback(r *http.Request, ch *store.Channel, path string, body []byte) (*http.Response, error, bool) {
+	resp, err := s.fetchUpstream(r, ch, path, body)
+	if err != nil || resp == nil {
+		return resp, err, false
+	}
+	if resp.StatusCode != http.StatusUnauthorized && resp.StatusCode != http.StatusForbidden {
+		return resp, nil, false
+	}
+	if ch.FallbackSecret == "" {
+		return resp, nil, false
+	}
+	discardUpstream(resp)
+	fb := *ch
+	fb.Secret = ch.FallbackSecret
+	fb.FallbackSecret = ""
+	resp2, err2 := s.fetchUpstream(r, &fb, path, body)
+	return resp2, err2, true
+}
+
 func copyPassHeaders(w http.ResponseWriter, resp *http.Response) {
 	for k, vals := range resp.Header {
 		lk := strings.ToLower(k)

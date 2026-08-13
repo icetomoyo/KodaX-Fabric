@@ -1,12 +1,12 @@
 # FEATURE_LIST
 
-Last Updated: 2026-08-13 18:00
+Last Updated: 2026-08-13 22:00
 
 ## Version Info
 
 | 项 | 值 |
 |----|-----|
-| Current Release | **v0.0.7** |
+| Current Release | **v0.0.8** |
 | Planned Version | — |
 
 ## Version Summary
@@ -20,7 +20,7 @@ Last Updated: 2026-08-13 18:00
 | v0.0.5 | Released | 1/1 | VK 绑池 + 分组 |
 | v0.0.6 | Released | 1/1 | 限流 + 熔断 |
 | v0.0.7 | Released | 1/1 | 预算闸 + 流式估算 |
-| v0.0.8 | — | — | 缓存 + 运营面 |
+| v0.0.8 | Released | 1/1 | 缓存 + 运营面 |
 | v0.1.0 | — | — | 独立部署收口 |
 
 切法全文：[token-hub-slices.md](token-hub-slices.md)（遵守 PRD + HLD）。手测：[TokenHub_VISION.md](TokenHub_VISION.md)。
@@ -36,6 +36,7 @@ Last Updated: 2026-08-13 18:00
 | 005 | VK 绑池与分组 | **Completed** | Critical | New | v0.0.5 | [设计](features/v0.0.5.md#feature_005) |
 | 006 | RPM 硬拒绝与渠熔断 | **Completed** | Critical | New | v0.0.6 | [设计](features/v0.0.6.md#feature_006) |
 | 007 | VK 月预算与流式估算 | **Completed** | Critical | New | v0.0.7 | [设计](features/v0.0.7.md#feature_007) |
+| 008 | 缓存审批白名单与轮换 | **Completed** | Critical | New | v0.0.8 | [设计](features/v0.0.8.md#feature_008) |
 
 ## Feature Details
 
@@ -193,12 +194,34 @@ VK + 自然月整数 Token 软/硬闸；SSE 中估算、结束用官方 usage �
 
 **Spec**：已综合（T1）。
 
+### FEATURE_008: 缓存审批白名单与轮换
+
+| 字段 | 内容 |
+|------|------|
+| ID | 008 |
+| Title | 缓存审批白名单与轮换 |
+| Status | **Completed** |
+| Priority | Critical |
+| Category | New |
+| Planned Version | v0.0.8 |
+| Released Version | v0.0.8 |
+| Created | 2026-08-13 |
+| Started | 2026-08-13 |
+| Completed | 2026-08-13 |
+| Design | [docs/features/v0.0.8.md#feature_008](features/v0.0.8.md#feature_008) |
+
+**Description**
+
+VK IP 白名单；自助申请/审批（明文一次）；Provider Key 预存轮换重叠；原生 prompt cache 透传；可选响应缓存（默认关）。
+
+**Spec**：已综合（T1）。
+
 ## Summary
 
 | 指标 | 数量 |
 |------|------|
-| Total | 7 |
+| Total | 8 |
 | Planned | 0 |
 | In Progress | 0 |
-| Completed | 7 |
-| Critical | 7 |
+| Completed | 8 |
+| Critical | 8 |

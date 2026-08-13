@@ -323,33 +323,44 @@ func reserveSpecFromBody(body []byte) ReserveSpec {
 }
 
 type usageBits struct {
-	Total      int64
-	Prompt     int64
-	Completion int64
-	Input      int64
-	Output     int64
+	Total       int64
+	Prompt      int64
+	Completion  int64
+	Input       int64
+	Output      int64
+	Cached      int64
+	CacheRead   int64
+	CacheCreate int64
 }
 
 type usageJSON struct {
-	TotalTokens      int64 `json:"total_tokens"`
-	PromptTokens     int64 `json:"prompt_tokens"`
-	CompletionTokens int64 `json:"completion_tokens"`
-	InputTokens      int64 `json:"input_tokens"`
-	OutputTokens     int64 `json:"output_tokens"`
+	TotalTokens              int64 `json:"total_tokens"`
+	PromptTokens             int64 `json:"prompt_tokens"`
+	CompletionTokens         int64 `json:"completion_tokens"`
+	InputTokens              int64 `json:"input_tokens"`
+	OutputTokens             int64 `json:"output_tokens"`
+	CacheReadInputTokens     int64 `json:"cache_read_input_tokens"`
+	CacheCreationInputTokens int64 `json:"cache_creation_input_tokens"`
+	PromptTokensDetails      struct {
+		CachedTokens int64 `json:"cached_tokens"`
+	} `json:"prompt_tokens_details"`
 }
 
 func (u usageJSON) bits() usageBits {
 	return usageBits{
-		Total:      u.TotalTokens,
-		Prompt:     u.PromptTokens,
-		Completion: u.CompletionTokens,
-		Input:      u.InputTokens,
-		Output:     u.OutputTokens,
+		Total:       u.TotalTokens,
+		Prompt:      u.PromptTokens,
+		Completion:  u.CompletionTokens,
+		Input:       u.InputTokens,
+		Output:      u.OutputTokens,
+		Cached:      u.PromptTokensDetails.CachedTokens,
+		CacheRead:   u.CacheReadInputTokens,
+		CacheCreate: u.CacheCreationInputTokens,
 	}
 }
 
 func (u usageBits) empty() bool {
-	return u.Total == 0 && u.Prompt == 0 && u.Completion == 0 && u.Input == 0 && u.Output == 0
+	return u.Total == 0 && u.Prompt == 0 && u.Completion == 0 && u.Input == 0 && u.Output == 0 && u.Cached == 0 && u.CacheRead == 0 && u.CacheCreate == 0
 }
 
 func (u usageBits) tokens() int64 {
@@ -359,7 +370,7 @@ func (u usageBits) tokens() int64 {
 	if u.Prompt+u.Completion > 0 {
 		return u.Prompt + u.Completion
 	}
-	return u.Input + u.Output
+	return u.Input + u.Output + u.CacheRead + u.CacheCreate
 }
 
 func mergeUsage(dst *usageBits, src usageBits) {
@@ -377,6 +388,15 @@ func mergeUsage(dst *usageBits, src usageBits) {
 	}
 	if src.Output > 0 {
 		dst.Output = src.Output
+	}
+	if src.Cached > 0 {
+		dst.Cached = src.Cached
+	}
+	if src.CacheRead > 0 {
+		dst.CacheRead = src.CacheRead
+	}
+	if src.CacheCreate > 0 {
+		dst.CacheCreate = src.CacheCreate
 	}
 }
 

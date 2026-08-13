@@ -15,11 +15,13 @@ import (
 )
 
 type Server struct {
-	Store  store.Store
-	Client *http.Client
-	Limits HotLimits
-	Budget HotBudget
-	Clock  Clock
+	Store      store.Store
+	Client     *http.Client
+	Limits     HotLimits
+	Budget     HotBudget
+	Cache      ResponseCache
+	AdminToken string
+	Clock      Clock
 
 	mu        sync.Mutex
 	rr        map[string]uint64
@@ -31,7 +33,12 @@ func New(st store.Store, client *http.Client) *Server {
 		client = http.DefaultClient
 	}
 	clk := Clock(realClock{})
-	return &Server{Store: st, Client: client, Limits: NewLimiter(clk), Budget: NewMemoryBudget(clk), Clock: clk, rr: map[string]uint64{}}
+	return &Server{
+		Store: st, Client: client,
+		Limits: NewLimiter(clk), Budget: NewMemoryBudget(clk),
+		Cache: NewMemoryCache(clk, time.Hour),
+		Clock: clk, rr: map[string]uint64{},
+	}
 }
 
 func (s *Server) Handler() http.Handler {
@@ -39,8 +46,17 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /health", s.handleHealth)
 	mux.HandleFunc("GET /health/limits", s.handleLimits)
 	mux.HandleFunc("GET /health/budget", s.handleBudget)
+	mux.HandleFunc("GET /health/cache", s.handleCacheHealth)
 	mux.HandleFunc("POST /v1/chat/completions", s.handleChatCompletions)
 	mux.HandleFunc("POST /v1/messages", s.handleMessages)
+	mux.HandleFunc("POST /admin/v1/vk-applications", s.handleCreateVKApp)
+	mux.HandleFunc("GET /admin/v1/vk-applications", s.handleListVKApps)
+	mux.HandleFunc("GET /admin/v1/vk-applications/{id}", s.handleGetVKApp)
+	mux.HandleFunc("POST /admin/v1/vk-applications/{id}/approve", s.handleApproveVKApp)
+	mux.HandleFunc("POST /admin/v1/vk-applications/{id}/reject", s.handleRejectVKApp)
+	mux.HandleFunc("GET /admin/v1/provider-keys", s.handleListProviderKeys)
+	mux.HandleFunc("POST /admin/v1/provider-keys/{id}/rotate", s.handleRotateProviderKey)
+	mux.HandleFunc("POST /admin/v1/provider-keys/{id}/rotate/activate", s.handleActivateProviderKey)
 	return mux
 }
 
@@ -72,6 +88,14 @@ func (s *Server) handleBudget(w http.ResponseWriter, _ *http.Request) {
 		entries = []BudgetSnap{}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "month": month, "budgets": entries})
+}
+
+func (s *Server) handleCacheHealth(w http.ResponseWriter, _ *http.Request) {
+	var st CacheStats
+	if s.Cache != nil {
+		st = s.Cache.Stats()
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "cache": st})
 }
 
 func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
@@ -106,13 +130,9 @@ func (s *Server) relay(w http.ResponseWriter, r *http.Request, protocol, upstrea
 		writeUnauthorized(w, protocol)
 		return
 	}
-	if s.Limits != nil {
-		s.Limits.Tick()
-		s.Limits.RegisterPool(resolved.PoolID, resolved.Channels)
-		if !s.Limits.AllowVK(resolved.VirtualKeyID, resolved.RPMLimit, resolved.RPMBurst) {
-			writeRateLimited(w, protocol, "vk")
-			return
-		}
+	if ok, _ := ipAllowed(remoteIP(r), resolved.IPAllow); !ok {
+		writeIPForbidden(w, protocol)
+		return
 	}
 
 	body, err := io.ReadAll(r.Body)
@@ -127,6 +147,50 @@ func (s *Server) relay(w http.ResponseWriter, r *http.Request, protocol, upstrea
 	if len(resolved.ModelScope) > 0 && (flag.Model == "" || !contains(resolved.ModelScope, flag.Model)) {
 		writeForbidden(w, protocol, "model not allowed")
 		return
+	}
+
+	resolved.Channels = ExpandRotated(resolved.Channels, s.now())
+
+	cacheStatus := "BYPASS"
+	ckey := ""
+	if flag.Stream || !wantsResponseCache(r.Header, body) {
+		w.Header().Set("X-Fabric-Cache", "BYPASS")
+	} else if s.Cache != nil {
+		if mc, ok := s.Cache.(*MemoryCache); ok {
+			mc.noteCandidate()
+		}
+		ckey = cacheKey(protocol, resolved, flag.Model, body)
+		if ent, ok := s.Cache.Get(ckey); ok {
+			if mc, ok := s.Cache.(*MemoryCache); ok {
+				mc.noteHit(ent.Tokens)
+			}
+			w.Header().Set("X-Fabric-Cache", "HIT")
+			for k, vs := range ent.Header {
+				for _, v := range vs {
+					w.Header().Add(k, v)
+				}
+			}
+			w.WriteHeader(ent.Status)
+			_, _ = w.Write(ent.Body)
+			s.noteRoute(resolved, protocol, flag.Model, flag.Model, 0, nil, "cache_hit", false, ent.Status, BudgetMonth(s.now()), 0, false, "HIT", ent.Tokens)
+			return
+		}
+		cacheStatus = "MISS"
+		w.Header().Set("X-Fabric-Cache", "MISS")
+		if mc, ok := s.Cache.(*MemoryCache); ok {
+			mc.noteMiss()
+		}
+	} else {
+		w.Header().Set("X-Fabric-Cache", "BYPASS")
+	}
+
+	if s.Limits != nil {
+		s.Limits.Tick()
+		s.Limits.RegisterPool(resolved.PoolID, resolved.Channels)
+		if !s.Limits.AllowVK(resolved.VirtualKeyID, resolved.RPMLimit, resolved.RPMBurst) {
+			writeRateLimited(w, protocol, "vk")
+			return
+		}
 	}
 
 	month := BudgetMonth(s.now())
@@ -219,7 +283,7 @@ func (s *Server) relay(w http.ResponseWriter, r *http.Request, protocol, upstrea
 			lastOrder = order
 			start := s.now()
 			s.markBudgetHit(&sess)
-			resp, ferr := s.fetchUpstream(r, &ch, upstreamPath, upBody)
+			resp, ferr, _ := s.fetchWithAuthFallback(r, &ch, upstreamPath, upBody)
 			lat := s.now().Sub(start)
 			if ferr != nil {
 				lastErr = ferr
@@ -258,7 +322,7 @@ func (s *Server) relay(w http.ResponseWriter, r *http.Request, protocol, upstrea
 			if flag.Stream {
 				declareBudgetTrailers(w)
 			}
-			status, _ := writeUpstream(w, resp, flag.Stream, func() {
+			status, werr := writeUpstream(w, resp, flag.Stream, func() {
 				if !flag.Stream {
 					snap := s.settleBudget(&sess)
 					setBudgetHeaders(w, snap, soft)
@@ -282,10 +346,13 @@ func (s *Server) relay(w http.ResponseWriter, r *http.Request, protocol, upstrea
 				}
 				snap := s.settleBudget(&sess)
 				setBudgetTrailers(w, snap, soft)
-				s.noteRoute(resolved, protocol, flag.Model, model, ch.ID, triedNums, reason, fallback, status, month, soft, sess.over)
+				s.noteRoute(resolved, protocol, flag.Model, model, ch.ID, triedNums, reason, fallback, status, month, soft, sess.over, cacheStatus, extractCachedTokens(sess.meter.official))
 				return
 			}
-			s.noteRoute(resolved, protocol, flag.Model, model, ch.ID, triedNums, reason, fallback, status, month, soft, sess.over)
+			if cacheStatus == "MISS" && werr == nil && status >= 200 && status < 400 && s.Cache != nil && ckey != "" {
+				s.rememberResponse(ckey, status, w.Header(), &sess)
+			}
+			s.noteRoute(resolved, protocol, flag.Model, model, ch.ID, triedNums, reason, fallback, status, month, soft, sess.over, cacheStatus, extractCachedTokens(sess.meter.official))
 			return
 		}
 	}
@@ -302,7 +369,7 @@ func (s *Server) relay(w http.ResponseWriter, r *http.Request, protocol, upstrea
 				"code":    "provider_error",
 			},
 		})
-		s.noteRoute(resolved, protocol, flag.Model, lastModel, lastCh.ID, triedNums, reason, fallback, http.StatusBadGateway, month, soft, sess.over)
+		s.noteRoute(resolved, protocol, flag.Model, lastModel, lastCh.ID, triedNums, reason, fallback, http.StatusBadGateway, month, soft, sess.over, cacheStatus, 0)
 		return
 	}
 	if lastStatus != 0 {
@@ -325,7 +392,7 @@ func (s *Server) relay(w http.ResponseWriter, r *http.Request, protocol, upstrea
 				"code":    reason,
 			},
 		})
-		s.noteRoute(resolved, protocol, flag.Model, lastModel, lastCh.ID, triedNums, reason, fallback, status, month, soft, sess.over)
+		s.noteRoute(resolved, protocol, flag.Model, lastModel, lastCh.ID, triedNums, reason, fallback, status, month, soft, sess.over, cacheStatus, 0)
 		return
 	}
 	if skippedOpen > 0 && attemptN == 0 {
@@ -384,15 +451,16 @@ func setBudgetTrailers(w http.ResponseWriter, snap BudgetSnap, soft int64) {
 }
 
 type budgetSession struct {
-	vkID     int64
-	month    string
-	lease    BudgetLease
-	spec     ReserveSpec
-	meter    sseMeter
-	reserved bool
-	hit      bool
-	closed   bool
-	over     bool
+	vkID       int64
+	month      string
+	lease      BudgetLease
+	spec       ReserveSpec
+	meter      sseMeter
+	reserved   bool
+	hit        bool
+	closed     bool
+	over       bool
+	cachedBody []byte
 }
 
 func (s *Server) markBudgetHit(sess *budgetSession) {
@@ -417,6 +485,7 @@ func (s *Server) ingestNonStream(sess *budgetSession, body []byte) {
 	if sess == nil || len(body) == 0 {
 		return
 	}
+	sess.cachedBody = append([]byte(nil), body...)
 	mergeUsage(&sess.meter.official, extractUsage(body))
 	if sess.meter.official.tokens() == 0 {
 		if n := textFieldTokens(body); n > 0 {
@@ -459,7 +528,31 @@ func (s *Server) finishBudget(sess *budgetSession) {
 	s.settleBudget(sess)
 }
 
-func (s *Server) noteRoute(vk *store.ResolvedVK, protocol, reqModel, upModel string, chID int64, tried []int64, reason string, fallback bool, status int, month string, soft int64, over bool) {
+func (s *Server) rememberResponse(key string, status int, hdr http.Header, sess *budgetSession) {
+	if s.Cache == nil || key == "" {
+		return
+	}
+	// Body already written to client; store a marker-less copy of safe headers only.
+	// The actual body is captured in writeUpstream for non-stream via lastNonStream.
+	if sess == nil || len(sess.cachedBody) == 0 {
+		return
+	}
+	tok := sess.meter.official.tokens()
+	if tok == 0 {
+		tok = sess.meter.est
+	}
+	s.Cache.Set(key, CacheEntry{
+		Status: status,
+		Header: safeCacheHeaders(hdr),
+		Body:   append([]byte(nil), sess.cachedBody...),
+		Tokens: tok,
+	})
+	if mc, ok := s.Cache.(*MemoryCache); ok {
+		mc.noteWrite(tok)
+	}
+}
+
+func (s *Server) noteRoute(vk *store.ResolvedVK, protocol, reqModel, upModel string, chID int64, tried []int64, reason string, fallback bool, status int, month string, soft int64, over bool, cacheStatus string, cachedTok int64) {
 	d := store.RouteDecision{
 		VirtualKeyID:   vk.VirtualKeyID,
 		Protocol:       protocol,
@@ -476,6 +569,8 @@ func (s *Server) noteRoute(vk *store.ResolvedVK, protocol, reqModel, upModel str
 		PoolGroup:      vk.PoolGroup,
 		BudgetMonth:    month,
 		BudgetOver:     over,
+		CacheStatus:    cacheStatus,
+		CachedTokens:   cachedTok,
 	}
 	if s.Budget != nil {
 		snap := s.Budget.Snap(vk.VirtualKeyID, month)

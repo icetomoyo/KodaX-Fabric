@@ -17,6 +17,28 @@ func HashVK(raw string) string {
 	return hex.EncodeToString(sum[:])
 }
 
+func NewVK() (string, error) {
+	var b [24]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	return "fab-" + hex.EncodeToString(b[:]), nil
+}
+
+func PrefixVK(raw string) string {
+	if len(raw) < 8 {
+		return raw
+	}
+	return raw[:8]
+}
+
+func MaskVK(raw string) string {
+	if len(raw) < 12 {
+		return "fab-****"
+	}
+	return raw[:7] + "****" + raw[len(raw)-4:]
+}
+
 // ParseAESKey accepts 32 raw bytes or 64 hex characters.
 func ParseAESKey(raw string) ([]byte, error) {
 	if len(raw) == 64 {

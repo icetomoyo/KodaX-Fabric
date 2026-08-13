@@ -114,6 +114,26 @@ func writeCircuitOpen(w http.ResponseWriter, protocol string) {
 	})
 }
 
+func writeIPForbidden(w http.ResponseWriter, protocol string) {
+	if protocol == store.ProtocolAnthropic {
+		writeJSON(w, http.StatusForbidden, map[string]any{
+			"type": "error",
+			"error": map[string]any{
+				"type":    "permission_error",
+				"message": "virtual key ip not allowed",
+			},
+		})
+		return
+	}
+	writeJSON(w, http.StatusForbidden, map[string]any{
+		"error": map[string]any{
+			"message": "virtual key ip not allowed",
+			"type":    "invalid_request_error",
+			"code":    "ip_not_allowed",
+		},
+	})
+}
+
 func writeForbidden(w http.ResponseWriter, protocol, msg string) {
 	if protocol == store.ProtocolAnthropic {
 		writeJSON(w, http.StatusForbidden, map[string]any{

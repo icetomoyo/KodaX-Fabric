@@ -52,7 +52,13 @@ func run() error {
 		fmt.Println("bootstrap complete")
 	}
 
+	ttl, err := hub.ParseCacheTTL(os.Getenv("CACHE_TTL"))
+	if err != nil {
+		return err
+	}
 	h := hub.New(pg, nil)
+	h.AdminToken = os.Getenv("ADMIN_TOKEN")
+	h.Cache = hub.NewMemoryCache(h.Clock, ttl)
 	h.StartProbes()
 	defer h.StopProbes()
 	mux := http.NewServeMux()

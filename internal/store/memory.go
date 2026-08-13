@@ -7,10 +7,14 @@ import (
 
 // Memory is the in-process store used by T1 tests.
 type Memory struct {
-	mu       sync.Mutex
-	ByRawKey map[string]*ResolvedVK
-	Aliases  map[string][]string
-	Routes   []RouteDecision
+	mu           sync.Mutex
+	ByRawKey     map[string]*ResolvedVK
+	Aliases      map[string][]string
+	Routes       []RouteDecision
+	Apps         map[int64]*VKApplication
+	PoolChannels map[int64][]Channel
+	nextApp      int64
+	nextVK       int64
 }
 
 func (m *Memory) ResolveVK(_ context.Context, rawKey string) (*ResolvedVK, error) {

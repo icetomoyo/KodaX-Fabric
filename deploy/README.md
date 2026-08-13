@@ -11,3 +11,4 @@ docker compose up --build
 - Origin: `http://127.0.0.1:3000`
 - `GET /health`
 - `POST /v1/chat/completions` with `Authorization: Bearer fab-local-bootstrap-01`
+- Optional `CACHE_TTL` (Go duration, default `1h`; invalid value fails gateway start)

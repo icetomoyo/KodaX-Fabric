@@ -6,6 +6,16 @@ Token Hub 按 PRD §3 + HLD 从 0 重建（Go 网关）。
 
 ---
 
+## [0.0.8] - 2026-08-13
+
+### Added
+
+- VK IP/CIDR 白名单（只信 RemoteAddr；非法配置 fail-closed）。
+- `/admin/v1` 申请审批 VK 与 Provider Key 预存轮换；管理 token 常量时间比较，缺 token fail-closed；明文只回一次。
+- 原生 prompt cache 字段透传 + 官方 cached/read tokens 审计；响应缓存默认关，`CACHE_TTL` 可配（默认 1h）。
+
+---
+
 ## [0.0.7] - 2026-08-13
 
 ### Added
