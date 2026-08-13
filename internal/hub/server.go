@@ -160,9 +160,9 @@ func (s *Server) relay(w http.ResponseWriter, r *http.Request, protocol, upstrea
 			failover := len(triedIDs) > 1
 			fallback := failover || modelFB
 			reason := routeReason(cands, order, ch, modelFB, failover)
-			setRouteHeaders(w, ch.ID, reason, triedIDs, model)
+			setRouteHeaders(w, resolved, ch.ID, reason, triedIDs, model)
 			status, _ := writeUpstream(w, resp, flag.Stream)
-			s.noteRoute(r, resolved.VirtualKeyID, protocol, flag.Model, model, ch.ID, triedNums, reason, fallback, status)
+			s.noteRoute(r, resolved, protocol, flag.Model, model, ch.ID, triedNums, reason, fallback, status)
 			return
 		}
 	}
@@ -171,7 +171,7 @@ func (s *Server) relay(w http.ResponseWriter, r *http.Request, protocol, upstrea
 		failover := len(triedNums) > 1
 		fallback := failover || modelFB
 		reason := routeReason(lastCands, lastOrder, lastCh, modelFB, failover)
-		setRouteHeaders(w, lastCh.ID, reason, triedIDs, lastModel)
+		setRouteHeaders(w, resolved, lastCh.ID, reason, triedIDs, lastModel)
 		writeJSON(w, http.StatusBadGateway, map[string]any{
 			"error": map[string]any{
 				"message": "upstream request failed",
@@ -179,7 +179,7 @@ func (s *Server) relay(w http.ResponseWriter, r *http.Request, protocol, upstrea
 				"code":    "provider_error",
 			},
 		})
-		s.noteRoute(r, resolved.VirtualKeyID, protocol, flag.Model, lastModel, lastCh.ID, triedNums, reason, fallback, http.StatusBadGateway)
+		s.noteRoute(r, resolved, protocol, flag.Model, lastModel, lastCh.ID, triedNums, reason, fallback, http.StatusBadGateway)
 		return
 	}
 	if lastStatus == 0 {
@@ -187,18 +187,24 @@ func (s *Server) relay(w http.ResponseWriter, r *http.Request, protocol, upstrea
 	}
 }
 
-func setRouteHeaders(w http.ResponseWriter, chID int64, reason string, tried []string, model string) {
+func setRouteHeaders(w http.ResponseWriter, vk *store.ResolvedVK, chID int64, reason string, tried []string, model string) {
 	w.Header().Set("X-Fabric-Channel-Id", fmt.Sprintf("%d", chID))
 	w.Header().Set("X-Fabric-Route-Reason", reason)
 	w.Header().Set("X-Fabric-Tried", strings.Join(tried, ","))
 	if model != "" {
 		w.Header().Set("X-Fabric-Upstream-Model", model)
 	}
+	if vk != nil && vk.PoolGroup != "" {
+		w.Header().Set("X-Fabric-Pool-Group", vk.PoolGroup)
+	}
+	if vk != nil && vk.TeamID != 0 {
+		w.Header().Set("X-Fabric-Team-Id", fmt.Sprintf("%d", vk.TeamID))
+	}
 }
 
-func (s *Server) noteRoute(r *http.Request, vkID int64, protocol, reqModel, upModel string, chID int64, tried []int64, reason string, fallback bool, status int) {
-	_ = s.Store.RecordRoute(r.Context(), store.RouteDecision{
-		VirtualKeyID:   vkID,
+func (s *Server) noteRoute(r *http.Request, vk *store.ResolvedVK, protocol, reqModel, upModel string, chID int64, tried []int64, reason string, fallback bool, status int) {
+	d := store.RouteDecision{
+		VirtualKeyID:   vk.VirtualKeyID,
 		Protocol:       protocol,
 		RequestedModel: reqModel,
 		UpstreamModel:  upModel,
@@ -208,7 +214,11 @@ func (s *Server) noteRoute(r *http.Request, vkID int64, protocol, reqModel, upMo
 		Fallback:       fallback,
 		Status:         status,
 		At:             time.Now(),
-	})
+		TeamID:         vk.TeamID,
+		PoolID:         vk.PoolID,
+		PoolGroup:      vk.PoolGroup,
+	}
+	_ = s.Store.RecordRoute(r.Context(), d)
 }
 
 func attemptOrder(cands []store.Channel, n uint64) []store.Channel {

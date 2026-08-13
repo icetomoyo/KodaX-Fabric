@@ -1197,6 +1197,212 @@ func TestRouteDecisionReplayFromMemory(t *testing.T) {
 	}
 }
 
+func TestTwoVKsDifferentPools(t *testing.T) {
+	var got []string
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = append(got, strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(openaiUsageBody()))
+	}))
+	t.Cleanup(up.Close)
+	st := &store.Memory{ByRawKey: map[string]*store.ResolvedVK{
+		"fab-team-a": {
+			VirtualKeyID: 1, PoolID: 10, PoolGroup: "premium", TeamID: 1, TeamName: "A", ProjectID: 100, ProjectName: "pa",
+			Channels: []store.Channel{{ID: 1, Protocol: store.ProtocolOpenAI, BaseURL: up.URL, Secret: "sk-a", PoolID: 10, TeamID: 1, KeyTeamID: 1}},
+		},
+		"fab-team-b": {
+			VirtualKeyID: 2, PoolID: 20, PoolGroup: "bulk", TeamID: 2, TeamName: "B", ProjectID: 200, ProjectName: "pb",
+			Channels: []store.Channel{{ID: 2, Protocol: store.ProtocolOpenAI, BaseURL: up.URL, Secret: "sk-b", PoolID: 20, TeamID: 2, KeyTeamID: 2}},
+		},
+	}}
+	gw := httptest.NewServer(hub.New(st, http.DefaultClient).Handler())
+	t.Cleanup(gw.Close)
+	for _, vk := range []string{"fab-team-a", "fab-team-b"} {
+		req, _ := http.NewRequest(http.MethodPost, gw.URL+"/v1/chat/completions", strings.NewReader(`{"model":"gpt-4","messages":[]}`))
+		req.Header.Set("Authorization", "Bearer "+vk)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if resp.StatusCode != 200 {
+			t.Fatalf("%s status %d", vk, resp.StatusCode)
+		}
+		_ = resp.Body.Close()
+	}
+	if strings.Join(got, ",") != "sk-a,sk-b" {
+		t.Fatalf("hits %v", got)
+	}
+}
+
+func TestTeamACannotUseTeamBKey(t *testing.T) {
+	var got []string
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = append(got, strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(openaiUsageBody()))
+	}))
+	t.Cleanup(up.Close)
+	st := &store.Memory{ByRawKey: map[string]*store.ResolvedVK{
+		testVK: {
+			VirtualKeyID: 1, PoolID: 10, PoolGroup: "standard", TeamID: 1, ProjectID: 100,
+			Channels: []store.Channel{
+				{ID: 99, Protocol: store.ProtocolOpenAI, BaseURL: up.URL, Secret: "sk-team-b", PoolID: 10, TeamID: 2, KeyTeamID: 2},
+			},
+		},
+	}}
+	gw := httptest.NewServer(hub.New(st, http.DefaultClient).Handler())
+	t.Cleanup(gw.Close)
+	req, _ := http.NewRequest(http.MethodPost, gw.URL+"/v1/chat/completions", strings.NewReader(`{"model":"gpt-4"}`))
+	req.Header.Set("Authorization", "Bearer "+testVK)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 503 {
+		t.Fatalf("status %d", resp.StatusCode)
+	}
+	if len(got) != 0 {
+		t.Fatalf("leaked to B key: %v", got)
+	}
+}
+
+func TestPoolGroupsVisibleInAudit(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(openaiUsageBody()))
+	}))
+	t.Cleanup(up.Close)
+	groups := []string{"premium", "standard", "bulk"}
+	st := &store.Memory{ByRawKey: map[string]*store.ResolvedVK{}}
+	for i, g := range groups {
+		id := int64(i + 1)
+		st.ByRawKey["fab-"+g] = &store.ResolvedVK{
+			VirtualKeyID: id, PoolID: id * 10, PoolGroup: g, TeamID: id, ProjectID: id * 100,
+			Channels: []store.Channel{{
+				ID: id, Protocol: store.ProtocolOpenAI, BaseURL: up.URL, Secret: "sk-" + g,
+				PoolID: id * 10, TeamID: id, KeyTeamID: id,
+			}},
+		}
+	}
+	gw := httptest.NewServer(hub.New(st, http.DefaultClient).Handler())
+	t.Cleanup(gw.Close)
+	for _, g := range groups {
+		req, _ := http.NewRequest(http.MethodPost, gw.URL+"/v1/chat/completions", strings.NewReader(`{"model":"gpt-4","messages":[]}`))
+		req.Header.Set("Authorization", "Bearer fab-"+g)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if resp.Header.Get("X-Fabric-Pool-Group") != g {
+			t.Fatalf("header group %s", resp.Header.Get("X-Fabric-Pool-Group"))
+		}
+		_ = resp.Body.Close()
+	}
+	dec, err := st.RecentRoutes(context.Background(), 0)
+	if err != nil || len(dec) != 3 {
+		t.Fatalf("routes %d %v", len(dec), err)
+	}
+	seen := map[string]bool{}
+	for _, d := range dec {
+		seen[d.PoolGroup] = true
+		if d.TeamID == 0 || d.PoolID == 0 {
+			t.Fatalf("missing chain %+v", d)
+		}
+	}
+	for _, g := range groups {
+		if !seen[g] {
+			t.Fatalf("missing group %s", g)
+		}
+	}
+}
+
+func TestOwnerlessVKCannotUseTeamedChannel(t *testing.T) {
+	var hits int32
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+	}))
+	t.Cleanup(up.Close)
+	st := &store.Memory{ByRawKey: map[string]*store.ResolvedVK{
+		testVK: {
+			VirtualKeyID: 1, PoolID: 10,
+			Channels: []store.Channel{{
+				ID: 2, Protocol: store.ProtocolOpenAI, BaseURL: up.URL, Secret: "sk-team-b",
+				PoolID: 10, TeamID: 2, KeyTeamID: 2,
+			}},
+		},
+	}}
+	gw := httptest.NewServer(hub.New(st, http.DefaultClient).Handler())
+	t.Cleanup(gw.Close)
+	req, _ := http.NewRequest(http.MethodPost, gw.URL+"/v1/chat/completions", strings.NewReader(`{"model":"gpt-4"}`))
+	req.Header.Set("Authorization", "Bearer "+testVK)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 503 {
+		t.Fatalf("status %d", resp.StatusCode)
+	}
+	if atomic.LoadInt32(&hits) != 0 {
+		t.Fatal("ownerless VK hit teamed upstream")
+	}
+}
+
+func TestOwnerlessVKLegacyChannelOK(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(openaiUsageBody()))
+	}))
+	t.Cleanup(up.Close)
+	gw := newGateway(t, []store.Channel{{
+		ID: 1, Protocol: store.ProtocolOpenAI, BaseURL: up.URL, Secret: "sk-legacy",
+	}})
+	t.Cleanup(gw.Close)
+	req, _ := http.NewRequest(http.MethodPost, gw.URL+"/v1/chat/completions", strings.NewReader(`{"model":"gpt-4","messages":[]}`))
+	req.Header.Set("Authorization", "Bearer "+testVK)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("status %d", resp.StatusCode)
+	}
+}
+
+func TestTeamVKRejectsZeroPoolChannel(t *testing.T) {
+	var hits int32
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+	}))
+	t.Cleanup(up.Close)
+	st := &store.Memory{ByRawKey: map[string]*store.ResolvedVK{
+		testVK: {
+			VirtualKeyID: 1, PoolID: 10, TeamID: 1, ProjectID: 100,
+			Channels: []store.Channel{{
+				ID: 1, Protocol: store.ProtocolOpenAI, BaseURL: up.URL, Secret: "sk-a",
+				PoolID: 0, TeamID: 1, KeyTeamID: 1,
+			}},
+		},
+	}}
+	gw := httptest.NewServer(hub.New(st, http.DefaultClient).Handler())
+	t.Cleanup(gw.Close)
+	req, _ := http.NewRequest(http.MethodPost, gw.URL+"/v1/chat/completions", strings.NewReader(`{"model":"gpt-4"}`))
+	req.Header.Set("Authorization", "Bearer "+testVK)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 503 {
+		t.Fatalf("status %d", resp.StatusCode)
+	}
+	if atomic.LoadInt32(&hits) != 0 {
+		t.Fatal("zero pool_id treated as wildcard")
+	}
+}
+
 func TestHealth(t *testing.T) {
 	gw := newGateway(t, nil)
 	t.Cleanup(gw.Close)

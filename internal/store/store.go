@@ -12,19 +12,28 @@ const (
 )
 
 type Channel struct {
-	ID       int64
-	Protocol string
-	BaseURL  string
-	Secret   string
-	Status   string
-	Priority int
-	Weight   int
-	Models   []string
+	ID        int64
+	Protocol  string
+	BaseURL   string
+	Secret    string
+	Status    string
+	Priority  int
+	Weight    int
+	Models    []string
+	PoolID    int64
+	TeamID    int64
+	KeyTeamID int64
 }
 
 type ResolvedVK struct {
 	VirtualKeyID int64
 	PoolID       int64
+	PoolName     string
+	PoolGroup    string
+	TeamID       int64
+	TeamName     string
+	ProjectID    int64
+	ProjectName  string
 	ExpiresAt    *time.Time
 	ModelScope   []string
 	Channels     []Channel
@@ -41,6 +50,41 @@ type RouteDecision struct {
 	Fallback       bool
 	Status         int
 	At             time.Time
+	TeamID         int64
+	PoolID         int64
+	PoolGroup      string
+}
+
+// IsolateChannels drops channels/keys that do not belong to the VK.
+// Ownerless VK (TeamID==0) only sees ownerless keys/channels; labeled PoolID must match.
+// Team VK requires exact TeamID/KeyTeamID and a non-zero PoolID equal to the VK pool.
+func IsolateChannels(vk *ResolvedVK) *ResolvedVK {
+	if vk == nil {
+		return nil
+	}
+	out := *vk
+	var chs []Channel
+	for _, c := range vk.Channels {
+		if vk.TeamID == 0 {
+			if c.TeamID != 0 || c.KeyTeamID != 0 {
+				continue
+			}
+			if c.PoolID != 0 && c.PoolID != vk.PoolID {
+				continue
+			}
+			chs = append(chs, c)
+			continue
+		}
+		if c.TeamID != vk.TeamID || c.KeyTeamID != vk.TeamID {
+			continue
+		}
+		if c.PoolID == 0 || c.PoolID != vk.PoolID {
+			continue
+		}
+		chs = append(chs, c)
+	}
+	out.Channels = chs
+	return &out
 }
 
 type Store interface {

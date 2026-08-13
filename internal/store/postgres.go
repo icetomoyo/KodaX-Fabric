@@ -80,6 +80,18 @@ CREATE TABLE IF NOT EXISTS virtual_keys (
   alias varchar(128) PRIMARY KEY,
   targets text NOT NULL
 )`,
+		`CREATE TABLE IF NOT EXISTS teams (
+  id bigserial PRIMARY KEY,
+  name varchar(100) NOT NULL UNIQUE
+)`,
+		`CREATE TABLE IF NOT EXISTS projects (
+  id bigserial PRIMARY KEY,
+  team_id bigint NOT NULL REFERENCES teams(id),
+  name varchar(100) NOT NULL
+)`,
+		`ALTER TABLE channel_pools ADD COLUMN IF NOT EXISTS team_id bigint REFERENCES teams(id)`,
+		`ALTER TABLE provider_keys ADD COLUMN IF NOT EXISTS team_id bigint REFERENCES teams(id)`,
+		`ALTER TABLE virtual_keys ADD COLUMN IF NOT EXISTS project_id bigint REFERENCES projects(id)`,
 		`CREATE TABLE IF NOT EXISTS route_decisions (
   id bigserial PRIMARY KEY,
   virtual_key_id bigint,
@@ -91,8 +103,14 @@ CREATE TABLE IF NOT EXISTS virtual_keys (
   reason varchar(32) NOT NULL DEFAULT '',
   fallback boolean NOT NULL DEFAULT false,
   status int NOT NULL DEFAULT 0,
-  created_at timestamptz NOT NULL DEFAULT now()
+  created_at timestamptz NOT NULL DEFAULT now(),
+  team_id bigint,
+  pool_id bigint,
+  pool_group varchar(32) NOT NULL DEFAULT ''
 )`,
+		`ALTER TABLE route_decisions ADD COLUMN IF NOT EXISTS team_id bigint`,
+		`ALTER TABLE route_decisions ADD COLUMN IF NOT EXISTS pool_id bigint`,
+		`ALTER TABLE route_decisions ADD COLUMN IF NOT EXISTS pool_group varchar(32) NOT NULL DEFAULT ''`,
 	} {
 		if _, err := p.DB.ExecContext(ctx, q); err != nil {
 			return err
@@ -106,9 +124,20 @@ func (p *Postgres) ResolveVK(ctx context.Context, rawKey string) (*ResolvedVK, e
 	var vkID, poolID int64
 	var status, models string
 	var expires sql.NullTime
+	var projectID, teamID, poolTeam sql.NullInt64
+	var projectName, teamName, poolName, poolGroup sql.NullString
 	err := p.DB.QueryRowContext(ctx, `
-SELECT id, pool_id, status, expires_at, model_scope FROM virtual_keys WHERE key_hash = $1
-`, hash).Scan(&vkID, &poolID, &status, &expires, &models)
+SELECT vk.id, vk.pool_id, vk.status, vk.expires_at, vk.model_scope,
+       vk.project_id, pr.name, pr.team_id, t.name,
+       p.name, p.group_name, p.team_id
+FROM virtual_keys vk
+LEFT JOIN projects pr ON pr.id = vk.project_id
+LEFT JOIN teams t ON t.id = pr.team_id
+LEFT JOIN channel_pools p ON p.id = vk.pool_id
+WHERE vk.key_hash = $1
+`, hash).Scan(&vkID, &poolID, &status, &expires, &models,
+		&projectID, &projectName, &teamID, &teamName,
+		&poolName, &poolGroup, &poolTeam)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -118,18 +147,41 @@ SELECT id, pool_id, status, expires_at, model_scope FROM virtual_keys WHERE key_
 	if status != "active" {
 		return nil, nil
 	}
-	rows, err := p.DB.QueryContext(ctx, `
-SELECT c.id, c.protocol, c.base_url, pk.secret_encrypted, c.priority, c.weight, c.models
+	if teamID.Valid && poolTeam.Valid && teamID.Int64 != poolTeam.Int64 {
+		return &ResolvedVK{
+			VirtualKeyID: vkID, PoolID: poolID, PoolName: poolName.String, PoolGroup: poolGroup.String,
+			TeamID: teamID.Int64, TeamName: teamName.String, ProjectID: projectID.Int64, ProjectName: projectName.String,
+			ModelScope: splitCSV(models),
+		}, nil
+	}
+	const chSelect = `
+SELECT c.id, c.protocol, c.base_url, pk.secret_encrypted, c.priority, c.weight, c.models,
+       c.pool_id, COALESCE(p.team_id, 0), COALESCE(pk.team_id, 0)
 FROM channels c
 JOIN provider_keys pk ON pk.id = c.provider_key_id
-WHERE c.pool_id = $1 AND c.status = 'active' AND pk.status = 'active'
-ORDER BY CASE WHEN c.priority <= 0 THEN 1000000 ELSE c.priority END, c.id
-`, poolID)
+JOIN channel_pools p ON p.id = c.pool_id
+WHERE c.pool_id = $1 AND c.status = 'active' AND pk.status = 'active'`
+	const ownerlessFilter = `
+  AND COALESCE(p.team_id, 0) = 0 AND COALESCE(pk.team_id, 0) = 0`
+	const teamedFilter = `
+  AND COALESCE(p.team_id, 0) = $2 AND COALESCE(pk.team_id, 0) = $2`
+	const chOrder = `
+ORDER BY CASE WHEN c.priority <= 0 THEN 1000000 ELSE c.priority END, c.id`
+	var rows *sql.Rows
+	if teamID.Int64 == 0 {
+		rows, err = p.DB.QueryContext(ctx, chSelect+ownerlessFilter+chOrder, poolID)
+	} else {
+		rows, err = p.DB.QueryContext(ctx, chSelect+teamedFilter+chOrder, poolID, teamID.Int64)
+	}
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	out := &ResolvedVK{VirtualKeyID: vkID, PoolID: poolID, ModelScope: splitCSV(models)}
+	out := &ResolvedVK{
+		VirtualKeyID: vkID, PoolID: poolID, PoolName: poolName.String, PoolGroup: poolGroup.String,
+		TeamID: teamID.Int64, TeamName: teamName.String, ProjectID: projectID.Int64, ProjectName: projectName.String,
+		ModelScope: splitCSV(models),
+	}
 	if expires.Valid {
 		t := expires.Time
 		out.ExpiresAt = &t
@@ -137,7 +189,8 @@ ORDER BY CASE WHEN c.priority <= 0 THEN 1000000 ELSE c.priority END, c.id
 	for rows.Next() {
 		var ch Channel
 		var enc, modelsCSV string
-		if err := rows.Scan(&ch.ID, &ch.Protocol, &ch.BaseURL, &enc, &ch.Priority, &ch.Weight, &modelsCSV); err != nil {
+		if err := rows.Scan(&ch.ID, &ch.Protocol, &ch.BaseURL, &enc, &ch.Priority, &ch.Weight, &modelsCSV,
+			&ch.PoolID, &ch.TeamID, &ch.KeyTeamID); err != nil {
 			return nil, err
 		}
 		plain, err := secret.Decrypt(p.EncryptKey, enc)
@@ -148,7 +201,7 @@ ORDER BY CASE WHEN c.priority <= 0 THEN 1000000 ELSE c.priority END, c.id
 		ch.Models = splitCSV(modelsCSV)
 		out.Channels = append(out.Channels, ch)
 	}
-	return out, rows.Err()
+	return IsolateChannels(out), rows.Err()
 }
 
 func (p *Postgres) DisableProviderKey(ctx context.Context, channelID int64) error {
@@ -186,17 +239,20 @@ func (p *Postgres) RecordRoute(ctx context.Context, d RouteDecision) error {
 	_, err := p.DB.ExecContext(ctx, `
 INSERT INTO route_decisions (
   virtual_key_id, protocol, requested_model, upstream_model,
-  channel_id, tried_ids, reason, fallback, status, created_at
-) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,COALESCE($10, now()))
+  channel_id, tried_ids, reason, fallback, status, created_at,
+  team_id, pool_id, pool_group
+) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,COALESCE($10, now()),$11,$12,$13)
 `, d.VirtualKeyID, d.Protocol, d.RequestedModel, d.UpstreamModel,
-		d.ChannelID, strings.Join(tried, ","), d.Reason, d.Fallback, d.Status, nullTime(d.At))
+		d.ChannelID, strings.Join(tried, ","), d.Reason, d.Fallback, d.Status, nullTime(d.At),
+		d.TeamID, d.PoolID, d.PoolGroup)
 	return err
 }
 
 func (p *Postgres) RecentRoutes(ctx context.Context, vkID int64) ([]RouteDecision, error) {
 	rows, err := p.DB.QueryContext(ctx, `
 SELECT virtual_key_id, protocol, requested_model, upstream_model, channel_id,
-       tried_ids, reason, fallback, status, created_at
+       tried_ids, reason, fallback, status, created_at,
+       COALESCE(team_id, 0), COALESCE(pool_id, 0), COALESCE(pool_group, '')
 FROM route_decisions
 WHERE ($1 = 0 OR virtual_key_id = $1)
 ORDER BY id
@@ -211,7 +267,8 @@ ORDER BY id
 		var tried string
 		var at time.Time
 		if err := rows.Scan(&d.VirtualKeyID, &d.Protocol, &d.RequestedModel, &d.UpstreamModel,
-			&d.ChannelID, &tried, &d.Reason, &d.Fallback, &d.Status, &at); err != nil {
+			&d.ChannelID, &tried, &d.Reason, &d.Fallback, &d.Status, &at,
+			&d.TeamID, &d.PoolID, &d.PoolGroup); err != nil {
 			return nil, err
 		}
 		d.Tried = parseIDs(tried)

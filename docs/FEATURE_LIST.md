@@ -1,12 +1,12 @@
 # FEATURE_LIST
 
-Last Updated: 2026-08-13 13:20
+Last Updated: 2026-08-13 14:10
 
 ## Version Info
 
 | 项 | 值 |
 |----|-----|
-| Current Release | **v0.0.4** |
+| Current Release | **v0.0.5** |
 | Planned Version | — |
 
 ## Version Summary
@@ -17,7 +17,7 @@ Last Updated: 2026-08-13 13:20
 | v0.0.2 | Released | 1/1 | 上游钥匙柜 |
 | v0.0.3 | Released | 1/1 | 虚拟钥匙，一把两端口 |
 | v0.0.4 | Released | 1/1 | 渠道池 + 简单路由 |
-| v0.0.5 | — | — | VK 绑池 + 分组 |
+| v0.0.5 | Released | 1/1 | VK 绑池 + 分组 |
 | v0.0.6 | — | — | 限流 + 熔断 |
 | v0.0.7 | — | — | 预算闸 + 流式估算 |
 | v0.0.8 | — | — | 缓存 + 运营面 |
@@ -33,6 +33,7 @@ Last Updated: 2026-08-13 13:20
 | 002 | 上游钥匙柜 | **Completed** | Critical | New | v0.0.2 | [设计](features/v0.0.2.md#feature_002) |
 | 003 | 虚拟钥匙一把两端口 | **Completed** | Critical | New | v0.0.3 | [设计](features/v0.0.3.md#feature_003) |
 | 004 | 同协议多渠 failover | **Completed** | Critical | New | v0.0.4 | [设计](features/v0.0.4.md#feature_004) |
+| 005 | VK 绑池与分组 | **Completed** | Critical | New | v0.0.5 | [设计](features/v0.0.5.md#feature_005) |
 
 ## Feature Details
 
@@ -124,12 +125,34 @@ Token Hub 按 `docs/PRD.md` §3 从 0 重开的第一刀：OpenAI / Anthropic �
 
 **Spec**：已综合（T1）。**Tickets**：#1–#5 **Done**。
 
+### FEATURE_005: VK 绑池与分组
+
+| 字段 | 内容 |
+|------|------|
+| ID | 005 |
+| Title | VK 绑池与分组 |
+| Status | **Completed** |
+| Priority | Critical |
+| Category | New |
+| Planned Version | v0.0.5 |
+| Released Version | v0.0.5 |
+| Created | 2026-08-13 |
+| Started | 2026-08-13 |
+| Completed | 2026-08-13 |
+| Design | [docs/features/v0.0.5.md#feature_005](features/v0.0.5.md#feature_005) |
+
+**Description**
+
+VK → Project → Team → Pool → Provider Key。查询层隔离跨团队官方 Key。池分组 premium/standard/bulk。
+
+**Spec**：已综合（T1）。
+
 ## Summary
 
 | 指标 | 数量 |
 |------|------|
-| Total | 4 |
+| Total | 5 |
 | Planned | 0 |
 | In Progress | 0 |
-| Completed | 4 |
-| Critical | 4 |
+| Completed | 5 |
+| Critical | 5 |

@@ -6,6 +6,15 @@ Token Hub 按 PRD §3 + HLD 从 0 重建（Go 网关）。
 
 ---
 
+## [0.0.5] - 2026-08-13
+
+### Added
+
+- VK → Project → Team → ChannelPool → Provider Key；查询层禁止跨团队渠/官方 Key。
+- 池分组 premium / standard / bulk，写入审计与 `X-Fabric-Pool-Group`。
+
+---
+
 ## [0.0.4] - 2026-08-13
 
 ### Added

@@ -21,7 +21,7 @@ func (m *Memory) ResolveVK(_ context.Context, rawKey string) (*ResolvedVK, error
 	if !ok {
 		return nil, nil
 	}
-	return vk, nil
+	return IsolateChannels(vk), nil
 }
 
 func (m *Memory) DisableProviderKey(_ context.Context, channelID int64) error {
