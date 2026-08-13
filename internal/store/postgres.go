@@ -122,6 +122,7 @@ CREATE TABLE IF NOT EXISTS virtual_keys (
 		`ALTER TABLE route_decisions ADD COLUMN IF NOT EXISTS budget_month varchar(7) NOT NULL DEFAULT ''`,
 		`ALTER TABLE route_decisions ADD COLUMN IF NOT EXISTS budget_over boolean NOT NULL DEFAULT false`,
 		`ALTER TABLE virtual_keys ADD COLUMN IF NOT EXISTS ip_allow text NOT NULL DEFAULT ''`,
+		`ALTER TABLE virtual_keys ADD COLUMN IF NOT EXISTS key_masked varchar(64) NOT NULL DEFAULT ''`,
 		`ALTER TABLE provider_keys ADD COLUMN IF NOT EXISTS replacement_encrypted text NOT NULL DEFAULT ''`,
 		`ALTER TABLE provider_keys ADD COLUMN IF NOT EXISTS replacement_activate_at timestamptz`,
 		`ALTER TABLE provider_keys ADD COLUMN IF NOT EXISTS retire_at timestamptz`,
@@ -151,6 +152,10 @@ CREATE TABLE IF NOT EXISTS virtual_keys (
 		}
 	}
 	return nil
+}
+
+func (p *Postgres) Ping(ctx context.Context) error {
+	return p.DB.PingContext(ctx)
 }
 
 func (p *Postgres) ResolveVK(ctx context.Context, rawKey string) (*ResolvedVK, error) {

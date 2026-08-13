@@ -22,6 +22,11 @@ type Server struct {
 	Cache      ResponseCache
 	AdminToken string
 	Clock      Clock
+	Redis      interface {
+		Ping(ctx context.Context) error
+	}
+	Version string
+	Commit  string
 
 	mu        sync.Mutex
 	rr        map[string]uint64
@@ -43,12 +48,28 @@ func New(st store.Store, client *http.Client) *Server {
 
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /live", s.handleLive)
 	mux.HandleFunc("GET /health", s.handleHealth)
 	mux.HandleFunc("GET /health/limits", s.handleLimits)
 	mux.HandleFunc("GET /health/budget", s.handleBudget)
 	mux.HandleFunc("GET /health/cache", s.handleCacheHealth)
 	mux.HandleFunc("POST /v1/chat/completions", s.handleChatCompletions)
 	mux.HandleFunc("POST /v1/messages", s.handleMessages)
+	mux.HandleFunc("GET /admin/v1/providers", s.handleListProviders)
+	mux.HandleFunc("POST /admin/v1/providers", s.handleCreateProvider)
+	mux.HandleFunc("PATCH /admin/v1/providers/{id}", s.handleUpdateProvider)
+	mux.HandleFunc("POST /admin/v1/providers/{id}/disable", s.handleDisableProvider)
+	mux.HandleFunc("GET /admin/v1/pools", s.handleListPools)
+	mux.HandleFunc("POST /admin/v1/pools", s.handleCreatePool)
+	mux.HandleFunc("PATCH /admin/v1/pools/{id}", s.handleUpdatePool)
+	mux.HandleFunc("GET /admin/v1/channels", s.handleListChannels)
+	mux.HandleFunc("POST /admin/v1/channels", s.handleCreateChannel)
+	mux.HandleFunc("PATCH /admin/v1/channels/{id}", s.handleUpdateChannel)
+	mux.HandleFunc("POST /admin/v1/channels/{id}/disable", s.handleDisableChannel)
+	mux.HandleFunc("GET /admin/v1/virtual-keys", s.handleListVKs)
+	mux.HandleFunc("POST /admin/v1/virtual-keys", s.handleCreateVK)
+	mux.HandleFunc("PATCH /admin/v1/virtual-keys/{id}", s.handleUpdateVK)
+	mux.HandleFunc("POST /admin/v1/virtual-keys/{id}/disable", s.handleDisableVK)
 	mux.HandleFunc("POST /admin/v1/vk-applications", s.handleCreateVKApp)
 	mux.HandleFunc("GET /admin/v1/vk-applications", s.handleListVKApps)
 	mux.HandleFunc("GET /admin/v1/vk-applications/{id}", s.handleGetVKApp)
@@ -60,10 +81,32 @@ func (s *Server) Handler() http.Handler {
 	return mux
 }
 
-func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
+func (s *Server) handleLive(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
-		"ok":      true,
-		"service": "kodax-fabric-gateway",
+		"ok": true, "service": "kodax-fabric-gateway", "live": true,
+		"version": s.Version, "commit": s.Commit,
+	})
+}
+
+func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	pgOK := true
+	if s.Store != nil {
+		pgOK = s.Store.Ping(ctx) == nil
+	}
+	redisOK := true
+	if s.Redis != nil {
+		redisOK = s.Redis.Ping(ctx) == nil
+	}
+	status := http.StatusOK
+	ok := pgOK && redisOK
+	if !ok {
+		status = http.StatusServiceUnavailable
+	}
+	writeJSON(w, status, map[string]any{
+		"ok": ok, "service": "kodax-fabric-gateway",
+		"postgres": pgOK, "redis": redisOK,
+		"version": s.Version, "commit": s.Commit,
 	})
 }
 
@@ -156,14 +199,10 @@ func (s *Server) relay(w http.ResponseWriter, r *http.Request, protocol, upstrea
 	if flag.Stream || !wantsResponseCache(r.Header, body) {
 		w.Header().Set("X-Fabric-Cache", "BYPASS")
 	} else if s.Cache != nil {
-		if mc, ok := s.Cache.(*MemoryCache); ok {
-			mc.noteCandidate()
-		}
+		s.Cache.NoteCandidate()
 		ckey = cacheKey(protocol, resolved, flag.Model, body)
 		if ent, ok := s.Cache.Get(ckey); ok {
-			if mc, ok := s.Cache.(*MemoryCache); ok {
-				mc.noteHit(ent.Tokens)
-			}
+			s.Cache.NoteHit(ent.Tokens)
 			w.Header().Set("X-Fabric-Cache", "HIT")
 			for k, vs := range ent.Header {
 				for _, v := range vs {
@@ -177,9 +216,7 @@ func (s *Server) relay(w http.ResponseWriter, r *http.Request, protocol, upstrea
 		}
 		cacheStatus = "MISS"
 		w.Header().Set("X-Fabric-Cache", "MISS")
-		if mc, ok := s.Cache.(*MemoryCache); ok {
-			mc.noteMiss()
-		}
+		s.Cache.NoteMiss()
 	} else {
 		w.Header().Set("X-Fabric-Cache", "BYPASS")
 	}
@@ -547,9 +584,7 @@ func (s *Server) rememberResponse(key string, status int, hdr http.Header, sess 
 		Body:   append([]byte(nil), sess.cachedBody...),
 		Tokens: tok,
 	})
-	if mc, ok := s.Cache.(*MemoryCache); ok {
-		mc.noteWrite(tok)
-	}
+	s.Cache.NoteWrite(tok)
 }
 
 func (s *Server) noteRoute(vk *store.ResolvedVK, protocol, reqModel, upModel string, chID int64, tried []int64, reason string, fallback bool, status int, month string, soft int64, over bool, cacheStatus string, cachedTok int64) {

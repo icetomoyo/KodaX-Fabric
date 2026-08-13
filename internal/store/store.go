@@ -13,6 +13,9 @@ var (
 	ErrNoReplacement           = errors.New("no replacement staged")
 	ErrRotationConflict        = errors.New("rotation already pending")
 	ErrInvalidRotationSchedule = errors.New("invalid rotation schedule")
+	ErrNotFound                = errors.New("not found")
+	ErrConflict                = errors.New("conflict")
+	ErrBadRequest              = errors.New("bad request")
 )
 
 const (
@@ -112,6 +115,9 @@ type ProviderKeyView struct {
 	ID             int64      `json:"id"`
 	ProviderCode   string     `json:"provider_code"`
 	Status         string     `json:"status"`
+	TeamID         int64      `json:"team_id"`
+	RPMLimit       int        `json:"rpm_limit"`
+	RPMBurst       int        `json:"rpm_burst"`
 	HasReplacement bool       `json:"has_replacement"`
 	ActivateAt     *time.Time `json:"activate_at,omitempty"`
 	RetireAt       *time.Time `json:"retire_at,omitempty"`
@@ -163,6 +169,105 @@ type Store interface {
 	StageProviderRotation(ctx context.Context, keyID int64, secret string, activate, retire *time.Time, now time.Time) error
 	ActivateProviderRotation(ctx context.Context, keyID int64, now time.Time) error
 	ListProviderKeys(ctx context.Context) ([]ProviderKeyView, error)
+	ListProviders(ctx context.Context) ([]ProviderKeyView, error)
+	CreateProvider(ctx context.Context, in ProviderWrite) (*ProviderKeyView, error)
+	UpdateProvider(ctx context.Context, id int64, in ProviderPatch) (*ProviderKeyView, error)
+	DisableProvider(ctx context.Context, id int64) error
+	ListPools(ctx context.Context) ([]ChannelPool, error)
+	CreatePool(ctx context.Context, in ChannelPool) (*ChannelPool, error)
+	UpdatePool(ctx context.Context, id int64, in PoolPatch) (*ChannelPool, error)
+	ListChannelsAdmin(ctx context.Context) ([]ChannelAdmin, error)
+	CreateChannel(ctx context.Context, in ChannelAdmin) (*ChannelAdmin, error)
+	UpdateChannel(ctx context.Context, id int64, in ChannelPatch) (*ChannelAdmin, error)
+	DisableChannel(ctx context.Context, id int64) error
+	ListVirtualKeys(ctx context.Context) ([]VirtualKeyAdmin, error)
+	CreateVirtualKey(ctx context.Context, in VirtualKeyAdmin) (*VirtualKeyAdmin, string, error)
+	UpdateVirtualKey(ctx context.Context, id int64, in VirtualKeyPatch) (*VirtualKeyAdmin, error)
+	DisableVirtualKey(ctx context.Context, id int64) error
+	Ping(ctx context.Context) error
+}
+
+type ProviderWrite struct {
+	ProviderCode string `json:"provider_code"`
+	Secret       string `json:"secret,omitempty"`
+	Status       string `json:"status"`
+	RPMLimit     int    `json:"rpm_limit"`
+	RPMBurst     int    `json:"rpm_burst"`
+	TeamID       int64  `json:"team_id"`
+}
+
+type ProviderPatch struct {
+	ProviderCode *string `json:"provider_code"`
+	Secret       *string `json:"secret"`
+	Status       *string `json:"status"`
+	RPMLimit     *int    `json:"rpm_limit"`
+	RPMBurst     *int    `json:"rpm_burst"`
+	TeamID       *int64  `json:"team_id"`
+}
+
+type ChannelPool struct {
+	ID        int64  `json:"id"`
+	Name      string `json:"name"`
+	GroupName string `json:"group_name"`
+	TeamID    int64  `json:"team_id"`
+}
+
+type PoolPatch struct {
+	Name      *string `json:"name"`
+	GroupName *string `json:"group_name"`
+	TeamID    *int64  `json:"team_id"`
+}
+
+type ChannelAdmin struct {
+	ID            int64    `json:"id"`
+	PoolID        int64    `json:"pool_id"`
+	ProviderKeyID int64    `json:"provider_key_id"`
+	Protocol      string   `json:"protocol"`
+	BaseURL       string   `json:"base_url"`
+	Status        string   `json:"status"`
+	Priority      int      `json:"priority"`
+	Weight        int      `json:"weight"`
+	Models        []string `json:"models"`
+}
+
+type ChannelPatch struct {
+	PoolID        *int64    `json:"pool_id"`
+	ProviderKeyID *int64    `json:"provider_key_id"`
+	Protocol      *string   `json:"protocol"`
+	BaseURL       *string   `json:"base_url"`
+	Status        *string   `json:"status"`
+	Priority      *int      `json:"priority"`
+	Weight        *int      `json:"weight"`
+	Models        *[]string `json:"models"`
+}
+
+type VirtualKeyAdmin struct {
+	ID          int64      `json:"id"`
+	PoolID      int64      `json:"pool_id"`
+	ProjectID   int64      `json:"project_id"`
+	Status      string     `json:"status"`
+	KeyPrefix   string     `json:"key_prefix,omitempty"`
+	KeyMasked   string     `json:"key_masked,omitempty"`
+	ExpiresAt   *time.Time `json:"expires_at,omitempty"`
+	ModelScope  []string   `json:"model_scope"`
+	IPAllow     []string   `json:"ip_allow"`
+	RPMLimit    int        `json:"rpm_limit"`
+	RPMBurst    int        `json:"rpm_burst"`
+	MonthlyHard int64      `json:"monthly_hard"`
+	MonthlySoft int64      `json:"monthly_soft"`
+}
+
+type VirtualKeyPatch struct {
+	PoolID      *int64     `json:"pool_id"`
+	ProjectID   *int64     `json:"project_id"`
+	Status      *string    `json:"status"`
+	ExpiresAt   *time.Time `json:"expires_at"`
+	ModelScope  *[]string  `json:"model_scope"`
+	IPAllow     *[]string  `json:"ip_allow"`
+	RPMLimit    *int       `json:"rpm_limit"`
+	RPMBurst    *int       `json:"rpm_burst"`
+	MonthlyHard *int64     `json:"monthly_hard"`
+	MonthlySoft *int64     `json:"monthly_soft"`
 }
 
 // Rank: smaller priority wins (1 primary, 2 backup). 0/negative = unset, after any explicit 1/2.

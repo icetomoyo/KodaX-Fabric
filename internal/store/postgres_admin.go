@@ -242,7 +242,7 @@ UPDATE provider_keys SET replacement_activate_at = $2, retire_at = $3 WHERE id =
 
 func (p *Postgres) ListProviderKeys(ctx context.Context) ([]ProviderKeyView, error) {
 	rows, err := p.DB.QueryContext(ctx, `
-SELECT id, provider_code, status,
+SELECT id, provider_code, status, COALESCE(team_id,0), rpm_limit, rpm_burst,
        COALESCE(replacement_encrypted, '') <> '',
        replacement_activate_at, retire_at
 FROM provider_keys ORDER BY id
@@ -255,7 +255,7 @@ FROM provider_keys ORDER BY id
 	for rows.Next() {
 		var v ProviderKeyView
 		var act, ret sql.NullTime
-		if err := rows.Scan(&v.ID, &v.ProviderCode, &v.Status, &v.HasReplacement, &act, &ret); err != nil {
+		if err := rows.Scan(&v.ID, &v.ProviderCode, &v.Status, &v.TeamID, &v.RPMLimit, &v.RPMBurst, &v.HasReplacement, &act, &ret); err != nil {
 			return nil, err
 		}
 		if act.Valid {

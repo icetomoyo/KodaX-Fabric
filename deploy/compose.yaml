@@ -1,65 +1,85 @@
 services:
   postgres:
-    image: postgres:16-alpine
+    image: postgres:16.6-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_USER: tokenhub
       POSTGRES_PASSWORD: tokenhub
       POSTGRES_DB: tokenhub
+    volumes:
+      - pgdata:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U tokenhub -d tokenhub"]
       interval: 2s
       timeout: 3s
-      retries: 20
-    ports:
-      - "15432:5432"
+      retries: 30
 
   redis:
-    image: redis:7-alpine
+    image: redis:7.4-alpine
+    restart: unless-stopped
+    volumes:
+      - redisdata:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 2s
       timeout: 3s
+      retries: 30
+
+  mockprovider:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: ${IMAGE_TAG:-kodax-fabric:v0.1.0}
+    restart: unless-stopped
+    entrypoint: ["/usr/local/bin/mockprovider"]
+    environment:
+      LISTEN_ADDR: ":9090"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:9090/health"]
+      interval: 2s
+      timeout: 3s
       retries: 20
-    ports:
-      - "16379:6379"
 
   bootstrap:
     build:
       context: ..
       dockerfile: deploy/Dockerfile
+    image: ${IMAGE_TAG:-kodax-fabric:v0.1.0}
     entrypoint: ["/usr/local/bin/bootstrap"]
     environment:
       DATABASE_URL: postgres://tokenhub:tokenhub@postgres:5432/tokenhub?sslmode=disable
       CREDENTIAL_ENCRYPT_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
-      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
-      DEEPSEEK_BASE_URL: https://api.deepseek.com
+      MOCK_PROVIDER_URL: http://mockprovider:9090
       ADMIN_PHONE: "18612243416"
       ADMIN_PASSWORD: "Hz@123456"
       BOOTSTRAP_VIRTUAL_KEY: fab-local-bootstrap-01
-      BOOTSTRAP_VK_FILE: /data/virtual-key.txt
-    volumes:
-      - vkdata:/data
     depends_on:
       postgres:
+        condition: service_healthy
+      mockprovider:
         condition: service_healthy
 
   gateway:
     build:
       context: ..
       dockerfile: deploy/Dockerfile
+    image: ${IMAGE_TAG:-kodax-fabric:v0.1.0}
+    restart: unless-stopped
     environment:
       LISTEN_ADDR: ":8080"
       DATABASE_URL: postgres://tokenhub:tokenhub@postgres:5432/tokenhub?sslmode=disable
       CREDENTIAL_ENCRYPT_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
       REDIS_URL: redis://redis:6379
       CACHE_TTL: 1h
+      # LOCAL ONLY — replace in production.
+      ADMIN_TOKEN: dev-local-admin-token
     ports:
-      - "3000:8080"
+      - "${GATEWAY_PORT:-3000}:8080"
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/health"]
       interval: 2s
       timeout: 3s
-      retries: 20
+      retries: 30
     depends_on:
       postgres:
         condition: service_healthy
@@ -67,6 +87,9 @@ services:
         condition: service_healthy
       bootstrap:
         condition: service_completed_successfully
+      mockprovider:
+        condition: service_healthy
 
 volumes:
-  vkdata:
+  pgdata:
+  redisdata:

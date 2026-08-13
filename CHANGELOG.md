@@ -6,6 +6,16 @@ Token Hub 按 PRD §3 + HLD 从 0 重建（Go 网关）。
 
 ---
 
+## [0.1.0] - 2026-08-13
+
+### Added
+
+- 生产 gateway 必需 Redis（真实 PING）；响应缓存 / VK+Provider RPM / 月预算走 Redis 原子实现；熔断仍为本进程。
+- `/live` 与 `/health`（PG+Redis）；管理 CRUD Provider/Pool/Channel/VK。
+- 本地 mock-provider + 无真实 LLM Key 的 compose；release/rollback/backup/restore 脚本。
+
+---
+
 ## [0.0.8] - 2026-08-13
 
 ### Added

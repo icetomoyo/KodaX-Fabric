@@ -2,18 +2,22 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"net"
 	"net/http"
 	"os"
-	"strings"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"kodax-fabric/internal/bootstrap"
 	"kodax-fabric/internal/hub"
 	"kodax-fabric/internal/secret"
 	"kodax-fabric/internal/store"
+)
+
+var (
+	version = "v0.1.0"
+	commit  = "unknown"
 )
 
 func main() {
@@ -29,6 +33,9 @@ func run() error {
 	encRaw := os.Getenv("CREDENTIAL_ENCRYPT_KEY")
 	if dsn == "" || encRaw == "" {
 		return fmt.Errorf("DATABASE_URL and CREDENTIAL_ENCRYPT_KEY are required")
+	}
+	if os.Getenv("REDIS_URL") == "" {
+		return fmt.Errorf("REDIS_URL is required")
 	}
 	key, err := secret.ParseAESKey(encRaw)
 	if err != nil {
@@ -56,35 +63,48 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	rdb, err := hub.OpenRedis(os.Getenv("REDIS_URL"))
+	if err != nil {
+		return err
+	}
+	defer rdb.Close()
+
 	h := hub.New(pg, nil)
 	h.AdminToken = os.Getenv("ADMIN_TOKEN")
-	h.Cache = hub.NewMemoryCache(h.Clock, ttl)
+	h.Cache = hub.NewRedisCache(rdb, ttl)
+	h.Budget = hub.NewRedisBudget(rdb)
+	h.Limits = hub.NewRedisLimiter(rdb, h.Clock)
+	h.Redis = hub.RedisPinger{C: rdb}
+	h.Version = version
+	h.Commit = commit
 	h.StartProbes()
 	defer h.StopProbes()
-	mux := http.NewServeMux()
-	mux.Handle("/", h.Handler())
-	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
-		pgOK := db.PingContext(r.Context()) == nil
-		redisOK := true
-		if ru := os.Getenv("REDIS_URL"); ru != "" {
-			redisOK = pingRedis(ru)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		status := http.StatusOK
-		if !pgOK {
-			status = http.StatusServiceUnavailable
-		}
-		w.WriteHeader(status)
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"ok":       pgOK,
-			"service":  "kodax-fabric-gateway",
-			"postgres": pgOK,
-			"redis":    redisOK,
-		})
-	})
 
-	fmt.Println("token-hub gateway listening on", addr)
-	return http.ListenAndServe(addr, mux)
+	srv := &http.Server{
+		Addr:              addr,
+		Handler:           h.Handler(),
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       120 * time.Second,
+		// WriteTimeout left unset so SSE can stream.
+	}
+	errCh := make(chan error, 1)
+	go func() {
+		fmt.Println("token-hub gateway listening on", addr, version, commit)
+		errCh <- srv.ListenAndServe()
+	}()
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
+	select {
+	case err := <-errCh:
+		if err != nil && err != http.ErrServerClosed {
+			return err
+		}
+	case <-sig:
+		shctx, shcancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer shcancel()
+		_ = srv.Shutdown(shctx)
+	}
+	return nil
 }
 
 func envOr(k, def string) string {
@@ -92,14 +112,4 @@ func envOr(k, def string) string {
 		return v
 	}
 	return def
-}
-
-func pingRedis(url string) bool {
-	host := strings.TrimPrefix(url, "redis://")
-	conn, err := net.DialTimeout("tcp", host, 400*time.Millisecond)
-	if err != nil {
-		return false
-	}
-	_ = conn.Close()
-	return true
 }

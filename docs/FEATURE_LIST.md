@@ -1,12 +1,12 @@
 # FEATURE_LIST
 
-Last Updated: 2026-08-13 22:00
+Last Updated: 2026-08-13 23:30
 
 ## Version Info
 
 | 项 | 值 |
 |----|-----|
-| Current Release | **v0.0.8** |
+| Current Release | **v0.1.0** |
 | Planned Version | — |
 
 ## Version Summary
@@ -21,7 +21,7 @@ Last Updated: 2026-08-13 22:00
 | v0.0.6 | Released | 1/1 | 限流 + 熔断 |
 | v0.0.7 | Released | 1/1 | 预算闸 + 流式估算 |
 | v0.0.8 | Released | 1/1 | 缓存 + 运营面 |
-| v0.1.0 | — | — | 独立部署收口 |
+| v0.1.0 | Released | 1/1 | 独立部署收口 |
 
 切法全文：[token-hub-slices.md](token-hub-slices.md)（遵守 PRD + HLD）。手测：[TokenHub_VISION.md](TokenHub_VISION.md)。
 
@@ -37,6 +37,7 @@ Last Updated: 2026-08-13 22:00
 | 006 | RPM 硬拒绝与渠熔断 | **Completed** | Critical | New | v0.0.6 | [设计](features/v0.0.6.md#feature_006) |
 | 007 | VK 月预算与流式估算 | **Completed** | Critical | New | v0.0.7 | [设计](features/v0.0.7.md#feature_007) |
 | 008 | 缓存审批白名单与轮换 | **Completed** | Critical | New | v0.0.8 | [设计](features/v0.0.8.md#feature_008) |
+| 009 | 独立部署收口 | **Completed** | Critical | New | v0.1.0 | [设计](features/v0.1.0.md#feature_009) |
 
 ## Feature Details
 
@@ -216,12 +217,34 @@ VK IP 白名单；自助申请/审批（明文一次）；Provider Key 预存轮
 
 **Spec**：已综合（T1）。
 
+### FEATURE_009: 独立部署收口
+
+| 字段 | 内容 |
+|------|------|
+| ID | 009 |
+| Title | 独立部署收口 |
+| Status | **Completed** |
+| Priority | Critical |
+| Category | New |
+| Planned Version | v0.1.0 |
+| Released Version | v0.1.0 |
+| Created | 2026-08-13 |
+| Started | 2026-08-13 |
+| Completed | 2026-08-13 |
+| Design | [docs/features/v0.1.0.md#feature_009](features/v0.1.0.md#feature_009) |
+
+**Description**
+
+PostgreSQL + Redis 生产热状态；管理 API 配 Provider/Pool/Channel/VK；无真实 Key 的 compose + mock-provider；发布/回滚/备份。
+
+**Spec**：已综合（T1）。
+
 ## Summary
 
 | 指标 | 数量 |
 |------|------|
-| Total | 8 |
+| Total | 9 |
 | Planned | 0 |
 | In Progress | 0 |
-| Completed | 8 |
-| Critical | 8 |
+| Completed | 9 |
+| Critical | 9 |

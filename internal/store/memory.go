@@ -13,9 +13,20 @@ type Memory struct {
 	Routes       []RouteDecision
 	Apps         map[int64]*VKApplication
 	PoolChannels map[int64][]Channel
+	Providers    map[int64]*ProviderWrite
+	Pools        map[int64]*ChannelPool
+	AdminChans   map[int64]*ChannelAdmin
+	AdminVKs     map[int64]*VirtualKeyAdmin
+	Teams        map[int64]struct{}
+	Projects     map[int64]int64
 	nextApp      int64
 	nextVK       int64
+	nextProv     int64
+	nextPool     int64
+	nextCh       int64
 }
+
+func (m *Memory) Ping(_ context.Context) error { return nil }
 
 func (m *Memory) ResolveVK(_ context.Context, rawKey string) (*ResolvedVK, error) {
 	if m == nil || m.ByRawKey == nil {

@@ -34,6 +34,10 @@ type ResponseCache interface {
 	Get(key string) (CacheEntry, bool)
 	Set(key string, e CacheEntry)
 	Stats() CacheStats
+	NoteCandidate()
+	NoteHit(tok int64)
+	NoteMiss()
+	NoteWrite(n int64)
 }
 
 type MemoryCache struct {
@@ -103,13 +107,13 @@ func (c *MemoryCache) Set(key string, e CacheEntry) {
 	c.mu.Unlock()
 }
 
-func (c *MemoryCache) noteCandidate() { c.cand.Add(1) }
-func (c *MemoryCache) noteHit(tok int64) {
+func (c *MemoryCache) NoteCandidate() { c.cand.Add(1) }
+func (c *MemoryCache) NoteHit(tok int64) {
 	c.hit.Add(1)
 	c.saved.Add(tok)
 }
-func (c *MemoryCache) noteMiss()         { c.miss.Add(1) }
-func (c *MemoryCache) noteWrite(n int64) { c.write.Add(1) }
+func (c *MemoryCache) NoteMiss()         { c.miss.Add(1) }
+func (c *MemoryCache) NoteWrite(_ int64) { c.write.Add(1) }
 
 func (c *MemoryCache) Stats() CacheStats {
 	if c == nil {
