@@ -1,0 +1,55 @@
+export type Operator = {
+  id: number;
+  phone: string;
+  name: string;
+  role: "admin" | "developer" | string;
+  status: string;
+  created_at: string;
+};
+
+export type Overview = {
+  operators: number;
+  provider_keys: number;
+  active_keys: number;
+  disabled_keys: number;
+  pools: number;
+  channels: number;
+  virtual_keys: number;
+};
+
+export type ProviderKey = {
+  id: number;
+  provider_code: string;
+  status: string;
+};
+
+export type Pool = {
+  id: number;
+  name: string;
+  group_name: string;
+};
+
+export type Channel = {
+  id: number;
+  pool_id: number;
+  provider_key_id: number;
+  protocol: string;
+  base_url: string;
+  status: string;
+};
+
+export type VirtualKey = {
+  id: number;
+  pool_id: number;
+  owner_id: number;
+  status: string;
+  key_prefix: string;
+  key_masked: string;
+  secret?: string;
+};
+
+export type Health = {
+  ok: boolean;
+  service?: string;
+  postgres?: boolean;
+};

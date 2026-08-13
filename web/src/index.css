@@ -2,6 +2,43 @@
 @tailwind components;
 @tailwind utilities;
 
+@layer base {
+  :root {
+    --background: 225 18% 5%;
+    --foreground: 40 33% 94%;
+    --card: 222 20% 7%;
+    --card-foreground: 40 33% 94%;
+    --popover: 222 22% 9%;
+    --popover-foreground: 40 33% 94%;
+    --primary: 36 78% 60%;
+    --primary-foreground: 225 25% 6%;
+    --secondary: 220 15% 13%;
+    --secondary-foreground: 40 33% 94%;
+    --muted: 220 13% 15%;
+    --muted-foreground: 40 8% 58%;
+    --accent: 220 15% 16%;
+    --accent-foreground: 40 33% 94%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 40 33% 96%;
+    --border: 220 12% 16%;
+    --input: 220 12% 20%;
+    --ring: 36 78% 60%;
+    --radius: 0.75rem;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings:
+      "rlig" 1,
+      "calt" 1;
+  }
+}
+
 :root {
   color-scheme: dark;
 }
@@ -14,11 +51,9 @@ body,
 
 body {
   margin: 0;
-  color: #f6f1e8;
   background:
     radial-gradient(1000px 520px at 8% -12%, rgba(232, 160, 76, 0.12), transparent 55%),
-    radial-gradient(800px 420px at 100% 0%, rgba(120, 150, 200, 0.06), transparent 50%),
-    #0a0b0e;
+    radial-gradient(800px 420px at 100% 0%, rgba(120, 150, 200, 0.06), transparent 50%), #0a0b0e;
   font-family: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
 }
 
