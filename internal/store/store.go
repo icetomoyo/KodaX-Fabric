@@ -12,19 +12,25 @@ const (
 )
 
 type Channel struct {
-	ID       int64
-	Protocol string
-	BaseURL  string
-	Secret   string
-	Status   string
-	Priority int
-	Weight   int
-	Models   []string
+	ID        int64
+	Protocol  string
+	BaseURL   string
+	Secret    string
+	Status    string
+	Priority  int
+	Weight    int
+	Models    []string
+	PoolID    int64
+	TeamID    int64
+	KeyTeamID int64
 }
 
 type ResolvedVK struct {
 	VirtualKeyID int64
 	PoolID       int64
+	TeamID       int64
+	ProjectID    int64
+	PoolGroup    string
 	ExpiresAt    *time.Time
 	ModelScope   []string
 	Channels     []Channel
@@ -35,6 +41,7 @@ type RouteDecision struct {
 	ChannelID int64
 	Reason    string
 	Fallback  bool
+	PoolGroup string
 }
 
 type Store interface {
@@ -69,6 +76,36 @@ func parseModelScope(raw string) []string {
 		if p != "" {
 			out = append(out, p)
 		}
+	}
+	return out
+}
+
+func NormalizePoolGroup(g string) string {
+	switch g {
+	case "premium", "standard", "bulk":
+		return g
+	default:
+		return "standard"
+	}
+}
+
+func IsolateChannels(vk *ResolvedVK, chans []Channel) []Channel {
+	if vk == nil {
+		return nil
+	}
+	var out []Channel
+	for _, c := range chans {
+		if c.PoolID != vk.PoolID && (c.PoolID != 0 || vk.TeamID != 0) {
+			continue
+		}
+		if vk.TeamID == 0 {
+			if c.TeamID != 0 || c.KeyTeamID != 0 {
+				continue
+			}
+		} else if c.TeamID != vk.TeamID || c.KeyTeamID != vk.TeamID {
+			continue
+		}
+		out = append(out, c)
 	}
 	return out
 }

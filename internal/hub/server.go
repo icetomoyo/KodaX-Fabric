@@ -133,7 +133,7 @@ func (s *Server) dispatch(w http.ResponseWriter, r *http.Request, resolved *stor
 			hops++
 
 			if stream {
-				s.stampRoute(w, rid, ch, hops, mi > 0)
+				s.stampRoute(w, rid, ch, hops, mi > 0, resolved.PoolGroup)
 				status, err := s.proxy(w, r, ch, upstreamPath, outBody, true)
 				if err != nil && attempt < 2 && s.pickChannel(resolved.VirtualKeyID, protocol, m, resolved.Channels, used) != nil {
 					lastErr = err
@@ -167,13 +167,13 @@ func (s *Server) dispatch(w http.ResponseWriter, r *http.Request, resolved *stor
 				}
 				break
 			}
-			s.stampRoute(w, rid, ch, hops, mi > 0)
+			s.stampRoute(w, rid, ch, hops, mi > 0, resolved.PoolGroup)
 			writeFetched(w, res)
 			return
 		}
 	}
 
-	s.stampRoute(w, rid, lastCh, hops, lastModel != model)
+	s.stampRoute(w, rid, lastCh, hops, lastModel != model, resolved.PoolGroup)
 	if last.status != 0 {
 		writeFetched(w, last)
 		return

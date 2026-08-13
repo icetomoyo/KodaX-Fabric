@@ -50,7 +50,8 @@ func (m *Memory) ResolveVK(_ context.Context, rawKey string) (*ResolvedVK, error
 		return nil, nil
 	}
 	cp := *vk
-	cp.Channels = append([]Channel(nil), vk.Channels...)
+	cp.PoolGroup = NormalizePoolGroup(cp.PoolGroup)
+	cp.Channels = IsolateChannels(&cp, vk.Channels)
 	return &cp, nil
 }
 

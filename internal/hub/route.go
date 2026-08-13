@@ -31,7 +31,7 @@ func (s *Server) aliasOf(protocol, model string) string {
 	return s.Aliases[protocol+"|"+model]
 }
 
-func (s *Server) stampRoute(w http.ResponseWriter, rid string, ch *store.Channel, hops int, modelFB bool) {
+func (s *Server) stampRoute(w http.ResponseWriter, rid string, ch *store.Channel, hops int, modelFB bool, poolGroup string) {
 	reason := "priority"
 	fb := hops > 1 || modelFB
 	if modelFB {
@@ -41,13 +41,15 @@ func (s *Server) stampRoute(w http.ResponseWriter, rid string, ch *store.Channel
 	} else if ch != nil && store.EffectiveWeight(ch.Weight) > 1 {
 		reason = "weighted"
 	}
-	dec := store.RouteDecision{RequestID: rid, Reason: reason, Fallback: fb}
+	group := store.NormalizePoolGroup(poolGroup)
+	dec := store.RouteDecision{RequestID: rid, Reason: reason, Fallback: fb, PoolGroup: group}
 	if ch != nil {
 		dec.ChannelID = ch.ID
 	}
 	w.Header().Set("X-Fabric-Request-Id", rid)
 	w.Header().Set("X-Fabric-Route", fmt.Sprintf("channel=%d;reason=%s", dec.ChannelID, reason))
 	w.Header().Set("X-Fabric-Fallback", strconv.FormatBool(fb))
+	w.Header().Set("X-Fabric-Pool-Group", group)
 	if s.Audit != nil {
 		_ = s.Audit(dec)
 	} else if s.Store != nil {

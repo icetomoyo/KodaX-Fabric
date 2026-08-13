@@ -42,17 +42,30 @@ CREATE TABLE IF NOT EXISTS operators (
 ALTER TABLE operators ADD COLUMN IF NOT EXISTS name varchar(100) NOT NULL DEFAULT '';
 ALTER TABLE operators ADD COLUMN IF NOT EXISTS status varchar(32) NOT NULL DEFAULT 'active';
 ALTER TABLE operators ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now();
+CREATE TABLE IF NOT EXISTS teams (
+  id bigserial PRIMARY KEY,
+  name varchar(100) NOT NULL
+);
+CREATE TABLE IF NOT EXISTS projects (
+  id bigserial PRIMARY KEY,
+  team_id bigint NOT NULL DEFAULT 0,
+  name varchar(100) NOT NULL
+);
 CREATE TABLE IF NOT EXISTS channel_pools (
   id bigserial PRIMARY KEY,
   name varchar(100) NOT NULL,
-  group_name varchar(32) NOT NULL DEFAULT 'standard'
+  group_name varchar(32) NOT NULL DEFAULT 'standard',
+  team_id bigint NOT NULL DEFAULT 0
 );
+ALTER TABLE channel_pools ADD COLUMN IF NOT EXISTS team_id bigint NOT NULL DEFAULT 0;
 CREATE TABLE IF NOT EXISTS provider_keys (
   id bigserial PRIMARY KEY,
   provider_code varchar(64) NOT NULL,
   secret_encrypted text NOT NULL,
-  status varchar(32) NOT NULL DEFAULT 'active'
+  status varchar(32) NOT NULL DEFAULT 'active',
+  team_id bigint NOT NULL DEFAULT 0
 );
+ALTER TABLE provider_keys ADD COLUMN IF NOT EXISTS team_id bigint NOT NULL DEFAULT 0;
 CREATE TABLE IF NOT EXISTS channels (
   id bigserial PRIMARY KEY,
   pool_id bigint NOT NULL REFERENCES channel_pools(id),
@@ -72,6 +85,7 @@ CREATE TABLE IF NOT EXISTS virtual_keys (
 ALTER TABLE virtual_keys ADD COLUMN IF NOT EXISTS owner_id bigint REFERENCES operators(id);
 ALTER TABLE virtual_keys ADD COLUMN IF NOT EXISTS expires_at timestamptz;
 ALTER TABLE virtual_keys ADD COLUMN IF NOT EXISTS model_scope text NOT NULL DEFAULT '';
+ALTER TABLE virtual_keys ADD COLUMN IF NOT EXISTS project_id bigint NOT NULL DEFAULT 0;
 ALTER TABLE channels ADD COLUMN IF NOT EXISTS priority int NOT NULL DEFAULT 0;
 ALTER TABLE channels ADD COLUMN IF NOT EXISTS weight int NOT NULL DEFAULT 0;
 ALTER TABLE channels ADD COLUMN IF NOT EXISTS models text NOT NULL DEFAULT '';
@@ -81,8 +95,10 @@ CREATE TABLE IF NOT EXISTS route_decisions (
   channel_id bigint,
   reason varchar(32) NOT NULL,
   fallback boolean NOT NULL DEFAULT false,
+  pool_group varchar(32) NOT NULL DEFAULT '',
   created_at timestamptz NOT NULL DEFAULT now()
 );
+ALTER TABLE route_decisions ADD COLUMN IF NOT EXISTS pool_group varchar(32) NOT NULL DEFAULT '';
 `
 	_, err := p.DB.ExecContext(ctx, ddl)
 	return err
@@ -90,13 +106,18 @@ CREATE TABLE IF NOT EXISTS route_decisions (
 
 func (p *Postgres) ResolveVK(ctx context.Context, rawKey string) (*ResolvedVK, error) {
 	hash := secret.HashVK(rawKey)
-	var vkID, poolID int64
-	var status string
+	var vkID, poolID, projectID, teamID, poolTeam int64
+	var status, groupName string
 	var expires sql.NullTime
 	var scope string
 	err := p.DB.QueryRowContext(ctx, `
-SELECT id, pool_id, status, expires_at, COALESCE(model_scope,'') FROM virtual_keys WHERE key_hash = $1
-`, hash).Scan(&vkID, &poolID, &status, &expires, &scope)
+SELECT v.id, v.pool_id, v.status, v.expires_at, COALESCE(v.model_scope,''), COALESCE(v.project_id,0),
+       COALESCE(p.team_id,0), COALESCE(cp.group_name,'standard'), COALESCE(cp.team_id,0)
+FROM virtual_keys v
+LEFT JOIN projects p ON p.id = v.project_id
+LEFT JOIN channel_pools cp ON cp.id = v.pool_id
+WHERE v.key_hash = $1
+`, hash).Scan(&vkID, &poolID, &status, &expires, &scope, &projectID, &teamID, &groupName, &poolTeam)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -106,11 +127,16 @@ SELECT id, pool_id, status, expires_at, COALESCE(model_scope,'') FROM virtual_ke
 	if status != "active" {
 		return nil, nil
 	}
+	if teamID == 0 {
+		teamID = poolTeam
+	}
 	rows, err := p.DB.QueryContext(ctx, `
 SELECT c.id, c.protocol, c.base_url, pk.secret_encrypted,
-       COALESCE(c.priority,0), COALESCE(c.weight,0), COALESCE(c.models,'')
+       COALESCE(c.priority,0), COALESCE(c.weight,0), COALESCE(c.models,''),
+       c.pool_id, COALESCE(cp.team_id,0), COALESCE(pk.team_id,0)
 FROM channels c
 JOIN provider_keys pk ON pk.id = c.provider_key_id
+LEFT JOIN channel_pools cp ON cp.id = c.pool_id
 WHERE c.pool_id = $1 AND c.status = 'active' AND pk.status = 'active'
 ORDER BY c.id
 `, poolID)
@@ -118,7 +144,10 @@ ORDER BY c.id
 		return nil, err
 	}
 	defer rows.Close()
-	out := &ResolvedVK{VirtualKeyID: vkID, PoolID: poolID, ModelScope: parseModelScope(scope)}
+	out := &ResolvedVK{
+		VirtualKeyID: vkID, PoolID: poolID, ProjectID: projectID, TeamID: teamID,
+		PoolGroup: groupName, ModelScope: parseModelScope(scope),
+	}
 	if expires.Valid {
 		t := expires.Time.UTC()
 		out.ExpiresAt = &t
@@ -126,7 +155,7 @@ ORDER BY c.id
 	for rows.Next() {
 		var ch Channel
 		var enc, models string
-		if err := rows.Scan(&ch.ID, &ch.Protocol, &ch.BaseURL, &enc, &ch.Priority, &ch.Weight, &models); err != nil {
+		if err := rows.Scan(&ch.ID, &ch.Protocol, &ch.BaseURL, &enc, &ch.Priority, &ch.Weight, &models, &ch.PoolID, &ch.TeamID, &ch.KeyTeamID); err != nil {
 			return nil, err
 		}
 		ch.Models = parseModelScope(models)
@@ -137,14 +166,19 @@ ORDER BY c.id
 		ch.Secret = plain
 		out.Channels = append(out.Channels, ch)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	out.PoolGroup = NormalizePoolGroup(out.PoolGroup)
+	out.Channels = IsolateChannels(out, out.Channels)
+	return out, nil
 }
 
 func (p *Postgres) SaveRouteDecision(ctx context.Context, d RouteDecision) error {
 	_, err := p.DB.ExecContext(ctx, `
-INSERT INTO route_decisions (request_id, channel_id, reason, fallback)
-VALUES ($1,$2,$3,$4)
-`, d.RequestID, d.ChannelID, d.Reason, d.Fallback)
+INSERT INTO route_decisions (request_id, channel_id, reason, fallback, pool_group)
+VALUES ($1,$2,$3,$4,$5)
+`, d.RequestID, d.ChannelID, d.Reason, d.Fallback, d.PoolGroup)
 	return err
 }
 
