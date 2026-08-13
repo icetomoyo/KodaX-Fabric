@@ -6,6 +6,15 @@ Token Hub 按 PRD §3 + HLD 从 0 重建（Go 网关）。
 
 ---
 
+## [0.0.6] - 2026-08-13
+
+### Added
+
+- VK / Provider 令牌桶 RPM + burst，超限 429（dimension 可区分）。
+- 渠滑动窗口与连续失败熔断、半开探测；`GET /health/limits`。热状态内存（`HotLimits`）。
+
+---
+
 ## [0.0.5] - 2026-08-13
 
 ### Added

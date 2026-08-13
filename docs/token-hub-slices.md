@@ -56,6 +56,6 @@
 
 ## 登记规则
 
-- `FEATURE_LIST` **一次只登当前要做的那一版**（001–005 已 Completed；下一版要做时再 Add）。  
+- `FEATURE_LIST` **一次只登当前要做的那一版**（001–006 已 Completed；下一版要做时再 Add）。  
 - 上一版 Completed 后再 Add 下一版。  
 - 设计块六节由 `/to-spec`、`/to-tickets` 填，不要在 Add 时写实现。

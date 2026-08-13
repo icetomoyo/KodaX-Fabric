@@ -1403,6 +1403,548 @@ func TestTeamVKRejectsZeroPoolChannel(t *testing.T) {
 	}
 }
 
+func TestVKBurstThen429(t *testing.T) {
+	var hits int32
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(openaiUsageBody()))
+	}))
+	t.Cleanup(up.Close)
+	st := &store.Memory{ByRawKey: map[string]*store.ResolvedVK{
+		testVK: {VirtualKeyID: 1, PoolID: 1, RPMLimit: 60, RPMBurst: 3, Channels: []store.Channel{
+			{ID: 1, Protocol: store.ProtocolOpenAI, BaseURL: up.URL, Secret: "sk-up"},
+		}},
+	}}
+	clk := hub.NewFakeClock(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	srv := hub.New(st, http.DefaultClient)
+	srv.Clock = clk
+	srv.Limits = hub.NewLimiter(clk)
+	gw := httptest.NewServer(srv.Handler())
+	t.Cleanup(gw.Close)
+	for i := 0; i < 3; i++ {
+		req, _ := http.NewRequest(http.MethodPost, gw.URL+"/v1/chat/completions", strings.NewReader(`{"model":"gpt-4","messages":[]}`))
+		req.Header.Set("Authorization", "Bearer "+testVK)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if resp.StatusCode != 200 {
+			t.Fatalf("burst %d status %d", i, resp.StatusCode)
+		}
+		_ = resp.Body.Close()
+	}
+	req, _ := http.NewRequest(http.MethodPost, gw.URL+"/v1/chat/completions", strings.NewReader(`{"model":"gpt-4"}`))
+	req.Header.Set("Authorization", "Bearer "+testVK)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 429 {
+		t.Fatalf("status %d", resp.StatusCode)
+	}
+	raw, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(raw), "vk_rate_limit_exceeded") || !strings.Contains(string(raw), `"dimension":"vk"`) {
+		t.Fatalf("body %s", raw)
+	}
+	if atomic.LoadInt32(&hits) != 3 {
+		t.Fatalf("upstream hits %d", hits)
+	}
+}
+
+func TestProviderBurstThen429(t *testing.T) {
+	var hits int32
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(openaiUsageBody()))
+	}))
+	t.Cleanup(up.Close)
+	st := &store.Memory{ByRawKey: map[string]*store.ResolvedVK{
+		testVK: {VirtualKeyID: 1, PoolID: 1, Channels: []store.Channel{
+			{ID: 1, Protocol: store.ProtocolOpenAI, BaseURL: up.URL, Secret: "sk-up", ProviderCode: "deepseek", ProviderRPM: 60, ProviderBurst: 2},
+		}},
+	}}
+	clk := hub.NewFakeClock(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	srv := hub.New(st, http.DefaultClient)
+	srv.Clock = clk
+	srv.Limits = hub.NewLimiter(clk)
+	gw := httptest.NewServer(srv.Handler())
+	t.Cleanup(gw.Close)
+	for i := 0; i < 2; i++ {
+		req, _ := http.NewRequest(http.MethodPost, gw.URL+"/v1/chat/completions", strings.NewReader(`{"model":"gpt-4","messages":[]}`))
+		req.Header.Set("Authorization", "Bearer "+testVK)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode != 200 {
+			t.Fatalf("status %d", resp.StatusCode)
+		}
+	}
+	req, _ := http.NewRequest(http.MethodPost, gw.URL+"/v1/chat/completions", strings.NewReader(`{"model":"gpt-4"}`))
+	req.Header.Set("Authorization", "Bearer "+testVK)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 429 {
+		t.Fatalf("status %d", resp.StatusCode)
+	}
+	raw, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(raw), "provider_rate_limit_exceeded") || !strings.Contains(string(raw), `"dimension":"provider"`) {
+		t.Fatalf("body %s", raw)
+	}
+	if atomic.LoadInt32(&hits) != 2 {
+		t.Fatalf("hits %d", hits)
+	}
+}
+
+func TestCircuitOpensAndShiftsInPool(t *testing.T) {
+	var got []string
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		key := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		got = append(got, key)
+		if key == "sk-bad" {
+			w.WriteHeader(http.StatusBadGateway)
+			_, _ = w.Write([]byte(`{"error":"down"}`))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(openaiUsageBody()))
+	}))
+	t.Cleanup(up.Close)
+	clk := hub.NewFakeClock(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	st := &store.Memory{ByRawKey: map[string]*store.ResolvedVK{
+		testVK: {VirtualKeyID: 1, PoolID: 7, Channels: []store.Channel{
+			{ID: 1, Protocol: store.ProtocolOpenAI, BaseURL: up.URL, Secret: "sk-bad", Priority: 1},
+			{ID: 2, Protocol: store.ProtocolOpenAI, BaseURL: up.URL, Secret: "sk-ok", Priority: 2},
+		}},
+	}}
+	srv := hub.New(st, http.DefaultClient)
+	srv.Clock = clk
+	srv.Limits = hub.NewLimiter(clk)
+	gw := httptest.NewServer(srv.Handler())
+	t.Cleanup(gw.Close)
+	for i := 0; i < 2; i++ {
+		req, _ := http.NewRequest(http.MethodPost, gw.URL+"/v1/chat/completions", strings.NewReader(`{"model":"gpt-4","messages":[]}`))
+		req.Header.Set("Authorization", "Bearer "+testVK)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+	}
+	before := len(got)
+	req, _ := http.NewRequest(http.MethodPost, gw.URL+"/v1/chat/completions", strings.NewReader(`{"model":"gpt-4","messages":[]}`))
+	req.Header.Set("Authorization", "Bearer "+testVK)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("status %d", resp.StatusCode)
+	}
+	for _, k := range got[before:] {
+		if k == "sk-bad" {
+			t.Fatalf("open circuit still hit: %v", got)
+		}
+	}
+}
+
+func TestHalfOpenProbeRecoverAndReopen(t *testing.T) {
+	var hits int32
+	fail := atomic.Bool{}
+	fail.Store(true)
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		if fail.Load() {
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(openaiUsageBody()))
+	}))
+	t.Cleanup(up.Close)
+	clk := hub.NewFakeClock(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	st := &store.Memory{ByRawKey: map[string]*store.ResolvedVK{
+		testVK: {VirtualKeyID: 1, PoolID: 1, Channels: []store.Channel{
+			{ID: 1, Protocol: store.ProtocolOpenAI, BaseURL: up.URL, Secret: "sk-up"},
+		}},
+	}}
+	srv := hub.New(st, http.DefaultClient)
+	srv.Clock = clk
+	srv.Limits = hub.NewLimiter(clk)
+	gw := httptest.NewServer(srv.Handler())
+	t.Cleanup(gw.Close)
+	do := func() int {
+		req, _ := http.NewRequest(http.MethodPost, gw.URL+"/v1/chat/completions", strings.NewReader(`{"model":"gpt-4"}`))
+		req.Header.Set("Authorization", "Bearer "+testVK)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		return resp.StatusCode
+	}
+	if do() != 502 || do() != 502 {
+		t.Fatal("need two fails to open")
+	}
+	openHits := atomic.LoadInt32(&hits)
+	if stt := do(); stt != 503 {
+		t.Fatalf("expected circuit open 503 got %d", stt)
+	}
+	if atomic.LoadInt32(&hits) != openHits {
+		t.Fatal("open circuit still probed")
+	}
+	clk.Advance(16 * time.Second)
+	fail.Store(false)
+	if do() != 200 {
+		t.Fatal("half-open probe should succeed")
+	}
+	if do() != 200 {
+		t.Fatal("recovered channel should stay closed")
+	}
+	fail.Store(true)
+	_ = do()
+	_ = do()
+	clk.Advance(16 * time.Second)
+	before := atomic.LoadInt32(&hits)
+	_ = do()
+	if atomic.LoadInt32(&hits) != before+1 {
+		t.Fatal("half-open should allow one probe")
+	}
+	if do() != 503 {
+		t.Fatal("failed probe should reopen")
+	}
+}
+
+func Test400DoesNotTripCircuit(t *testing.T) {
+	var hits int32
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":"bad"}`))
+	}))
+	t.Cleanup(up.Close)
+	clk := hub.NewFakeClock(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	st := &store.Memory{ByRawKey: map[string]*store.ResolvedVK{
+		testVK: {VirtualKeyID: 1, PoolID: 1, Channels: []store.Channel{
+			{ID: 1, Protocol: store.ProtocolOpenAI, BaseURL: up.URL, Secret: "sk-up"},
+		}},
+	}}
+	srv := hub.New(st, http.DefaultClient)
+	srv.Clock = clk
+	srv.Limits = hub.NewLimiter(clk)
+	gw := httptest.NewServer(srv.Handler())
+	t.Cleanup(gw.Close)
+	for i := 0; i < 5; i++ {
+		req, _ := http.NewRequest(http.MethodPost, gw.URL+"/v1/chat/completions", strings.NewReader(`{"model":"gpt-4"}`))
+		req.Header.Set("Authorization", "Bearer "+testVK)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if resp.StatusCode != 400 {
+			t.Fatalf("status %d", resp.StatusCode)
+		}
+		_ = resp.Body.Close()
+	}
+	if atomic.LoadInt32(&hits) != 5 {
+		t.Fatalf("400 tripped circuit, hits %d", hits)
+	}
+}
+
+func TestPoolHealthReadable(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	t.Cleanup(up.Close)
+	clk := hub.NewFakeClock(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	st := &store.Memory{ByRawKey: map[string]*store.ResolvedVK{
+		testVK: {VirtualKeyID: 1, PoolID: 42, RPMLimit: 60, RPMBurst: 10, Channels: []store.Channel{
+			{ID: 8, Protocol: store.ProtocolOpenAI, BaseURL: up.URL, Secret: "sk-up"},
+		}},
+	}}
+	srv := hub.New(st, http.DefaultClient)
+	srv.Clock = clk
+	srv.Limits = hub.NewLimiter(clk)
+	gw := httptest.NewServer(srv.Handler())
+	t.Cleanup(gw.Close)
+	for i := 0; i < 2; i++ {
+		req, _ := http.NewRequest(http.MethodPost, gw.URL+"/v1/chat/completions", strings.NewReader(`{"model":"gpt-4"}`))
+		req.Header.Set("Authorization", "Bearer "+testVK)
+		resp, _ := http.DefaultClient.Do(req)
+		_ = resp.Body.Close()
+	}
+	resp, err := http.Get(gw.URL + "/health/limits")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(raw), `"pool_id":42`) || !strings.Contains(string(raw), `"state":"open"`) {
+		t.Fatalf("limits %s", raw)
+	}
+	if !strings.Contains(string(raw), `"healthy_channels"`) || !strings.Contains(string(raw), `"tokens"`) {
+		t.Fatalf("capacity %s", raw)
+	}
+}
+
+func TestDiscardedUpstreamNotImplicit200(t *testing.T) {
+	var hits int32
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = w.Write([]byte(`{"error":"down"}`))
+	}))
+	t.Cleanup(up.Close)
+	clk := hub.NewFakeClock(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	lim := hub.NewLimiter(clk)
+	lim.Record(1, 2, 0, false, true)
+	lim.Record(1, 2, 0, false, true)
+	st := &store.Memory{ByRawKey: map[string]*store.ResolvedVK{
+		testVK: {VirtualKeyID: 1, PoolID: 1, Channels: []store.Channel{
+			{ID: 1, Protocol: store.ProtocolOpenAI, BaseURL: up.URL, Secret: "sk-a", Priority: 1},
+			{ID: 2, Protocol: store.ProtocolOpenAI, BaseURL: up.URL, Secret: "sk-b", Priority: 2},
+		}},
+	}}
+	srv := hub.New(st, http.DefaultClient)
+	srv.Clock = clk
+	srv.Limits = lim
+	gw := httptest.NewServer(srv.Handler())
+	t.Cleanup(gw.Close)
+	req, _ := http.NewRequest(http.MethodPost, gw.URL+"/v1/chat/completions", strings.NewReader(`{"model":"gpt-4"}`))
+	req.Header.Set("Authorization", "Bearer "+testVK)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 400 {
+		t.Fatalf("implicit success %d", resp.StatusCode)
+	}
+	if atomic.LoadInt32(&hits) != 1 {
+		t.Fatalf("hits %d", hits)
+	}
+	dec, _ := st.RecentRoutes(req.Context(), 1)
+	if len(dec) != 1 || dec[0].Status < 400 {
+		t.Fatalf("audit %+v", dec)
+	}
+}
+
+func TestDiscardedThenProviderLimitedNot200(t *testing.T) {
+	var hits int32
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	t.Cleanup(up.Close)
+	clk := hub.NewFakeClock(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	lim := hub.NewLimiter(clk)
+	_ = lim.AllowProvider("p", 60, 1)
+	st := &store.Memory{ByRawKey: map[string]*store.ResolvedVK{
+		testVK: {VirtualKeyID: 1, PoolID: 1, Channels: []store.Channel{
+			{ID: 1, Protocol: store.ProtocolOpenAI, BaseURL: up.URL, Secret: "sk-a", Priority: 1},
+			{ID: 2, Protocol: store.ProtocolOpenAI, BaseURL: up.URL, Secret: "sk-b", Priority: 2, ProviderCode: "p", ProviderRPM: 60, ProviderBurst: 1},
+		}},
+	}}
+	srv := hub.New(st, http.DefaultClient)
+	srv.Clock = clk
+	srv.Limits = lim
+	gw := httptest.NewServer(srv.Handler())
+	t.Cleanup(gw.Close)
+	req, _ := http.NewRequest(http.MethodPost, gw.URL+"/v1/chat/completions", strings.NewReader(`{"model":"gpt-4"}`))
+	req.Header.Set("Authorization", "Bearer "+testVK)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 400 {
+		t.Fatalf("status %d", resp.StatusCode)
+	}
+	if atomic.LoadInt32(&hits) != 1 {
+		t.Fatalf("hits %d", hits)
+	}
+}
+
+func TestHalfOpenProviderLimitReleasesPermit(t *testing.T) {
+	var hits int32
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(openaiUsageBody()))
+	}))
+	t.Cleanup(up.Close)
+	clk := hub.NewFakeClock(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	lim := hub.NewLimiter(clk)
+	lim.Record(1, 1, 0, false, true)
+	lim.Record(1, 1, 0, false, true)
+	clk.Advance(16 * time.Second)
+	_ = lim.AllowProvider("p", 60, 1)
+	st := &store.Memory{ByRawKey: map[string]*store.ResolvedVK{
+		testVK: {VirtualKeyID: 1, PoolID: 1, Channels: []store.Channel{
+			{ID: 1, Protocol: store.ProtocolOpenAI, BaseURL: up.URL, Secret: "sk-up", ProviderCode: "p", ProviderRPM: 60, ProviderBurst: 1},
+		}},
+	}}
+	srv := hub.New(st, http.DefaultClient)
+	srv.Clock = clk
+	srv.Limits = lim
+	gw := httptest.NewServer(srv.Handler())
+	t.Cleanup(gw.Close)
+	req, _ := http.NewRequest(http.MethodPost, gw.URL+"/v1/chat/completions", strings.NewReader(`{"model":"gpt-4"}`))
+	req.Header.Set("Authorization", "Bearer "+testVK)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if atomic.LoadInt32(&hits) != 0 {
+		t.Fatal("should not hit while provider limited")
+	}
+	clk.Advance(time.Minute)
+	req, _ = http.NewRequest(http.MethodPost, gw.URL+"/v1/chat/completions", strings.NewReader(`{"model":"gpt-4","messages":[]}`))
+	req.Header.Set("Authorization", "Bearer "+testVK)
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("permit stuck status %d", resp.StatusCode)
+	}
+}
+
+func TestCancelDoesNotTripCircuit(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(openaiUsageBody()))
+	}))
+	t.Cleanup(up.Close)
+	clk := hub.NewFakeClock(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	st := &store.Memory{ByRawKey: map[string]*store.ResolvedVK{
+		testVK: {VirtualKeyID: 1, PoolID: 1, Channels: []store.Channel{
+			{ID: 1, Protocol: store.ProtocolOpenAI, BaseURL: up.URL, Secret: "sk-up"},
+		}},
+	}}
+	srv := hub.New(st, http.DefaultClient)
+	srv.Clock = clk
+	srv.Limits = hub.NewLimiter(clk)
+	gw := httptest.NewServer(srv.Handler())
+	t.Cleanup(gw.Close)
+	for i := 0; i < 2; i++ {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		req, _ := http.NewRequestWithContext(ctx, http.MethodPost, gw.URL+"/v1/chat/completions", strings.NewReader(`{"model":"gpt-4"}`))
+		req.Header.Set("Authorization", "Bearer "+testVK)
+		resp, err := http.DefaultClient.Do(req)
+		if err == nil {
+			_ = resp.Body.Close()
+		}
+	}
+	req, _ := http.NewRequest(http.MethodPost, gw.URL+"/v1/chat/completions", strings.NewReader(`{"model":"gpt-4","messages":[]}`))
+	req.Header.Set("Authorization", "Bearer "+testVK)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("cancel tripped circuit %d", resp.StatusCode)
+	}
+}
+
+func TestProbeOnceWithoutUserTraffic(t *testing.T) {
+	var probes int32
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/models" {
+			atomic.AddInt32(&probes, 1)
+			w.WriteHeader(200)
+			return
+		}
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	t.Cleanup(up.Close)
+	clk := hub.NewFakeClock(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	lim := hub.NewLimiter(clk)
+	ch := store.Channel{ID: 1, PoolID: 1, Protocol: store.ProtocolOpenAI, BaseURL: up.URL, Secret: "sk-up"}
+	lim.RegisterPool(1, []store.Channel{ch})
+	lim.Record(1, 1, 0, false, true)
+	lim.Record(1, 1, 0, false, true)
+	clk.Advance(16 * time.Second)
+	lim.Tick()
+	srv := hub.New(&store.Memory{}, http.DefaultClient)
+	srv.Clock = clk
+	srv.Limits = lim
+	if !srv.ProbeOnce(ch) {
+		t.Fatal("probe should succeed")
+	}
+	if atomic.LoadInt32(&probes) != 1 {
+		t.Fatalf("probes %d", probes)
+	}
+	if snap := lim.Snapshot(); snap.Pools[0].Healthy != 1 {
+		t.Fatalf("not closed after probe %+v", snap)
+	}
+	lim.Record(1, 1, 0, false, true)
+	lim.Record(1, 1, 0, false, true)
+	clk.Advance(16 * time.Second)
+	lim.Tick()
+	failUp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(502)
+	}))
+	t.Cleanup(failUp.Close)
+	ch.BaseURL = failUp.URL
+	if srv.ProbeOnce(ch) {
+		t.Fatal("failed probe should be false")
+	}
+}
+
+func TestSnapshotCountsUnregisteredHits(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(openaiUsageBody()))
+	}))
+	t.Cleanup(up.Close)
+	clk := hub.NewFakeClock(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	st := &store.Memory{ByRawKey: map[string]*store.ResolvedVK{
+		testVK: {VirtualKeyID: 1, PoolID: 9, Channels: []store.Channel{
+			{ID: 1, Protocol: store.ProtocolOpenAI, BaseURL: up.URL, Secret: "sk-a", Priority: 1, ProviderRPM: 10},
+			{ID: 2, Protocol: store.ProtocolOpenAI, BaseURL: up.URL, Secret: "sk-b", Priority: 2, ProviderRPM: 10},
+			{ID: 3, Protocol: store.ProtocolOpenAI, BaseURL: up.URL, Secret: "sk-c", Priority: 2, ProviderRPM: 10},
+		}},
+	}}
+	srv := hub.New(st, http.DefaultClient)
+	srv.Clock = clk
+	srv.Limits = hub.NewLimiter(clk)
+	gw := httptest.NewServer(srv.Handler())
+	t.Cleanup(gw.Close)
+	req, _ := http.NewRequest(http.MethodPost, gw.URL+"/v1/chat/completions", strings.NewReader(`{"model":"gpt-4","messages":[]}`))
+	req.Header.Set("Authorization", "Bearer "+testVK)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	snap := srv.Limits.Snapshot()
+	if len(snap.Pools) != 1 || snap.Pools[0].Total != 3 || snap.Pools[0].Healthy != 3 {
+		t.Fatalf("snap %+v", snap.Pools)
+	}
+	if snap.Pools[0].RPMCapacity != 30 || snap.Pools[0].RPMAvailable != 30 {
+		t.Fatalf("cap %+v", snap.Pools[0])
+	}
+	srv.Limits.Record(9, 1, 0, false, true)
+	srv.Limits.Record(9, 1, 0, false, true)
+	snap = srv.Limits.Snapshot()
+	if snap.Pools[0].Healthy != 2 || snap.Pools[0].RPMAvailable != 20 {
+		t.Fatalf("after open %+v", snap.Pools[0])
+	}
+}
+
 func TestHealth(t *testing.T) {
 	gw := newGateway(t, nil)
 	t.Cleanup(gw.Close)

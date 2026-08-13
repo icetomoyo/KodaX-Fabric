@@ -1,12 +1,12 @@
 # FEATURE_LIST
 
-Last Updated: 2026-08-13 14:10
+Last Updated: 2026-08-13 15:00
 
 ## Version Info
 
 | 项 | 值 |
 |----|-----|
-| Current Release | **v0.0.5** |
+| Current Release | **v0.0.6** |
 | Planned Version | — |
 
 ## Version Summary
@@ -18,7 +18,7 @@ Last Updated: 2026-08-13 14:10
 | v0.0.3 | Released | 1/1 | 虚拟钥匙，一把两端口 |
 | v0.0.4 | Released | 1/1 | 渠道池 + 简单路由 |
 | v0.0.5 | Released | 1/1 | VK 绑池 + 分组 |
-| v0.0.6 | — | — | 限流 + 熔断 |
+| v0.0.6 | Released | 1/1 | 限流 + 熔断 |
 | v0.0.7 | — | — | 预算闸 + 流式估算 |
 | v0.0.8 | — | — | 缓存 + 运营面 |
 | v0.1.0 | — | — | 独立部署收口 |
@@ -34,6 +34,7 @@ Last Updated: 2026-08-13 14:10
 | 003 | 虚拟钥匙一把两端口 | **Completed** | Critical | New | v0.0.3 | [设计](features/v0.0.3.md#feature_003) |
 | 004 | 同协议多渠 failover | **Completed** | Critical | New | v0.0.4 | [设计](features/v0.0.4.md#feature_004) |
 | 005 | VK 绑池与分组 | **Completed** | Critical | New | v0.0.5 | [设计](features/v0.0.5.md#feature_005) |
+| 006 | RPM 硬拒绝与渠熔断 | **Completed** | Critical | New | v0.0.6 | [设计](features/v0.0.6.md#feature_006) |
 
 ## Feature Details
 
@@ -147,12 +148,34 @@ VK → Project → Team → Pool → Provider Key。查询层隔离跨团队官�
 
 **Spec**：已综合（T1）。
 
+### FEATURE_006: RPM 硬拒绝与渠熔断
+
+| 字段 | 内容 |
+|------|------|
+| ID | 006 |
+| Title | RPM 硬拒绝与渠熔断 |
+| Status | **Completed** |
+| Priority | Critical |
+| Category | New |
+| Planned Version | v0.0.6 |
+| Released Version | v0.0.6 |
+| Created | 2026-08-13 |
+| Started | 2026-08-13 |
+| Completed | 2026-08-13 |
+| Design | [docs/features/v0.0.6.md#feature_006](features/v0.0.6.md#feature_006) |
+
+**Description**
+
+VK + Provider 令牌桶突发后 429；渠熔断半开；`GET /health/limits`。热状态内存，`HotLimits` 留给 Redis。
+
+**Spec**：已综合（T1）。
+
 ## Summary
 
 | 指标 | 数量 |
 |------|------|
-| Total | 5 |
+| Total | 6 |
 | Planned | 0 |
 | In Progress | 0 |
-| Completed | 5 |
-| Critical | 5 |
+| Completed | 6 |
+| Critical | 6 |

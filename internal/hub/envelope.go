@@ -53,6 +53,47 @@ func writeUnavailable(w http.ResponseWriter, protocol string) {
 	})
 }
 
+func writeRateLimited(w http.ResponseWriter, protocol, dim string) {
+	code := "vk_rate_limit_exceeded"
+	msg := "virtual key RPM limit exceeded"
+	if dim == "provider" {
+		code = "provider_rate_limit_exceeded"
+		msg = "provider RPM limit exceeded"
+	}
+	if protocol == store.ProtocolAnthropic {
+		writeJSON(w, http.StatusTooManyRequests, map[string]any{
+			"type": "error",
+			"error": map[string]any{
+				"type":      "rate_limit_error",
+				"message":   msg,
+				"dimension": dim,
+			},
+		})
+		return
+	}
+	writeJSON(w, http.StatusTooManyRequests, map[string]any{
+		"error": map[string]any{
+			"message":   msg,
+			"type":      "rate_limit_error",
+			"code":      code,
+			"dimension": dim,
+		},
+	})
+}
+
+func writeCircuitOpen(w http.ResponseWriter, protocol string) {
+	if protocol == store.ProtocolAnthropic {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+			"type":  "error",
+			"error": map[string]any{"type": "api_error", "message": "all matching channels are in circuit-open", "code": "circuit_open"},
+		})
+		return
+	}
+	writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+		"error": map[string]any{"message": "all matching channels are in circuit-open", "type": "server_error", "code": "circuit_open"},
+	})
+}
+
 func writeForbidden(w http.ResponseWriter, protocol, msg string) {
 	if protocol == store.ProtocolAnthropic {
 		writeJSON(w, http.StatusForbidden, map[string]any{

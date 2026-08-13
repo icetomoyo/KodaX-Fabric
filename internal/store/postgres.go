@@ -73,6 +73,10 @@ CREATE TABLE IF NOT EXISTS virtual_keys (
 	for _, q := range []string{
 		`ALTER TABLE virtual_keys ADD COLUMN IF NOT EXISTS expires_at timestamptz`,
 		`ALTER TABLE virtual_keys ADD COLUMN IF NOT EXISTS model_scope text NOT NULL DEFAULT ''`,
+		`ALTER TABLE virtual_keys ADD COLUMN IF NOT EXISTS rpm_limit int NOT NULL DEFAULT 0`,
+		`ALTER TABLE virtual_keys ADD COLUMN IF NOT EXISTS rpm_burst int NOT NULL DEFAULT 0`,
+		`ALTER TABLE provider_keys ADD COLUMN IF NOT EXISTS rpm_limit int NOT NULL DEFAULT 0`,
+		`ALTER TABLE provider_keys ADD COLUMN IF NOT EXISTS rpm_burst int NOT NULL DEFAULT 0`,
 		`ALTER TABLE channels ADD COLUMN IF NOT EXISTS priority int NOT NULL DEFAULT 0`,
 		`ALTER TABLE channels ADD COLUMN IF NOT EXISTS weight int NOT NULL DEFAULT 100`,
 		`ALTER TABLE channels ADD COLUMN IF NOT EXISTS models text NOT NULL DEFAULT ''`,
@@ -123,11 +127,13 @@ func (p *Postgres) ResolveVK(ctx context.Context, rawKey string) (*ResolvedVK, e
 	hash := secret.HashVK(rawKey)
 	var vkID, poolID int64
 	var status, models string
+	var rpm, burst int
 	var expires sql.NullTime
 	var projectID, teamID, poolTeam sql.NullInt64
 	var projectName, teamName, poolName, poolGroup sql.NullString
 	err := p.DB.QueryRowContext(ctx, `
 SELECT vk.id, vk.pool_id, vk.status, vk.expires_at, vk.model_scope,
+       vk.rpm_limit, vk.rpm_burst,
        vk.project_id, pr.name, pr.team_id, t.name,
        p.name, p.group_name, p.team_id
 FROM virtual_keys vk
@@ -135,7 +141,7 @@ LEFT JOIN projects pr ON pr.id = vk.project_id
 LEFT JOIN teams t ON t.id = pr.team_id
 LEFT JOIN channel_pools p ON p.id = vk.pool_id
 WHERE vk.key_hash = $1
-`, hash).Scan(&vkID, &poolID, &status, &expires, &models,
+`, hash).Scan(&vkID, &poolID, &status, &expires, &models, &rpm, &burst,
 		&projectID, &projectName, &teamID, &teamName,
 		&poolName, &poolGroup, &poolTeam)
 	if err == sql.ErrNoRows {
@@ -151,12 +157,13 @@ WHERE vk.key_hash = $1
 		return &ResolvedVK{
 			VirtualKeyID: vkID, PoolID: poolID, PoolName: poolName.String, PoolGroup: poolGroup.String,
 			TeamID: teamID.Int64, TeamName: teamName.String, ProjectID: projectID.Int64, ProjectName: projectName.String,
-			ModelScope: splitCSV(models),
+			ModelScope: splitCSV(models), RPMLimit: rpm, RPMBurst: burst,
 		}, nil
 	}
 	const chSelect = `
 SELECT c.id, c.protocol, c.base_url, pk.secret_encrypted, c.priority, c.weight, c.models,
-       c.pool_id, COALESCE(p.team_id, 0), COALESCE(pk.team_id, 0)
+       c.pool_id, COALESCE(p.team_id, 0), COALESCE(pk.team_id, 0),
+       pk.provider_code, pk.rpm_limit, pk.rpm_burst
 FROM channels c
 JOIN provider_keys pk ON pk.id = c.provider_key_id
 JOIN channel_pools p ON p.id = c.pool_id
@@ -180,7 +187,7 @@ ORDER BY CASE WHEN c.priority <= 0 THEN 1000000 ELSE c.priority END, c.id`
 	out := &ResolvedVK{
 		VirtualKeyID: vkID, PoolID: poolID, PoolName: poolName.String, PoolGroup: poolGroup.String,
 		TeamID: teamID.Int64, TeamName: teamName.String, ProjectID: projectID.Int64, ProjectName: projectName.String,
-		ModelScope: splitCSV(models),
+		ModelScope: splitCSV(models), RPMLimit: rpm, RPMBurst: burst,
 	}
 	if expires.Valid {
 		t := expires.Time
@@ -190,7 +197,7 @@ ORDER BY CASE WHEN c.priority <= 0 THEN 1000000 ELSE c.priority END, c.id`
 		var ch Channel
 		var enc, modelsCSV string
 		if err := rows.Scan(&ch.ID, &ch.Protocol, &ch.BaseURL, &enc, &ch.Priority, &ch.Weight, &modelsCSV,
-			&ch.PoolID, &ch.TeamID, &ch.KeyTeamID); err != nil {
+			&ch.PoolID, &ch.TeamID, &ch.KeyTeamID, &ch.ProviderCode, &ch.ProviderRPM, &ch.ProviderBurst); err != nil {
 			return nil, err
 		}
 		plain, err := secret.Decrypt(p.EncryptKey, enc)

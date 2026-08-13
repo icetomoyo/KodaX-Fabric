@@ -53,6 +53,8 @@ func run() error {
 	}
 
 	h := hub.New(pg, nil)
+	h.StartProbes()
+	defer h.StopProbes()
 	mux := http.NewServeMux()
 	mux.Handle("/", h.Handler())
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
