@@ -21,11 +21,11 @@ KodaX Fabric 的核心模块是 **Token Hub**：企业 Token 统一接入。当�
 | `docs/UI_DESIGN.md` | 17 屏线框，是愿景，不是 0.1.0 范围 |
 | `docs/ProductDraft.md` | 早期设想（容量控制面叙事）。**不要当合同、不要当入门** |
 
-`FEATURE_LIST` 规则是一次只登当前要做的那一版；0.0.2–0.1.0 的能力是 goal 一口气收口的，没有对应 `docs/features/v0.0.x.md`。不要事后补一整套 feature 文档，除非用户明确要求走 feature-manager。
+`FEATURE_LIST` 规则是一次只登当前要做的那一版。0.0.2–0.1.0 曾随 goal 一口气收口；2026-08-13 已按用户要求事后回填 `docs/features/v0.0.2.md`–`v0.1.0.md` 与 FEATURE_002–009。新功能仍走 feature-manager，不要再无触发地补文档。
 
 ## 当前实现（2026-08-13）
 
-能力上已按 0.1.0 六条收口在跑，但 `FEATURE_LIST` 里 0.1.0 仍标 In Progress，也还没打 git tag。
+能力上已按 0.1.0 六条收口在跑。`FEATURE_LIST` 001–009 已标 Completed；git tag `v0.1.0` 存在（HEAD 已超前）。未再跑 `/smart-release`。
 
 - **网关** `cmd/gateway`：`POST /v1/chat/completions`、`POST /v1/messages` 零转换透传；同一把 `fab-` VK 两个端点都能用。
 - **模型**：VirtualKey → ChannelPool → Channel → ProviderKey。禁止调用方钥匙硬绑单渠。禁止跨协议 fallback。
@@ -85,7 +85,7 @@ Cursor / Claude Code 的 Base URL 填 `http://127.0.0.1:3000`（不要带 `/v1`�
 
 ## 建议的下一步（未做）
 
-- `FEATURE_LIST` 与 tag：能力已按 0.1.0 收口，文档/发版手续未做完。
+- 发版手续：tag `v0.1.0` 已在，未再跑 `/smart-release`；HEAD 已超前 tag。
 - 正式 `compose up` 仍依赖本机 `DEEPSEEK_API_KEY`（bootstrap），对「只重启网关」不挡，对干净环境首启会挡。
 - 操作台还可以继续打磨，但不要扩成 Fabric 全控制台。
 - 未提交的工作区改动（Go 网关、`web/`、embed dist）若还在，先确认要不要 commit。

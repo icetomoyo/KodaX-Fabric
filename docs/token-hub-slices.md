@@ -5,7 +5,7 @@
 - 产品行为：[PRD.md](PRD.md) §3（Token Hub）
 - 架构与已定技术决策：[HLD.md](HLD.md) §1、§3、附录 B（网关 Go、零转换、V1 单进程、PG + Redis）
 - 功能点与**手测依据**：[TokenHub_VISION.md](TokenHub_VISION.md)（从 PRD §3 抽出的 57 点 + 人话版）
-- 进度：[FEATURE_LIST.md](FEATURE_LIST.md)（当前只登记 0.0.1）
+- 进度：[FEATURE_LIST.md](FEATURE_LIST.md)（001–009 已按现网回填登记）
 
 现网 Node 试点按**对照实现**冻住，不是 HLD 基线。新序列从 `0.0.1` 按 HLD 实体 **VirtualKey → ChannelPool → Channel** 重开（本版池里可以只有一条渠）。
 
@@ -56,6 +56,7 @@
 
 ## 登记规则
 
-- `FEATURE_LIST` **一次只登当前要做的那一版**（现在是 001 / v0.0.1）。  
+- `FEATURE_LIST` **一次只登当前要做的那一版**。  
 - 上一版 Completed 后再 Add 下一版。  
-- 设计块六节由 `/to-spec`、`/to-tickets` 填，不要在 Add 时写实现。
+- 设计块六节由 `/to-spec`、`/to-tickets` 填，不要在 Add 时写实现。  
+- **例外（2026-08-13）**：0.0.2–0.1.0 曾随 goal 一口气收口、未逐版 Add。用户要求按 feature-manager 补登记后，002–009 按**现网实现**回填设计块并标 Completed。新功能仍走「一次一版」。
