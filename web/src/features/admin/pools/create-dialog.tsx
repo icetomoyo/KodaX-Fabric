@@ -28,26 +28,33 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { useCreatePool } from "@/lib/query/hooks";
+import { useCreatePool, useTeams } from "@/lib/query/hooks";
+import { POOL_GROUPS } from "@/lib/labels";
 import { errMsg } from "@/lib/error";
 
 const schema = z.object({
   name: z.string().trim().min(1, "请输入名称"),
   group_name: z.enum(["premium", "standard", "bulk"]),
+  team_id: z.string(),
 });
 type Values = z.infer<typeof schema>;
 
 export function CreatePoolDialog() {
   const [open, setOpen] = useState(false);
   const create = useCreatePool();
+  const teams = useTeams();
   const form = useForm<Values>({
     resolver: zodResolver(schema),
-    defaultValues: { name: "", group_name: "standard" },
+    defaultValues: { name: "", group_name: "standard", team_id: "0" },
   });
 
   async function onSubmit(v: Values) {
     try {
-      await create.mutateAsync(v);
+      await create.mutateAsync({
+        name: v.name,
+        group_name: v.group_name,
+        team_id: Number(v.team_id) || 0,
+      });
       toast.success("池已创建");
       form.reset();
       setOpen(false);
@@ -95,9 +102,36 @@ export function CreatePoolDialog() {
                       </SelectTrigger>
                     </FormControl>
                     <SelectContent>
-                      <SelectItem value="premium">premium</SelectItem>
-                      <SelectItem value="standard">standard</SelectItem>
-                      <SelectItem value="bulk">bulk</SelectItem>
+                      {POOL_GROUPS.map((g) => (
+                        <SelectItem key={g.value} value={g.value}>
+                          {g.label}（{g.hint}）
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name="team_id"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>团队</FormLabel>
+                  <Select onValueChange={field.onChange} defaultValue={field.value}>
+                    <FormControl>
+                      <SelectTrigger>
+                        <SelectValue placeholder="无归属" />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                      <SelectItem value="0">无归属</SelectItem>
+                      {(teams.data ?? []).map((t) => (
+                        <SelectItem key={t.id} value={String(t.id)}>
+                          {t.name}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                   <FormMessage />

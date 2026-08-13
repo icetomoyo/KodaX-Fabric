@@ -103,6 +103,11 @@ func (s *Server) mountConsole(mux *http.ServeMux) {
 	mux.HandleFunc("GET /console/v1/me/keys", s.withAuth(false, s.handleMyKeys))
 
 	mux.HandleFunc("GET /console/v1/overview", s.withAuth(true, s.handleOverview))
+	mux.HandleFunc("GET /console/v1/teams", s.withAuth(false, s.handleListTeams))
+	mux.HandleFunc("POST /console/v1/teams", s.withAuth(true, s.handleCreateTeam))
+	mux.HandleFunc("GET /console/v1/projects", s.withAuth(false, s.handleListProjects))
+	mux.HandleFunc("POST /console/v1/projects", s.withAuth(true, s.handleCreateProject))
+	mux.HandleFunc("GET /console/v1/route-decisions", s.withAuth(true, s.handleListRouteDecisions))
 	mux.HandleFunc("GET /console/v1/users", s.withAuth(true, s.handleListUsers))
 	mux.HandleFunc("POST /console/v1/users", s.withAuth(true, s.handleCreateUser))
 	mux.HandleFunc("PATCH /console/v1/users/{id}", s.withAuth(true, s.handlePatchUser))
@@ -113,6 +118,7 @@ func (s *Server) mountConsole(mux *http.ServeMux) {
 
 	mux.HandleFunc("GET /console/v1/pools", s.withAuth(false, s.handleListPools))
 	mux.HandleFunc("POST /console/v1/pools", s.withAuth(true, s.handleCreatePool))
+	mux.HandleFunc("PATCH /console/v1/pools/{id}", s.withAuth(true, s.handlePatchPool))
 
 	mux.HandleFunc("GET /console/v1/channels", s.withAuth(true, s.handleListChannels))
 	mux.HandleFunc("POST /console/v1/channels", s.withAuth(true, s.handleCreateChannel))

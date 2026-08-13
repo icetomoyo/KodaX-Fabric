@@ -11,6 +11,11 @@ export function providerColumns(
     { accessorKey: "id", header: "ID" },
     { accessorKey: "provider_code", header: "厂商" },
     {
+      accessorKey: "team_id",
+      header: "团队",
+      cell: ({ row }) => row.original.team_id || "—",
+    },
+    {
       accessorKey: "status",
       header: "状态",
       cell: ({ row }) => <StatusBadge status={row.original.status} />,

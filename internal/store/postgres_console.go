@@ -183,11 +183,17 @@ func (p *Postgres) Overview(ctx context.Context) (*Overview, error) {
 	if err := p.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM virtual_keys`).Scan(&ov.VirtualKeys); err != nil {
 		return nil, err
 	}
+	if err := p.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM teams`).Scan(&ov.Teams); err != nil {
+		return nil, err
+	}
+	if err := p.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM projects`).Scan(&ov.Projects); err != nil {
+		return nil, err
+	}
 	return ov, nil
 }
 
 func (p *Postgres) ListProviderKeys(ctx context.Context) ([]ProviderKeyView, error) {
-	rows, err := p.DB.QueryContext(ctx, `SELECT id, provider_code, status FROM provider_keys ORDER BY id`)
+	rows, err := p.DB.QueryContext(ctx, `SELECT id, provider_code, status, COALESCE(team_id,0) FROM provider_keys ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
@@ -195,7 +201,7 @@ func (p *Postgres) ListProviderKeys(ctx context.Context) ([]ProviderKeyView, err
 	var out []ProviderKeyView
 	for rows.Next() {
 		var r ProviderKeyView
-		if err := rows.Scan(&r.ID, &r.ProviderCode, &r.Status); err != nil {
+		if err := rows.Scan(&r.ID, &r.ProviderCode, &r.Status, &r.TeamID); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
@@ -217,12 +223,12 @@ func (p *Postgres) CreateProviderKey(ctx context.Context, in ProviderKeyCreate) 
 	}
 	var id int64
 	if err := p.DB.QueryRowContext(ctx, `
-INSERT INTO provider_keys (provider_code, secret_encrypted, status)
-VALUES ($1, $2, 'active') RETURNING id
-`, code, enc).Scan(&id); err != nil {
+INSERT INTO provider_keys (provider_code, secret_encrypted, status, team_id)
+VALUES ($1, $2, 'active', $3) RETURNING id
+`, code, enc, in.TeamID).Scan(&id); err != nil {
 		return nil, err
 	}
-	return &ProviderKeyView{ID: id, ProviderCode: code, Status: StatusActive}, nil
+	return &ProviderKeyView{ID: id, ProviderCode: code, Status: StatusActive, TeamID: in.TeamID}, nil
 }
 
 func (p *Postgres) UpdateProviderKey(ctx context.Context, id int64, in ProviderKeyUpdate) (*ProviderKeyView, error) {
@@ -240,8 +246,18 @@ func (p *Postgres) UpdateProviderKey(ctx context.Context, id int64, in ProviderK
 			return nil, ErrNotFound
 		}
 	}
+	if in.TeamID != nil {
+		res, err := p.DB.ExecContext(ctx, `UPDATE provider_keys SET team_id=$2 WHERE id=$1`, id, *in.TeamID)
+		if err != nil {
+			return nil, err
+		}
+		n, _ := res.RowsAffected()
+		if n == 0 {
+			return nil, ErrNotFound
+		}
+	}
 	var r ProviderKeyView
-	err := p.DB.QueryRowContext(ctx, `SELECT id, provider_code, status FROM provider_keys WHERE id=$1`, id).Scan(&r.ID, &r.ProviderCode, &r.Status)
+	err := p.DB.QueryRowContext(ctx, `SELECT id, provider_code, status, COALESCE(team_id,0) FROM provider_keys WHERE id=$1`, id).Scan(&r.ID, &r.ProviderCode, &r.Status, &r.TeamID)
 	if err == sql.ErrNoRows {
 		return nil, ErrNotFound
 	}
@@ -249,7 +265,7 @@ func (p *Postgres) UpdateProviderKey(ctx context.Context, id int64, in ProviderK
 }
 
 func (p *Postgres) ListPools(ctx context.Context) ([]PoolView, error) {
-	rows, err := p.DB.QueryContext(ctx, `SELECT id, name, group_name FROM channel_pools ORDER BY id`)
+	rows, err := p.DB.QueryContext(ctx, `SELECT id, name, group_name, COALESCE(team_id,0) FROM channel_pools ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
@@ -257,7 +273,7 @@ func (p *Postgres) ListPools(ctx context.Context) ([]PoolView, error) {
 	var out []PoolView
 	for rows.Next() {
 		var r PoolView
-		if err := rows.Scan(&r.ID, &r.Name, &r.GroupName); err != nil {
+		if err := rows.Scan(&r.ID, &r.Name, &r.GroupName, &r.TeamID); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
@@ -276,11 +292,47 @@ func (p *Postgres) CreatePool(ctx context.Context, in PoolCreate) (*PoolView, er
 	}
 	var id int64
 	if err := p.DB.QueryRowContext(ctx, `
-INSERT INTO channel_pools (name, group_name) VALUES ($1, $2) RETURNING id
-`, name, g).Scan(&id); err != nil {
+INSERT INTO channel_pools (name, group_name, team_id) VALUES ($1, $2, $3) RETURNING id
+`, name, g, in.TeamID).Scan(&id); err != nil {
 		return nil, err
 	}
-	return &PoolView{ID: id, Name: name, GroupName: g}, nil
+	return &PoolView{ID: id, Name: name, GroupName: g, TeamID: in.TeamID}, nil
+}
+
+func (p *Postgres) UpdatePool(ctx context.Context, id int64, in PoolUpdate) (*PoolView, error) {
+	var r PoolView
+	err := p.DB.QueryRowContext(ctx, `
+SELECT id, name, group_name, COALESCE(team_id,0) FROM channel_pools WHERE id=$1
+`, id).Scan(&r.ID, &r.Name, &r.GroupName, &r.TeamID)
+	if err == sql.ErrNoRows {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if in.Name != nil {
+		n := strings.TrimSpace(*in.Name)
+		if n == "" {
+			return nil, ErrInvalid
+		}
+		r.Name = n
+	}
+	if in.GroupName != nil {
+		g := NormalizeGroup(*in.GroupName)
+		if g == "" {
+			return nil, ErrInvalid
+		}
+		r.GroupName = g
+	}
+	if in.TeamID != nil {
+		r.TeamID = *in.TeamID
+	}
+	if _, err := p.DB.ExecContext(ctx, `
+UPDATE channel_pools SET name=$2, group_name=$3, team_id=$4 WHERE id=$1
+`, id, r.Name, r.GroupName, r.TeamID); err != nil {
+		return nil, err
+	}
+	return &r, nil
 }
 
 func (p *Postgres) ListChannels(ctx context.Context) ([]ChannelView, error) {
@@ -356,7 +408,7 @@ SELECT id, pool_id, provider_key_id, protocol, base_url, status FROM channels WH
 
 func (p *Postgres) ListVirtualKeys(ctx context.Context, ownerID int64) ([]VirtualKeyView, error) {
 	q := `
-SELECT id, pool_id, COALESCE(owner_id,0), status, key_prefix FROM virtual_keys
+SELECT id, pool_id, COALESCE(owner_id,0), COALESCE(project_id,0), status, key_prefix FROM virtual_keys
 `
 	var args []any
 	if ownerID > 0 {
@@ -372,7 +424,7 @@ SELECT id, pool_id, COALESCE(owner_id,0), status, key_prefix FROM virtual_keys
 	var out []VirtualKeyView
 	for rows.Next() {
 		var r VirtualKeyView
-		if err := rows.Scan(&r.ID, &r.PoolID, &r.OwnerID, &r.Status, &r.KeyPrefix); err != nil {
+		if err := rows.Scan(&r.ID, &r.PoolID, &r.OwnerID, &r.ProjectID, &r.Status, &r.KeyPrefix); err != nil {
 			return nil, err
 		}
 		r.KeyMasked = MaskPrefix(r.KeyPrefix)
@@ -395,14 +447,14 @@ func (p *Postgres) CreateVirtualKey(ctx context.Context, in VirtualKeyCreate) (*
 	}
 	var id int64
 	err := p.DB.QueryRowContext(ctx, `
-INSERT INTO virtual_keys (key_hash, key_prefix, pool_id, status, owner_id)
-VALUES ($1,$2,$3,'active',$4) RETURNING id
-`, secret.HashVK(raw), prefix, in.PoolID, owner).Scan(&id)
+INSERT INTO virtual_keys (key_hash, key_prefix, pool_id, status, owner_id, project_id)
+VALUES ($1,$2,$3,'active',$4,$5) RETURNING id
+`, secret.HashVK(raw), prefix, in.PoolID, owner, in.ProjectID).Scan(&id)
 	if err != nil {
 		return nil, ErrInvalid
 	}
 	view := VirtualKeyView{
-		ID: id, PoolID: in.PoolID, OwnerID: in.OwnerID,
+		ID: id, PoolID: in.PoolID, OwnerID: in.OwnerID, ProjectID: in.ProjectID,
 		Status: StatusActive, KeyPrefix: prefix, KeyMasked: MaskPrefix(prefix),
 	}
 	return &VirtualKeyCreated{VirtualKeyView: view, Secret: raw}, nil
@@ -411,8 +463,8 @@ VALUES ($1,$2,$3,'active',$4) RETURNING id
 func (p *Postgres) UpdateVirtualKey(ctx context.Context, id int64, in VirtualKeyUpdate) (*VirtualKeyView, error) {
 	var r VirtualKeyView
 	err := p.DB.QueryRowContext(ctx, `
-SELECT id, pool_id, COALESCE(owner_id,0), status, key_prefix FROM virtual_keys WHERE id=$1
-`, id).Scan(&r.ID, &r.PoolID, &r.OwnerID, &r.Status, &r.KeyPrefix)
+SELECT id, pool_id, COALESCE(owner_id,0), COALESCE(project_id,0), status, key_prefix FROM virtual_keys WHERE id=$1
+`, id).Scan(&r.ID, &r.PoolID, &r.OwnerID, &r.ProjectID, &r.Status, &r.KeyPrefix)
 	if err == sql.ErrNoRows {
 		return nil, ErrNotFound
 	}
@@ -432,15 +484,102 @@ SELECT id, pool_id, COALESCE(owner_id,0), status, key_prefix FROM virtual_keys W
 	if in.PoolID != nil {
 		r.PoolID = *in.PoolID
 	}
+	if in.ProjectID != nil {
+		r.ProjectID = *in.ProjectID
+	}
 	var owner any
 	if r.OwnerID > 0 {
 		owner = r.OwnerID
 	}
 	if _, err := p.DB.ExecContext(ctx, `
-UPDATE virtual_keys SET status=$2, owner_id=$3, pool_id=$4 WHERE id=$1
-`, id, r.Status, owner, r.PoolID); err != nil {
+UPDATE virtual_keys SET status=$2, owner_id=$3, pool_id=$4, project_id=$5 WHERE id=$1
+`, id, r.Status, owner, r.PoolID, r.ProjectID); err != nil {
 		return nil, err
 	}
 	r.KeyMasked = MaskPrefix(r.KeyPrefix)
 	return &r, nil
+}
+
+func (p *Postgres) ListTeams(ctx context.Context) ([]TeamView, error) {
+	rows, err := p.DB.QueryContext(ctx, `SELECT id, name FROM teams ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []TeamView{}
+	for rows.Next() {
+		var r TeamView
+		if err := rows.Scan(&r.ID, &r.Name); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+func (p *Postgres) CreateTeam(ctx context.Context, in TeamCreate) (*TeamView, error) {
+	name := strings.TrimSpace(in.Name)
+	if name == "" {
+		return nil, ErrInvalid
+	}
+	var id int64
+	if err := p.DB.QueryRowContext(ctx, `INSERT INTO teams (name) VALUES ($1) RETURNING id`, name).Scan(&id); err != nil {
+		return nil, err
+	}
+	return &TeamView{ID: id, Name: name}, nil
+}
+
+func (p *Postgres) ListProjects(ctx context.Context) ([]ProjectView, error) {
+	rows, err := p.DB.QueryContext(ctx, `SELECT id, team_id, name FROM projects ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []ProjectView{}
+	for rows.Next() {
+		var r ProjectView
+		if err := rows.Scan(&r.ID, &r.TeamID, &r.Name); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+func (p *Postgres) CreateProject(ctx context.Context, in ProjectCreate) (*ProjectView, error) {
+	name := strings.TrimSpace(in.Name)
+	if name == "" || in.TeamID == 0 {
+		return nil, ErrInvalid
+	}
+	var id int64
+	if err := p.DB.QueryRowContext(ctx, `
+INSERT INTO projects (team_id, name) VALUES ($1, $2) RETURNING id
+`, in.TeamID, name).Scan(&id); err != nil {
+		return nil, ErrInvalid
+	}
+	return &ProjectView{ID: id, TeamID: in.TeamID, Name: name}, nil
+}
+
+func (p *Postgres) ListRouteDecisions(ctx context.Context, limit int) ([]RouteDecision, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 50
+	}
+	rows, err := p.DB.QueryContext(ctx, `
+SELECT request_id, COALESCE(channel_id,0), reason, fallback, COALESCE(pool_group,''), created_at
+FROM route_decisions ORDER BY id DESC LIMIT $1
+`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []RouteDecision{}
+	for rows.Next() {
+		var d RouteDecision
+		if err := rows.Scan(&d.RequestID, &d.ChannelID, &d.Reason, &d.Fallback, &d.PoolGroup, &d.CreatedAt); err != nil {
+			return nil, err
+		}
+		d.CreatedAt = d.CreatedAt.UTC()
+		out = append(out, d)
+	}
+	return out, rows.Err()
 }

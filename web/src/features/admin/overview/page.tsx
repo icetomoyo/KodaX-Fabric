@@ -16,11 +16,12 @@ export default function OverviewPage() {
           ))}
         </div>
       ) : ov.data ? (
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <Tile k="用户" v={ov.data.operators} />
           <Tile k="上游钥匙" v={`${ov.data.active_keys} 活 / ${ov.data.disabled_keys} 停`} />
           <Tile k="池 / 渠" v={`${ov.data.pools} / ${ov.data.channels}`} />
           <Tile k="虚拟钥匙" v={ov.data.virtual_keys} />
+          <Tile k="团队 / 项目" v={`${ov.data.teams ?? 0} / ${ov.data.projects ?? 0}`} />
         </div>
       ) : (
         <p className="text-sm text-muted-foreground">无法加载总览。</p>

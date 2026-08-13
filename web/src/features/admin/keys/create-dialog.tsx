@@ -29,12 +29,13 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { CopyText } from "@/components/shared/copy-text";
-import { useCreateVK, usePools, useUsers } from "@/lib/query/hooks";
+import { useCreateVK, usePools, useProjects, useUsers } from "@/lib/query/hooks";
 import { errMsg } from "@/lib/error";
 
 const schema = z.object({
   pool_id: z.string().min(1, "请选择池"),
   owner_id: z.string(),
+  project_id: z.string(),
 });
 type Values = z.infer<typeof schema>;
 
@@ -43,10 +44,11 @@ export function CreateKeyDialog() {
   const [once, setOnce] = useState("");
   const pools = usePools();
   const users = useUsers();
+  const projects = useProjects();
   const create = useCreateVK();
   const form = useForm<Values>({
     resolver: zodResolver(schema),
-    defaultValues: { pool_id: "", owner_id: "0" },
+    defaultValues: { pool_id: "", owner_id: "0", project_id: "0" },
   });
 
   function handleOpen(next: boolean) {
@@ -59,6 +61,7 @@ export function CreateKeyDialog() {
       const vk = await create.mutateAsync({
         pool_id: Number(v.pool_id),
         owner_id: Number(v.owner_id),
+        project_id: Number(v.project_id) || 0,
       });
       setOnce(vk.secret ?? "");
       toast.success("VK 已生成，明文只这一次");
@@ -135,6 +138,31 @@ export function CreateKeyDialog() {
                         {(users.data ?? []).map((u) => (
                           <SelectItem key={u.id} value={String(u.id)}>
                             {u.name || u.phone}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="project_id"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>项目</FormLabel>
+                    <Select onValueChange={field.onChange} defaultValue={field.value}>
+                      <FormControl>
+                        <SelectTrigger>
+                          <SelectValue placeholder="无项目" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        <SelectItem value="0">无项目</SelectItem>
+                        {(projects.data ?? []).map((p) => (
+                          <SelectItem key={p.id} value={String(p.id)}>
+                            {p.name}
                           </SelectItem>
                         ))}
                       </SelectContent>

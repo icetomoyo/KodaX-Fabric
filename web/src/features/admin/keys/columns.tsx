@@ -19,6 +19,11 @@ export function vkColumns(
     },
     { accessorKey: "pool_id", header: "池" },
     {
+      accessorKey: "project_id",
+      header: "项目",
+      cell: ({ row }) => row.original.project_id || "—",
+    },
+    {
       accessorKey: "owner_id",
       header: "持有人",
       cell: ({ row }) => row.original.owner_id || "—",

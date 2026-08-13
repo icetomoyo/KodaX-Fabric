@@ -19,13 +19,14 @@ func (s *Server) handleCreateProviderKey(w http.ResponseWriter, r *http.Request,
 	var body struct {
 		ProviderCode string `json:"provider_code"`
 		Secret       string `json:"secret"`
+		TeamID       int64  `json:"team_id"`
 	}
 	if err := decodeJSON(r, &body); err != nil {
 		writeConsoleErr(w, http.StatusBadRequest, "invalid", "invalid json")
 		return
 	}
 	row, err := s.Console.CreateProviderKey(r.Context(), store.ProviderKeyCreate{
-		ProviderCode: body.ProviderCode, Secret: body.Secret,
+		ProviderCode: body.ProviderCode, Secret: body.Secret, TeamID: body.TeamID,
 	})
 	if err != nil {
 		writeStoreErr(w, err)
@@ -74,6 +75,25 @@ func (s *Server) handleCreatePool(w http.ResponseWriter, r *http.Request, _ *sto
 		return
 	}
 	writeJSON(w, http.StatusCreated, row)
+}
+
+func (s *Server) handlePatchPool(w http.ResponseWriter, r *http.Request, _ *store.Operator) {
+	id, err := pathID(r)
+	if err != nil {
+		writeConsoleErr(w, http.StatusBadRequest, "invalid", "bad id")
+		return
+	}
+	var body store.PoolUpdate
+	if err := decodeJSON(r, &body); err != nil {
+		writeConsoleErr(w, http.StatusBadRequest, "invalid", "invalid json")
+		return
+	}
+	row, err := s.Console.UpdatePool(r.Context(), id, body)
+	if err != nil {
+		writeStoreErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, row)
 }
 
 func (s *Server) handleListChannels(w http.ResponseWriter, r *http.Request, _ *store.Operator) {

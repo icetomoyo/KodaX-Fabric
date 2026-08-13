@@ -30,9 +30,25 @@ type Memory struct {
 	VKs    []VirtualKeyView
 	VKRaw  map[int64]string
 	nextVK int64
+
+	Teams    []TeamView
+	nextTeam int64
+	Projects []ProjectView
+	nextProj int64
+
+	Decisions []RouteDecision
 }
 
-func (m *Memory) SaveRouteDecision(_ context.Context, _ RouteDecision) error {
+func (m *Memory) SaveRouteDecision(_ context.Context, d RouteDecision) error {
+	if m == nil {
+		return nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if d.CreatedAt.IsZero() {
+		d.CreatedAt = time.Now().UTC()
+	}
+	m.Decisions = append(m.Decisions, d)
 	return nil
 }
 

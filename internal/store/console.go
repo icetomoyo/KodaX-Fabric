@@ -54,32 +54,65 @@ type Overview struct {
 	Pools        int `json:"pools"`
 	Channels     int `json:"channels"`
 	VirtualKeys  int `json:"virtual_keys"`
+	Teams        int `json:"teams"`
+	Projects     int `json:"projects"`
+}
+
+type TeamView struct {
+	ID   int64  `json:"id"`
+	Name string `json:"name"`
+}
+
+type TeamCreate struct {
+	Name string `json:"name"`
+}
+
+type ProjectView struct {
+	ID     int64  `json:"id"`
+	TeamID int64  `json:"team_id"`
+	Name   string `json:"name"`
+}
+
+type ProjectCreate struct {
+	TeamID int64  `json:"team_id"`
+	Name   string `json:"name"`
 }
 
 type ProviderKeyView struct {
 	ID           int64  `json:"id"`
 	ProviderCode string `json:"provider_code"`
 	Status       string `json:"status"`
+	TeamID       int64  `json:"team_id"`
 }
 
 type ProviderKeyCreate struct {
 	ProviderCode string
 	Secret       string
+	TeamID       int64 `json:"team_id"`
 }
 
 type ProviderKeyUpdate struct {
 	Status *string `json:"status"`
+	TeamID *int64  `json:"team_id"`
 }
 
 type PoolView struct {
 	ID        int64  `json:"id"`
 	Name      string `json:"name"`
 	GroupName string `json:"group_name"`
+	TeamID    int64  `json:"team_id"`
 }
 
 type PoolCreate struct {
 	Name      string `json:"name"`
 	GroupName string `json:"group_name"`
+	TeamID    int64  `json:"team_id"`
+}
+
+type PoolUpdate struct {
+	Name      *string `json:"name"`
+	GroupName *string `json:"group_name"`
+	TeamID    *int64  `json:"team_id"`
 }
 
 type ChannelView struct {
@@ -107,14 +140,16 @@ type VirtualKeyView struct {
 	ID        int64  `json:"id"`
 	PoolID    int64  `json:"pool_id"`
 	OwnerID   int64  `json:"owner_id"`
+	ProjectID int64  `json:"project_id"`
 	Status    string `json:"status"`
 	KeyPrefix string `json:"key_prefix"`
 	KeyMasked string `json:"key_masked"`
 }
 
 type VirtualKeyCreate struct {
-	PoolID  int64 `json:"pool_id"`
-	OwnerID int64 `json:"owner_id"`
+	PoolID    int64 `json:"pool_id"`
+	OwnerID   int64 `json:"owner_id"`
+	ProjectID int64 `json:"project_id"`
 }
 
 type VirtualKeyCreated struct {
@@ -123,9 +158,10 @@ type VirtualKeyCreated struct {
 }
 
 type VirtualKeyUpdate struct {
-	Status  *string `json:"status"`
-	OwnerID *int64  `json:"owner_id"`
-	PoolID  *int64  `json:"pool_id"`
+	Status    *string `json:"status"`
+	OwnerID   *int64  `json:"owner_id"`
+	PoolID    *int64  `json:"pool_id"`
+	ProjectID *int64  `json:"project_id"`
 }
 
 // Console is the operator-facing catalog. Relay tests only need Store.
@@ -138,12 +174,19 @@ type Console interface {
 
 	Overview(ctx context.Context) (*Overview, error)
 
+	ListTeams(ctx context.Context) ([]TeamView, error)
+	CreateTeam(ctx context.Context, in TeamCreate) (*TeamView, error)
+	ListProjects(ctx context.Context) ([]ProjectView, error)
+	CreateProject(ctx context.Context, in ProjectCreate) (*ProjectView, error)
+	ListRouteDecisions(ctx context.Context, limit int) ([]RouteDecision, error)
+
 	ListProviderKeys(ctx context.Context) ([]ProviderKeyView, error)
 	CreateProviderKey(ctx context.Context, in ProviderKeyCreate) (*ProviderKeyView, error)
 	UpdateProviderKey(ctx context.Context, id int64, in ProviderKeyUpdate) (*ProviderKeyView, error)
 
 	ListPools(ctx context.Context) ([]PoolView, error)
 	CreatePool(ctx context.Context, in PoolCreate) (*PoolView, error)
+	UpdatePool(ctx context.Context, id int64, in PoolUpdate) (*PoolView, error)
 
 	ListChannels(ctx context.Context) ([]ChannelView, error)
 	CreateChannel(ctx context.Context, in ChannelCreate) (*ChannelView, error)

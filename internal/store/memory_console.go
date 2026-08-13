@@ -155,6 +155,8 @@ func (m *Memory) Overview(_ context.Context) (*Overview, error) {
 		Pools:        len(m.Pools),
 		Channels:     len(m.Channels),
 		VirtualKeys:  len(m.VKs),
+		Teams:        len(m.Teams),
+		Projects:     len(m.Projects),
 	}
 	for _, k := range m.ProviderKeys {
 		if k.Status == StatusActive {
@@ -181,8 +183,11 @@ func (m *Memory) CreateProviderKey(_ context.Context, in ProviderKeyCreate) (*Pr
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if in.TeamID > 0 && !m.hasTeam(in.TeamID) {
+		return nil, ErrInvalid
+	}
 	m.nextPK++
-	row := ProviderKeyView{ID: m.nextPK, ProviderCode: code, Status: StatusActive}
+	row := ProviderKeyView{ID: m.nextPK, ProviderCode: code, Status: StatusActive, TeamID: in.TeamID}
 	m.ProviderKeys = append(m.ProviderKeys, row)
 	if m.PKSecrets == nil {
 		m.PKSecrets = map[int64]string{}
@@ -204,6 +209,12 @@ func (m *Memory) UpdateProviderKey(_ context.Context, id int64, in ProviderKeyUp
 				return nil, err
 			}
 			m.ProviderKeys[i].Status = st
+		}
+		if in.TeamID != nil {
+			if *in.TeamID > 0 && !m.hasTeam(*in.TeamID) {
+				return nil, ErrInvalid
+			}
+			m.ProviderKeys[i].TeamID = *in.TeamID
 		}
 		cp := m.ProviderKeys[i]
 		return &cp, nil
@@ -227,10 +238,46 @@ func (m *Memory) CreatePool(_ context.Context, in PoolCreate) (*PoolView, error)
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if in.TeamID > 0 && !m.hasTeam(in.TeamID) {
+		return nil, ErrInvalid
+	}
 	m.nextPo++
-	row := PoolView{ID: m.nextPo, Name: name, GroupName: g}
+	row := PoolView{ID: m.nextPo, Name: name, GroupName: g, TeamID: in.TeamID}
 	m.Pools = append(m.Pools, row)
 	return &row, nil
+}
+
+func (m *Memory) UpdatePool(_ context.Context, id int64, in PoolUpdate) (*PoolView, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for i := range m.Pools {
+		if m.Pools[i].ID != id {
+			continue
+		}
+		if in.Name != nil {
+			n := strings.TrimSpace(*in.Name)
+			if n == "" {
+				return nil, ErrInvalid
+			}
+			m.Pools[i].Name = n
+		}
+		if in.GroupName != nil {
+			g := NormalizeGroup(*in.GroupName)
+			if g == "" {
+				return nil, ErrInvalid
+			}
+			m.Pools[i].GroupName = g
+		}
+		if in.TeamID != nil {
+			if *in.TeamID > 0 && !m.hasTeam(*in.TeamID) {
+				return nil, ErrInvalid
+			}
+			m.Pools[i].TeamID = *in.TeamID
+		}
+		cp := m.Pools[i]
+		return &cp, nil
+	}
+	return nil, ErrNotFound
 }
 
 func (m *Memory) ListChannels(_ context.Context) ([]ChannelView, error) {
@@ -314,10 +361,18 @@ func (m *Memory) CreateVirtualKey(_ context.Context, in VirtualKeyCreate) (*Virt
 	if in.OwnerID > 0 && !m.hasOp(in.OwnerID) {
 		return nil, ErrInvalid
 	}
+	var teamID int64
+	if in.ProjectID > 0 {
+		pr := m.project(in.ProjectID)
+		if pr == nil {
+			return nil, ErrInvalid
+		}
+		teamID = pr.TeamID
+	}
 	raw, prefix := GenerateVK()
 	m.nextVK++
 	view := VirtualKeyView{
-		ID: m.nextVK, PoolID: in.PoolID, OwnerID: in.OwnerID,
+		ID: m.nextVK, PoolID: in.PoolID, OwnerID: in.OwnerID, ProjectID: in.ProjectID,
 		Status: StatusActive, KeyPrefix: prefix, KeyMasked: MaskPrefix(prefix),
 	}
 	m.VKs = append(m.VKs, view)
@@ -328,7 +383,7 @@ func (m *Memory) CreateVirtualKey(_ context.Context, in VirtualKeyCreate) (*Virt
 	if m.ByRawKey == nil {
 		m.ByRawKey = map[string]*ResolvedVK{}
 	}
-	m.ByRawKey[raw] = &ResolvedVK{VirtualKeyID: view.ID, PoolID: view.PoolID}
+	m.ByRawKey[raw] = &ResolvedVK{VirtualKeyID: view.ID, PoolID: view.PoolID, ProjectID: in.ProjectID, TeamID: teamID}
 	return &VirtualKeyCreated{VirtualKeyView: view, Secret: raw}, nil
 }
 
@@ -357,6 +412,12 @@ func (m *Memory) UpdateVirtualKey(_ context.Context, id int64, in VirtualKeyUpda
 				return nil, ErrInvalid
 			}
 			m.VKs[i].PoolID = *in.PoolID
+		}
+		if in.ProjectID != nil {
+			if *in.ProjectID > 0 && m.project(*in.ProjectID) == nil {
+				return nil, ErrInvalid
+			}
+			m.VKs[i].ProjectID = *in.ProjectID
 		}
 		cp := m.VKs[i]
 		return &cp, nil
@@ -389,4 +450,88 @@ func (m *Memory) hasOp(id int64) bool {
 		}
 	}
 	return false
+}
+
+func (m *Memory) hasTeam(id int64) bool {
+	for _, t := range m.Teams {
+		if t.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *Memory) project(id int64) *ProjectView {
+	for i := range m.Projects {
+		if m.Projects[i].ID == id {
+			return &m.Projects[i]
+		}
+	}
+	return nil
+}
+
+func (m *Memory) ListTeams(_ context.Context) ([]TeamView, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]TeamView, len(m.Teams))
+	copy(out, m.Teams)
+	return out, nil
+}
+
+func (m *Memory) CreateTeam(_ context.Context, in TeamCreate) (*TeamView, error) {
+	name := strings.TrimSpace(in.Name)
+	if name == "" {
+		return nil, ErrInvalid
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.nextTeam++
+	row := TeamView{ID: m.nextTeam, Name: name}
+	m.Teams = append(m.Teams, row)
+	return &row, nil
+}
+
+func (m *Memory) ListProjects(_ context.Context) ([]ProjectView, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]ProjectView, len(m.Projects))
+	copy(out, m.Projects)
+	return out, nil
+}
+
+func (m *Memory) CreateProject(_ context.Context, in ProjectCreate) (*ProjectView, error) {
+	name := strings.TrimSpace(in.Name)
+	if name == "" || in.TeamID == 0 {
+		return nil, ErrInvalid
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !m.hasTeam(in.TeamID) {
+		return nil, ErrInvalid
+	}
+	m.nextProj++
+	row := ProjectView{ID: m.nextProj, TeamID: in.TeamID, Name: name}
+	m.Projects = append(m.Projects, row)
+	return &row, nil
+}
+
+func (m *Memory) ListRouteDecisions(_ context.Context, limit int) ([]RouteDecision, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if limit <= 0 || limit > 100 {
+		limit = 50
+	}
+	n := len(m.Decisions)
+	if n == 0 {
+		return []RouteDecision{}, nil
+	}
+	start := n - limit
+	if start < 0 {
+		start = 0
+	}
+	out := make([]RouteDecision, n-start)
+	for i, d := range m.Decisions[start:] {
+		out[len(out)-1-i] = d
+	}
+	return out, nil
 }

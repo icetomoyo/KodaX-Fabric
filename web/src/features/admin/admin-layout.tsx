@@ -1,5 +1,15 @@
 import { NavLink, Link, Outlet } from "react-router-dom";
-import { Activity, KeyRound, Layers, Server, Users, Waypoints, LogOut } from "lucide-react";
+import {
+  Activity,
+  Building2,
+  KeyRound,
+  Layers,
+  LogOut,
+  ScrollText,
+  Server,
+  Users,
+  Waypoints,
+} from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { useHealth } from "@/lib/query/hooks";
 import { cn } from "@/lib/utils";
@@ -11,6 +21,8 @@ const nav = [
   { to: "/admin/pools", label: "渠道池", icon: Layers },
   { to: "/admin/channels", label: "渠道", icon: Waypoints },
   { to: "/admin/keys", label: "虚拟钥匙", icon: KeyRound },
+  { to: "/admin/org", label: "团队项目", icon: Building2 },
+  { to: "/admin/audit", label: "路由审计", icon: ScrollText },
 ];
 
 export default function AdminLayout() {

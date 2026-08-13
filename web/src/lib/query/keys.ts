@@ -15,5 +15,8 @@ export const qk = {
     pools: () => [...qk.admin.all, "pools"] as const,
     channels: () => [...qk.admin.all, "channels"] as const,
     virtualKeys: () => [...qk.admin.all, "virtual-keys"] as const,
+    teams: () => [...qk.admin.all, "teams"] as const,
+    projects: () => [...qk.admin.all, "projects"] as const,
+    routeDecisions: () => [...qk.admin.all, "route-decisions"] as const,
   },
 };

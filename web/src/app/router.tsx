@@ -10,6 +10,8 @@ const ProvidersPage = lazy(() => import("@/features/admin/providers/page"));
 const PoolsPage = lazy(() => import("@/features/admin/pools/page"));
 const ChannelsPage = lazy(() => import("@/features/admin/channels/page"));
 const KeysPage = lazy(() => import("@/features/admin/keys/page"));
+const OrgPage = lazy(() => import("@/features/admin/org/page"));
+const AuditPage = lazy(() => import("@/features/admin/audit/page"));
 const UserPage = lazy(() => import("@/features/user/user-page"));
 
 function ChunkLoader() {
@@ -39,6 +41,8 @@ export function AppRouter() {
             <Route path="pools" element={<PoolsPage />} />
             <Route path="channels" element={<ChannelsPage />} />
             <Route path="keys" element={<KeysPage />} />
+            <Route path="org" element={<OrgPage />} />
+            <Route path="audit" element={<AuditPage />} />
           </Route>
         </Route>
 

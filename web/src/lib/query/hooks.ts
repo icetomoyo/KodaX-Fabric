@@ -72,6 +72,27 @@ export function useVirtualKeys() {
     select: (d) => d.virtual_keys ?? [],
   });
 }
+export function useTeams() {
+  return useQuery({
+    queryKey: qk.admin.teams(),
+    queryFn: adminApi.teams,
+    select: (d) => d.teams ?? [],
+  });
+}
+export function useProjects() {
+  return useQuery({
+    queryKey: qk.admin.projects(),
+    queryFn: adminApi.projects,
+    select: (d) => d.projects ?? [],
+  });
+}
+export function useRouteDecisions() {
+  return useQuery({
+    queryKey: qk.admin.routeDecisions(),
+    queryFn: adminApi.routeDecisions,
+    select: (d) => d.route_decisions ?? [],
+  });
+}
 
 /** Invalidate every admin list + overview after any catalog mutation. */
 function useInvalidateAdmin() {
@@ -109,6 +130,14 @@ export function usePatchProviderKey() {
 export function useCreatePool() {
   const invalidate = useInvalidateAdmin();
   return useMutation({ mutationFn: adminApi.createPool, onSuccess: invalidate });
+}
+export function useCreateTeam() {
+  const invalidate = useInvalidateAdmin();
+  return useMutation({ mutationFn: adminApi.createTeam, onSuccess: invalidate });
+}
+export function useCreateProject() {
+  const invalidate = useInvalidateAdmin();
+  return useMutation({ mutationFn: adminApi.createProject, onSuccess: invalidate });
 }
 export function useCreateChannel() {
   const invalidate = useInvalidateAdmin();

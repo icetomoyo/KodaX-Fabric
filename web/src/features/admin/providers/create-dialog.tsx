@@ -21,26 +21,39 @@ import {
   FormMessage,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
-import { useCreateProviderKey } from "@/lib/query/hooks";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { useCreateProviderKey, useTeams } from "@/lib/query/hooks";
 import { errMsg } from "@/lib/error";
 
 const schema = z.object({
   provider_code: z.string().trim().min(1, "请输入厂商代码"),
   secret: z.string().min(1, "请输入官方 Secret"),
+  team_id: z.string(),
 });
 type Values = z.infer<typeof schema>;
 
 export function CreateProviderDialog() {
   const [open, setOpen] = useState(false);
   const create = useCreateProviderKey();
+  const teams = useTeams();
   const form = useForm<Values>({
     resolver: zodResolver(schema),
-    defaultValues: { provider_code: "deepseek", secret: "" },
+    defaultValues: { provider_code: "deepseek", secret: "", team_id: "0" },
   });
 
   async function onSubmit(v: Values) {
     try {
-      await create.mutateAsync(v);
+      await create.mutateAsync({
+        provider_code: v.provider_code,
+        secret: v.secret,
+        team_id: Number(v.team_id) || 0,
+      });
       toast.success("官方 Key 已加密入库");
       form.reset({ provider_code: v.provider_code, secret: "" });
       setOpen(false);
@@ -84,6 +97,31 @@ export function CreateProviderDialog() {
                   <FormControl>
                     <Input type="password" placeholder="sk-…" {...field} />
                   </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name="team_id"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>团队</FormLabel>
+                  <Select onValueChange={field.onChange} defaultValue={field.value}>
+                    <FormControl>
+                      <SelectTrigger>
+                        <SelectValue placeholder="无归属" />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                      <SelectItem value="0">无归属</SelectItem>
+                      {(teams.data ?? []).map((t) => (
+                        <SelectItem key={t.id} value={String(t.id)}>
+                          {t.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                   <FormMessage />
                 </FormItem>
               )}

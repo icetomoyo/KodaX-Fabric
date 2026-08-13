@@ -233,6 +233,105 @@ func TestCreateVKPlaintextOnce(t *testing.T) {
 	}
 }
 
+func TestTeamProjectBindOnCatalog(t *testing.T) {
+	ts, _, c := newConsole(t)
+	_ = readBody(t, login(t, c, ts.URL, "18612243416", "Hz@123456"))
+
+	teamResp, err := c.Post(ts.URL+"/console/v1/teams", "application/json", strings.NewReader(`{"name":"研发"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	traw := readBody(t, teamResp)
+	if teamResp.StatusCode != 201 {
+		t.Fatalf("team %d %s", teamResp.StatusCode, traw)
+	}
+	var team store.TeamView
+	if err := json.Unmarshal([]byte(traw), &team); err != nil {
+		t.Fatal(err)
+	}
+
+	projResp, err := c.Post(ts.URL+"/console/v1/projects", "application/json", strings.NewReader(
+		`{"team_id":`+itoa(team.ID)+`,"name":"网关"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	praw := readBody(t, projResp)
+	if projResp.StatusCode != 201 {
+		t.Fatalf("project %d %s", projResp.StatusCode, praw)
+	}
+	var proj store.ProjectView
+	if err := json.Unmarshal([]byte(praw), &proj); err != nil {
+		t.Fatal(err)
+	}
+
+	poolResp, err := c.Post(ts.URL+"/console/v1/pools", "application/json", strings.NewReader(
+		`{"name":"vip","group_name":"premium","team_id":`+itoa(team.ID)+`}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	poolRaw := readBody(t, poolResp)
+	if poolResp.StatusCode != 201 || !strings.Contains(poolRaw, `"team_id":`+itoa(team.ID)) {
+		t.Fatalf("pool %d %s", poolResp.StatusCode, poolRaw)
+	}
+	var pool store.PoolView
+	if err := json.Unmarshal([]byte(poolRaw), &pool); err != nil {
+		t.Fatal(err)
+	}
+
+	pkResp, err := c.Post(ts.URL+"/console/v1/provider-keys", "application/json", strings.NewReader(
+		`{"provider_code":"openai","secret":"sk-team-a","team_id":`+itoa(team.ID)+`}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pkRaw := readBody(t, pkResp)
+	if pkResp.StatusCode != 201 || strings.Contains(pkRaw, "sk-team-a") || !strings.Contains(pkRaw, `"team_id":`+itoa(team.ID)) {
+		t.Fatalf("pk %d %s", pkResp.StatusCode, pkRaw)
+	}
+
+	vkResp, err := c.Post(ts.URL+"/console/v1/virtual-keys", "application/json", strings.NewReader(
+		`{"pool_id":`+itoa(pool.ID)+`,"owner_id":2,"project_id":`+itoa(proj.ID)+`}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	vkRaw := readBody(t, vkResp)
+	if vkResp.StatusCode != 201 || !strings.Contains(vkRaw, `"project_id":`+itoa(proj.ID)) {
+		t.Fatalf("vk %d %s", vkResp.StatusCode, vkRaw)
+	}
+
+	dev := &http.Client{}
+	jar, _ := cookiejar.New(nil)
+	dev.Jar = jar
+	_ = readBody(t, login(t, dev, ts.URL, "13800138000", "Dev@123456"))
+	denied, err := dev.Post(ts.URL+"/console/v1/teams", "application/json", strings.NewReader(`{"name":"x"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if denied.StatusCode != 403 {
+		t.Fatalf("dev create team %d %s", denied.StatusCode, readBody(t, denied))
+	}
+}
+
+func TestRouteDecisionsListed(t *testing.T) {
+	ts, st, c := newConsole(t)
+	_ = readBody(t, login(t, c, ts.URL, "18612243416", "Hz@123456"))
+	if err := st.SaveRouteDecision(nil, store.RouteDecision{
+		RequestID: "req-1", ChannelID: 7, Reason: "priority", PoolGroup: "premium",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	resp, err := c.Get(ts.URL + "/console/v1/route-decisions")
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := readBody(t, resp)
+	if resp.StatusCode != 200 {
+		t.Fatalf("status %d %s", resp.StatusCode, raw)
+	}
+	if !strings.Contains(raw, "req-1") || !strings.Contains(raw, "premium") {
+		t.Fatalf("audit %s", raw)
+	}
+}
+
 func itoa(n int64) string {
 	return strconv.FormatInt(n, 10)
 }

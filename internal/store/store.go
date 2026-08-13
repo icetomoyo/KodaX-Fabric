@@ -37,11 +37,12 @@ type ResolvedVK struct {
 }
 
 type RouteDecision struct {
-	RequestID string
-	ChannelID int64
-	Reason    string
-	Fallback  bool
-	PoolGroup string
+	RequestID string    `json:"request_id"`
+	ChannelID int64     `json:"channel_id"`
+	Reason    string    `json:"reason"`
+	Fallback  bool      `json:"fallback"`
+	PoolGroup string    `json:"pool_group"`
+	CreatedAt time.Time `json:"created_at,omitempty"`
 }
 
 type Store interface {
