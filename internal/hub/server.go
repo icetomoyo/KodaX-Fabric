@@ -2,7 +2,6 @@ package hub
 
 import (
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -19,7 +18,9 @@ type Server struct {
 	UI       http.Handler
 	Client   *http.Client
 
-	Now func() time.Time
+	Now     func() time.Time
+	Aliases map[string]string
+	Audit   func(store.RouteDecision) error
 
 	mu sync.Mutex
 	rr map[string]uint64
@@ -100,40 +101,92 @@ func (s *Server) relay(w http.ResponseWriter, r *http.Request, protocol, upstrea
 		return
 	}
 
-	ch := s.nextChannel(resolved.VirtualKeyID, protocol, resolved.Channels)
-	if ch == nil {
-		writeUnavailable(w, protocol)
-		return
-	}
-
-	status, err := s.proxy(w, r, ch, upstreamPath, body, reqMeta.Stream)
-	if err != nil {
-		if !reqMeta.Stream {
-			writeJSON(w, http.StatusBadGateway, map[string]any{
-				"error": map[string]any{
-					"message": "upstream request failed",
-					"type":    "server_error",
-					"code":    "provider_error",
-				},
-			})
-		}
-		return
-	}
-	if status == http.StatusUnauthorized || status == http.StatusForbidden {
-		_ = s.Store.DisableProviderKey(r.Context(), ch.ID)
-	}
+	s.dispatch(w, r, resolved, protocol, upstreamPath, body, reqMeta.Stream, reqMeta.Model)
 }
 
-func (s *Server) nextChannel(vkID int64, protocol string, channels []store.Channel) *store.Channel {
-	cands := store.ChannelsForProtocol(channels, protocol)
-	if len(cands) == 0 {
-		return nil
+func (s *Server) dispatch(w http.ResponseWriter, r *http.Request, resolved *store.ResolvedVK, protocol, upstreamPath string, body []byte, stream bool, model string) {
+	rid := newRequestID()
+	models := []string{model}
+	if fb := s.aliasOf(protocol, model); fb != "" && fb != model {
+		models = append(models, fb)
 	}
-	key := fmt.Sprintf("%d:%s", vkID, protocol)
-	s.mu.Lock()
-	n := s.rr[key]
-	s.rr[key] = n + 1
-	s.mu.Unlock()
-	c := cands[int(n%uint64(len(cands)))]
-	return &c
+	var last upResult
+	var lastErr error
+	var lastCh *store.Channel
+	var lastModel string
+	var hops int
+
+	for mi, m := range models {
+		used := map[int64]bool{}
+		outBody := body
+		if mi > 0 {
+			outBody = rewriteJSONModel(body, m)
+		}
+		for attempt := 0; attempt < 3; attempt++ {
+			ch := s.pickChannel(resolved.VirtualKeyID, protocol, m, resolved.Channels, used)
+			if ch == nil {
+				break
+			}
+			used[ch.ID] = true
+			lastCh = ch
+			lastModel = m
+			hops++
+
+			if stream {
+				s.stampRoute(w, rid, ch, hops, mi > 0)
+				status, err := s.proxy(w, r, ch, upstreamPath, outBody, true)
+				if err != nil && attempt < 2 && s.pickChannel(resolved.VirtualKeyID, protocol, m, resolved.Channels, used) != nil {
+					lastErr = err
+					continue
+				}
+				if err != nil {
+					return
+				}
+				if status == http.StatusUnauthorized || status == http.StatusForbidden {
+					_ = s.Store.DisableProviderKey(r.Context(), ch.ID)
+				}
+				return
+			}
+
+			res, err := s.fetchUpstream(r, ch, upstreamPath, outBody)
+			if err != nil {
+				lastErr = err
+				if attempt < 2 {
+					continue
+				}
+				break
+			}
+			last = res
+			lastErr = nil
+			if res.status == http.StatusUnauthorized || res.status == http.StatusForbidden {
+				_ = s.Store.DisableProviderKey(r.Context(), ch.ID)
+			}
+			if retryable(res.status, nil) {
+				if attempt < 2 && s.pickChannel(resolved.VirtualKeyID, protocol, m, resolved.Channels, used) != nil {
+					continue
+				}
+				break
+			}
+			s.stampRoute(w, rid, ch, hops, mi > 0)
+			writeFetched(w, res)
+			return
+		}
+	}
+
+	s.stampRoute(w, rid, lastCh, hops, lastModel != model)
+	if last.status != 0 {
+		writeFetched(w, last)
+		return
+	}
+	if lastErr != nil && !stream {
+		writeJSON(w, http.StatusBadGateway, map[string]any{
+			"error": map[string]any{
+				"message": "upstream request failed",
+				"type":    "server_error",
+				"code":    "provider_error",
+			},
+		})
+		return
+	}
+	writeUnavailable(w, protocol)
 }

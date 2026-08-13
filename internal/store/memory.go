@@ -22,14 +22,18 @@ type Memory struct {
 	PKSecrets    map[int64]string
 	nextPK       int64
 
-	Pools   []PoolView
-	nextPo  int64
+	Pools    []PoolView
+	nextPo   int64
 	Channels []ChannelView
 	nextCh   int64
 
 	VKs    []VirtualKeyView
 	VKRaw  map[int64]string
 	nextVK int64
+}
+
+func (m *Memory) SaveRouteDecision(_ context.Context, _ RouteDecision) error {
+	return nil
 }
 
 func (m *Memory) ResolveVK(_ context.Context, rawKey string) (*ResolvedVK, error) {

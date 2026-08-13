@@ -1,13 +1,13 @@
 # FEATURE_LIST
 
-Last Updated: 2026-08-13 16:40
+Last Updated: 2026-08-13 17:40
 
 ## Version Info
 
 | 项 | 值 |
 |----|-----|
 | Current Release | **v0.0.3** |
-| Planned Version | — |
+| Planned Version | **v0.0.4** |
 
 ## Version Summary
 
@@ -16,7 +16,7 @@ Last Updated: 2026-08-13 16:40
 | v0.0.1 | Released | 1/1 | 最小双端点网关 |
 | v0.0.2 | Released | 1/1 | 上游钥匙柜 |
 | v0.0.3 | Released | 1/1 | 虚拟钥匙，一把两端口 |
-| v0.0.4 | — | — | 渠道池 + 简单路由 |
+| v0.0.4 | In Progress | 0/1 | 同协议多渠 failover |
 | v0.0.5 | — | — | VK 绑池 + 分组 |
 | v0.0.6 | — | — | 限流 + 熔断 |
 | v0.0.7 | — | — | 预算闸 + 流式估算 |
@@ -32,6 +32,7 @@ Last Updated: 2026-08-13 16:40
 | 001 | 最小双端点网关 | **Completed** | Critical | New | v0.0.1 | [设计](features/v0.0.1.md#feature_001) |
 | 002 | 上游钥匙柜 | **Completed** | Critical | New | v0.0.2 | [设计](features/v0.0.2.md#feature_002) |
 | 003 | 虚拟钥匙一把两端口 | **Completed** | Critical | New | v0.0.3 | [设计](features/v0.0.3.md#feature_003) |
+| 004 | 同协议多渠 failover | **InProgress** | Critical | New | v0.0.4 | [设计](features/v0.0.4.md#feature_004) |
 
 ## Feature Details
 
@@ -101,12 +102,34 @@ Token Hub 按 `docs/PRD.md` §3 从 0 重开的第一刀：OpenAI / Anthropic �
 
 **Spec**：已综合（T1，2026-08-13 用户确认「是」）。**Tickets**：#1–#3 **Done**。
 
+### FEATURE_004: 同协议多渠 failover
+
+| 字段 | 内容 |
+|------|------|
+| ID | 004 |
+| Title | 同协议多渠 failover |
+| Status | **InProgress** |
+| Priority | Critical |
+| Category | New |
+| Planned Version | v0.0.4 |
+| Released Version | — |
+| Created | 2026-08-13 |
+| Started | 2026-08-13 |
+| Completed | — |
+| Design | [docs/features/v0.0.4.md#feature_004](features/v0.0.4.md#feature_004) |
+
+**Description**
+
+同协议多渠：优先级主备、同级权重、5xx/429 换路、4xx 不换、模型别名 fallback、审计头回放。禁止跨协议。
+
+**Spec**：已综合（T1，2026-08-13 用户确认「是」）。**Tickets**：#1–#5 **Done**。
+
 ## Summary
 
 | 指标 | 数量 |
 |------|------|
-| Total | 3 |
+| Total | 4 |
 | Planned | 0 |
-| In Progress | 0 |
+| In Progress | 1 |
 | Completed | 3 |
-| Critical | 3 |
+| Critical | 4 |

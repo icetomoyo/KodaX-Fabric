@@ -334,9 +334,20 @@ func TestUpstream5xxDoesNotDisableProviderKey(t *testing.T) {
 		_, _ = io.Copy(io.Discard, resp.Body)
 		_ = resp.Body.Close()
 	}
-	want := []string{"sk-key-a", "sk-key-b", "sk-key-a", "sk-key-b"}
-	if strings.Join(got, ",") != strings.Join(want, ",") {
-		t.Fatalf("5xx should not drop key A: got %v want %v", got, want)
+	sawA, sawB := 0, 0
+	for _, k := range got {
+		if k == "sk-key-a" {
+			sawA++
+		}
+		if k == "sk-key-b" {
+			sawB++
+		}
+	}
+	if sawA < 2 {
+		t.Fatalf("5xx should not drop key A: got %v", got)
+	}
+	if sawB < 1 {
+		t.Fatalf("expected backup hits after 5xx: %v", got)
 	}
 }
 

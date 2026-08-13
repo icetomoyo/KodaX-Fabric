@@ -72,6 +72,17 @@ CREATE TABLE IF NOT EXISTS virtual_keys (
 ALTER TABLE virtual_keys ADD COLUMN IF NOT EXISTS owner_id bigint REFERENCES operators(id);
 ALTER TABLE virtual_keys ADD COLUMN IF NOT EXISTS expires_at timestamptz;
 ALTER TABLE virtual_keys ADD COLUMN IF NOT EXISTS model_scope text NOT NULL DEFAULT '';
+ALTER TABLE channels ADD COLUMN IF NOT EXISTS priority int NOT NULL DEFAULT 0;
+ALTER TABLE channels ADD COLUMN IF NOT EXISTS weight int NOT NULL DEFAULT 0;
+ALTER TABLE channels ADD COLUMN IF NOT EXISTS models text NOT NULL DEFAULT '';
+CREATE TABLE IF NOT EXISTS route_decisions (
+  id bigserial PRIMARY KEY,
+  request_id varchar(64) NOT NULL,
+  channel_id bigint,
+  reason varchar(32) NOT NULL,
+  fallback boolean NOT NULL DEFAULT false,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
 `
 	_, err := p.DB.ExecContext(ctx, ddl)
 	return err
@@ -96,7 +107,8 @@ SELECT id, pool_id, status, expires_at, COALESCE(model_scope,'') FROM virtual_ke
 		return nil, nil
 	}
 	rows, err := p.DB.QueryContext(ctx, `
-SELECT c.id, c.protocol, c.base_url, pk.secret_encrypted
+SELECT c.id, c.protocol, c.base_url, pk.secret_encrypted,
+       COALESCE(c.priority,0), COALESCE(c.weight,0), COALESCE(c.models,'')
 FROM channels c
 JOIN provider_keys pk ON pk.id = c.provider_key_id
 WHERE c.pool_id = $1 AND c.status = 'active' AND pk.status = 'active'
@@ -113,10 +125,11 @@ ORDER BY c.id
 	}
 	for rows.Next() {
 		var ch Channel
-		var enc string
-		if err := rows.Scan(&ch.ID, &ch.Protocol, &ch.BaseURL, &enc); err != nil {
+		var enc, models string
+		if err := rows.Scan(&ch.ID, &ch.Protocol, &ch.BaseURL, &enc, &ch.Priority, &ch.Weight, &models); err != nil {
 			return nil, err
 		}
+		ch.Models = parseModelScope(models)
 		plain, err := secret.Decrypt(p.EncryptKey, enc)
 		if err != nil {
 			return nil, fmt.Errorf("decrypt provider key: %w", err)
@@ -125,6 +138,14 @@ ORDER BY c.id
 		out.Channels = append(out.Channels, ch)
 	}
 	return out, rows.Err()
+}
+
+func (p *Postgres) SaveRouteDecision(ctx context.Context, d RouteDecision) error {
+	_, err := p.DB.ExecContext(ctx, `
+INSERT INTO route_decisions (request_id, channel_id, reason, fallback)
+VALUES ($1,$2,$3,$4)
+`, d.RequestID, d.ChannelID, d.Reason, d.Fallback)
+	return err
 }
 
 func (p *Postgres) DisableProviderKey(ctx context.Context, channelID int64) error {

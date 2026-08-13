@@ -17,6 +17,9 @@ type Channel struct {
 	BaseURL  string
 	Secret   string
 	Status   string
+	Priority int
+	Weight   int
+	Models   []string
 }
 
 type ResolvedVK struct {
@@ -27,9 +30,17 @@ type ResolvedVK struct {
 	Channels     []Channel
 }
 
+type RouteDecision struct {
+	RequestID string
+	ChannelID int64
+	Reason    string
+	Fallback  bool
+}
+
 type Store interface {
 	ResolveVK(ctx context.Context, rawKey string) (*ResolvedVK, error)
 	DisableProviderKey(ctx context.Context, channelID int64) error
+	SaveRouteDecision(ctx context.Context, d RouteDecision) error
 }
 
 func ModelAllowed(scope []string, model string) bool {
@@ -60,6 +71,32 @@ func parseModelScope(raw string) []string {
 		}
 	}
 	return out
+}
+
+func ChannelServes(c Channel, model string) bool {
+	if len(c.Models) == 0 {
+		return true
+	}
+	for _, m := range c.Models {
+		if m == model {
+			return true
+		}
+	}
+	return false
+}
+
+func PriorityRank(p int) int {
+	if p > 0 {
+		return p
+	}
+	return 1_000_000
+}
+
+func EffectiveWeight(w int) int {
+	if w <= 0 {
+		return 1
+	}
+	return w
 }
 
 func ChannelsForProtocol(channels []Channel, protocol string) []Channel {
