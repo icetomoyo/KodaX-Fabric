@@ -50,7 +50,7 @@ export function LoginPage() {
       <aside className="relative hidden overflow-hidden border-r border-border px-14 py-16 lg:flex lg:flex-col">
         <div className="absolute -left-24 top-24 h-72 w-72 rounded-full bg-ember-400/10 blur-3xl" />
         <p className="font-mono text-[11px] uppercase tracking-[0.32em] text-ember-400/90">
-          KodaX Fabric
+          KodaX-Fabric
         </p>
         <h1 className="mt-8 font-serif text-5xl leading-[1.1] tracking-tight">
           一把虚拟钥匙，
@@ -58,7 +58,7 @@ export function LoginPage() {
           管住所有上游。
         </h1>
         <p className="mt-6 max-w-md text-sm leading-7 text-muted-foreground">
-          Token Hub 把官方 Key 锁在网关里。员工只拿{" "}
+          KodaX-Fabric 把官方 Key 锁在网关里。员工只拿{" "}
           <span className="font-mono text-ember-300">fab-</span>{" "}
           钥匙；管理员在这里发卡、停用、看渠还活不活。
         </p>

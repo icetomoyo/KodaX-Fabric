@@ -55,7 +55,7 @@ export default function UserPage() {
         <div className="mx-auto flex max-w-5xl items-center justify-between px-6 py-4">
           <div>
             <p className="font-mono text-[10px] uppercase tracking-[0.28em] text-ember-400/80">
-              Token Hub
+              KodaX-Fabric
             </p>
             <h1 className="font-serif text-xl">工作台</h1>
           </div>

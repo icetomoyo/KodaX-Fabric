@@ -22,7 +22,7 @@ export default function AdminLayout() {
       <aside className="sticky top-0 flex h-screen w-56 shrink-0 flex-col border-r border-border bg-card/60 px-3 py-6">
         <div className="px-3">
           <p className="font-mono text-[10px] uppercase tracking-[0.28em] text-ember-400/80">
-            Token Hub
+            KodaX-Fabric
           </p>
           <div className="font-serif text-lg">编目</div>
         </div>
