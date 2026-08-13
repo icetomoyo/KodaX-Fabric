@@ -14,10 +14,11 @@ export default defineConfig({
     emptyOutDir: true,
   },
   server: {
+    port: 8080,
     proxy: {
-      "/api": "http://127.0.0.1:18080",
-      "/v1": "http://127.0.0.1:18080",
-      "/health": "http://127.0.0.1:18080",
+      "/api": "http://127.0.0.1:3000",
+      "/v1": "http://127.0.0.1:3000",
+      "/health": "http://127.0.0.1:3000",
     },
   },
   test: {

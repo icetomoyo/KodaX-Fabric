@@ -8,6 +8,7 @@ docker compose up --build
 
 - Admin operator (bootstrap): phone `18612243416` / password `Hz@123456`
 - Caller virtual key: `fab-local-bootstrap-01`
-- Origin: `http://127.0.0.1:18080`
+- API Origin: `http://127.0.0.1:3000`
+- 操作台: `http://127.0.0.1:8080`
 - `GET /health`
 - `POST /v1/chat/completions` with `Authorization: Bearer fab-local-bootstrap-01`

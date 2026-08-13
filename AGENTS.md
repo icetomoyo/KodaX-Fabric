@@ -42,7 +42,7 @@ KodaX Fabric 的核心模块是 **Token Hub**：企业 Token 统一接入。当�
 
 - **不要删** `internal/webui`：那是嵌产物和页面 handler，不是旧 HTML。旧 `static/admin.html` 已删除。
 - 改 UI：改 `web/src` → `cd web && npm test && npm run build` → 重建 gateway 镜像。
-- 开发时 Vite 反代 `127.0.0.1:18080`。Cookie 是 `th_session`，HttpOnly，SameSite=Lax。
+- 开发时 Vite 听 `8080`，反代 `127.0.0.1:3000`。Cookie 是 `th_session`，HttpOnly，SameSite=Lax。
 - 客户端只序列化现有 JSON：`web/src/lib/api.ts`。加字段先改 Go。
 
 ## 本机怎么跑
@@ -51,21 +51,22 @@ compose 项目名 `tokenhub-goal`，文件 `deploy/compose.yaml`。
 
 | 服务 | 宿主机端口 |
 |------|------------|
-| 网关 / 操作台 | **18080**（容器内 8080；本机 8080 常被占用） |
+| 网关 API | **3000**（容器内仍是 8080；可用 `TOKENHUB_API_PORT` 覆盖） |
+| 操作台 | **8080**（同一进程再映一份；可用 `TOKENHUB_WEB_PORT` 覆盖） |
 | Postgres | 15432 |
 | Redis | 16379 |
 
 ```sh
 # 健康
-curl -fsS http://127.0.0.1:18080/health
+curl -fsS http://127.0.0.1:3000/health
 
 # 改完代码后只重启网关（库已有种子时）
 docker compose -p tokenhub-goal -f deploy/compose.yaml up -d --build --no-deps gateway
 ```
 
-页面：<http://127.0.0.1:18080/>  管理 <http://127.0.0.1:18080/admin>  申请 <http://127.0.0.1:18080/me>  
+页面：<http://127.0.0.1:8080/>  管理 <http://127.0.0.1:8080/admin>  申请 <http://127.0.0.1:8080/me>  
 管理员：手机 `18612243416`，密码 `Hz@123456`。  
-Cursor / Claude Code 的 Base URL 填 `http://127.0.0.1:18080`（不要带 `/v1`）。
+Cursor / Claude Code 的 Base URL 填 `http://127.0.0.1:3000`（不要带 `/v1`）。
 
 网关进程要求环境变量 `DATABASE_URL` 与 `CREDENTIAL_ENCRYPT_KEY`（compose 里已写死一套本地值）。
 

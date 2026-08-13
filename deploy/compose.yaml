@@ -53,7 +53,9 @@ services:
       CREDENTIAL_ENCRYPT_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
       REDIS_URL: redis://redis:6379
     ports:
-      - "18080:8080"
+      # 同一进程；宿主机拆成 API 3000 / 操作台 8080。被占时用 TOKENHUB_*_PORT 覆盖。
+      - "${TOKENHUB_API_PORT:-3000}:8080"
+      - "${TOKENHUB_WEB_PORT:-8080}:8080"
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/health"]
       interval: 2s
