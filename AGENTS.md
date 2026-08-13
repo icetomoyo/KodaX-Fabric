@@ -2,6 +2,10 @@
 
 给后续会话的仓库事实。产品行为以 [docs/PRD.md](docs/PRD.md) §3 与 [docs/HLD.md](docs/HLD.md) 为准；切法以 [docs/token-hub-slices.md](docs/token-hub-slices.md) 为准。手测对照 [docs/TokenHub_VISION.md](docs/TokenHub_VISION.md) 人话版。
 
+## 回答风格
+
+少一些项目黑话，说人话，减少认知负担
+
 ## 这是什么
 
 KodaX Fabric 的核心模块是 **Token Hub**：企业 Token 统一接入。当前在分支 `token_hub` 上从 0 用 **Go 单进程**重写，目标是 **0.1.0 可独立部署**，供公司内部过渡使用（正式 Fabric 控制台尚未做）。
