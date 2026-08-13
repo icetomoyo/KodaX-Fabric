@@ -12,6 +12,7 @@ type Channel struct {
 	Protocol string
 	BaseURL  string
 	Secret   string
+	Status   string
 }
 
 type ResolvedVK struct {
@@ -22,14 +23,28 @@ type ResolvedVK struct {
 
 type Store interface {
 	ResolveVK(ctx context.Context, rawKey string) (*ResolvedVK, error)
+	DisableProviderKey(ctx context.Context, channelID int64) error
+}
+
+func ChannelsForProtocol(channels []Channel, protocol string) []Channel {
+	var out []Channel
+	for _, c := range channels {
+		if c.Protocol != protocol {
+			continue
+		}
+		if c.Status != "" && c.Status != "active" {
+			continue
+		}
+		out = append(out, c)
+	}
+	return out
 }
 
 func ChannelForProtocol(channels []Channel, protocol string) *Channel {
-	for i := range channels {
-		if channels[i].Protocol == protocol {
-			c := channels[i]
-			return &c
-		}
+	cs := ChannelsForProtocol(channels, protocol)
+	if len(cs) == 0 {
+		return nil
 	}
-	return nil
+	c := cs[0]
+	return &c
 }

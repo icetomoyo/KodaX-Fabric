@@ -9,11 +9,11 @@ import (
 	"kodax-fabric/internal/store"
 )
 
-func (s *Server) proxy(w http.ResponseWriter, r *http.Request, ch *store.Channel, path string, body []byte, stream bool) error {
+func (s *Server) proxy(w http.ResponseWriter, r *http.Request, ch *store.Channel, path string, body []byte, stream bool) (int, error) {
 	url := strings.TrimRight(ch.BaseURL, "/") + path
 	upReq, err := http.NewRequestWithContext(r.Context(), http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
-		return err
+		return 0, err
 	}
 	upReq.Header.Set("Content-Type", "application/json")
 	if ch.Protocol == store.ProtocolAnthropic {
@@ -28,7 +28,7 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request, ch *store.Channel
 
 	resp, err := s.Client.Do(upReq)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer resp.Body.Close()
 
@@ -62,7 +62,7 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request, ch *store.Channel
 			n, readErr := resp.Body.Read(buf)
 			if n > 0 {
 				if _, werr := w.Write(buf[:n]); werr != nil {
-					return werr
+					return resp.StatusCode, werr
 				}
 				if flusher != nil {
 					flusher.Flush()
@@ -70,12 +70,12 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request, ch *store.Channel
 			}
 			if readErr != nil {
 				if readErr == io.EOF {
-					return nil
+					return resp.StatusCode, nil
 				}
-				return readErr
+				return resp.StatusCode, readErr
 			}
 		}
 	}
 	_, err = io.Copy(w, resp.Body)
-	return err
+	return resp.StatusCode, err
 }

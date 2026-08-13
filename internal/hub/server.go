@@ -2,9 +2,11 @@ package hub
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 
 	"kodax-fabric/internal/store"
 )
@@ -12,13 +14,16 @@ import (
 type Server struct {
 	Store  store.Store
 	Client *http.Client
+
+	mu sync.Mutex
+	rr map[string]uint64
 }
 
 func New(st store.Store, client *http.Client) *Server {
 	if client == nil {
 		client = http.DefaultClient
 	}
-	return &Server{Store: st, Client: client}
+	return &Server{Store: st, Client: client, rr: map[string]uint64{}}
 }
 
 func (s *Server) Handler() http.Handler {
@@ -63,7 +68,7 @@ func (s *Server) relay(w http.ResponseWriter, r *http.Request, protocol, upstrea
 		writeUnauthorized(w, protocol)
 		return
 	}
-	ch := store.ChannelForProtocol(resolved.Channels, protocol)
+	ch := s.nextChannel(resolved.VirtualKeyID, protocol, resolved.Channels)
 	if ch == nil {
 		writeUnavailable(w, protocol)
 		return
@@ -79,7 +84,8 @@ func (s *Server) relay(w http.ResponseWriter, r *http.Request, protocol, upstrea
 	var flag streamFlag
 	_ = json.Unmarshal(body, &flag)
 
-	if err := s.proxy(w, r, ch, upstreamPath, body, flag.Stream); err != nil {
+	status, err := s.proxy(w, r, ch, upstreamPath, body, flag.Stream)
+	if err != nil {
 		if !flag.Stream {
 			writeJSON(w, http.StatusBadGateway, map[string]any{
 				"error": map[string]any{
@@ -89,5 +95,23 @@ func (s *Server) relay(w http.ResponseWriter, r *http.Request, protocol, upstrea
 				},
 			})
 		}
+		return
 	}
+	if status == http.StatusUnauthorized || status == http.StatusForbidden {
+		_ = s.Store.DisableProviderKey(r.Context(), ch.ID)
+	}
+}
+
+func (s *Server) nextChannel(vkID int64, protocol string, channels []store.Channel) *store.Channel {
+	cands := store.ChannelsForProtocol(channels, protocol)
+	if len(cands) == 0 {
+		return nil
+	}
+	key := fmt.Sprintf("%d:%s", vkID, protocol)
+	s.mu.Lock()
+	n := s.rr[key]
+	s.rr[key] = n + 1
+	s.mu.Unlock()
+	c := cands[int(n%uint64(len(cands)))]
+	return &c
 }

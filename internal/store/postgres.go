@@ -110,3 +110,11 @@ ORDER BY c.id
 	}
 	return out, rows.Err()
 }
+
+func (p *Postgres) DisableProviderKey(ctx context.Context, channelID int64) error {
+	_, err := p.DB.ExecContext(ctx, `
+UPDATE provider_keys SET status = 'disabled'
+WHERE id = (SELECT provider_key_id FROM channels WHERE id = $1)
+`, channelID)
+	return err
+}
