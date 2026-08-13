@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+	"time"
 
 	_ "github.com/lib/pq"
 
@@ -12,7 +13,7 @@ import (
 )
 
 type Postgres struct {
-	DB        *sql.DB
+	DB         *sql.DB
 	EncryptKey []byte
 }
 
@@ -72,6 +73,26 @@ CREATE TABLE IF NOT EXISTS virtual_keys (
 	for _, q := range []string{
 		`ALTER TABLE virtual_keys ADD COLUMN IF NOT EXISTS expires_at timestamptz`,
 		`ALTER TABLE virtual_keys ADD COLUMN IF NOT EXISTS model_scope text NOT NULL DEFAULT ''`,
+		`ALTER TABLE channels ADD COLUMN IF NOT EXISTS priority int NOT NULL DEFAULT 0`,
+		`ALTER TABLE channels ADD COLUMN IF NOT EXISTS weight int NOT NULL DEFAULT 100`,
+		`ALTER TABLE channels ADD COLUMN IF NOT EXISTS models text NOT NULL DEFAULT ''`,
+		`CREATE TABLE IF NOT EXISTS model_aliases (
+  alias varchar(128) PRIMARY KEY,
+  targets text NOT NULL
+)`,
+		`CREATE TABLE IF NOT EXISTS route_decisions (
+  id bigserial PRIMARY KEY,
+  virtual_key_id bigint,
+  protocol varchar(32) NOT NULL DEFAULT '',
+  requested_model text NOT NULL DEFAULT '',
+  upstream_model text NOT NULL DEFAULT '',
+  channel_id bigint,
+  tried_ids text NOT NULL DEFAULT '',
+  reason varchar(32) NOT NULL DEFAULT '',
+  fallback boolean NOT NULL DEFAULT false,
+  status int NOT NULL DEFAULT 0,
+  created_at timestamptz NOT NULL DEFAULT now()
+)`,
 	} {
 		if _, err := p.DB.ExecContext(ctx, q); err != nil {
 			return err
@@ -98,11 +119,11 @@ SELECT id, pool_id, status, expires_at, model_scope FROM virtual_keys WHERE key_
 		return nil, nil
 	}
 	rows, err := p.DB.QueryContext(ctx, `
-SELECT c.id, c.protocol, c.base_url, pk.secret_encrypted
+SELECT c.id, c.protocol, c.base_url, pk.secret_encrypted, c.priority, c.weight, c.models
 FROM channels c
 JOIN provider_keys pk ON pk.id = c.provider_key_id
 WHERE c.pool_id = $1 AND c.status = 'active' AND pk.status = 'active'
-ORDER BY c.id
+ORDER BY CASE WHEN c.priority <= 0 THEN 1000000 ELSE c.priority END, c.id
 `, poolID)
 	if err != nil {
 		return nil, err
@@ -115,8 +136,8 @@ ORDER BY c.id
 	}
 	for rows.Next() {
 		var ch Channel
-		var enc string
-		if err := rows.Scan(&ch.ID, &ch.Protocol, &ch.BaseURL, &enc); err != nil {
+		var enc, modelsCSV string
+		if err := rows.Scan(&ch.ID, &ch.Protocol, &ch.BaseURL, &enc, &ch.Priority, &ch.Weight, &modelsCSV); err != nil {
 			return nil, err
 		}
 		plain, err := secret.Decrypt(p.EncryptKey, enc)
@@ -124,6 +145,7 @@ ORDER BY c.id
 			return nil, fmt.Errorf("decrypt provider key: %w", err)
 		}
 		ch.Secret = plain
+		ch.Models = splitCSV(modelsCSV)
 		out.Channels = append(out.Channels, ch)
 	}
 	return out, rows.Err()
@@ -135,6 +157,91 @@ UPDATE provider_keys SET status = 'disabled'
 WHERE id = (SELECT provider_key_id FROM channels WHERE id = $1)
 `, channelID)
 	return err
+}
+
+func (p *Postgres) LookupAlias(ctx context.Context, model string) ([]string, error) {
+	if model == "" {
+		return nil, nil
+	}
+	var targets string
+	err := p.DB.QueryRowContext(ctx, `SELECT targets FROM model_aliases WHERE alias = $1`, model).Scan(&targets)
+	if err == sql.ErrNoRows {
+		return []string{model}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	out := splitCSV(targets)
+	if len(out) == 0 {
+		return []string{model}, nil
+	}
+	return out, nil
+}
+
+func (p *Postgres) RecordRoute(ctx context.Context, d RouteDecision) error {
+	tried := make([]string, 0, len(d.Tried))
+	for _, id := range d.Tried {
+		tried = append(tried, fmt.Sprintf("%d", id))
+	}
+	_, err := p.DB.ExecContext(ctx, `
+INSERT INTO route_decisions (
+  virtual_key_id, protocol, requested_model, upstream_model,
+  channel_id, tried_ids, reason, fallback, status, created_at
+) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,COALESCE($10, now()))
+`, d.VirtualKeyID, d.Protocol, d.RequestedModel, d.UpstreamModel,
+		d.ChannelID, strings.Join(tried, ","), d.Reason, d.Fallback, d.Status, nullTime(d.At))
+	return err
+}
+
+func (p *Postgres) RecentRoutes(ctx context.Context, vkID int64) ([]RouteDecision, error) {
+	rows, err := p.DB.QueryContext(ctx, `
+SELECT virtual_key_id, protocol, requested_model, upstream_model, channel_id,
+       tried_ids, reason, fallback, status, created_at
+FROM route_decisions
+WHERE ($1 = 0 OR virtual_key_id = $1)
+ORDER BY id
+`, vkID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []RouteDecision
+	for rows.Next() {
+		var d RouteDecision
+		var tried string
+		var at time.Time
+		if err := rows.Scan(&d.VirtualKeyID, &d.Protocol, &d.RequestedModel, &d.UpstreamModel,
+			&d.ChannelID, &tried, &d.Reason, &d.Fallback, &d.Status, &at); err != nil {
+			return nil, err
+		}
+		d.Tried = parseIDs(tried)
+		d.At = at
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
+func nullTime(t time.Time) any {
+	if t.IsZero() {
+		return nil
+	}
+	return t
+}
+
+func parseIDs(s string) []int64 {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil
+	}
+	var out []int64
+	for _, p := range strings.Split(s, ",") {
+		p = strings.TrimSpace(p)
+		var id int64
+		if _, err := fmt.Sscanf(p, "%d", &id); err == nil && id != 0 {
+			out = append(out, id)
+		}
+	}
+	return out
 }
 
 func splitCSV(s string) []string {

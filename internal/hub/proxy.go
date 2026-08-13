@@ -9,11 +9,18 @@ import (
 	"kodax-fabric/internal/store"
 )
 
-func (s *Server) proxy(w http.ResponseWriter, r *http.Request, ch *store.Channel, path string, body []byte, stream bool) (int, error) {
+func retryableStatus(status int, err error) bool {
+	if err != nil {
+		return true
+	}
+	return status == http.StatusTooManyRequests || status >= 500
+}
+
+func (s *Server) fetchUpstream(r *http.Request, ch *store.Channel, path string, body []byte) (*http.Response, error) {
 	url := strings.TrimRight(ch.BaseURL, "/") + path
 	upReq, err := http.NewRequestWithContext(r.Context(), http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	upReq.Header.Set("Content-Type", "application/json")
 	if ch.Protocol == store.ProtocolAnthropic {
@@ -25,35 +32,29 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request, ch *store.Channel
 	if v := r.Header.Get("Accept"); v != "" {
 		upReq.Header.Set("Accept", v)
 	}
+	return s.Client.Do(upReq)
+}
 
-	resp, err := s.Client.Do(upReq)
-	if err != nil {
-		return 0, err
-	}
-	defer resp.Body.Close()
-
+func copyPassHeaders(w http.ResponseWriter, resp *http.Response) {
 	for k, vals := range resp.Header {
 		lk := strings.ToLower(k)
-		if lk == "x-ratelimit-limit-requests" ||
-			lk == "x-ratelimit-remaining-requests" ||
-			lk == "x-ratelimit-limit-tokens" ||
-			lk == "x-ratelimit-remaining-tokens" ||
-			lk == "x-ratelimit-reset-requests" ||
-			lk == "x-ratelimit-reset-tokens" ||
-			strings.HasPrefix(lk, "x-ratelimit-") ||
+		if strings.HasPrefix(lk, "x-ratelimit-") ||
 			lk == "retry-after" ||
-			lk == "anthropic-ratelimit-requests-limit" ||
-			lk == "anthropic-ratelimit-requests-remaining" ||
+			strings.HasPrefix(lk, "anthropic-ratelimit-") ||
 			lk == "content-type" {
 			for _, v := range vals {
 				w.Header().Add(k, v)
 			}
 		}
 	}
+}
+
+func writeUpstream(w http.ResponseWriter, resp *http.Response, stream bool) (int, error) {
+	defer resp.Body.Close()
+	copyPassHeaders(w, resp)
 	if stream && w.Header().Get("Content-Type") == "" {
 		w.Header().Set("Content-Type", "text/event-stream")
 	}
-
 	w.WriteHeader(resp.StatusCode)
 	if stream {
 		flusher, _ := w.(http.Flusher)
@@ -76,6 +77,14 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request, ch *store.Channel
 			}
 		}
 	}
-	_, err = io.Copy(w, resp.Body)
+	_, err := io.Copy(w, resp.Body)
 	return resp.StatusCode, err
+}
+
+func discardUpstream(resp *http.Response) {
+	if resp == nil {
+		return
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	_ = resp.Body.Close()
 }
