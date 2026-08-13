@@ -37,33 +37,44 @@ const schema = z.object({
 });
 type Values = z.infer<typeof schema>;
 
-export function CreateProjectDialog() {
+export function CreateProjectDialog({ teamId }: { teamId?: number }) {
   const [open, setOpen] = useState(false);
   const teams = useTeams();
   const create = useCreateProject();
+  const locked = teamId != null && teamId > 0;
   const form = useForm<Values>({
     resolver: zodResolver(schema),
-    defaultValues: { name: "", team_id: "" },
+    defaultValues: { name: "", team_id: locked ? String(teamId) : "" },
   });
 
   async function onSubmit(v: Values) {
     try {
-      await create.mutateAsync({ name: v.name, team_id: Number(v.team_id) });
+      await create.mutateAsync({
+        name: v.name,
+        team_id: locked ? teamId : Number(v.team_id),
+      });
       toast.success("项目已创建");
-      form.reset();
+      form.reset({ name: "", team_id: locked ? String(teamId) : "" });
       setOpen(false);
     } catch (e) {
       toast.error(errMsg(e));
     }
   }
 
-  const empty = (teams.data ?? []).length === 0;
+  const empty = !locked && (teams.data ?? []).length === 0;
+
+  function handleOpen(next: boolean) {
+    setOpen(next);
+    if (next) {
+      form.reset({ name: "", team_id: locked ? String(teamId) : "" });
+    }
+  }
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog open={open} onOpenChange={handleOpen}>
       <DialogTrigger asChild>
-        <Button>
-          <Plus className="mr-1 h-4 w-4" /> 新建项目
+        <Button size="sm">
+          <Plus className="h-4 w-4" /> 新建项目
         </Button>
       </DialogTrigger>
       <DialogContent>
@@ -75,30 +86,32 @@ export function CreateProjectDialog() {
         ) : (
           <Form {...form}>
             <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4" noValidate>
-              <FormField
-                control={form.control}
-                name="team_id"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>团队</FormLabel>
-                    <Select onValueChange={field.onChange} defaultValue={field.value}>
-                      <FormControl>
-                        <SelectTrigger>
-                          <SelectValue placeholder="选择团队" />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        {(teams.data ?? []).map((t) => (
-                          <SelectItem key={t.id} value={String(t.id)}>
-                            {t.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
+              {locked ? null : (
+                <FormField
+                  control={form.control}
+                  name="team_id"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>团队</FormLabel>
+                      <Select onValueChange={field.onChange} defaultValue={field.value}>
+                        <FormControl>
+                          <SelectTrigger>
+                            <SelectValue placeholder="选择团队" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          {(teams.data ?? []).map((t) => (
+                            <SelectItem key={t.id} value={String(t.id)}>
+                              {t.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              )}
               <FormField
                 control={form.control}
                 name="name"

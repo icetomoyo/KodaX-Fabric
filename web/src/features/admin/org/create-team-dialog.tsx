@@ -23,11 +23,12 @@ import {
 import { Input } from "@/components/ui/input";
 import { useCreateTeam } from "@/lib/query/hooks";
 import { errMsg } from "@/lib/error";
+import type { Team } from "@/types/api";
 
 const schema = z.object({ name: z.string().trim().min(1, "请输入名称") });
 type Values = z.infer<typeof schema>;
 
-export function CreateTeamDialog() {
+export function CreateTeamDialog({ onCreated }: { onCreated?: (team: Team) => void }) {
   const [open, setOpen] = useState(false);
   const create = useCreateTeam();
   const form = useForm<Values>({
@@ -37,10 +38,11 @@ export function CreateTeamDialog() {
 
   async function onSubmit(v: Values) {
     try {
-      await create.mutateAsync(v);
+      const team = await create.mutateAsync(v);
       toast.success("团队已创建");
       form.reset();
       setOpen(false);
+      onCreated?.(team);
     } catch (e) {
       toast.error(errMsg(e));
     }
@@ -49,8 +51,8 @@ export function CreateTeamDialog() {
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button>
-          <Plus className="mr-1 h-4 w-4" /> 新建团队
+        <Button size="sm" variant="outline" className="h-7 px-2 text-xs">
+          <Plus className="h-3.5 w-3.5" /> 新建
         </Button>
       </DialogTrigger>
       <DialogContent>
