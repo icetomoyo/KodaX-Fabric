@@ -64,7 +64,7 @@ func run() error {
 	mux.Handle("/admin/", ui)
 	mux.Handle("/me", ui)
 	mux.Handle("/me/", ui)
-	mux.Handle("/ui/", ui)
+	mux.Handle("/assets/", ui)
 	mux.Handle("GET /{$}", ui)
 	mux.Handle("/", h.Handler())
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {

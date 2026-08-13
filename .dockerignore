@@ -1,5 +1,6 @@
 .git
-.agent
-docs
-*.md
-.DS_Store
+backups
+web/node_modules
+*.log
+.env
+.env.*

@@ -4,27 +4,28 @@ import (
 	"embed"
 	"io/fs"
 	"net/http"
+	"strings"
 )
 
-//go:embed static/*
-var staticFS embed.FS
+//go:embed all:dist
+var distFS embed.FS
 
 func Handler() http.Handler {
-	sub, err := fs.Sub(staticFS, "static")
+	sub, err := fs.Sub(distFS, "dist")
 	if err != nil {
 		panic(err)
 	}
 	file := http.FileServer(http.FS(sub))
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /admin", func(w http.ResponseWriter, r *http.Request) {
-		http.ServeFileFS(w, r, staticFS, "static/admin.html")
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		p := r.URL.Path
+		if p == "/" || p == "/admin" || p == "/me" || strings.HasPrefix(p, "/admin/") || strings.HasPrefix(p, "/me/") {
+			http.ServeFileFS(w, r, distFS, "dist/index.html")
+			return
+		}
+		file.ServeHTTP(w, r)
 	})
-	mux.HandleFunc("GET /me", func(w http.ResponseWriter, r *http.Request) {
-		http.ServeFileFS(w, r, staticFS, "static/me.html")
-	})
-	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
-		http.ServeFileFS(w, r, staticFS, "static/home.html")
-	})
-	mux.Handle("GET /ui/", http.StripPrefix("/ui/", file))
-	return mux
 }

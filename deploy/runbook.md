@@ -20,7 +20,7 @@ docker compose -p tokenhub-goal -f deploy/compose.yaml up -d --wait
 curl -fsS http://127.0.0.1:18080/health
 ```
 
-页面：`/admin` 管理员、`/me` 开发者申请 VK。调用 Origin：`http://127.0.0.1:18080`。
+页面（shadcn，同源）：`/` 首页、`/admin` 管理员、`/me` 开发者申请 VK。调用 Origin：`http://127.0.0.1:18080`。
 
 ## 回滚
 

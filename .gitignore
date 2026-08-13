@@ -2,6 +2,9 @@
 /bin/
 /dist/
 vendor/
+
+# Frontend
+web/node_modules/
 *.exe
 *.test
 *.out

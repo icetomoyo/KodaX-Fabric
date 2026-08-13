@@ -17,8 +17,12 @@ go run ./cmd/gateway
 # GET http://127.0.0.1:8080/health
 ```
 
-页面：`/admin` 管理后台，`/me` 开发者申请 VK。  
+操作台（shadcn，网关同进程）：`/` 首页，`/admin` 管理后台，`/me` 开发者申请 VK。  
 Cursor / Claude Code 的 Base URL 填网关 Origin（本机 `http://127.0.0.1:18080`），同一把 `fab-` 钥匙两个端点都能用。
+
+```sh
+cd web && npm install && npm test && npm run build
+```
 
 发布 / 备份见 [deploy/runbook.md](deploy/runbook.md)。
 
