@@ -1,6 +1,7 @@
 # Go
 /bin/
 /dist/
+web/node_modules/
 vendor/
 *.exe
 *.test

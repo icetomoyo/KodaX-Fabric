@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"kodax-fabric/internal/store"
+	"kodax-fabric/internal/webui"
 )
 
 type Server struct {
@@ -78,6 +79,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /admin/v1/provider-keys", s.handleListProviderKeys)
 	mux.HandleFunc("POST /admin/v1/provider-keys/{id}/rotate", s.handleRotateProviderKey)
 	mux.HandleFunc("POST /admin/v1/provider-keys/{id}/rotate/activate", s.handleActivateProviderKey)
+	ui := webui.Handler()
+	mux.Handle("GET /{$}", ui)
+	mux.Handle("GET /admin", ui)
+	mux.Handle("GET /admin/{path...}", ui)
+	mux.Handle("/assets/", ui)
 	return mux
 }
 

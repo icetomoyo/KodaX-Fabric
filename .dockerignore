@@ -3,3 +3,5 @@
 docs
 *.md
 .DS_Store
+web/node_modules
+backups

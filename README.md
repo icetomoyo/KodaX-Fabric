@@ -7,7 +7,7 @@
 | 项 | 说明 |
 |----|------|
 | 对外 | `POST /v1/chat/completions`（OpenAI）与 `POST /v1/messages`（Anthropic），同一把 `fab-` VK |
-| 管理 | `/admin/v1/*`，请求头 `X-Admin-Token` |
+| 管理 | 操作台 `/` `/admin`（同源 embed）；API `/admin/v1/*`，请求头 `X-Admin-Token` |
 | 健康 | `GET /live` 存活；`GET /health` 同时检查 PostgreSQL + Redis |
 
 ## 无真实 Key 本地启动
@@ -20,6 +20,7 @@ docker compose -f compose.yaml up --build --wait
 默认走仓库内 mock-provider，不需要 `DEEPSEEK_API_KEY` / OpenAI / Anthropic Key。
 
 - Origin：`http://127.0.0.1:3000`
+- 操作台：<http://127.0.0.1:3000/admin>（登录 token 仅 local：`dev-local-admin-token`）
 - 调用 VK：`fab-local-bootstrap-01`
 - 管理 token（**仅 local**）：`dev-local-admin-token`
 - Claude Code：Base URL `http://127.0.0.1:3000`，Anthropic 风格，`x-api-key: fab-local-bootstrap-01`
