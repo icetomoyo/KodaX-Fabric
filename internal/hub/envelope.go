@@ -81,6 +81,26 @@ func writeRateLimited(w http.ResponseWriter, protocol, dim string) {
 	})
 }
 
+func writeBudgetExceeded(w http.ResponseWriter, protocol string) {
+	if protocol == store.ProtocolAnthropic {
+		writeJSON(w, http.StatusPaymentRequired, map[string]any{
+			"type": "error",
+			"error": map[string]any{
+				"type":    "invalid_request_error",
+				"message": "virtual key monthly token budget exceeded",
+			},
+		})
+		return
+	}
+	writeJSON(w, http.StatusPaymentRequired, map[string]any{
+		"error": map[string]any{
+			"message": "virtual key monthly token budget exceeded",
+			"type":    "insufficient_quota",
+			"code":    "budget_exceeded",
+		},
+	})
+}
+
 func writeCircuitOpen(w http.ResponseWriter, protocol string) {
 	if protocol == store.ProtocolAnthropic {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{

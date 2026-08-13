@@ -1,12 +1,12 @@
 # FEATURE_LIST
 
-Last Updated: 2026-08-13 15:00
+Last Updated: 2026-08-13 18:00
 
 ## Version Info
 
 | 项 | 值 |
 |----|-----|
-| Current Release | **v0.0.6** |
+| Current Release | **v0.0.7** |
 | Planned Version | — |
 
 ## Version Summary
@@ -19,7 +19,7 @@ Last Updated: 2026-08-13 15:00
 | v0.0.4 | Released | 1/1 | 渠道池 + 简单路由 |
 | v0.0.5 | Released | 1/1 | VK 绑池 + 分组 |
 | v0.0.6 | Released | 1/1 | 限流 + 熔断 |
-| v0.0.7 | — | — | 预算闸 + 流式估算 |
+| v0.0.7 | Released | 1/1 | 预算闸 + 流式估算 |
 | v0.0.8 | — | — | 缓存 + 运营面 |
 | v0.1.0 | — | — | 独立部署收口 |
 
@@ -35,6 +35,7 @@ Last Updated: 2026-08-13 15:00
 | 004 | 同协议多渠 failover | **Completed** | Critical | New | v0.0.4 | [设计](features/v0.0.4.md#feature_004) |
 | 005 | VK 绑池与分组 | **Completed** | Critical | New | v0.0.5 | [设计](features/v0.0.5.md#feature_005) |
 | 006 | RPM 硬拒绝与渠熔断 | **Completed** | Critical | New | v0.0.6 | [设计](features/v0.0.6.md#feature_006) |
+| 007 | VK 月预算与流式估算 | **Completed** | Critical | New | v0.0.7 | [设计](features/v0.0.7.md#feature_007) |
 
 ## Feature Details
 
@@ -170,12 +171,34 @@ VK + Provider 令牌桶突发后 429；渠熔断半开；`GET /health/limits`。
 
 **Spec**：已综合（T1）。
 
+### FEATURE_007: VK 月预算与流式估算
+
+| 字段 | 内容 |
+|------|------|
+| ID | 007 |
+| Title | VK 月预算与流式估算 |
+| Status | **Completed** |
+| Priority | Critical |
+| Category | New |
+| Planned Version | v0.0.7 |
+| Released Version | v0.0.7 |
+| Created | 2026-08-13 |
+| Started | 2026-08-13 |
+| Completed | 2026-08-13 |
+| Design | [docs/features/v0.0.7.md#feature_007](features/v0.0.7.md#feature_007) |
+
+**Description**
+
+VK + 自然月整数 Token 软/硬闸；SSE 中估算、结束用官方 usage 校准；热账内存，`HotBudget` 留给 0.1.0 Redis/PG。
+
+**Spec**：已综合（T1）。
+
 ## Summary
 
 | 指标 | 数量 |
 |------|------|
-| Total | 6 |
+| Total | 7 |
 | Planned | 0 |
 | In Progress | 0 |
-| Completed | 6 |
-| Critical | 6 |
+| Completed | 7 |
+| Critical | 7 |

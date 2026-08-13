@@ -1,10 +1,12 @@
 package hub
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -16,6 +18,7 @@ type Server struct {
 	Store  store.Store
 	Client *http.Client
 	Limits HotLimits
+	Budget HotBudget
 	Clock  Clock
 
 	mu        sync.Mutex
@@ -28,13 +31,14 @@ func New(st store.Store, client *http.Client) *Server {
 		client = http.DefaultClient
 	}
 	clk := Clock(realClock{})
-	return &Server{Store: st, Client: client, Limits: NewLimiter(clk), Clock: clk, rr: map[string]uint64{}}
+	return &Server{Store: st, Client: client, Limits: NewLimiter(clk), Budget: NewMemoryBudget(clk), Clock: clk, rr: map[string]uint64{}}
 }
 
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", s.handleHealth)
 	mux.HandleFunc("GET /health/limits", s.handleLimits)
+	mux.HandleFunc("GET /health/budget", s.handleBudget)
 	mux.HandleFunc("POST /v1/chat/completions", s.handleChatCompletions)
 	mux.HandleFunc("POST /v1/messages", s.handleMessages)
 	return mux
@@ -56,6 +60,18 @@ func (s *Server) handleLimits(w http.ResponseWriter, _ *http.Request) {
 		snap = s.Limits.Snapshot()
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "limits": snap})
+}
+
+func (s *Server) handleBudget(w http.ResponseWriter, _ *http.Request) {
+	month := BudgetMonth(s.now())
+	var entries []BudgetSnap
+	if s.Budget != nil {
+		entries = s.Budget.All()
+	}
+	if entries == nil {
+		entries = []BudgetSnap{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "month": month, "budgets": entries})
 }
 
 func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
@@ -112,6 +128,25 @@ func (s *Server) relay(w http.ResponseWriter, r *http.Request, protocol, upstrea
 		writeForbidden(w, protocol, "model not allowed")
 		return
 	}
+
+	month := BudgetMonth(s.now())
+	hard := resolved.MonthlyHard
+	soft := softLimit(hard, resolved.MonthlySoft)
+	sess := budgetSession{vkID: resolved.VirtualKeyID, month: month}
+	if s.Budget != nil {
+		sess.spec = reserveSpecFromBody(body)
+		lease, ok := s.Budget.Reserve(resolved.VirtualKeyID, month, hard, sess.spec)
+		if hard > 0 && !ok {
+			setBudgetHeaders(w, s.Budget.Snap(resolved.VirtualKeyID, month), soft)
+			writeBudgetExceeded(w, protocol)
+			return
+		}
+		if ok && lease.ID != 0 {
+			sess.lease = lease
+			sess.reserved = true
+		}
+	}
+	defer s.finishBudget(&sess)
 
 	models, err := s.Store.LookupAlias(r.Context(), flag.Model)
 	if err != nil {
@@ -183,6 +218,7 @@ func (s *Server) relay(w http.ResponseWriter, r *http.Request, protocol, upstrea
 			lastCands = cands
 			lastOrder = order
 			start := s.now()
+			s.markBudgetHit(&sess)
 			resp, ferr := s.fetchUpstream(r, &ch, upstreamPath, upBody)
 			lat := s.now().Sub(start)
 			if ferr != nil {
@@ -219,8 +255,37 @@ func (s *Server) relay(w http.ResponseWriter, r *http.Request, protocol, upstrea
 			fallback := failover || modelFB
 			reason := routeReason(cands, order, ch, modelFB, failover)
 			setRouteHeaders(w, resolved, ch.ID, reason, triedIDs, model)
-			status, _ := writeUpstream(w, resp, flag.Stream)
-			s.noteRoute(r, resolved, protocol, flag.Model, model, ch.ID, triedNums, reason, fallback, status)
+			if flag.Stream {
+				declareBudgetTrailers(w)
+			}
+			status, _ := writeUpstream(w, resp, flag.Stream, func() {
+				if !flag.Stream {
+					snap := s.settleBudget(&sess)
+					setBudgetHeaders(w, snap, soft)
+					return
+				}
+				if s.Budget != nil {
+					setBudgetHeaders(w, s.Budget.Snap(resolved.VirtualKeyID, month), soft)
+				}
+			}, func(p []byte) {
+				if flag.Stream {
+					if n := sess.meter.Feed(p); n > 0 {
+						s.observeBudget(&sess, n)
+					}
+					return
+				}
+				s.ingestNonStream(&sess, p)
+			})
+			if flag.Stream {
+				if n := sess.meter.Flush(); n > 0 {
+					s.observeBudget(&sess, n)
+				}
+				snap := s.settleBudget(&sess)
+				setBudgetTrailers(w, snap, soft)
+				s.noteRoute(resolved, protocol, flag.Model, model, ch.ID, triedNums, reason, fallback, status, month, soft, sess.over)
+				return
+			}
+			s.noteRoute(resolved, protocol, flag.Model, model, ch.ID, triedNums, reason, fallback, status, month, soft, sess.over)
 			return
 		}
 	}
@@ -237,7 +302,7 @@ func (s *Server) relay(w http.ResponseWriter, r *http.Request, protocol, upstrea
 				"code":    "provider_error",
 			},
 		})
-		s.noteRoute(r, resolved, protocol, flag.Model, lastModel, lastCh.ID, triedNums, reason, fallback, http.StatusBadGateway)
+		s.noteRoute(resolved, protocol, flag.Model, lastModel, lastCh.ID, triedNums, reason, fallback, http.StatusBadGateway, month, soft, sess.over)
 		return
 	}
 	if lastStatus != 0 {
@@ -260,7 +325,7 @@ func (s *Server) relay(w http.ResponseWriter, r *http.Request, protocol, upstrea
 				"code":    reason,
 			},
 		})
-		s.noteRoute(r, resolved, protocol, flag.Model, lastModel, lastCh.ID, triedNums, reason, fallback, status)
+		s.noteRoute(resolved, protocol, flag.Model, lastModel, lastCh.ID, triedNums, reason, fallback, status, month, soft, sess.over)
 		return
 	}
 	if skippedOpen > 0 && attemptN == 0 {
@@ -296,7 +361,105 @@ func setRouteHeaders(w http.ResponseWriter, vk *store.ResolvedVK, chID int64, re
 	}
 }
 
-func (s *Server) noteRoute(r *http.Request, vk *store.ResolvedVK, protocol, reqModel, upModel string, chID int64, tried []int64, reason string, fallback bool, status int) {
+func setBudgetHeaders(w http.ResponseWriter, snap BudgetSnap, soft int64) {
+	if snap.Month != "" {
+		w.Header().Set("X-Fabric-Budget-Month", snap.Month)
+	}
+	w.Header().Set("X-Fabric-Budget-Used", strconv.FormatInt(snap.Used, 10))
+	if soft > 0 && snap.Used >= soft {
+		w.Header().Set("X-Fabric-Budget-Soft", "1")
+	}
+}
+
+func declareBudgetTrailers(w http.ResponseWriter) {
+	w.Header().Add("Trailer", "X-Fabric-Budget-Used")
+	w.Header().Add("Trailer", "X-Fabric-Budget-Soft")
+}
+
+func setBudgetTrailers(w http.ResponseWriter, snap BudgetSnap, soft int64) {
+	w.Header().Set("X-Fabric-Budget-Used", strconv.FormatInt(snap.Used, 10))
+	if soft > 0 && snap.Used >= soft {
+		w.Header().Set("X-Fabric-Budget-Soft", "1")
+	}
+}
+
+type budgetSession struct {
+	vkID     int64
+	month    string
+	lease    BudgetLease
+	spec     ReserveSpec
+	meter    sseMeter
+	reserved bool
+	hit      bool
+	closed   bool
+	over     bool
+}
+
+func (s *Server) markBudgetHit(sess *budgetSession) {
+	if sess == nil || sess.hit {
+		return
+	}
+	sess.hit = true
+	if sess.spec.Input > 0 {
+		s.observeBudget(sess, sess.spec.Input)
+		sess.meter.est += sess.spec.Input
+	}
+}
+
+func (s *Server) observeBudget(sess *budgetSession, n int64) {
+	if s.Budget == nil || sess == nil || !sess.reserved || n == 0 {
+		return
+	}
+	s.Budget.Observe(sess.lease, n)
+}
+
+func (s *Server) ingestNonStream(sess *budgetSession, body []byte) {
+	if sess == nil || len(body) == 0 {
+		return
+	}
+	mergeUsage(&sess.meter.official, extractUsage(body))
+	if sess.meter.official.tokens() == 0 {
+		if n := textFieldTokens(body); n > 0 {
+			s.observeBudget(sess, n)
+			sess.meter.est += n
+		}
+	}
+}
+
+func (s *Server) settleBudget(sess *budgetSession) BudgetSnap {
+	if sess == nil {
+		return BudgetSnap{}
+	}
+	if s.Budget == nil || !sess.reserved || sess.closed {
+		if s.Budget != nil {
+			return s.Budget.Snap(sess.vkID, sess.month)
+		}
+		return BudgetSnap{VirtualKeyID: sess.vkID, Month: sess.month}
+	}
+	sess.closed = true
+	n := sess.meter.est
+	if off := sess.meter.official.tokens(); off > 0 {
+		n = off
+	}
+	if n > sess.lease.Reserved && sess.lease.Reserved > 0 {
+		sess.over = true
+	}
+	return s.Budget.Settle(sess.lease, n)
+}
+
+func (s *Server) finishBudget(sess *budgetSession) {
+	if sess == nil || !sess.reserved || sess.closed || s.Budget == nil {
+		return
+	}
+	if !sess.hit {
+		sess.closed = true
+		s.Budget.Release(sess.lease)
+		return
+	}
+	s.settleBudget(sess)
+}
+
+func (s *Server) noteRoute(vk *store.ResolvedVK, protocol, reqModel, upModel string, chID int64, tried []int64, reason string, fallback bool, status int, month string, soft int64, over bool) {
 	d := store.RouteDecision{
 		VirtualKeyID:   vk.VirtualKeyID,
 		Protocol:       protocol,
@@ -311,8 +474,17 @@ func (s *Server) noteRoute(r *http.Request, vk *store.ResolvedVK, protocol, reqM
 		TeamID:         vk.TeamID,
 		PoolID:         vk.PoolID,
 		PoolGroup:      vk.PoolGroup,
+		BudgetMonth:    month,
+		BudgetOver:     over,
 	}
-	_ = s.Store.RecordRoute(r.Context(), d)
+	if s.Budget != nil {
+		snap := s.Budget.Snap(vk.VirtualKeyID, month)
+		d.BudgetUsed = snap.Used
+		d.BudgetSoft = soft > 0 && snap.Used >= soft
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	_ = s.Store.RecordRoute(ctx, d)
 }
 
 func attemptOrder(cands []store.Channel, n uint64) []store.Channel {

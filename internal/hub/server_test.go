@@ -6,7 +6,9 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -1956,5 +1958,825 @@ func TestHealth(t *testing.T) {
 	raw, _ := io.ReadAll(resp.Body)
 	if !strings.Contains(string(raw), `"ok":true`) {
 		t.Fatalf("health %s", raw)
+	}
+}
+
+func usageBody(total int) string {
+	return `{"id":"chatcmpl-fixed","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"hello-fixed"},"finish_reason":"stop"}],"usage":{"prompt_tokens":0,"completion_tokens":0,"total_tokens":` + strconv.Itoa(total) + `}}`
+}
+
+func newBudgetGateway(t *testing.T, vk *store.ResolvedVK, clk *hub.FakeClock) (*hub.Server, *store.Memory, *httptest.Server) {
+	t.Helper()
+	st := &store.Memory{ByRawKey: map[string]*store.ResolvedVK{testVK: vk}}
+	srv := hub.New(st, http.DefaultClient)
+	if clk != nil {
+		srv.Clock = clk
+		srv.Budget = hub.NewMemoryBudget(clk)
+		srv.Limits = hub.NewLimiter(clk)
+	}
+	gw := httptest.NewServer(srv.Handler())
+	t.Cleanup(gw.Close)
+	return srv, st, gw
+}
+
+func doChat(t *testing.T, gw *httptest.Server, body string) *http.Response {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodPost, gw.URL+"/v1/chat/completions", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer "+testVK)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resp
+}
+
+type budgetView struct {
+	Used     int64
+	Settled  int64
+	Reserved int64
+	Month    string
+}
+
+func readBudget(t *testing.T, gw *httptest.Server, vkID int64) budgetView {
+	t.Helper()
+	resp, err := http.Get(gw.URL + "/health/budget")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	var body struct {
+		Month   string `json:"month"`
+		Budgets []struct {
+			VKID     int64  `json:"vk_id"`
+			Used     int64  `json:"used"`
+			Settled  int64  `json:"settled"`
+			Reserved int64  `json:"reserved"`
+			Month    string `json:"month"`
+		} `json:"budgets"`
+	}
+	if err := json.Unmarshal(raw, &body); err != nil {
+		t.Fatalf("budget json %s: %v", raw, err)
+	}
+	var fallback budgetView
+	for _, e := range body.Budgets {
+		if e.VKID != vkID {
+			continue
+		}
+		v := budgetView{Used: e.Used, Settled: e.Settled, Reserved: e.Reserved, Month: e.Month}
+		if e.Month == body.Month {
+			return v
+		}
+		if fallback.Month == "" {
+			fallback = v
+		}
+	}
+	return fallback
+}
+
+func budgetUsedOf(t *testing.T, gw *httptest.Server, vkID int64) int64 {
+	t.Helper()
+	return readBudget(t, gw, vkID).Used
+}
+
+func seedUsed(t *testing.T, b hub.HotBudget, vkID int64, month string, hard, used int64) {
+	t.Helper()
+	lease, ok := b.Reserve(vkID, month, hard, hub.ReserveSpec{OutputCap: used, HasCap: true})
+	if !ok {
+		t.Fatal("seed reserve")
+	}
+	b.Settle(lease, used)
+}
+
+func waitBudgetUsed(t *testing.T, gw *httptest.Server, vkID int64, min int64) int64 {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	var used int64
+	for time.Now().Before(deadline) {
+		used = budgetUsedOf(t, gw, vkID)
+		if used >= min {
+			return used
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("budget used %d want >= %d", used, min)
+	return used
+}
+
+func TestBudgetSoftWarning(t *testing.T) {
+	var hits int32
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(usageBody(15)))
+	}))
+	t.Cleanup(up.Close)
+	clk := hub.NewFakeClock(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	_, st, gw := newBudgetGateway(t, &store.ResolvedVK{
+		VirtualKeyID: 1, PoolID: 1, MonthlyHard: 100, MonthlySoft: 10,
+		Channels: []store.Channel{{ID: 1, Protocol: store.ProtocolOpenAI, BaseURL: up.URL, Secret: "sk-up"}},
+	}, clk)
+	resp := doChat(t, gw, `{"model":"gpt-4","messages":[]}`)
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("status %d", resp.StatusCode)
+	}
+	if resp.Header.Get("X-Fabric-Budget-Soft") != "1" {
+		t.Fatalf("missing soft header %v", resp.Header)
+	}
+	if resp.Header.Get("X-Fabric-Budget-Used") != "15" {
+		t.Fatalf("used header %q", resp.Header.Get("X-Fabric-Budget-Used"))
+	}
+	if resp.Header.Get("X-Fabric-Budget-Month") != "2026-01" {
+		t.Fatalf("month %q", resp.Header.Get("X-Fabric-Budget-Month"))
+	}
+	if atomic.LoadInt32(&hits) != 1 {
+		t.Fatalf("hits %d", hits)
+	}
+	dec, err := st.RecentRoutes(context.Background(), 1)
+	if err != nil || len(dec) != 1 || !dec[0].BudgetSoft || dec[0].BudgetUsed != 15 {
+		t.Fatalf("audit %+v err %v", dec, err)
+	}
+}
+
+func TestBudgetHardRejectZeroUpstream(t *testing.T) {
+	var hits int32
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(usageBody(5)))
+	}))
+	t.Cleanup(up.Close)
+	clk := hub.NewFakeClock(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	srv, _, gw := newBudgetGateway(t, &store.ResolvedVK{
+		VirtualKeyID: 1, PoolID: 1, MonthlyHard: 5,
+		Channels: []store.Channel{{ID: 1, Protocol: store.ProtocolOpenAI, BaseURL: up.URL, Secret: "sk-up"}},
+	}, clk)
+	seedUsed(t, srv.Budget, 1, "2026-01", 5, 5)
+	resp := doChat(t, gw, `{"model":"gpt-4","messages":[],"max_tokens":5}`)
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusPaymentRequired {
+		t.Fatalf("status %d body %s", resp.StatusCode, raw)
+	}
+	if !strings.Contains(string(raw), "budget_exceeded") {
+		t.Fatalf("body %s", raw)
+	}
+	if atomic.LoadInt32(&hits) != 0 {
+		t.Fatalf("upstream hits %d", hits)
+	}
+}
+
+func TestBudgetConcurrentNoPierce(t *testing.T) {
+	var hits int32
+	release := make(chan struct{})
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		<-release
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(usageBody(2)))
+	}))
+	t.Cleanup(up.Close)
+	clk := hub.NewFakeClock(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	_, _, gw := newBudgetGateway(t, &store.ResolvedVK{
+		VirtualKeyID: 1, PoolID: 1, MonthlyHard: 10,
+		Channels: []store.Channel{{ID: 1, Protocol: store.ProtocolOpenAI, BaseURL: up.URL, Secret: "sk-up"}},
+	}, clk)
+	const n = 8
+	var wg sync.WaitGroup
+	var ok, blocked int32
+	wg.Add(n)
+	for i := 0; i < n; i++ {
+		go func() {
+			defer wg.Done()
+			resp := doChat(t, gw, `{"model":"gpt-4","messages":[],"max_tokens":5}`)
+			_, _ = io.Copy(io.Discard, resp.Body)
+			_ = resp.Body.Close()
+			switch resp.StatusCode {
+			case 200:
+				atomic.AddInt32(&ok, 1)
+			case http.StatusPaymentRequired:
+				atomic.AddInt32(&blocked, 1)
+			default:
+				t.Errorf("status %d", resp.StatusCode)
+			}
+		}()
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && atomic.LoadInt32(&hits) < 2 {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if atomic.LoadInt32(&hits) != 2 {
+		close(release)
+		wg.Wait()
+		t.Fatalf("in-flight hits %d", hits)
+	}
+	time.Sleep(20 * time.Millisecond)
+	if atomic.LoadInt32(&hits) > 2 {
+		close(release)
+		wg.Wait()
+		t.Fatalf("pierced hits %d", hits)
+	}
+	snap := readBudget(t, gw, 1)
+	if snap.Used+snap.Reserved > 10 {
+		close(release)
+		wg.Wait()
+		t.Fatalf("used+reserved %+v", snap)
+	}
+	if snap.Reserved != 10 {
+		close(release)
+		wg.Wait()
+		t.Fatalf("reserved %+v", snap)
+	}
+	close(release)
+	wg.Wait()
+	if atomic.LoadInt32(&ok) != 2 || atomic.LoadInt32(&blocked) != n-2 {
+		t.Fatalf("ok=%d blocked=%d hits=%d", ok, blocked, hits)
+	}
+	if got := readBudget(t, gw, 1); got.Settled != 4 || got.Reserved != 0 {
+		t.Fatalf("after settle %+v", got)
+	}
+}
+
+func TestBudgetMonthRollover(t *testing.T) {
+	var hits int32
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(usageBody(5)))
+	}))
+	t.Cleanup(up.Close)
+	clk := hub.NewFakeClock(time.Date(2026, 1, 15, 0, 0, 0, 0, time.UTC))
+	srv, _, gw := newBudgetGateway(t, &store.ResolvedVK{
+		VirtualKeyID: 1, PoolID: 1, MonthlyHard: 10,
+		Channels: []store.Channel{{ID: 1, Protocol: store.ProtocolOpenAI, BaseURL: up.URL, Secret: "sk-up"}},
+	}, clk)
+	seedUsed(t, srv.Budget, 1, "2026-01", 10, 10)
+	resp := doChat(t, gw, `{"model":"gpt-4","messages":[],"max_tokens":5}`)
+	if resp.StatusCode != http.StatusPaymentRequired {
+		t.Fatalf("jan status %d", resp.StatusCode)
+	}
+	_ = resp.Body.Close()
+	if atomic.LoadInt32(&hits) != 0 {
+		t.Fatalf("jan hits %d", hits)
+	}
+	clk.Advance(20 * 24 * time.Hour)
+	resp = doChat(t, gw, `{"model":"gpt-4","messages":[],"max_tokens":5}`)
+	raw, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("feb status %d %s", resp.StatusCode, raw)
+	}
+	if atomic.LoadInt32(&hits) != 1 {
+		t.Fatalf("feb hits %d", hits)
+	}
+	if budgetUsedOf(t, gw, 1) < 5 {
+		t.Fatalf("feb used %d", budgetUsedOf(t, gw, 1))
+	}
+}
+
+func TestStreamBudgetGrows(t *testing.T) {
+	next := make(chan string)
+	var closeNext sync.Once
+	t.Cleanup(func() { closeNext.Do(func() { close(next) }) })
+	started := make(chan struct{})
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fl := w.(http.Flusher)
+		w.WriteHeader(200)
+		fl.Flush()
+		close(started)
+		for {
+			select {
+			case c, ok := <-next:
+				if !ok {
+					return
+				}
+				_, _ = io.WriteString(w, c)
+				fl.Flush()
+			case <-r.Context().Done():
+				return
+			}
+		}
+	}))
+	t.Cleanup(up.Close)
+	clk := hub.NewFakeClock(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	_, _, gw := newBudgetGateway(t, &store.ResolvedVK{
+		VirtualKeyID: 1, PoolID: 1, MonthlyHard: 10000,
+		Channels: []store.Channel{{ID: 1, Protocol: store.ProtocolOpenAI, BaseURL: up.URL, Secret: "sk-up"}},
+	}, clk)
+	req, _ := http.NewRequest(http.MethodPost, gw.URL+"/v1/chat/completions", strings.NewReader(`{"model":"gpt-4","stream":true}`))
+	req.Header.Set("Authorization", "Bearer "+testVK)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	<-started
+	readDone := make(chan struct{})
+	go func() {
+		defer close(readDone)
+		_, _ = io.Copy(io.Discard, resp.Body)
+	}()
+	chunk := func(s string) string {
+		return "data: {\"choices\":[{\"delta\":{\"content\":\"" + s + "\"}}]}\n\n"
+	}
+	next <- chunk("abcdefghijklmnopqrstuvwxyz012345")
+	used1 := waitBudgetUsed(t, gw, 1, 1)
+	next <- chunk("ABCDEFGHIJKLMNOPQRSTUVWXYZ678901")
+	used2 := waitBudgetUsed(t, gw, 1, used1+1)
+	if used2 <= used1 {
+		t.Fatalf("used did not grow %d -> %d", used1, used2)
+	}
+	closeNext.Do(func() { close(next) })
+	select {
+	case <-readDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("stream did not finish")
+	}
+}
+
+func TestOfficialUsageCalibratesNoDouble(t *testing.T) {
+	next := make(chan string)
+	var closeNext sync.Once
+	t.Cleanup(func() { closeNext.Do(func() { close(next) }) })
+	started := make(chan struct{})
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fl := w.(http.Flusher)
+		w.WriteHeader(200)
+		fl.Flush()
+		close(started)
+		for {
+			select {
+			case c, ok := <-next:
+				if !ok {
+					return
+				}
+				_, _ = io.WriteString(w, c)
+				fl.Flush()
+			case <-r.Context().Done():
+				return
+			}
+		}
+	}))
+	t.Cleanup(up.Close)
+	clk := hub.NewFakeClock(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	_, _, gw := newBudgetGateway(t, &store.ResolvedVK{
+		VirtualKeyID: 1, PoolID: 1, MonthlyHard: 10000,
+		Channels: []store.Channel{{ID: 1, Protocol: store.ProtocolOpenAI, BaseURL: up.URL, Secret: "sk-up"}},
+	}, clk)
+	req, _ := http.NewRequest(http.MethodPost, gw.URL+"/v1/chat/completions", strings.NewReader(`{"model":"gpt-4","stream":true}`))
+	req.Header.Set("Authorization", "Bearer "+testVK)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	<-started
+	readDone := make(chan struct{})
+	go func() {
+		defer close(readDone)
+		_, _ = io.Copy(io.Discard, resp.Body)
+	}()
+	next <- "data: {\"choices\":[{\"delta\":{\"content\":\"abcdefghijklmnopqrstuvwxyz012345\"}}]}\n\n"
+	est := waitBudgetUsed(t, gw, 1, 1)
+	next <- "data: {\"choices\":[{\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":30,\"total_tokens\":40}}\n\n"
+	next <- "data: [DONE]\n\n"
+	closeNext.Do(func() { close(next) })
+	select {
+	case <-readDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("stream did not finish")
+	}
+	used := budgetUsedOf(t, gw, 1)
+	if used != 40 {
+		t.Fatalf("calibrated used %d est-before %d (double-count?)", used, est)
+	}
+}
+
+func TestStreamAbortKeepsEstimate(t *testing.T) {
+	next := make(chan string)
+	var closeNext sync.Once
+	t.Cleanup(func() { closeNext.Do(func() { close(next) }) })
+	started := make(chan struct{})
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fl := w.(http.Flusher)
+		w.WriteHeader(200)
+		fl.Flush()
+		close(started)
+		for {
+			select {
+			case c, ok := <-next:
+				if !ok {
+					return
+				}
+				_, _ = io.WriteString(w, c)
+				fl.Flush()
+			case <-r.Context().Done():
+				return
+			}
+		}
+	}))
+	t.Cleanup(up.Close)
+	clk := hub.NewFakeClock(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	_, _, gw := newBudgetGateway(t, &store.ResolvedVK{
+		VirtualKeyID: 1, PoolID: 1, MonthlyHard: 10000,
+		Channels: []store.Channel{{ID: 1, Protocol: store.ProtocolOpenAI, BaseURL: up.URL, Secret: "sk-up"}},
+	}, clk)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, gw.URL+"/v1/chat/completions", strings.NewReader(`{"model":"gpt-4","stream":true}`))
+	req.Header.Set("Authorization", "Bearer "+testVK)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-started
+	readDone := make(chan struct{})
+	go func() {
+		defer close(readDone)
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+	}()
+	next <- "data: {\"choices\":[{\"delta\":{\"content\":\"abcdefghijklmnopqrstuvwxyz012345\"}}]}\n\n"
+	est := waitBudgetUsed(t, gw, 1, 1)
+	cancel()
+	closeNext.Do(func() { close(next) })
+	select {
+	case <-readDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("abort did not finish")
+	}
+	used := budgetUsedOf(t, gw, 1)
+	if used < est {
+		t.Fatalf("abort dropped estimate %d -> %d", est, used)
+	}
+}
+
+func TestAnthropicOfficialUsage(t *testing.T) {
+	var hits int32
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"msg_1","type":"message","role":"assistant","content":[{"type":"text","text":"ok"}],"usage":{"input_tokens":11,"output_tokens":7}}`))
+	}))
+	t.Cleanup(up.Close)
+	clk := hub.NewFakeClock(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	_, _, gw := newBudgetGateway(t, &store.ResolvedVK{
+		VirtualKeyID: 1, PoolID: 1, MonthlyHard: 1000,
+		Channels: []store.Channel{{ID: 1, Protocol: store.ProtocolAnthropic, BaseURL: up.URL, Secret: "sk-a"}},
+	}, clk)
+	req, _ := http.NewRequest(http.MethodPost, gw.URL+"/v1/messages", strings.NewReader(`{"model":"claude","messages":[]}`))
+	req.Header.Set("X-Api-Key", testVK)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		raw, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status %d %s", resp.StatusCode, raw)
+	}
+	if budgetUsedOf(t, gw, 1) != 18 {
+		t.Fatalf("used %d", budgetUsedOf(t, gw, 1))
+	}
+	if atomic.LoadInt32(&hits) != 1 {
+		t.Fatalf("hits %d", hits)
+	}
+}
+
+func TestAnthropicStreamUsageCalibrates(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fl := w.(http.Flusher)
+		_, _ = io.WriteString(w, "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":9,\"output_tokens\":1}}}\n\n")
+		fl.Flush()
+		_, _ = io.WriteString(w, "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"delta\":{\"text\":\"abcdefghijklmnopqrstuvwxyz012345\"}}\n\n")
+		fl.Flush()
+		_, _ = io.WriteString(w, "event: message_delta\ndata: {\"type\":\"message_delta\",\"usage\":{\"output_tokens\":20}}\n\n")
+		fl.Flush()
+	}))
+	t.Cleanup(up.Close)
+	clk := hub.NewFakeClock(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	_, _, gw := newBudgetGateway(t, &store.ResolvedVK{
+		VirtualKeyID: 1, PoolID: 1, MonthlyHard: 1000,
+		Channels: []store.Channel{{ID: 1, Protocol: store.ProtocolAnthropic, BaseURL: up.URL, Secret: "sk-a"}},
+	}, clk)
+	req, _ := http.NewRequest(http.MethodPost, gw.URL+"/v1/messages", strings.NewReader(`{"model":"claude","stream":true}`))
+	req.Header.Set("X-Api-Key", testVK)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	_ = resp.Body.Close()
+	if budgetUsedOf(t, gw, 1) != 29 {
+		t.Fatalf("used %d want 29 (9+20)", budgetUsedOf(t, gw, 1))
+	}
+}
+
+func TestBudgetVKIsolation(t *testing.T) {
+	var hits int32
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(usageBody(5)))
+	}))
+	t.Cleanup(up.Close)
+	clk := hub.NewFakeClock(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	st := &store.Memory{ByRawKey: map[string]*store.ResolvedVK{
+		testVK: {VirtualKeyID: 1, PoolID: 1, MonthlyHard: 5, Channels: []store.Channel{
+			{ID: 1, Protocol: store.ProtocolOpenAI, BaseURL: up.URL, Secret: "sk-up"},
+		}},
+		"fab-other": {VirtualKeyID: 2, PoolID: 1, MonthlyHard: 5, Channels: []store.Channel{
+			{ID: 2, Protocol: store.ProtocolOpenAI, BaseURL: up.URL, Secret: "sk-up"},
+		}},
+	}}
+	srv := hub.New(st, http.DefaultClient)
+	srv.Clock = clk
+	srv.Budget = hub.NewMemoryBudget(clk)
+	gw := httptest.NewServer(srv.Handler())
+	t.Cleanup(gw.Close)
+	seedUsed(t, srv.Budget, 1, "2026-01", 5, 5)
+	resp := doChat(t, gw, `{"model":"gpt-4","max_tokens":5}`)
+	if resp.StatusCode != http.StatusPaymentRequired {
+		t.Fatalf("vk1 %d", resp.StatusCode)
+	}
+	_ = resp.Body.Close()
+	req, _ := http.NewRequest(http.MethodPost, gw.URL+"/v1/chat/completions", strings.NewReader(`{"model":"gpt-4"}`))
+	req.Header.Set("Authorization", "Bearer fab-other")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != 200 {
+		t.Fatalf("vk2 %d", resp.StatusCode)
+	}
+	_ = resp.Body.Close()
+	if atomic.LoadInt32(&hits) != 1 {
+		t.Fatalf("hits %d", hits)
+	}
+}
+
+func TestBudgetLargePromptRejects(t *testing.T) {
+	var hits int32
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(usageBody(1)))
+	}))
+	t.Cleanup(up.Close)
+	clk := hub.NewFakeClock(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	_, _, gw := newBudgetGateway(t, &store.ResolvedVK{
+		VirtualKeyID: 1, PoolID: 1, MonthlyHard: 10,
+		Channels: []store.Channel{{ID: 1, Protocol: store.ProtocolOpenAI, BaseURL: up.URL, Secret: "sk-up"}},
+	}, clk)
+	body := `{"model":"gpt-4","max_tokens":1,"messages":[{"role":"user","content":"` + strings.Repeat("abcd", 20) + `"}]}`
+	resp := doChat(t, gw, body)
+	raw, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusPaymentRequired {
+		t.Fatalf("status %d %s", resp.StatusCode, raw)
+	}
+	if atomic.LoadInt32(&hits) != 0 {
+		t.Fatalf("hits %d", hits)
+	}
+	if got := readBudget(t, gw, 1); got.Used != 0 || got.Reserved != 0 {
+		t.Fatalf("ledger %+v", got)
+	}
+}
+
+func TestBudgetNoChannelReleases(t *testing.T) {
+	clk := hub.NewFakeClock(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	_, _, gw := newBudgetGateway(t, &store.ResolvedVK{
+		VirtualKeyID: 1, PoolID: 1, MonthlyHard: 100,
+		Channels: []store.Channel{{ID: 1, Protocol: store.ProtocolAnthropic, BaseURL: "http://127.0.0.1:1", Secret: "sk-a"}},
+	}, clk)
+	resp := doChat(t, gw, `{"model":"gpt-4","messages":[],"max_tokens":5}`)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("status %d", resp.StatusCode)
+	}
+	if got := readBudget(t, gw, 1); got.Used != 0 || got.Reserved != 0 || got.Settled != 0 {
+		t.Fatalf("ledger %+v", got)
+	}
+}
+
+func TestBudgetCircuitOpenReleases(t *testing.T) {
+	var hits int32
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	t.Cleanup(up.Close)
+	clk := hub.NewFakeClock(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	_, _, gw := newBudgetGateway(t, &store.ResolvedVK{
+		VirtualKeyID: 1, PoolID: 1, MonthlyHard: 100,
+		Channels: []store.Channel{{ID: 1, Protocol: store.ProtocolOpenAI, BaseURL: up.URL, Secret: "sk-up"}},
+	}, clk)
+	for i := 0; i < 2; i++ {
+		resp := doChat(t, gw, `{"model":"gpt-4","max_tokens":5}`)
+		_ = resp.Body.Close()
+	}
+	before := atomic.LoadInt32(&hits)
+	resp := doChat(t, gw, `{"model":"gpt-4","messages":[],"max_tokens":5}`)
+	raw, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusServiceUnavailable || !strings.Contains(string(raw), "circuit_open") {
+		t.Fatalf("status %d %s", resp.StatusCode, raw)
+	}
+	if atomic.LoadInt32(&hits) != before {
+		t.Fatalf("circuit still hit upstream")
+	}
+	if got := readBudget(t, gw, 1); got.Reserved != 0 {
+		t.Fatalf("reservation leftover %+v", got)
+	}
+}
+
+func TestBudgetProviderLimitReleases(t *testing.T) {
+	var hits int32
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(usageBody(1)))
+	}))
+	t.Cleanup(up.Close)
+	clk := hub.NewFakeClock(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	srv, _, gw := newBudgetGateway(t, &store.ResolvedVK{
+		VirtualKeyID: 1, PoolID: 1, MonthlyHard: 100,
+		Channels: []store.Channel{{
+			ID: 1, Protocol: store.ProtocolOpenAI, BaseURL: up.URL, Secret: "sk-up",
+			ProviderCode: "deepseek", ProviderRPM: 60, ProviderBurst: 1,
+		}},
+	}, clk)
+	if !srv.Limits.AllowProvider("deepseek", 60, 1) {
+		t.Fatal("pre-consume")
+	}
+	resp := doChat(t, gw, `{"model":"gpt-4","messages":[],"max_tokens":5}`)
+	raw, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusTooManyRequests || !strings.Contains(string(raw), "provider") {
+		t.Fatalf("status %d %s", resp.StatusCode, raw)
+	}
+	if atomic.LoadInt32(&hits) != 0 {
+		t.Fatalf("hits %d", hits)
+	}
+	if got := readBudget(t, gw, 1); got.Used != 0 || got.Reserved != 0 {
+		t.Fatalf("ledger %+v", got)
+	}
+}
+
+func TestStreamCrossSoftTrailer(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fl := w.(http.Flusher)
+		_, _ = io.WriteString(w, "data: {\"choices\":[{\"delta\":{\"content\":\"abcdefghijklmnopqrstuvwxyz012345\"}}]}\n\n")
+		fl.Flush()
+		_, _ = io.WriteString(w, "data: {\"choices\":[{\"finish_reason\":\"stop\"}],\"usage\":{\"total_tokens\":15}}\n\n")
+		fl.Flush()
+		_, _ = io.WriteString(w, "data: [DONE]\n\n")
+		fl.Flush()
+	}))
+	t.Cleanup(up.Close)
+	clk := hub.NewFakeClock(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	_, _, gw := newBudgetGateway(t, &store.ResolvedVK{
+		VirtualKeyID: 1, PoolID: 1, MonthlyHard: 100, MonthlySoft: 10,
+		Channels: []store.Channel{{ID: 1, Protocol: store.ProtocolOpenAI, BaseURL: up.URL, Secret: "sk-up"}},
+	}, clk)
+	req, _ := http.NewRequest(http.MethodPost, gw.URL+"/v1/chat/completions", strings.NewReader(`{"model":"gpt-4","stream":true,"max_tokens":50}`))
+	req.Header.Set("Authorization", "Bearer "+testVK)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := resp.Trailer["X-Fabric-Budget-Used"]; !ok {
+		t.Fatalf("trailer Used not declared: header=%v trailer=%v", resp.Header, resp.Trailer)
+	}
+	if _, ok := resp.Trailer["X-Fabric-Budget-Soft"]; !ok {
+		t.Fatalf("trailer Soft not declared: %v", resp.Trailer)
+	}
+	if resp.Header.Get("X-Fabric-Budget-Soft") == "1" {
+		t.Fatal("initial header should not yet be over soft")
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	_ = resp.Body.Close()
+	if resp.Trailer.Get("X-Fabric-Budget-Used") != "15" {
+		t.Fatalf("trailer used %q", resp.Trailer.Get("X-Fabric-Budget-Used"))
+	}
+	if resp.Trailer.Get("X-Fabric-Budget-Soft") != "1" {
+		t.Fatalf("trailer soft %q", resp.Trailer.Get("X-Fabric-Budget-Soft"))
+	}
+}
+
+func TestStreamAbortKeepsAudit(t *testing.T) {
+	next := make(chan string)
+	var closeNext sync.Once
+	t.Cleanup(func() { closeNext.Do(func() { close(next) }) })
+	started := make(chan struct{})
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fl := w.(http.Flusher)
+		w.WriteHeader(200)
+		fl.Flush()
+		close(started)
+		for {
+			select {
+			case c, ok := <-next:
+				if !ok {
+					return
+				}
+				_, _ = io.WriteString(w, c)
+				fl.Flush()
+			case <-r.Context().Done():
+				return
+			}
+		}
+	}))
+	t.Cleanup(up.Close)
+	clk := hub.NewFakeClock(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	_, st, gw := newBudgetGateway(t, &store.ResolvedVK{
+		VirtualKeyID: 1, PoolID: 1, MonthlyHard: 10000,
+		Channels: []store.Channel{{ID: 1, Protocol: store.ProtocolOpenAI, BaseURL: up.URL, Secret: "sk-up"}},
+	}, clk)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, gw.URL+"/v1/chat/completions", strings.NewReader(`{"model":"gpt-4","stream":true,"max_tokens":50}`))
+	req.Header.Set("Authorization", "Bearer "+testVK)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-started
+	readDone := make(chan struct{})
+	go func() {
+		defer close(readDone)
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+	}()
+	next <- "data: {\"choices\":[{\"delta\":{\"content\":\"abcdefghijklmnopqrstuvwxyz012345\"}}]}\n\n"
+	est := waitBudgetUsed(t, gw, 1, 1)
+	cancel()
+	closeNext.Do(func() { close(next) })
+	select {
+	case <-readDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("abort did not finish")
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	var dec []store.RouteDecision
+	for time.Now().Before(deadline) {
+		dec, _ = st.RecentRoutes(context.Background(), 1)
+		if len(dec) > 0 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if len(dec) == 0 || dec[0].BudgetUsed < est {
+		t.Fatalf("abort audit %+v est %d", dec, est)
+	}
+}
+
+func TestBudgetOfficialOverageBlocksNext(t *testing.T) {
+	var hits int32
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := atomic.AddInt32(&hits, 1)
+		w.Header().Set("Content-Type", "application/json")
+		if n == 1 {
+			_, _ = w.Write([]byte(usageBody(12)))
+			return
+		}
+		_, _ = w.Write([]byte(usageBody(1)))
+	}))
+	t.Cleanup(up.Close)
+	clk := hub.NewFakeClock(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	_, st, gw := newBudgetGateway(t, &store.ResolvedVK{
+		VirtualKeyID: 1, PoolID: 1, MonthlyHard: 10,
+		Channels: []store.Channel{{ID: 1, Protocol: store.ProtocolOpenAI, BaseURL: up.URL, Secret: "sk-up"}},
+	}, clk)
+	resp := doChat(t, gw, `{"model":"gpt-4","messages":[],"max_tokens":5}`)
+	_ = resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("first %d", resp.StatusCode)
+	}
+	if got := readBudget(t, gw, 1); got.Settled != 12 {
+		t.Fatalf("clamped? %+v", got)
+	}
+	resp = doChat(t, gw, `{"model":"gpt-4","messages":[],"max_tokens":5}`)
+	if resp.StatusCode != http.StatusPaymentRequired {
+		t.Fatalf("second %d", resp.StatusCode)
+	}
+	_ = resp.Body.Close()
+	if atomic.LoadInt32(&hits) != 1 {
+		t.Fatalf("hits %d", hits)
+	}
+	dec, _ := st.RecentRoutes(context.Background(), 1)
+	if len(dec) == 0 || !dec[0].BudgetOver || dec[0].BudgetUsed != 12 {
+		t.Fatalf("overage audit %+v", dec)
 	}
 }

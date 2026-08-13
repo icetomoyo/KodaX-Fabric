@@ -6,6 +6,16 @@ Token Hub 按 PRD §3 + HLD 从 0 重建（Go 网关）。
 
 ---
 
+## [0.0.7] - 2026-08-13
+
+### Added
+
+- VK 自然月整数 Token 软/硬预算：按请求预留 input + `max_tokens`/`max_completion_tokens`（无上限则预留剩余额度）；软警告头/Trailer 与审计，硬拒 402 且不打上游。
+- SSE 流中估算 Token，结束优先用 OpenAI / Anthropic 官方 `usage` 校准（不双计、不 clamp）；断流保留估算并用后台 context 落审计。
+- `GET /health/budget` 含 used/settled/reserved；热账 `HotBudget` 内存实现（0.1.0 换 Redis/PG）。
+
+---
+
 ## [0.0.6] - 2026-08-13
 
 ### Added

@@ -41,6 +41,8 @@ type ResolvedVK struct {
 	ModelScope   []string
 	RPMLimit     int
 	RPMBurst     int
+	MonthlyHard  int64
+	MonthlySoft  int64
 	Channels     []Channel
 }
 
@@ -58,6 +60,10 @@ type RouteDecision struct {
 	TeamID         int64
 	PoolID         int64
 	PoolGroup      string
+	BudgetUsed     int64
+	BudgetSoft     bool
+	BudgetMonth    string
+	BudgetOver     bool
 }
 
 // IsolateChannels drops channels/keys that do not belong to the VK.

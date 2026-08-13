@@ -49,36 +49,56 @@ func copyPassHeaders(w http.ResponseWriter, resp *http.Response) {
 	}
 }
 
-func writeUpstream(w http.ResponseWriter, resp *http.Response, stream bool) (int, error) {
+func writeUpstream(w http.ResponseWriter, resp *http.Response, stream bool, beforeHeader func(), onData func([]byte)) (int, error) {
 	defer resp.Body.Close()
 	copyPassHeaders(w, resp)
 	if stream && w.Header().Get("Content-Type") == "" {
 		w.Header().Set("Content-Type", "text/event-stream")
 	}
+	if !stream {
+		body, err := io.ReadAll(resp.Body)
+		if onData != nil {
+			onData(body)
+		}
+		if beforeHeader != nil {
+			beforeHeader()
+		}
+		w.WriteHeader(resp.StatusCode)
+		_, werr := w.Write(body)
+		if err != nil {
+			return resp.StatusCode, err
+		}
+		return resp.StatusCode, werr
+	}
+	if beforeHeader != nil {
+		beforeHeader()
+	}
 	w.WriteHeader(resp.StatusCode)
-	if stream {
-		flusher, _ := w.(http.Flusher)
-		buf := make([]byte, 4096)
-		for {
-			n, readErr := resp.Body.Read(buf)
-			if n > 0 {
-				if _, werr := w.Write(buf[:n]); werr != nil {
-					return resp.StatusCode, werr
-				}
-				if flusher != nil {
-					flusher.Flush()
-				}
+	flusher, _ := w.(http.Flusher)
+	if flusher != nil {
+		flusher.Flush()
+	}
+	buf := make([]byte, 4096)
+	for {
+		n, readErr := resp.Body.Read(buf)
+		if n > 0 {
+			if onData != nil {
+				onData(buf[:n])
 			}
-			if readErr != nil {
-				if readErr == io.EOF {
-					return resp.StatusCode, nil
-				}
-				return resp.StatusCode, readErr
+			if _, werr := w.Write(buf[:n]); werr != nil {
+				return resp.StatusCode, werr
+			}
+			if flusher != nil {
+				flusher.Flush()
 			}
 		}
+		if readErr != nil {
+			if readErr == io.EOF {
+				return resp.StatusCode, nil
+			}
+			return resp.StatusCode, readErr
+		}
 	}
-	_, err := io.Copy(w, resp.Body)
-	return resp.StatusCode, err
 }
 
 func discardUpstream(resp *http.Response) {

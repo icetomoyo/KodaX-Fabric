@@ -115,6 +115,12 @@ CREATE TABLE IF NOT EXISTS virtual_keys (
 		`ALTER TABLE route_decisions ADD COLUMN IF NOT EXISTS team_id bigint`,
 		`ALTER TABLE route_decisions ADD COLUMN IF NOT EXISTS pool_id bigint`,
 		`ALTER TABLE route_decisions ADD COLUMN IF NOT EXISTS pool_group varchar(32) NOT NULL DEFAULT ''`,
+		`ALTER TABLE virtual_keys ADD COLUMN IF NOT EXISTS monthly_token_hard bigint NOT NULL DEFAULT 0`,
+		`ALTER TABLE virtual_keys ADD COLUMN IF NOT EXISTS monthly_token_soft bigint NOT NULL DEFAULT 0`,
+		`ALTER TABLE route_decisions ADD COLUMN IF NOT EXISTS budget_used bigint NOT NULL DEFAULT 0`,
+		`ALTER TABLE route_decisions ADD COLUMN IF NOT EXISTS budget_soft boolean NOT NULL DEFAULT false`,
+		`ALTER TABLE route_decisions ADD COLUMN IF NOT EXISTS budget_month varchar(7) NOT NULL DEFAULT ''`,
+		`ALTER TABLE route_decisions ADD COLUMN IF NOT EXISTS budget_over boolean NOT NULL DEFAULT false`,
 	} {
 		if _, err := p.DB.ExecContext(ctx, q); err != nil {
 			return err
@@ -128,12 +134,13 @@ func (p *Postgres) ResolveVK(ctx context.Context, rawKey string) (*ResolvedVK, e
 	var vkID, poolID int64
 	var status, models string
 	var rpm, burst int
+	var monthlyHard, monthlySoft int64
 	var expires sql.NullTime
 	var projectID, teamID, poolTeam sql.NullInt64
 	var projectName, teamName, poolName, poolGroup sql.NullString
 	err := p.DB.QueryRowContext(ctx, `
 SELECT vk.id, vk.pool_id, vk.status, vk.expires_at, vk.model_scope,
-       vk.rpm_limit, vk.rpm_burst,
+       vk.rpm_limit, vk.rpm_burst, vk.monthly_token_hard, vk.monthly_token_soft,
        vk.project_id, pr.name, pr.team_id, t.name,
        p.name, p.group_name, p.team_id
 FROM virtual_keys vk
@@ -141,7 +148,7 @@ LEFT JOIN projects pr ON pr.id = vk.project_id
 LEFT JOIN teams t ON t.id = pr.team_id
 LEFT JOIN channel_pools p ON p.id = vk.pool_id
 WHERE vk.key_hash = $1
-`, hash).Scan(&vkID, &poolID, &status, &expires, &models, &rpm, &burst,
+`, hash).Scan(&vkID, &poolID, &status, &expires, &models, &rpm, &burst, &monthlyHard, &monthlySoft,
 		&projectID, &projectName, &teamID, &teamName,
 		&poolName, &poolGroup, &poolTeam)
 	if err == sql.ErrNoRows {
@@ -158,6 +165,7 @@ WHERE vk.key_hash = $1
 			VirtualKeyID: vkID, PoolID: poolID, PoolName: poolName.String, PoolGroup: poolGroup.String,
 			TeamID: teamID.Int64, TeamName: teamName.String, ProjectID: projectID.Int64, ProjectName: projectName.String,
 			ModelScope: splitCSV(models), RPMLimit: rpm, RPMBurst: burst,
+			MonthlyHard: monthlyHard, MonthlySoft: monthlySoft,
 		}, nil
 	}
 	const chSelect = `
@@ -188,6 +196,7 @@ ORDER BY CASE WHEN c.priority <= 0 THEN 1000000 ELSE c.priority END, c.id`
 		VirtualKeyID: vkID, PoolID: poolID, PoolName: poolName.String, PoolGroup: poolGroup.String,
 		TeamID: teamID.Int64, TeamName: teamName.String, ProjectID: projectID.Int64, ProjectName: projectName.String,
 		ModelScope: splitCSV(models), RPMLimit: rpm, RPMBurst: burst,
+		MonthlyHard: monthlyHard, MonthlySoft: monthlySoft,
 	}
 	if expires.Valid {
 		t := expires.Time
@@ -247,11 +256,11 @@ func (p *Postgres) RecordRoute(ctx context.Context, d RouteDecision) error {
 INSERT INTO route_decisions (
   virtual_key_id, protocol, requested_model, upstream_model,
   channel_id, tried_ids, reason, fallback, status, created_at,
-  team_id, pool_id, pool_group
-) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,COALESCE($10, now()),$11,$12,$13)
+  team_id, pool_id, pool_group, budget_used, budget_soft, budget_month, budget_over
+) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,COALESCE($10, now()),$11,$12,$13,$14,$15,$16,$17)
 `, d.VirtualKeyID, d.Protocol, d.RequestedModel, d.UpstreamModel,
 		d.ChannelID, strings.Join(tried, ","), d.Reason, d.Fallback, d.Status, nullTime(d.At),
-		d.TeamID, d.PoolID, d.PoolGroup)
+		d.TeamID, d.PoolID, d.PoolGroup, d.BudgetUsed, d.BudgetSoft, d.BudgetMonth, d.BudgetOver)
 	return err
 }
 
@@ -259,7 +268,9 @@ func (p *Postgres) RecentRoutes(ctx context.Context, vkID int64) ([]RouteDecisio
 	rows, err := p.DB.QueryContext(ctx, `
 SELECT virtual_key_id, protocol, requested_model, upstream_model, channel_id,
        tried_ids, reason, fallback, status, created_at,
-       COALESCE(team_id, 0), COALESCE(pool_id, 0), COALESCE(pool_group, '')
+       COALESCE(team_id, 0), COALESCE(pool_id, 0), COALESCE(pool_group, ''),
+       COALESCE(budget_used, 0), COALESCE(budget_soft, false), COALESCE(budget_month, ''),
+       COALESCE(budget_over, false)
 FROM route_decisions
 WHERE ($1 = 0 OR virtual_key_id = $1)
 ORDER BY id
@@ -275,7 +286,8 @@ ORDER BY id
 		var at time.Time
 		if err := rows.Scan(&d.VirtualKeyID, &d.Protocol, &d.RequestedModel, &d.UpstreamModel,
 			&d.ChannelID, &tried, &d.Reason, &d.Fallback, &d.Status, &at,
-			&d.TeamID, &d.PoolID, &d.PoolGroup); err != nil {
+			&d.TeamID, &d.PoolID, &d.PoolGroup,
+			&d.BudgetUsed, &d.BudgetSoft, &d.BudgetMonth, &d.BudgetOver); err != nil {
 			return nil, err
 		}
 		d.Tried = parseIDs(tried)
