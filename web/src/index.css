@@ -4,26 +4,30 @@
 
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 240 10% 3.9%;
+    --background: 210 24% 97%;
+    --foreground: 222 41% 12%;
     --card: 0 0% 100%;
-    --card-foreground: 240 10% 3.9%;
+    --card-foreground: 222 41% 12%;
     --popover: 0 0% 100%;
-    --popover-foreground: 240 10% 3.9%;
-    --primary: 240 5.9% 10%;
-    --primary-foreground: 0 0% 98%;
-    --secondary: 240 4.8% 95.9%;
-    --secondary-foreground: 240 5.9% 10%;
-    --muted: 240 4.8% 95.9%;
-    --muted-foreground: 240 3.8% 46.1%;
-    --accent: 240 4.8% 95.9%;
-    --accent-foreground: 240 5.9% 10%;
-    --destructive: 0 84.2% 60.2%;
+    --popover-foreground: 222 41% 12%;
+    --primary: 172 72% 29%;
+    --primary-foreground: 160 40% 98%;
+    --secondary: 210 20% 94%;
+    --secondary-foreground: 222 30% 20%;
+    --muted: 210 18% 94%;
+    --muted-foreground: 215 14% 42%;
+    --accent: 168 35% 93%;
+    --accent-foreground: 172 72% 22%;
+    --destructive: 0 72% 51%;
     --destructive-foreground: 0 0% 98%;
-    --border: 240 5.9% 90%;
-    --input: 240 5.9% 90%;
-    --ring: 240 5.9% 10%;
-    --radius: 0.5rem;
+    --border: 214 20% 88%;
+    --input: 214 20% 88%;
+    --ring: 172 72% 29%;
+    --sidebar: 222 38% 11%;
+    --sidebar-foreground: 210 20% 92%;
+    --sidebar-muted: 215 16% 62%;
+    --sidebar-accent: 172 40% 16%;
+    --radius: 0.65rem;
   }
 }
 
@@ -31,7 +35,16 @@
   * {
     @apply border-border;
   }
+  html {
+    font-feature-settings: "ss01" on, "cv11" on;
+  }
   body {
     @apply bg-background text-foreground antialiased;
+    font-family: "IBM Plex Sans", "Noto Sans SC", ui-sans-serif, system-ui, sans-serif;
+  }
+  code,
+  kbd,
+  pre {
+    font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
   }
 }

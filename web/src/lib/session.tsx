@@ -17,8 +17,8 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
 
   const refresh = React.useCallback(async () => {
     try {
-      const out = await callApi<Session>(requests.me());
-      setSession(out.data);
+      const out = await callApi<Session | null>(requests.me());
+      setSession(out.data ?? null);
     } catch {
       setSession(null);
     }

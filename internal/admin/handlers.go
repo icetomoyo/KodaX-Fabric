@@ -114,7 +114,8 @@ func (a *API) register(w http.ResponseWriter, r *http.Request) {
 func (a *API) me(w http.ResponseWriter, r *http.Request) {
 	ss, ok := a.Sessions.Get(cookieToken(r))
 	if !ok {
-		http.Error(w, `{"error":"unauthorized"}`, 401)
+		// Session probe: 200 + null so the console does not log a failed GET on first paint.
+		writeOK(w, nil)
 		return
 	}
 	writeOK(w, map[string]any{"role": ss.Role, "phone": ss.Phone, "name": ss.Name})

@@ -37,8 +37,8 @@ export function Toaster() {
         <div
           key={t.id}
           className={cn(
-            "rounded-md border bg-background px-3 py-2 text-sm shadow-lg",
-            t.variant === "destructive" && "border-destructive text-destructive",
+            "rounded-lg border bg-card px-3 py-2.5 text-sm shadow-lg",
+            t.variant === "destructive" && "border-destructive/40 bg-red-50 text-destructive",
           )}
         >
           {t.title}

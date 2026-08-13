@@ -1,8 +1,14 @@
 import * as React from "react";
+import { useSearchParams } from "react-router-dom";
+import { Plus } from "lucide-react";
+import { CopyButton } from "@/components/CopyButton";
+import { StatusBadge } from "@/components/StatusBadge";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
@@ -11,13 +17,11 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "@/components/ui/toast";
 import { callApi, requests } from "@/lib/api";
 import { useSession } from "@/lib/session";
+import { AppShell } from "@/pages/AppShell";
 import { LoginCard } from "@/pages/LoginCard";
-import { Shell } from "@/pages/Shell";
-import { UsageNote } from "@/pages/UsageNote";
 
 type Row = Record<string, unknown>;
 
@@ -26,15 +30,17 @@ function cell(v: unknown): string {
   return String(v);
 }
 
-function DataTable({ rows, cols, action }: { rows: Row[]; cols: string[]; action?: (row: Row) => React.ReactNode }) {
+type Col = { key: string; label: string; render?: (row: Row) => React.ReactNode };
+
+function DataTable({ rows, cols, action, empty }: { rows: Row[]; cols: Col[]; action?: (row: Row) => React.ReactNode; empty: string }) {
   return (
     <Table>
       <TableHeader>
-        <TableRow>
+        <TableRow className="hover:bg-transparent">
           {cols.map((c) => (
-            <TableHead key={c}>{c}</TableHead>
+            <TableHead key={c.key}>{c.label}</TableHead>
           ))}
-          {action ? <TableHead /> : null}
+          {action ? <TableHead className="text-right">操作</TableHead> : null}
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -42,15 +48,15 @@ function DataTable({ rows, cols, action }: { rows: Row[]; cols: string[]; action
           rows.map((r, i) => (
             <TableRow key={cell(r.id) || i}>
               {cols.map((c) => (
-                <TableCell key={c}>{cell(r[c])}</TableCell>
+                <TableCell key={c.key}>{c.render ? c.render(r) : cell(r[c.key])}</TableCell>
               ))}
-              {action ? <TableCell>{action(r)}</TableCell> : null}
+              {action ? <TableCell className="text-right">{action(r)}</TableCell> : null}
             </TableRow>
           ))
         ) : (
-          <TableRow>
-            <TableCell colSpan={cols.length + (action ? 1 : 0)} className="text-muted-foreground">
-              空
+          <TableRow className="hover:bg-transparent">
+            <TableCell colSpan={cols.length + (action ? 1 : 0)} className="py-12 text-center text-muted-foreground">
+              {empty}
             </TableCell>
           </TableRow>
         )}
@@ -59,18 +65,29 @@ function DataTable({ rows, cols, action }: { rows: Row[]; cols: string[]; action
   );
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (
     <div className="space-y-2">
       <Label>{label}</Label>
       {children}
+      {hint ? <p className="text-xs text-muted-foreground">{hint}</p> : null}
     </div>
   );
 }
 
+const titles: Record<string, { title: string; desc: string }> = {
+  providers: { title: "供应商", desc: "上游模型厂家，例如 DeepSeek、OpenAI。" },
+  keys: { title: "上游密钥", desc: "官方 Key 加密入库。明文只在录入时提交，列表永不回显。" },
+  pools: { title: "渠道池", desc: "虚拟钥匙绑定到池，而不是绑死某一条渠。" },
+  channels: { title: "渠道", desc: "池内的一条上游通路：协议、地址、优先级与权重。" },
+  vks: { title: "虚拟钥匙", desc: "发给调用方的 fab- 钥匙。同一把可走两个端点。" },
+  apps: { title: "申请审批", desc: "开发者提交的虚拟钥匙申请。" },
+};
+
 export function AdminPage() {
   const { session, loading } = useSession();
-  const origin = typeof window === "undefined" ? "" : window.location.origin;
+  const [params] = useSearchParams();
+  const section = titles[params.get("s") || ""] ? params.get("s") || "providers" : "providers";
   const [providers, setProviders] = React.useState<Row[]>([]);
   const [keys, setKeys] = React.useState<Row[]>([]);
   const [pools, setPools] = React.useState<Row[]>([]);
@@ -110,131 +127,199 @@ export function AdminPage() {
     }
   }
 
+  if (loading) {
+    return <div className="flex min-h-screen items-center justify-center text-sm text-muted-foreground">加载中…</div>;
+  }
+  if (!session) return <LoginCard allowRegister={false} />;
+
+  const meta = titles[section];
+
   return (
-    <Shell title="管理后台">
-      <UsageNote origin={origin} />
-      {loading ? <p className="text-sm text-muted-foreground">加载中…</p> : null}
-      {!loading && !session ? <LoginCard allowRegister={false} /> : null}
-      {session && session.role !== "admin" ? (
-        <p className="text-sm text-destructive">需要管理员账号。当前 {session.phone} / {session.role}</p>
-      ) : null}
-      {session?.role === "admin" ? (
-        <Tabs defaultValue="providers">
-          <TabsList className="flex flex-wrap">
-            <TabsTrigger value="providers">Providers</TabsTrigger>
-            <TabsTrigger value="keys">上游 Key</TabsTrigger>
-            <TabsTrigger value="pools">渠道池</TabsTrigger>
-            <TabsTrigger value="channels">渠道</TabsTrigger>
-            <TabsTrigger value="vks">Virtual Keys</TabsTrigger>
-            <TabsTrigger value="apps">VK 申请</TabsTrigger>
-          </TabsList>
-
-          <TabsContent value="providers" className="space-y-3">
-            <CreateProvider onCreate={(input) => run(async () => { await callApi(requests.createProvider(input)); })} />
-            <DataTable rows={providers} cols={["id", "code", "name", "default_base_url"]} />
-          </TabsContent>
-
-          <TabsContent value="keys" className="space-y-3">
-            <p className="text-sm text-muted-foreground">明文 secret 只在创建时提交，列表永不回显。</p>
-            <CreateKey
-              onCreate={(input) =>
-                run(async () => {
-                  await callApi(requests.createProviderKey(input));
-                })
-              }
-            />
-            <DataTable
-              rows={keys}
-              cols={["id", "provider_code", "label", "status"]}
-              action={(row) => (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() =>
-                    run(async () => {
-                      const next = cell(row.status) === "active" ? "disabled" : "active";
-                      await callApi(requests.setProviderKeyStatus(Number(row.id), next));
-                    })
+    <AppShell title={meta.title} description={meta.desc}>
+      {session.role !== "admin" ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>需要管理员权限</CardTitle>
+            <CardDescription>
+              当前账号 {session.phone} 是开发者，只能申请虚拟钥匙，不能改接入配置。
+            </CardDescription>
+          </CardHeader>
+        </Card>
+      ) : (
+        <>
+          {once ? (
+            <Card className="border-amber-200 bg-amber-50">
+              <CardHeader>
+                <CardTitle>请立即保存这把钥匙</CardTitle>
+                <CardDescription>明文只出现这一次，关闭页面后无法再看。</CardDescription>
+              </CardHeader>
+              <CardContent className="flex flex-wrap items-center justify-between gap-3">
+                <code className="break-all text-sm">{once}</code>
+                <CopyButton text={once} />
+              </CardContent>
+            </Card>
+          ) : null}
+          <Card>
+            <CardHeader className="flex-row items-center justify-end space-y-0 pb-2">
+              {section === "providers" ? (
+                <CreateProvider onCreate={(input) => run(async () => { await callApi(requests.createProvider(input)); })} />
+              ) : null}
+              {section === "keys" ? (
+                <CreateKey
+                  providers={providers}
+                  onCreate={(input) => run(async () => { await callApi(requests.createProviderKey(input)); })}
+                />
+              ) : null}
+              {section === "pools" ? (
+                <CreatePool onCreate={(input) => run(async () => { await callApi(requests.createPool(input)); })} />
+              ) : null}
+              {section === "channels" ? (
+                <CreateChannel
+                  pools={pools}
+                  keys={keys}
+                  onCreate={(input) => run(async () => { await callApi(requests.createChannel(input)); })}
+                />
+              ) : null}
+              {section === "vks" ? (
+                <CreateVK
+                  pools={pools}
+                  onCreate={async (input) => {
+                    await run(async () => {
+                      const out = await callApi<{ id: number; virtual_key: string }>(requests.createVirtualKey(input));
+                      setOnce(out.data.virtual_key);
+                    });
+                  }}
+                />
+              ) : null}
+            </CardHeader>
+            <CardContent className="px-0 pb-2">
+              {section === "providers" ? (
+                <DataTable
+                  empty="还没有供应商。先添加一家上游。"
+                  rows={providers}
+                  cols={[
+                    { key: "id", label: "编号" },
+                    { key: "name", label: "名称" },
+                    { key: "code", label: "代码" },
+                    { key: "default_base_url", label: "默认地址" },
+                  ]}
+                />
+              ) : null}
+              {section === "keys" ? (
+                <DataTable
+                  empty="还没有上游密钥。"
+                  rows={keys}
+                  cols={[
+                    { key: "id", label: "编号" },
+                    { key: "provider_code", label: "供应商" },
+                    { key: "label", label: "备注" },
+                    { key: "status", label: "状态", render: (r) => <StatusBadge value={cell(r.status)} /> },
+                  ]}
+                  action={(row) => (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() =>
+                        run(async () => {
+                          const next = cell(row.status) === "active" ? "disabled" : "active";
+                          await callApi(requests.setProviderKeyStatus(Number(row.id), next));
+                        })
+                      }
+                    >
+                      {cell(row.status) === "active" ? "停用" : "启用"}
+                    </Button>
+                  )}
+                />
+              ) : null}
+              {section === "pools" ? (
+                <DataTable
+                  empty="还没有渠道池。"
+                  rows={pools}
+                  cols={[
+                    { key: "id", label: "编号" },
+                    { key: "name", label: "名称" },
+                    { key: "group_name", label: "分组" },
+                  ]}
+                />
+              ) : null}
+              {section === "channels" ? (
+                <DataTable
+                  empty="还没有渠道。"
+                  rows={channels}
+                  cols={[
+                    { key: "id", label: "编号" },
+                    { key: "pool_id", label: "池" },
+                    { key: "label", label: "密钥" },
+                    { key: "protocol", label: "协议" },
+                    { key: "base_url", label: "地址" },
+                    { key: "priority", label: "优先级" },
+                    { key: "weight", label: "权重" },
+                    { key: "status", label: "状态", render: (r) => <StatusBadge value={cell(r.status)} /> },
+                  ]}
+                />
+              ) : null}
+              {section === "vks" ? (
+                <DataTable
+                  empty="还没有签发虚拟钥匙。"
+                  rows={vks}
+                  cols={[
+                    { key: "id", label: "编号" },
+                    { key: "name", label: "名称" },
+                    { key: "key_prefix", label: "前缀" },
+                    { key: "pool_id", label: "池" },
+                    { key: "rpm_limit", label: "RPM" },
+                    { key: "monthly_token_limit", label: "月预算" },
+                    { key: "monthly_tokens_used", label: "本月已用" },
+                    { key: "status", label: "状态", render: (r) => <StatusBadge value={cell(r.status)} /> },
+                  ]}
+                  action={(row) =>
+                    cell(row.status) === "revoked" ? null : (
+                      <Button
+                        size="sm"
+                        variant="destructive"
+                        onClick={() => run(async () => { await callApi(requests.revokeVirtualKey(Number(row.id))); })}
+                      >
+                        吊销
+                      </Button>
+                    )
                   }
-                >
-                  切换状态
-                </Button>
-              )}
-            />
-          </TabsContent>
-
-          <TabsContent value="pools" className="space-y-3">
-            <CreatePool onCreate={(input) => run(async () => { await callApi(requests.createPool(input)); })} />
-            <DataTable rows={pools} cols={["id", "name", "group_name"]} />
-          </TabsContent>
-
-          <TabsContent value="channels" className="space-y-3">
-            <CreateChannel
-              onCreate={(input) =>
-                run(async () => {
-                  await callApi(requests.createChannel(input));
-                })
-              }
-            />
-            <DataTable rows={channels} cols={["id", "pool_id", "provider_key_id", "protocol", "base_url", "status", "priority", "weight"]} />
-          </TabsContent>
-
-          <TabsContent value="vks" className="space-y-3">
-            {once ? <pre className="overflow-auto rounded-md bg-muted p-3 text-sm">仅显示一次: {once}</pre> : null}
-            <CreateVK
-              onCreate={async (input) => {
-                await run(async () => {
-                  const out = await callApi<{ id: number; virtual_key: string }>(requests.createVirtualKey(input));
-                  setOnce(out.data.virtual_key);
-                });
-              }}
-            />
-            <DataTable
-              rows={vks}
-              cols={["id", "key_prefix", "name", "pool_id", "status", "rpm_limit", "monthly_token_limit", "monthly_tokens_used"]}
-              action={(row) =>
-                cell(row.status) === "revoked" ? null : (
-                  <Button
-                    size="sm"
-                    variant="destructive"
-                    onClick={() =>
-                      run(async () => {
-                        await callApi(requests.revokeVirtualKey(Number(row.id)));
-                      })
-                    }
-                  >
-                    吊销
-                  </Button>
-                )
-              }
-            />
-          </TabsContent>
-
-          <TabsContent value="apps" className="space-y-3">
-            <DataTable
-              rows={apps}
-              cols={["id", "operator_id", "pool_id", "name", "status", "created_vk_prefix"]}
-              action={(row) =>
-                cell(row.status) === "pending" ? (
-                  <Button
-                    size="sm"
-                    onClick={() =>
-                      run(async () => {
-                        const out = await callApi<{ virtual_key: string }>(requests.approveVkApplication(Number(row.id)));
-                        setOnce(out.data.virtual_key);
-                        toast("已签发，开发者可在 /me 显示一次");
-                      })
-                    }
-                  >
-                    批准
-                  </Button>
-                ) : null
-              }
-            />
-          </TabsContent>
-        </Tabs>
-      ) : null}
-    </Shell>
+                />
+              ) : null}
+              {section === "apps" ? (
+                <DataTable
+                  empty="暂时没有申请。"
+                  rows={apps}
+                  cols={[
+                    { key: "id", label: "编号" },
+                    { key: "name", label: "名称" },
+                    { key: "operator_id", label: "申请人" },
+                    { key: "pool_id", label: "池" },
+                    { key: "created_vk_prefix", label: "钥匙前缀" },
+                    { key: "status", label: "状态", render: (r) => <StatusBadge value={cell(r.status)} /> },
+                  ]}
+                  action={(row) =>
+                    cell(row.status) === "pending" ? (
+                      <Button
+                        size="sm"
+                        onClick={() =>
+                          run(async () => {
+                            const out = await callApi<{ virtual_key: string }>(requests.approveVkApplication(Number(row.id)));
+                            setOnce(out.data.virtual_key);
+                            toast("已批准，开发者可在「申请虚拟钥匙」里显示一次");
+                          })
+                        }
+                      >
+                        批准
+                      </Button>
+                    ) : null
+                  }
+                />
+              ) : null}
+            </CardContent>
+          </Card>
+        </>
+      )}
+    </AppShell>
   );
 }
 
@@ -246,37 +331,48 @@ function CreateProvider({ onCreate }: { onCreate: (v: { code: string; name: stri
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button size="sm">添加 Provider</Button>
+        <Button size="sm">
+          <Plus className="h-4 w-4" />
+          添加供应商
+        </Button>
       </DialogTrigger>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>添加 Provider</DialogTitle>
+          <DialogTitle>添加供应商</DialogTitle>
+          <DialogDescription>填写厂家代码和默认上游地址。</DialogDescription>
         </DialogHeader>
-        <Field label="code">
+        <Field label="代码" hint="例如 deepseek">
           <Input value={code} onChange={(e) => setCode(e.target.value)} />
         </Field>
-        <Field label="name">
+        <Field label="显示名称">
           <Input value={name} onChange={(e) => setName(e.target.value)} />
         </Field>
-        <Field label="default_base_url">
-          <Input value={base} onChange={(e) => setBase(e.target.value)} />
+        <Field label="默认地址">
+          <Input placeholder="https://" value={base} onChange={(e) => setBase(e.target.value)} />
         </Field>
-        <Button
-          onClick={() => {
-            onCreate({ code, name, default_base_url: base });
-            setOpen(false);
-          }}
-        >
-          保存
-        </Button>
+        <div className="flex justify-end gap-2">
+          <Button variant="outline" onClick={() => setOpen(false)}>
+            取消
+          </Button>
+          <Button
+            onClick={() => {
+              onCreate({ code, name, default_base_url: base });
+              setOpen(false);
+            }}
+          >
+            保存
+          </Button>
+        </div>
       </DialogContent>
     </Dialog>
   );
 }
 
 function CreateKey({
+  providers,
   onCreate,
 }: {
+  providers: Row[];
   onCreate: (v: { provider_code: string; label: string; secret: string }) => void;
 }) {
   const [open, setOpen] = React.useState(false);
@@ -286,30 +382,50 @@ function CreateKey({
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button size="sm">添加上游 Key</Button>
+        <Button size="sm">
+          <Plus className="h-4 w-4" />
+          录入密钥
+        </Button>
       </DialogTrigger>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>添加上游 Key</DialogTitle>
+          <DialogTitle>录入上游密钥</DialogTitle>
+          <DialogDescription>官方 Key 会加密保存，之后无法从列表看到明文。</DialogDescription>
         </DialogHeader>
-        <Field label="provider_code">
-          <Input value={provider_code} onChange={(e) => setCode(e.target.value)} />
+        <Field label="供应商">
+          <Select value={provider_code} onValueChange={setCode}>
+            <SelectTrigger>
+              <SelectValue placeholder="选择供应商" />
+            </SelectTrigger>
+            <SelectContent>
+              {providers.map((p) => (
+                <SelectItem key={cell(p.code)} value={cell(p.code)}>
+                  {cell(p.name)} ({cell(p.code)})
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </Field>
-        <Field label="label">
-          <Input value={label} onChange={(e) => setLabel(e.target.value)} />
+        <Field label="备注">
+          <Input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="例如 生产 / 备用" />
         </Field>
-        <Field label="secret（明文只提交一次）">
+        <Field label="官方密钥">
           <Input type="password" value={secret} onChange={(e) => setSecret(e.target.value)} />
         </Field>
-        <Button
-          onClick={() => {
-            onCreate({ provider_code, label, secret });
-            setSecret("");
-            setOpen(false);
-          }}
-        >
-          保存
-        </Button>
+        <div className="flex justify-end gap-2">
+          <Button variant="outline" onClick={() => setOpen(false)}>
+            取消
+          </Button>
+          <Button
+            onClick={() => {
+              onCreate({ provider_code, label, secret });
+              setSecret("");
+              setOpen(false);
+            }}
+          >
+            保存
+          </Button>
+        </div>
       </DialogContent>
     </Dialog>
   );
@@ -322,43 +438,55 @@ function CreatePool({ onCreate }: { onCreate: (v: { name: string; group_name: st
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button size="sm">添加渠道池</Button>
+        <Button size="sm">
+          <Plus className="h-4 w-4" />
+          新建渠道池
+        </Button>
       </DialogTrigger>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>添加渠道池</DialogTitle>
+          <DialogTitle>新建渠道池</DialogTitle>
         </DialogHeader>
-        <Field label="name">
+        <Field label="名称">
           <Input value={name} onChange={(e) => setName(e.target.value)} />
         </Field>
-        <Field label="group_name">
+        <Field label="分组">
           <Select value={group} onValueChange={setGroup}>
             <SelectTrigger>
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="standard">standard</SelectItem>
-              <SelectItem value="premium">premium</SelectItem>
-              <SelectItem value="bulk">bulk</SelectItem>
+              <SelectItem value="standard">standard 标准</SelectItem>
+              <SelectItem value="premium">premium 高优先级</SelectItem>
+              <SelectItem value="bulk">bulk 批量</SelectItem>
             </SelectContent>
           </Select>
         </Field>
-        <Button
-          onClick={() => {
-            onCreate({ name, group_name: group });
-            setOpen(false);
-          }}
-        >
-          保存
-        </Button>
+        <div className="flex justify-end gap-2">
+          <Button variant="outline" onClick={() => setOpen(false)}>
+            取消
+          </Button>
+          <Button
+            onClick={() => {
+              onCreate({ name, group_name: group });
+              setOpen(false);
+            }}
+          >
+            保存
+          </Button>
+        </div>
       </DialogContent>
     </Dialog>
   );
 }
 
 function CreateChannel({
+  pools,
+  keys,
   onCreate,
 }: {
+  pools: Row[];
+  keys: Row[];
   onCreate: (v: {
     pool_id: number;
     provider_key_id: number;
@@ -369,8 +497,8 @@ function CreateChannel({
   }) => void;
 }) {
   const [open, setOpen] = React.useState(false);
-  const [pool_id, setPool] = React.useState("1");
-  const [provider_key_id, setKey] = React.useState("1");
+  const [pool_id, setPool] = React.useState("");
+  const [provider_key_id, setKey] = React.useState("");
   const [protocol, setProto] = React.useState("openai_chat");
   const [base_url, setBase] = React.useState("");
   const [priority, setPri] = React.useState("0");
@@ -378,61 +506,96 @@ function CreateChannel({
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button size="sm">添加渠道</Button>
+        <Button size="sm">
+          <Plus className="h-4 w-4" />
+          添加渠道
+        </Button>
       </DialogTrigger>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>添加渠道</DialogTitle>
+          <DialogDescription>渠道挂在某个池上，并绑定一把上游密钥。</DialogDescription>
         </DialogHeader>
-        <Field label="pool_id">
-          <Input value={pool_id} onChange={(e) => setPool(e.target.value)} />
+        <Field label="渠道池">
+          <Select value={pool_id} onValueChange={setPool}>
+            <SelectTrigger>
+              <SelectValue placeholder="选择池" />
+            </SelectTrigger>
+            <SelectContent>
+              {pools.map((p) => (
+                <SelectItem key={cell(p.id)} value={cell(p.id)}>
+                  {cell(p.name)} #{cell(p.id)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </Field>
-        <Field label="provider_key_id">
-          <Input value={provider_key_id} onChange={(e) => setKey(e.target.value)} />
+        <Field label="上游密钥">
+          <Select value={provider_key_id} onValueChange={setKey}>
+            <SelectTrigger>
+              <SelectValue placeholder="选择密钥" />
+            </SelectTrigger>
+            <SelectContent>
+              {keys.map((k) => (
+                <SelectItem key={cell(k.id)} value={cell(k.id)}>
+                  {cell(k.label)} · {cell(k.provider_code)} #{cell(k.id)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </Field>
-        <Field label="protocol">
+        <Field label="协议">
           <Select value={protocol} onValueChange={setProto}>
             <SelectTrigger>
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="openai_chat">openai_chat</SelectItem>
-              <SelectItem value="anthropic_messages">anthropic_messages</SelectItem>
+              <SelectItem value="openai_chat">OpenAI Chat Completions</SelectItem>
+              <SelectItem value="anthropic_messages">Anthropic Messages</SelectItem>
             </SelectContent>
           </Select>
         </Field>
-        <Field label="base_url">
-          <Input value={base_url} onChange={(e) => setBase(e.target.value)} />
+        <Field label="上游地址">
+          <Input placeholder="https://" value={base_url} onChange={(e) => setBase(e.target.value)} />
         </Field>
-        <Field label="priority">
-          <Input value={priority} onChange={(e) => setPri(e.target.value)} />
-        </Field>
-        <Field label="weight">
-          <Input value={weight} onChange={(e) => setW(e.target.value)} />
-        </Field>
-        <Button
-          onClick={() => {
-            onCreate({
-              pool_id: Number(pool_id),
-              provider_key_id: Number(provider_key_id),
-              protocol,
-              base_url,
-              priority: Number(priority),
-              weight: Number(weight),
-            });
-            setOpen(false);
-          }}
-        >
-          保存
-        </Button>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="优先级">
+            <Input value={priority} onChange={(e) => setPri(e.target.value)} />
+          </Field>
+          <Field label="权重">
+            <Input value={weight} onChange={(e) => setW(e.target.value)} />
+          </Field>
+        </div>
+        <div className="flex justify-end gap-2">
+          <Button variant="outline" onClick={() => setOpen(false)}>
+            取消
+          </Button>
+          <Button
+            onClick={() => {
+              onCreate({
+                pool_id: Number(pool_id),
+                provider_key_id: Number(provider_key_id),
+                protocol,
+                base_url,
+                priority: Number(priority),
+                weight: Number(weight),
+              });
+              setOpen(false);
+            }}
+          >
+            保存
+          </Button>
+        </div>
       </DialogContent>
     </Dialog>
   );
 }
 
 function CreateVK({
+  pools,
   onCreate,
 }: {
+  pools: Row[];
   onCreate: (v: {
     name: string;
     model_scope: string;
@@ -444,49 +607,71 @@ function CreateVK({
 }) {
   const [open, setOpen] = React.useState(false);
   const [name, setName] = React.useState("");
-  const [pool_id, setPool] = React.useState("1");
+  const [pool_id, setPool] = React.useState("");
   const [rpm, setRpm] = React.useState("60");
   const [budget, setBudget] = React.useState("0");
   const [models, setModels] = React.useState("");
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button size="sm">签发 VK</Button>
+        <Button size="sm">
+          <Plus className="h-4 w-4" />
+          签发钥匙
+        </Button>
       </DialogTrigger>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>签发 Virtual Key</DialogTitle>
+          <DialogTitle>签发虚拟钥匙</DialogTitle>
+          <DialogDescription>签发后明文只显示一次。0 表示不限额。</DialogDescription>
         </DialogHeader>
-        <Field label="name">
-          <Input value={name} onChange={(e) => setName(e.target.value)} />
+        <Field label="名称">
+          <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="例如 cursor-team-a" />
         </Field>
-        <Field label="pool_id">
-          <Input value={pool_id} onChange={(e) => setPool(e.target.value)} />
+        <Field label="渠道池">
+          <Select value={pool_id} onValueChange={setPool}>
+            <SelectTrigger>
+              <SelectValue placeholder="选择池" />
+            </SelectTrigger>
+            <SelectContent>
+              {pools.map((p) => (
+                <SelectItem key={cell(p.id)} value={cell(p.id)}>
+                  {cell(p.name)} #{cell(p.id)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </Field>
-        <Field label="rpm_limit">
-          <Input value={rpm} onChange={(e) => setRpm(e.target.value)} />
-        </Field>
-        <Field label="monthly_token_limit">
-          <Input value={budget} onChange={(e) => setBudget(e.target.value)} />
-        </Field>
-        <Field label="model_scope">
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="每分钟请求上限">
+            <Input value={rpm} onChange={(e) => setRpm(e.target.value)} />
+          </Field>
+          <Field label="月 Token 预算">
+            <Input value={budget} onChange={(e) => setBudget(e.target.value)} />
+          </Field>
+        </div>
+        <Field label="模型范围" hint="留空表示不限制。多个模型用逗号分隔。">
           <Input value={models} onChange={(e) => setModels(e.target.value)} />
         </Field>
-        <Button
-          onClick={() => {
-            onCreate({
-              name,
-              pool_id: Number(pool_id),
-              rpm_limit: Number(rpm),
-              monthly_token_limit: Number(budget),
-              model_scope: models,
-              ip_whitelist: "",
-            });
-            setOpen(false);
-          }}
-        >
-          签发
-        </Button>
+        <div className="flex justify-end gap-2">
+          <Button variant="outline" onClick={() => setOpen(false)}>
+            取消
+          </Button>
+          <Button
+            onClick={() => {
+              onCreate({
+                name,
+                pool_id: Number(pool_id),
+                rpm_limit: Number(rpm),
+                monthly_token_limit: Number(budget),
+                model_scope: models,
+                ip_whitelist: "",
+              });
+              setOpen(false);
+            }}
+          >
+            签发
+          </Button>
+        </div>
       </DialogContent>
     </Dialog>
   );

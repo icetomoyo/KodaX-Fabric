@@ -1,5 +1,8 @@
 import * as React from "react";
+import { CopyButton } from "@/components/CopyButton";
+import { StatusBadge } from "@/components/StatusBadge";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -7,8 +10,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { toast } from "@/components/ui/toast";
 import { callApi, requests } from "@/lib/api";
 import { useSession } from "@/lib/session";
+import { AppShell } from "@/pages/AppShell";
 import { LoginCard } from "@/pages/LoginCard";
-import { Shell } from "@/pages/Shell";
 import { UsageNote } from "@/pages/UsageNote";
 
 type Pool = { id: number; name: string; group_name?: string };
@@ -26,7 +29,7 @@ export function DeveloperPage() {
   const [pools, setPools] = React.useState<Pool[]>([]);
   const [apps, setApps] = React.useState<AppRow[]>([]);
   const [poolId, setPoolId] = React.useState("");
-  const [name, setName] = React.useState("dev-key");
+  const [name, setName] = React.useState("");
   const [revealed, setRevealed] = React.useState("");
 
   const load = React.useCallback(async () => {
@@ -46,8 +49,9 @@ export function DeveloperPage() {
 
   async function apply() {
     try {
-      await callApi(requests.createMyVkApplication({ pool_id: Number(poolId), name }));
-      toast("已提交申请");
+      await callApi(requests.createMyVkApplication({ pool_id: Number(poolId), name: name || "dev-key" }));
+      toast("申请已提交，等待管理员批准");
+      setName("");
       await load();
     } catch (e) {
       toast(e instanceof Error ? e.message : "申请失败", "destructive");
@@ -65,51 +69,72 @@ export function DeveloperPage() {
     }
   }
 
+  if (loading) {
+    return <div className="flex min-h-screen items-center justify-center text-sm text-muted-foreground">加载中…</div>;
+  }
+  if (!session) return <LoginCard allowRegister />;
+
   return (
-    <Shell title="申请 VK">
+    <AppShell title="申请虚拟钥匙" description="提交申请，批准后只能查看明文一次。">
       <UsageNote origin={origin} />
-      {loading ? <p className="text-sm text-muted-foreground">加载中…</p> : null}
-      {!loading && !session ? <LoginCard allowRegister /> : null}
-      {session ? (
-        <div className="space-y-6">
-          <div className="grid gap-3 rounded-lg border p-4 sm:grid-cols-3">
-            <div className="space-y-2">
-              <Label>渠道池</Label>
-              <Select value={poolId} onValueChange={setPoolId}>
-                <SelectTrigger>
-                  <SelectValue placeholder="选择池" />
-                </SelectTrigger>
-                <SelectContent>
-                  {pools.map((p) => (
-                    <SelectItem key={p.id} value={String(p.id)}>
-                      {p.name} (#{p.id})
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label>名称</Label>
-              <Input value={name} onChange={(e) => setName(e.target.value)} />
-            </div>
-            <div className="flex items-end">
-              <Button onClick={apply} disabled={!poolId}>
-                提交申请
-              </Button>
-            </div>
+      <Card>
+        <CardHeader>
+          <CardTitle>新申请</CardTitle>
+          <CardDescription>选择渠道池，写一个方便辨认的名称。</CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-4 sm:grid-cols-[1fr_1fr_auto]">
+          <div className="space-y-2">
+            <Label>渠道池</Label>
+            <Select value={poolId} onValueChange={setPoolId}>
+              <SelectTrigger>
+                <SelectValue placeholder="选择池" />
+              </SelectTrigger>
+              <SelectContent>
+                {pools.map((p) => (
+                  <SelectItem key={p.id} value={String(p.id)}>
+                    {p.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
-          {revealed ? (
-            <pre className="overflow-auto rounded-md bg-muted p-3 text-sm">请立即保存: {revealed}</pre>
-          ) : null}
+          <div className="space-y-2">
+            <Label>名称</Label>
+            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="例如 我的 Cursor" />
+          </div>
+          <div className="flex items-end">
+            <Button onClick={apply} disabled={!poolId}>
+              提交申请
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+      {revealed ? (
+        <Card className="border-amber-200 bg-amber-50">
+          <CardHeader>
+            <CardTitle>请立即保存</CardTitle>
+            <CardDescription>这把 fab- 钥匙关闭后无法再显示。</CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-wrap items-center justify-between gap-3">
+            <code className="break-all text-sm">{revealed}</code>
+            <CopyButton text={revealed} />
+          </CardContent>
+        </Card>
+      ) : null}
+      <Card>
+        <CardHeader>
+          <CardTitle>我的申请</CardTitle>
+        </CardHeader>
+        <CardContent className="px-0 pb-2">
           <Table>
             <TableHeader>
-              <TableRow>
-                <TableHead>id</TableHead>
-                <TableHead>name</TableHead>
-                <TableHead>pool_id</TableHead>
-                <TableHead>status</TableHead>
-                <TableHead>created_vk_prefix</TableHead>
-                <TableHead />
+              <TableRow className="hover:bg-transparent">
+                <TableHead>编号</TableHead>
+                <TableHead>名称</TableHead>
+                <TableHead>渠道池</TableHead>
+                <TableHead>状态</TableHead>
+                <TableHead>钥匙前缀</TableHead>
+                <TableHead className="text-right">操作</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -118,10 +143,12 @@ export function DeveloperPage() {
                   <TableRow key={a.id}>
                     <TableCell>{a.id}</TableCell>
                     <TableCell>{a.name}</TableCell>
-                    <TableCell>{a.pool_id}</TableCell>
-                    <TableCell>{a.status}</TableCell>
-                    <TableCell>{a.created_vk_prefix || ""}</TableCell>
+                    <TableCell>{pools.find((p) => p.id === a.pool_id)?.name || a.pool_id}</TableCell>
                     <TableCell>
+                      <StatusBadge value={a.status} />
+                    </TableCell>
+                    <TableCell className="font-mono text-xs">{a.created_vk_prefix || "—"}</TableCell>
+                    <TableCell className="text-right">
                       {a.status === "approved" ? (
                         <Button size="sm" variant="outline" onClick={() => reveal(a.id)}>
                           显示一次
@@ -131,16 +158,16 @@ export function DeveloperPage() {
                   </TableRow>
                 ))
               ) : (
-                <TableRow>
-                  <TableCell colSpan={6} className="text-muted-foreground">
-                    空
+                <TableRow className="hover:bg-transparent">
+                  <TableCell colSpan={6} className="py-12 text-center text-muted-foreground">
+                    还没有申请。提交后会显示在这里。
                   </TableCell>
                 </TableRow>
               )}
             </TableBody>
           </Table>
-        </div>
-      ) : null}
-    </Shell>
+        </CardContent>
+      </Card>
+    </AppShell>
   );
 }
