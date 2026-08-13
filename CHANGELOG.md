@@ -4,6 +4,18 @@
 
 ---
 
+## [0.0.4] - 2026-08-13
+
+KodaX-Fabric。落地模块仍是 Token Hub。
+
+### Added
+
+- 同协议多渠 failover：priority 主备、同级加权轮转、5xx/429/网络错误换路、4xx 不换
+- 同协议模型别名 fallback（只改发出去的 `model`）
+- 路由审计头：`X-Fabric-Request-Id` / `X-Fabric-Route` / `X-Fabric-Fallback`
+
+---
+
 ## [0.0.3] - 2026-08-13
 
 KodaX-Fabric 首次按切法发布。当前落地模块是 Token Hub（Go 单进程网关）。
@@ -19,4 +31,4 @@ KodaX-Fabric 首次按切法发布。当前落地模块是 Token Hub（Go 单进
 
 - 控制台 TypeScript 路径配置，去掉已弃用的 `baseUrl`
 
-<!-- last-sync: da0e57c -->
+<!-- last-sync: 2c5c722 -->
