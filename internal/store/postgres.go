@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 
 	_ "github.com/lib/pq"
 
@@ -60,20 +61,33 @@ CREATE TABLE IF NOT EXISTS virtual_keys (
   key_hash varchar(64) NOT NULL UNIQUE,
   key_prefix varchar(16) NOT NULL,
   pool_id bigint NOT NULL REFERENCES channel_pools(id),
-  status varchar(32) NOT NULL DEFAULT 'active'
+  status varchar(32) NOT NULL DEFAULT 'active',
+  expires_at timestamptz,
+  model_scope text NOT NULL DEFAULT ''
 );
 `
-	_, err := p.DB.ExecContext(ctx, ddl)
-	return err
+	if _, err := p.DB.ExecContext(ctx, ddl); err != nil {
+		return err
+	}
+	for _, q := range []string{
+		`ALTER TABLE virtual_keys ADD COLUMN IF NOT EXISTS expires_at timestamptz`,
+		`ALTER TABLE virtual_keys ADD COLUMN IF NOT EXISTS model_scope text NOT NULL DEFAULT ''`,
+	} {
+		if _, err := p.DB.ExecContext(ctx, q); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (p *Postgres) ResolveVK(ctx context.Context, rawKey string) (*ResolvedVK, error) {
 	hash := secret.HashVK(rawKey)
 	var vkID, poolID int64
-	var status string
+	var status, models string
+	var expires sql.NullTime
 	err := p.DB.QueryRowContext(ctx, `
-SELECT id, pool_id, status FROM virtual_keys WHERE key_hash = $1
-`, hash).Scan(&vkID, &poolID, &status)
+SELECT id, pool_id, status, expires_at, model_scope FROM virtual_keys WHERE key_hash = $1
+`, hash).Scan(&vkID, &poolID, &status, &expires, &models)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -94,7 +108,11 @@ ORDER BY c.id
 		return nil, err
 	}
 	defer rows.Close()
-	out := &ResolvedVK{VirtualKeyID: vkID, PoolID: poolID}
+	out := &ResolvedVK{VirtualKeyID: vkID, PoolID: poolID, ModelScope: splitCSV(models)}
+	if expires.Valid {
+		t := expires.Time
+		out.ExpiresAt = &t
+	}
 	for rows.Next() {
 		var ch Channel
 		var enc string
@@ -117,4 +135,19 @@ UPDATE provider_keys SET status = 'disabled'
 WHERE id = (SELECT provider_key_id FROM channels WHERE id = $1)
 `, channelID)
 	return err
+}
+
+func splitCSV(s string) []string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil
+	}
+	var out []string
+	for _, p := range strings.Split(s, ",") {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }

@@ -1,6 +1,9 @@
 package store
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 const (
 	ProtocolOpenAI    = "openai_chat"
@@ -18,6 +21,8 @@ type Channel struct {
 type ResolvedVK struct {
 	VirtualKeyID int64
 	PoolID       int64
+	ExpiresAt    *time.Time
+	ModelScope   []string
 	Channels     []Channel
 }
 

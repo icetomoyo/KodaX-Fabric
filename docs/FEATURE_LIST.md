@@ -1,12 +1,12 @@
 # FEATURE_LIST
 
-Last Updated: 2026-08-13 12:10
+Last Updated: 2026-08-13 12:40
 
 ## Version Info
 
 | 项 | 值 |
 |----|-----|
-| Current Release | **v0.0.2** |
+| Current Release | **v0.0.3** |
 | Planned Version | — |
 
 ## Version Summary
@@ -15,7 +15,7 @@ Last Updated: 2026-08-13 12:10
 |------|------|------|------|
 | v0.0.1 | Released | 1/1 | 最小双端点网关 |
 | v0.0.2 | Released | 1/1 | 上游钥匙柜 |
-| v0.0.3 | — | — | 虚拟钥匙，一把两端口 |
+| v0.0.3 | Released | 1/1 | 虚拟钥匙，一把两端口 |
 | v0.0.4 | — | — | 渠道池 + 简单路由 |
 | v0.0.5 | — | — | VK 绑池 + 分组 |
 | v0.0.6 | — | — | 限流 + 熔断 |
@@ -31,6 +31,7 @@ Last Updated: 2026-08-13 12:10
 |----|-------|--------|----------|----------|---------|--------|
 | 001 | 最小双端点网关 | **Completed** | Critical | New | v0.0.1 | [设计](features/v0.0.1.md#feature_001) |
 | 002 | 上游钥匙柜 | **Completed** | Critical | New | v0.0.2 | [设计](features/v0.0.2.md#feature_002) |
+| 003 | 虚拟钥匙一把两端口 | **Completed** | Critical | New | v0.0.3 | [设计](features/v0.0.3.md#feature_003) |
 
 ## Feature Details
 
@@ -78,12 +79,34 @@ Token Hub 按 `docs/PRD.md` §3 从 0 重开的第一刀：OpenAI / Anthropic �
 
 **Spec**：已综合（T1）。**Tickets**：#1–#4 **Done**。
 
+### FEATURE_003: 虚拟钥匙一把两端口
+
+| 字段 | 内容 |
+|------|------|
+| ID | 003 |
+| Title | 虚拟钥匙一把两端口 |
+| Status | **Completed** |
+| Priority | Critical |
+| Category | New |
+| Planned Version | v0.0.3 |
+| Released Version | v0.0.3 |
+| Created | 2026-08-13 |
+| Started | 2026-08-13 |
+| Completed | 2026-08-13 |
+| Design | [docs/features/v0.0.3.md#feature_003](features/v0.0.3.md#feature_003) |
+
+**Description**
+
+调用方只持 `fab-`；同一把 VK 走两个 `/v1` 端点；可限模型、可过期。
+
+**Spec**：已综合（T1）。**Tickets**：#1–#3 **Done**。
+
 ## Summary
 
 | 指标 | 数量 |
 |------|------|
-| Total | 2 |
+| Total | 3 |
 | Planned | 0 |
 | In Progress | 0 |
-| Completed | 2 |
-| Critical | 2 |
+| Completed | 3 |
+| Critical | 3 |

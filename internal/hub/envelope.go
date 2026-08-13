@@ -53,6 +53,19 @@ func writeUnavailable(w http.ResponseWriter, protocol string) {
 	})
 }
 
+func writeForbidden(w http.ResponseWriter, protocol, msg string) {
+	if protocol == store.ProtocolAnthropic {
+		writeJSON(w, http.StatusForbidden, map[string]any{
+			"type":  "error",
+			"error": map[string]any{"type": "permission_error", "message": msg},
+		})
+		return
+	}
+	writeJSON(w, http.StatusForbidden, map[string]any{
+		"error": map[string]any{"message": msg, "type": "invalid_request_error", "code": "model_not_allowed"},
+	})
+}
+
 func extractCallerKey(r *http.Request) string {
 	if k := r.Header.Get("X-Api-Key"); k != "" {
 		return k

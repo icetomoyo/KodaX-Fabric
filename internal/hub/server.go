@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"kodax-fabric/internal/store"
 )
@@ -50,7 +51,8 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 }
 
 type streamFlag struct {
-	Stream bool `json:"stream"`
+	Stream bool   `json:"stream"`
+	Model  string `json:"model"`
 }
 
 func (s *Server) relay(w http.ResponseWriter, r *http.Request, protocol, upstreamPath string) {
@@ -68,9 +70,8 @@ func (s *Server) relay(w http.ResponseWriter, r *http.Request, protocol, upstrea
 		writeUnauthorized(w, protocol)
 		return
 	}
-	ch := s.nextChannel(resolved.VirtualKeyID, protocol, resolved.Channels)
-	if ch == nil {
-		writeUnavailable(w, protocol)
+	if resolved.ExpiresAt != nil && !time.Now().Before(*resolved.ExpiresAt) {
+		writeUnauthorized(w, protocol)
 		return
 	}
 
@@ -83,6 +84,16 @@ func (s *Server) relay(w http.ResponseWriter, r *http.Request, protocol, upstrea
 
 	var flag streamFlag
 	_ = json.Unmarshal(body, &flag)
+	if len(resolved.ModelScope) > 0 && (flag.Model == "" || !contains(resolved.ModelScope, flag.Model)) {
+		writeForbidden(w, protocol, "model not allowed")
+		return
+	}
+
+	ch := s.nextChannel(resolved.VirtualKeyID, protocol, resolved.Channels)
+	if ch == nil {
+		writeUnavailable(w, protocol)
+		return
+	}
 
 	status, err := s.proxy(w, r, ch, upstreamPath, body, flag.Stream)
 	if err != nil {
@@ -114,4 +125,13 @@ func (s *Server) nextChannel(vkID int64, protocol string, channels []store.Chann
 	s.mu.Unlock()
 	c := cands[int(n%uint64(len(cands)))]
 	return &c
+}
+
+func contains(ss []string, v string) bool {
+	for _, s := range ss {
+		if s == v {
+			return true
+		}
+	}
+	return false
 }

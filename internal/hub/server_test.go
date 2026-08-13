@@ -589,6 +589,173 @@ func TestClientDisconnectCancelsUpstream(t *testing.T) {
 	t.Fatal("upstream was not cancelled")
 }
 
+func TestSameVKBothEndpoints(t *testing.T) {
+	var chatHits, msgHits int32
+	chatUp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&chatHits, 1)
+		if r.URL.Path != "/v1/chat/completions" {
+			t.Errorf("path %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(openaiUsageBody()))
+	}))
+	t.Cleanup(chatUp.Close)
+	msgUp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&msgHits, 1)
+		if r.URL.Path != "/v1/messages" {
+			t.Errorf("path %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"msg_1","type":"message"}`))
+	}))
+	t.Cleanup(msgUp.Close)
+
+	gw := newGateway(t, []store.Channel{
+		{ID: 1, Protocol: store.ProtocolOpenAI, BaseURL: chatUp.URL, Secret: "sk-oai"},
+		{ID: 2, Protocol: store.ProtocolAnthropic, BaseURL: msgUp.URL, Secret: "sk-anth"},
+	})
+	t.Cleanup(gw.Close)
+
+	req, _ := http.NewRequest(http.MethodPost, gw.URL+"/v1/chat/completions", strings.NewReader(`{"model":"gpt-4","messages":[]}`))
+	req.Header.Set("Authorization", "Bearer "+testVK)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("chat status %d", resp.StatusCode)
+	}
+
+	req, _ = http.NewRequest(http.MethodPost, gw.URL+"/v1/messages", strings.NewReader(`{"model":"claude","messages":[]}`))
+	req.Header.Set("X-Api-Key", testVK)
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("messages status %d", resp.StatusCode)
+	}
+	if atomic.LoadInt32(&chatHits) != 1 || atomic.LoadInt32(&msgHits) != 1 {
+		t.Fatalf("hits chat=%d msg=%d", chatHits, msgHits)
+	}
+}
+
+func TestExpiredVKUnauthorized(t *testing.T) {
+	var hits int32
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+	}))
+	t.Cleanup(up.Close)
+	expired := time.Now().Add(-time.Hour)
+	st := &store.Memory{ByRawKey: map[string]*store.ResolvedVK{
+		testVK: {
+			VirtualKeyID: 1, PoolID: 1, ExpiresAt: &expired,
+			Channels: []store.Channel{{ID: 1, Protocol: store.ProtocolOpenAI, BaseURL: up.URL, Secret: "sk-up"}},
+		},
+	}}
+	gw := httptest.NewServer(hub.New(st, http.DefaultClient).Handler())
+	t.Cleanup(gw.Close)
+
+	req, _ := http.NewRequest(http.MethodPost, gw.URL+"/v1/chat/completions", strings.NewReader(`{"model":"gpt-4"}`))
+	req.Header.Set("Authorization", "Bearer "+testVK)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 401 {
+		t.Fatalf("status %d", resp.StatusCode)
+	}
+	if atomic.LoadInt32(&hits) != 0 {
+		t.Fatal("expired VK still hit upstream")
+	}
+}
+
+func TestModelNotInScopeForbidden(t *testing.T) {
+	var hits int32
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+	}))
+	t.Cleanup(up.Close)
+	st := &store.Memory{ByRawKey: map[string]*store.ResolvedVK{
+		testVK: {
+			VirtualKeyID: 1, PoolID: 1, ModelScope: []string{"deepseek-chat"},
+			Channels: []store.Channel{{ID: 1, Protocol: store.ProtocolOpenAI, BaseURL: up.URL, Secret: "sk-up"}},
+		},
+	}}
+	gw := httptest.NewServer(hub.New(st, http.DefaultClient).Handler())
+	t.Cleanup(gw.Close)
+
+	req, _ := http.NewRequest(http.MethodPost, gw.URL+"/v1/chat/completions", strings.NewReader(`{"model":"gpt-4","messages":[]}`))
+	req.Header.Set("Authorization", "Bearer "+testVK)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 403 {
+		t.Fatalf("status %d", resp.StatusCode)
+	}
+	raw, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(raw), "model not allowed") {
+		t.Fatalf("body %s", raw)
+	}
+	if atomic.LoadInt32(&hits) != 0 {
+		t.Fatal("out-of-scope model hit upstream")
+	}
+
+	req, _ = http.NewRequest(http.MethodPost, gw.URL+"/v1/chat/completions", strings.NewReader(`{"model":"deepseek-chat","messages":[]}`))
+	req.Header.Set("Authorization", "Bearer "+testVK)
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("allowed model status %d", resp.StatusCode)
+	}
+	if atomic.LoadInt32(&hits) != 1 {
+		t.Fatalf("allowed model hits %d", hits)
+	}
+}
+
+func TestModelScopeMissingModelForbidden(t *testing.T) {
+	var hits int32
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+	}))
+	t.Cleanup(up.Close)
+	st := &store.Memory{ByRawKey: map[string]*store.ResolvedVK{
+		testVK: {
+			VirtualKeyID: 1, PoolID: 1, ModelScope: []string{"deepseek-chat"},
+			Channels: []store.Channel{{ID: 1, Protocol: store.ProtocolOpenAI, BaseURL: up.URL, Secret: "sk-up"}},
+		},
+	}}
+	gw := httptest.NewServer(hub.New(st, http.DefaultClient).Handler())
+	t.Cleanup(gw.Close)
+
+	req, _ := http.NewRequest(http.MethodPost, gw.URL+"/v1/chat/completions", strings.NewReader(`{"messages":[]}`))
+	req.Header.Set("Authorization", "Bearer "+testVK)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 403 {
+		t.Fatalf("status %d", resp.StatusCode)
+	}
+	raw, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(raw), "model not allowed") {
+		t.Fatalf("body %s", raw)
+	}
+	if atomic.LoadInt32(&hits) != 0 {
+		t.Fatal("missing model hit upstream")
+	}
+}
+
 func TestHealth(t *testing.T) {
 	gw := newGateway(t, nil)
 	t.Cleanup(gw.Close)
