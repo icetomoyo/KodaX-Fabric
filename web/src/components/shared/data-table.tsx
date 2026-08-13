@@ -69,7 +69,7 @@ export function DataTable<TData>({
           className="max-w-xs"
         />
       ) : null}
-      <div className="overflow-hidden rounded-xl border border-border bg-card/60">
+      <div className="overflow-hidden rounded-lg border border-border bg-card shadow-card">
         <Table>
           <TableHeader>
             {table.getHeaderGroups().map((hg) => (

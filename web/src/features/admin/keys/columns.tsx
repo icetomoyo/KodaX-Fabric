@@ -14,7 +14,7 @@ export function vkColumns(
       accessorKey: "key_masked",
       header: "掩码",
       cell: ({ row }) => (
-        <CopyText value={row.original.key_masked} className="text-xs text-ember-300" />
+        <CopyText value={row.original.key_masked} className="font-mono text-xs text-foreground" />
       ),
     },
     { accessorKey: "pool_id", header: "池" },

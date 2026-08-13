@@ -1,1 +1,0 @@
-import{j as e}from"./index-DFInAboH.js";function i({title:s,description:t,actions:r}){return e.jsxs("div",{className:"mb-6 flex items-start justify-between gap-4",children:[e.jsxs("div",{children:[e.jsx("h1",{className:"font-serif text-2xl tracking-tight",children:s}),t?e.jsx("div",{className:"mt-1 text-sm text-muted-foreground",children:t}):null]}),r]})}export{i as P};

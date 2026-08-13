@@ -46,38 +46,24 @@ export function LoginPage() {
   }
 
   return (
-    <div className="grid min-h-screen lg:grid-cols-[1.05fr_0.95fr]">
-      <aside className="relative hidden overflow-hidden border-r border-border px-14 py-16 lg:flex lg:flex-col">
-        <div className="absolute -left-24 top-24 h-72 w-72 rounded-full bg-ember-400/10 blur-3xl" />
-        <p className="font-mono text-[11px] uppercase tracking-[0.32em] text-ember-400/90">
-          KodaX-Fabric
-        </p>
-        <h1 className="mt-8 font-serif text-5xl leading-[1.1] tracking-tight">
-          一把虚拟钥匙，
-          <br />
-          管住所有上游。
-        </h1>
-        <p className="mt-6 max-w-md text-sm leading-7 text-muted-foreground">
-          KodaX-Fabric 把官方 Key 锁在网关里。员工只拿{" "}
-          <span className="font-mono text-ember-300">fab-</span>{" "}
-          钥匙；管理员在这里发卡、停用、看渠还活不活。
-        </p>
-        <div className="mt-auto grid grid-cols-3 gap-4 text-xs text-muted-foreground">
-          <Stat k="零转换" v="双端点透传" />
-          <Stat k="钥匙柜" v="加密 · 轮转 · 停用" />
-          <Stat k="调用方" v="永远看不到官方 Key" />
+    <div className="flex min-h-screen items-center justify-center bg-background px-4 py-12">
+      <div className="w-full max-w-sm">
+        <div className="flex flex-col items-center text-center">
+          <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-primary text-lg font-semibold text-primary-foreground">
+            K
+          </div>
+          <h1 className="mt-4 text-xl font-semibold tracking-tight text-foreground">
+            登录 KodaX Fabric
+          </h1>
+          <p className="mt-1.5 text-sm text-muted-foreground">统一密钥网关控制台</p>
         </div>
-      </aside>
 
-      <main className="flex items-center justify-center px-6 py-16">
-        <form onSubmit={handleSubmit(onSubmit)} className="w-full max-w-sm" noValidate>
-          <p className="font-mono text-[11px] uppercase tracking-[0.28em] text-ember-400/80">
-            Sign in
-          </p>
-          <h2 className="mt-3 font-serif text-3xl">进入控制台</h2>
-          <p className="mt-2 text-sm text-muted-foreground">管理员进编目，开发者进自己的工作台。</p>
-
-          <div className="mt-8 space-y-1.5">
+        <form
+          onSubmit={handleSubmit(onSubmit)}
+          className="mt-8 rounded-lg border border-border bg-card p-6 shadow-card"
+          noValidate
+        >
+          <div className="space-y-1.5">
             <Label htmlFor="phone">手机号</Label>
             <Input
               id="phone"
@@ -107,22 +93,12 @@ export function LoginPage() {
           <Button type="submit" className="mt-6 w-full" disabled={isSubmitting}>
             {isSubmitting ? "验证中…" : "登录"}
           </Button>
-          <p className="mt-6 font-mono text-[11px] leading-5 text-muted-foreground/60">
-            本机默认管理员 18612243416 / Hz@123456
-            <br />
-            开发者 13800138000 / Dev@123456
-          </p>
         </form>
-      </main>
-    </div>
-  );
-}
 
-function Stat({ k, v }: { k: string; v: string }) {
-  return (
-    <div className="rounded-xl border border-border bg-card/40 px-3 py-3">
-      <div className="font-mono text-[10px] uppercase tracking-wider text-ember-400/70">{k}</div>
-      <div className="mt-1 text-foreground">{v}</div>
+        <p className="mt-6 text-center text-xs leading-5 text-muted-foreground">
+          管理员进入控制台，开发者进入自己的工作台。
+        </p>
+      </div>
     </div>
   );
 }

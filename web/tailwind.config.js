@@ -40,10 +40,19 @@ export default {
           DEFAULT: "hsl(var(--card))",
           foreground: "hsl(var(--card-foreground))",
         },
-        // brand accents (existing palette, used for highlights)
-        ink: { 950: "#0a0b0e", 900: "#111318", 800: "#181b22", 700: "#232833" },
-        sand: { 50: "#f6f1e8", 200: "#d8cbb6" },
-        ember: { 300: "#f0c27a", 400: "#e8a04c", 500: "#c9842f" },
+        // brand accent (teal) used for highlights, kept as a named scale
+        brand: {
+          50: "#effaf9",
+          100: "#d7f1ef",
+          200: "#b0e2df",
+          300: "#7dcbc7",
+          400: "#45aca8",
+          500: "#2a8f8c",
+          600: "#207372",
+          700: "#1d5c5c",
+          800: "#1b4a4a",
+          900: "#1a3e3e",
+        },
       },
       borderRadius: {
         lg: "var(--radius)",
@@ -51,12 +60,21 @@ export default {
         sm: "calc(var(--radius) - 4px)",
       },
       fontFamily: {
-        sans: ["IBM Plex Sans", "ui-sans-serif", "system-ui"],
-        serif: ["Fraunces", "ui-serif", "Georgia"],
-        mono: ["IBM Plex Mono", "ui-monospace", "monospace"],
+        sans: [
+          "Inter",
+          "ui-sans-serif",
+          "system-ui",
+          "-apple-system",
+          "PingFang SC",
+          "Hiragino Sans GB",
+          "Microsoft YaHei",
+          "sans-serif",
+        ],
+        mono: ["IBM Plex Mono", "ui-monospace", "SFMono-Regular", "Menlo", "monospace"],
       },
       boxShadow: {
-        glow: "0 0 80px -20px rgba(232, 160, 76, 0.45)",
+        card: "0 1px 2px 0 rgb(16 24 40 / 0.05)",
+        pop: "0 4px 16px -2px rgb(16 24 40 / 0.08), 0 2px 6px -2px rgb(16 24 40 / 0.05)",
       },
       keyframes: {
         "accordion-down": {

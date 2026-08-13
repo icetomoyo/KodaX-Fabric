@@ -50,14 +50,14 @@ export default function UserPage() {
   const origin = window.location.origin;
 
   return (
-    <div className="min-h-screen">
-      <header className="border-b border-border bg-card/60 backdrop-blur">
-        <div className="mx-auto flex max-w-5xl items-center justify-between px-6 py-4">
-          <div>
-            <p className="font-mono text-[10px] uppercase tracking-[0.28em] text-ember-400/80">
-              KodaX-Fabric
-            </p>
-            <h1 className="font-serif text-xl">工作台</h1>
+    <div className="min-h-screen bg-background">
+      <header className="border-b border-border bg-card">
+        <div className="mx-auto flex h-14 max-w-5xl items-center justify-between px-6">
+          <div className="flex items-center gap-2.5">
+            <div className="flex h-7 w-7 items-center justify-center rounded-md bg-primary text-xs font-semibold text-primary-foreground">
+              K
+            </div>
+            <span className="text-sm font-semibold text-foreground">KodaX Fabric · 工作台</span>
           </div>
           <div className="flex items-center gap-3 text-sm">
             {operator?.role === "admin" ? (
@@ -80,30 +80,29 @@ export default function UserPage() {
 
       <main className="mx-auto max-w-5xl space-y-8 px-6 py-10">
         <section>
-          <p className="text-sm text-muted-foreground">你好</p>
-          <h2 className="font-serif text-4xl tracking-tight">
+          <h2 className="text-2xl font-semibold tracking-tight text-foreground">
             {operator?.name || operator?.phone}
           </h2>
-          <p className="mt-2 text-sm text-muted-foreground">
-            你只持有虚拟钥匙。公司官方 Key 不会出现在这个页面。
+          <p className="mt-1.5 text-sm text-muted-foreground">
+            你只持有虚拟钥匙，公司官方 Key 不会出现在这个页面。
           </p>
         </section>
 
         <section>
-          <h3 className="mb-3 text-sm text-muted-foreground">我的虚拟钥匙</h3>
+          <h3 className="mb-3 text-sm font-medium text-foreground">我的虚拟钥匙</h3>
           {keys.isPending ? (
             <div className="grid gap-3 md:grid-cols-2">
               {[0, 1].map((i) => (
-                <Skeleton key={i} className="h-28 w-full rounded-2xl" />
+                <Skeleton key={i} className="h-24 w-full rounded-lg" />
               ))}
             </div>
           ) : keys.data && keys.data.length > 0 ? (
             <div className="grid gap-3 md:grid-cols-2">
               {keys.data.map((k) => (
-                <Card key={k.id} className="bg-card/80">
+                <Card key={k.id}>
                   <CardContent className="p-5">
                     <div className="flex items-center justify-between">
-                      <CopyText value={k.key_masked} className="text-sm text-ember-300" />
+                      <CopyText value={k.key_masked} className="text-sm text-foreground" />
                       <StatusBadge status={k.status} />
                     </div>
                     <p className="mt-3 text-xs text-muted-foreground">
@@ -114,30 +113,33 @@ export default function UserPage() {
               ))}
             </div>
           ) : (
-            <div className="rounded-2xl border border-dashed border-border px-6 py-10 text-sm text-muted-foreground">
+            <div className="rounded-lg border border-dashed border-border bg-card px-6 py-10 text-sm text-muted-foreground">
               还没有发给你的钥匙。请联系管理员在后台创建一把 VK 并指定到你的账号。
             </div>
           )}
         </section>
 
-        <section className="grid gap-4 md:grid-cols-2">
-          <Guide
-            title="Cursor"
-            lines={[
-              `Base URL  ${origin}/v1`,
-              "协议      OpenAI",
-              "Header    Authorization: Bearer fab-…",
-            ]}
-          />
-          <Guide
-            title="Claude Code"
-            lines={[`Base URL  ${origin}`, "协议      Anthropic", "Header    x-api-key: fab-…"]}
-          />
+        <section>
+          <h3 className="mb-3 text-sm font-medium text-foreground">接入指南</h3>
+          <div className="grid gap-4 md:grid-cols-2">
+            <Guide
+              title="Cursor"
+              lines={[
+                `Base URL  ${origin}/v1`,
+                "协议      OpenAI",
+                "Header    Authorization: Bearer fab-…",
+              ]}
+            />
+            <Guide
+              title="Claude Code"
+              lines={[`Base URL  ${origin}`, "协议      Anthropic", "Header    x-api-key: fab-…"]}
+            />
+          </div>
         </section>
 
-        <Card className="bg-card/70">
+        <Card>
           <CardHeader>
-            <CardTitle className="text-sm font-medium text-muted-foreground">账号</CardTitle>
+            <CardTitle className="text-base font-semibold">账号设置</CardTitle>
           </CardHeader>
           <CardContent>
             <form onSubmit={handleSubmit(onSave)} className="grid gap-4 md:grid-cols-2" noValidate>
@@ -170,10 +172,10 @@ export default function UserPage() {
 
 function Guide({ title, lines }: { title: string; lines: string[] }) {
   return (
-    <Card className="bg-card/70">
+    <Card>
       <CardContent className="p-5">
-        <div className="text-sm">{title}</div>
-        <pre className="mt-3 overflow-x-auto font-mono text-[12px] leading-6 text-muted-foreground">
+        <div className="text-sm font-medium text-foreground">{title}</div>
+        <pre className="mt-3 overflow-x-auto rounded-md bg-muted p-3 font-mono text-[12px] leading-6 text-muted-foreground">
           {lines.join("\n")}
         </pre>
       </CardContent>

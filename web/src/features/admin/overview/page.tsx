@@ -12,7 +12,7 @@ export default function OverviewPage() {
       {ov.isPending ? (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           {[0, 1, 2, 3].map((i) => (
-            <Skeleton key={i} className="h-28 w-full rounded-2xl" />
+            <Skeleton key={i} className="h-24 w-full rounded-lg" />
           ))}
         </div>
       ) : ov.data ? (
@@ -31,10 +31,10 @@ export default function OverviewPage() {
 
 function Tile({ k, v }: { k: string; v: ReactNode }) {
   return (
-    <Card className="bg-card/70">
+    <Card>
       <CardContent className="p-5">
-        <div className="text-xs text-muted-foreground">{k}</div>
-        <div className="mt-2 font-serif text-3xl">{v}</div>
+        <div className="text-xs font-medium text-muted-foreground">{k}</div>
+        <div className="mt-2 text-2xl font-semibold tracking-tight text-foreground">{v}</div>
       </CardContent>
     </Card>
   );

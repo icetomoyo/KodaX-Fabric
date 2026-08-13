@@ -9,7 +9,9 @@ export function StatusBadge({ status }: { status: string }) {
       variant="outline"
       className={cn(
         "border-transparent font-normal",
-        on ? "bg-emerald-400/15 text-emerald-300" : "bg-white/10 text-muted-foreground",
+        on
+          ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200"
+          : "bg-slate-100 text-slate-500 ring-1 ring-slate-200",
       )}
     >
       {on ? "启用" : "停用"}

@@ -82,9 +82,9 @@ export function CreateKeyDialog() {
           <DialogDescription>明文只在创建瞬间显示一次，请立刻复制。</DialogDescription>
         </DialogHeader>
         {once ? (
-          <div className="rounded-xl border border-ember-400/30 bg-ember-400/10 p-4">
-            <p className="mb-2 text-xs text-ember-300/80">请立刻复制，关闭后不再出现：</p>
-            <CopyText value={once} className="break-all text-sm text-ember-300" />
+          <div className="rounded-md border border-brand-200 bg-brand-50 p-4">
+            <p className="mb-2 text-xs font-medium text-brand-800">请立刻复制，关闭后不再出现：</p>
+            <CopyText value={once} className="break-all font-mono text-sm text-foreground" />
             <Button variant="secondary" className="mt-4 w-full" onClick={() => handleOpen(false)}>
               我已保存
             </Button>
