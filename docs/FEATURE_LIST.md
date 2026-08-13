@@ -1,20 +1,20 @@
 # FEATURE_LIST
 
-Last Updated: 2026-08-13 10:50
+Last Updated: 2026-08-13 11:00
 
 ## Version Info
 
 | 项 | 值 |
 |----|-----|
 | Current Release | **v0.0.1** |
-| Planned Version | — |
+| Planned Version | **v0.0.2** |
 
 ## Version Summary
 
 | 版本 | 状态 | 进度 | 说明 |
 |------|------|------|------|
 | v0.0.1 | Released | 1/1 | 最小双端点网关 |
-| v0.0.2 | — | — | 上游钥匙柜（切法已冻，完成后登记） |
+| v0.0.2 | **In Progress** | 0/1 | 上游钥匙柜 |
 | v0.0.3 | — | — | 虚拟钥匙，一把两端口 |
 | v0.0.4 | — | — | 渠道池 + 简单路由 |
 | v0.0.5 | — | — | VK 绑池 + 分组 |
@@ -30,6 +30,7 @@ Last Updated: 2026-08-13 10:50
 | ID | Title | Status | Priority | Category | Planned | Design |
 |----|-------|--------|----------|----------|---------|--------|
 | 001 | 最小双端点网关 | **Completed** | Critical | New | v0.0.1 | [设计](features/v0.0.1.md#feature_001) |
+| 002 | 上游钥匙柜 | **InProgress** | Critical | New | v0.0.2 | [设计](features/v0.0.2.md#feature_002) |
 
 ## Feature Details
 
@@ -55,12 +56,34 @@ Token Hub 按 `docs/PRD.md` §3 从 0 重开的第一刀：OpenAI / Anthropic �
 
 **Spec**：已综合（T1）。**Tickets**：#1–#4 **Done**。Go 网关 + compose 可独立拉起。
 
+### FEATURE_002: 上游钥匙柜
+
+| 字段 | 内容 |
+|------|------|
+| ID | 002 |
+| Title | 上游钥匙柜 |
+| Status | **InProgress** |
+| Priority | Critical |
+| Category | New |
+| Planned Version | v0.0.2 |
+| Released Version | — |
+| Created | 2026-08-13 |
+| Started | 2026-08-13 |
+| Completed | — |
+| Design | [docs/features/v0.0.2.md#feature_002](features/v0.0.2.md#feature_002) |
+
+**Description**
+
+管理员把官方 Key 加密存进网关；同一家可以挂多把并轮转；401 / 额度用尽的 Key 能停用，不再被选。手测：两把 Key 打流会摊，废 Key 不再打。
+
+**Spec**：进行中。**Tickets**：未拆。
+
 ## Summary
 
 | 指标 | 数量 |
 |------|------|
-| Total | 1 |
+| Total | 2 |
 | Planned | 0 |
-| In Progress | 0 |
+| In Progress | 1 |
 | Completed | 1 |
-| Critical | 1 |
+| Critical | 2 |
