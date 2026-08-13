@@ -86,6 +86,7 @@ ALTER TABLE virtual_keys ADD COLUMN IF NOT EXISTS owner_id bigint REFERENCES ope
 ALTER TABLE virtual_keys ADD COLUMN IF NOT EXISTS expires_at timestamptz;
 ALTER TABLE virtual_keys ADD COLUMN IF NOT EXISTS model_scope text NOT NULL DEFAULT '';
 ALTER TABLE virtual_keys ADD COLUMN IF NOT EXISTS project_id bigint NOT NULL DEFAULT 0;
+ALTER TABLE virtual_keys ADD COLUMN IF NOT EXISTS rpm_limit int NOT NULL DEFAULT 0;
 ALTER TABLE channels ADD COLUMN IF NOT EXISTS priority int NOT NULL DEFAULT 0;
 ALTER TABLE channels ADD COLUMN IF NOT EXISTS weight int NOT NULL DEFAULT 0;
 ALTER TABLE channels ADD COLUMN IF NOT EXISTS models text NOT NULL DEFAULT '';
@@ -107,17 +108,18 @@ ALTER TABLE route_decisions ADD COLUMN IF NOT EXISTS pool_group varchar(32) NOT 
 func (p *Postgres) ResolveVK(ctx context.Context, rawKey string) (*ResolvedVK, error) {
 	hash := secret.HashVK(rawKey)
 	var vkID, poolID, projectID, teamID, poolTeam int64
+	var rpm int
 	var status, groupName string
 	var expires sql.NullTime
 	var scope string
 	err := p.DB.QueryRowContext(ctx, `
 SELECT v.id, v.pool_id, v.status, v.expires_at, COALESCE(v.model_scope,''), COALESCE(v.project_id,0),
-       COALESCE(p.team_id,0), COALESCE(cp.group_name,'standard'), COALESCE(cp.team_id,0)
+       COALESCE(p.team_id,0), COALESCE(cp.group_name,'standard'), COALESCE(cp.team_id,0), COALESCE(v.rpm_limit,0)
 FROM virtual_keys v
 LEFT JOIN projects p ON p.id = v.project_id
 LEFT JOIN channel_pools cp ON cp.id = v.pool_id
 WHERE v.key_hash = $1
-`, hash).Scan(&vkID, &poolID, &status, &expires, &scope, &projectID, &teamID, &groupName, &poolTeam)
+`, hash).Scan(&vkID, &poolID, &status, &expires, &scope, &projectID, &teamID, &groupName, &poolTeam, &rpm)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -133,7 +135,7 @@ WHERE v.key_hash = $1
 	rows, err := p.DB.QueryContext(ctx, `
 SELECT c.id, c.protocol, c.base_url, pk.secret_encrypted,
        COALESCE(c.priority,0), COALESCE(c.weight,0), COALESCE(c.models,''),
-       c.pool_id, COALESCE(cp.team_id,0), COALESCE(pk.team_id,0)
+       c.pool_id, COALESCE(cp.team_id,0), COALESCE(pk.team_id,0), COALESCE(pk.provider_code,'')
 FROM channels c
 JOIN provider_keys pk ON pk.id = c.provider_key_id
 LEFT JOIN channel_pools cp ON cp.id = c.pool_id
@@ -146,7 +148,7 @@ ORDER BY c.id
 	defer rows.Close()
 	out := &ResolvedVK{
 		VirtualKeyID: vkID, PoolID: poolID, ProjectID: projectID, TeamID: teamID,
-		PoolGroup: groupName, ModelScope: parseModelScope(scope),
+		PoolGroup: groupName, RPMLimit: rpm, ModelScope: parseModelScope(scope),
 	}
 	if expires.Valid {
 		t := expires.Time.UTC()
@@ -155,7 +157,7 @@ ORDER BY c.id
 	for rows.Next() {
 		var ch Channel
 		var enc, models string
-		if err := rows.Scan(&ch.ID, &ch.Protocol, &ch.BaseURL, &enc, &ch.Priority, &ch.Weight, &models, &ch.PoolID, &ch.TeamID, &ch.KeyTeamID); err != nil {
+		if err := rows.Scan(&ch.ID, &ch.Protocol, &ch.BaseURL, &enc, &ch.Priority, &ch.Weight, &models, &ch.PoolID, &ch.TeamID, &ch.KeyTeamID, &ch.ProviderCode); err != nil {
 			return nil, err
 		}
 		ch.Models = parseModelScope(models)

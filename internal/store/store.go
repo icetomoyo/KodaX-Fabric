@@ -12,17 +12,18 @@ const (
 )
 
 type Channel struct {
-	ID        int64
-	Protocol  string
-	BaseURL   string
-	Secret    string
-	Status    string
-	Priority  int
-	Weight    int
-	Models    []string
-	PoolID    int64
-	TeamID    int64
-	KeyTeamID int64
+	ID           int64
+	Protocol     string
+	BaseURL      string
+	Secret       string
+	Status       string
+	Priority     int
+	Weight       int
+	Models       []string
+	PoolID       int64
+	TeamID       int64
+	KeyTeamID    int64
+	ProviderCode string
 }
 
 type ResolvedVK struct {
@@ -31,6 +32,8 @@ type ResolvedVK struct {
 	TeamID       int64
 	ProjectID    int64
 	PoolGroup    string
+	RPMLimit     int
+	ProviderRPM  map[string]int
 	ExpiresAt    *time.Time
 	ModelScope   []string
 	Channels     []Channel

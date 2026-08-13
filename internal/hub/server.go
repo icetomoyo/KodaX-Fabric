@@ -22,8 +22,17 @@ type Server struct {
 	Aliases map[string]string
 	Audit   func(store.RouteDecision) error
 
-	mu sync.Mutex
-	rr map[string]uint64
+	BreakerWindow     int
+	BreakerMinFail    int
+	BreakerOpenRate   float64
+	BreakerCoolDown   time.Duration
+	BreakerHalfProbes int
+
+	mu          sync.Mutex
+	rr          map[string]uint64
+	vkBuckets   map[int64]*tokenBucket
+	provBuckets map[string]*tokenBucket
+	breakers    map[int64]*breaker
 }
 
 func New(st store.Store, client *http.Client) *Server {
@@ -100,11 +109,15 @@ func (s *Server) relay(w http.ResponseWriter, r *http.Request, protocol, upstrea
 		writeModelNotAllowed(w, protocol)
 		return
 	}
+	if !s.allowVK(resolved.VirtualKeyID, resolved.RPMLimit, now) {
+		writeRateLimited(w, protocol)
+		return
+	}
 
-	s.dispatch(w, r, resolved, protocol, upstreamPath, body, reqMeta.Stream, reqMeta.Model)
+	s.dispatch(w, r, resolved, protocol, upstreamPath, body, reqMeta.Stream, reqMeta.Model, now)
 }
 
-func (s *Server) dispatch(w http.ResponseWriter, r *http.Request, resolved *store.ResolvedVK, protocol, upstreamPath string, body []byte, stream bool, model string) {
+func (s *Server) dispatch(w http.ResponseWriter, r *http.Request, resolved *store.ResolvedVK, protocol, upstreamPath string, body []byte, stream bool, model string, now time.Time) {
 	rid := newRequestID()
 	models := []string{model}
 	if fb := s.aliasOf(protocol, model); fb != "" && fb != model {
@@ -123,7 +136,7 @@ func (s *Server) dispatch(w http.ResponseWriter, r *http.Request, resolved *stor
 			outBody = rewriteJSONModel(body, m)
 		}
 		for attempt := 0; attempt < 3; attempt++ {
-			ch := s.pickChannel(resolved.VirtualKeyID, protocol, m, resolved.Channels, used)
+			ch := s.pickChannel(resolved, protocol, m, used, now)
 			if ch == nil {
 				break
 			}
@@ -131,11 +144,12 @@ func (s *Server) dispatch(w http.ResponseWriter, r *http.Request, resolved *stor
 			lastCh = ch
 			lastModel = m
 			hops++
+			s.takeProvider(resolved, ch.ProviderCode, now)
 
 			if stream {
 				s.stampRoute(w, rid, ch, hops, mi > 0, resolved.PoolGroup)
 				status, err := s.proxy(w, r, ch, upstreamPath, outBody, true)
-				if err != nil && attempt < 2 && s.pickChannel(resolved.VirtualKeyID, protocol, m, resolved.Channels, used) != nil {
+				if err != nil && attempt < 2 && s.pickChannel(resolved, protocol, m, used, now) != nil {
 					lastErr = err
 					continue
 				}
@@ -151,6 +165,7 @@ func (s *Server) dispatch(w http.ResponseWriter, r *http.Request, resolved *stor
 			res, err := s.fetchUpstream(r, ch, upstreamPath, outBody)
 			if err != nil {
 				lastErr = err
+				s.observeChannel(ch.ID, false, now)
 				if attempt < 2 {
 					continue
 				}
@@ -161,8 +176,13 @@ func (s *Server) dispatch(w http.ResponseWriter, r *http.Request, resolved *stor
 			if res.status == http.StatusUnauthorized || res.status == http.StatusForbidden {
 				_ = s.Store.DisableProviderKey(r.Context(), ch.ID)
 			}
+			if res.status >= 500 {
+				s.observeChannel(ch.ID, false, now)
+			} else if res.status < 400 {
+				s.observeChannel(ch.ID, true, now)
+			}
 			if retryable(res.status, nil) {
-				if attempt < 2 && s.pickChannel(resolved.VirtualKeyID, protocol, m, resolved.Channels, used) != nil {
+				if attempt < 2 && s.pickChannel(resolved, protocol, m, used, now) != nil {
 					continue
 				}
 				break
@@ -176,6 +196,10 @@ func (s *Server) dispatch(w http.ResponseWriter, r *http.Request, resolved *stor
 	s.stampRoute(w, rid, lastCh, hops, lastModel != model, resolved.PoolGroup)
 	if last.status != 0 {
 		writeFetched(w, last)
+		return
+	}
+	if hops == 0 && s.allProvidersExhausted(resolved, protocol, model, now) {
+		writeRateLimited(w, protocol)
 		return
 	}
 	if lastErr != nil && !stream {

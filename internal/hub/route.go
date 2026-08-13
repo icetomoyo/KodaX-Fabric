@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"regexp"
 	"strconv"
+	"time"
 
 	"kodax-fabric/internal/store"
 )
@@ -64,14 +65,23 @@ func retryable(status int, err error) bool {
 	return status == 429 || status >= 500
 }
 
-func (s *Server) pickChannel(vkID int64, protocol, model string, all []store.Channel, used map[int64]bool) *store.Channel {
+func (s *Server) pickChannel(resolved *store.ResolvedVK, protocol, model string, used map[int64]bool, now time.Time) *store.Channel {
+	if resolved == nil {
+		return nil
+	}
 	best := int(^uint(0) >> 1)
 	var pool []store.Channel
-	for _, c := range store.ChannelsForProtocol(all, protocol) {
+	for _, c := range store.ChannelsForProtocol(resolved.Channels, protocol) {
 		if used[c.ID] {
 			continue
 		}
 		if !store.ChannelServes(c, model) {
+			continue
+		}
+		if !s.providerOK(resolved, c.ProviderCode, now) {
+			continue
+		}
+		if !s.channelAllowed(c.ID, now) {
 			continue
 		}
 		r := store.PriorityRank(c.Priority)
@@ -85,7 +95,25 @@ func (s *Server) pickChannel(vkID int64, protocol, model string, all []store.Cha
 	if len(pool) == 0 {
 		return nil
 	}
-	return s.weightedPick(vkID, protocol, model, pool, len(used) == 0)
+	return s.weightedPick(resolved.VirtualKeyID, protocol, model, pool, len(used) == 0)
+}
+
+func (s *Server) allProvidersExhausted(resolved *store.ResolvedVK, protocol, model string, now time.Time) bool {
+	if resolved == nil {
+		return false
+	}
+	any, allOut := false, true
+	for _, c := range store.ChannelsForProtocol(resolved.Channels, protocol) {
+		if !store.ChannelServes(c, model) {
+			continue
+		}
+		any = true
+		if s.providerOK(resolved, c.ProviderCode, now) {
+			allOut = false
+			break
+		}
+	}
+	return any && allOut
 }
 
 func (s *Server) weightedPick(vkID int64, protocol, model string, pool []store.Channel, advance bool) *store.Channel {

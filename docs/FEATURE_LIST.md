@@ -1,13 +1,13 @@
 # FEATURE_LIST
 
-Last Updated: 2026-08-13 19:10
+Last Updated: 2026-08-13 21:00
 
 ## Version Info
 
 | 项 | 值 |
 |----|-----|
 | Current Release | **v0.0.5** |
-| Planned Version | — |
+| Planned Version | **v0.0.6** |
 
 ## Version Summary
 
@@ -18,7 +18,7 @@ Last Updated: 2026-08-13 19:10
 | v0.0.3 | Released | 1/1 | 虚拟钥匙，一把两端口 |
 | v0.0.4 | Released | 1/1 | 同协议多渠 failover |
 | v0.0.5 | Released | 1/1 | VK 绑池与分组 |
-| v0.0.6 | — | — | 限流 + 熔断 |
+| v0.0.6 | In Progress | 0/1 | 限流 + 熔断 |
 | v0.0.7 | — | — | 预算闸 + 流式估算 |
 | v0.0.8 | — | — | 缓存 + 运营面 |
 | v0.1.0 | — | — | 独立部署收口 |
@@ -34,6 +34,7 @@ Last Updated: 2026-08-13 19:10
 | 003 | 虚拟钥匙一把两端口 | **Completed** | Critical | New | v0.0.3 | [设计](features/v0.0.3.md#feature_003) |
 | 004 | 同协议多渠 failover | **Completed** | Critical | New | v0.0.4 | [设计](features/v0.0.4.md#feature_004) |
 | 005 | VK 绑池与分组 | **Completed** | Critical | New | v0.0.5 | [设计](features/v0.0.5.md#feature_005) |
+| 006 | 限流与熔断 | **InProgress** | Critical | New | v0.0.6 | [设计](features/v0.0.6.md#feature_006) |
 
 ## Feature Details
 
@@ -147,12 +148,34 @@ VK → Project → Team → ChannelPool → Provider Key。两把 VK 走不同�
 
 **Spec**：已综合（T1，2026-08-13 用户确认「是」）。**Tickets**：#1–#3 **Done**。
 
+### FEATURE_006: 限流与熔断
+
+| 字段 | 内容 |
+|------|------|
+| ID | 006 |
+| Title | 限流与熔断 |
+| Status | **InProgress** |
+| Priority | Critical |
+| Category | New |
+| Planned Version | v0.0.6 |
+| Released Version | — |
+| Created | 2026-08-13 |
+| Started | 2026-08-13 |
+| Completed | — |
+| Design | [docs/features/v0.0.6.md#feature_006](features/v0.0.6.md#feature_006) |
+
+**Description**
+
+Key / Provider 硬拒绝 + 突发桶；摘病路、半开、池内切流。超 RPM 立刻 429；连续失败的渠被摘掉再半开。#42 本版只先两维。
+
+**Spec**：已综合（T1，2026-08-13 用户确认「是」）。**Tickets**：#1–#4 **Done**。
+
 ## Summary
 
 | 指标 | 数量 |
 |------|------|
-| Total | 5 |
+| Total | 6 |
 | Planned | 0 |
-| In Progress | 0 |
+| In Progress | 1 |
 | Completed | 5 |
-| Critical | 5 |
+| Critical | 6 |

@@ -53,6 +53,26 @@ func writeModelNotAllowed(w http.ResponseWriter, protocol string) {
 	})
 }
 
+func writeRateLimited(w http.ResponseWriter, protocol string) {
+	if protocol == store.ProtocolAnthropic {
+		writeJSON(w, http.StatusTooManyRequests, map[string]any{
+			"type": "error",
+			"error": map[string]any{
+				"type":    "rate_limit_error",
+				"message": "rate limited",
+			},
+		})
+		return
+	}
+	writeJSON(w, http.StatusTooManyRequests, map[string]any{
+		"error": map[string]any{
+			"message": "rate limited",
+			"type":    "rate_limit_error",
+			"code":    "rate_limited",
+		},
+	})
+}
+
 func writeUnavailable(w http.ResponseWriter, protocol string) {
 	if protocol == store.ProtocolAnthropic {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{
