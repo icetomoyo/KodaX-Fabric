@@ -14,7 +14,8 @@
 
 ```sh
 go run ./cmd/gateway
-# GET http://127.0.0.1:8080/health
+# 进程默认 :8080；compose 对外 API：http://127.0.0.1:3000
+# GET http://127.0.0.1:3000/health
 ```
 
 `/v1/chat/completions` 与 `/v1/messages` 尚未实现，见票 #1。
