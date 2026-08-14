@@ -4,6 +4,19 @@
 
 ---
 
+## [0.0.8] - 2026-08-14
+
+KodaX-Fabric。落地模块仍是 Token Hub。
+
+### Added
+
+- 确定性非流响应缓存：请求标明可缓存时，相同协议 + 模型 + 规范化请求体第二次命中，`X-Fabric-Cache: hit`，不打上游；`stream:true` 永不缓存
+- VK 申请审批：`POST /console/v1/vk-requests` 申请无明文；管理员批准后明文只亮一次；`pending` 不能调 `/v1`
+- VK 可选 IP 白名单：不在名单 403；空名单不拦
+- 停用旧官方 Key 后，同一把 `fab-` 打到池内新钥
+
+---
+
 ## [0.0.7] - 2026-08-13
 
 KodaX-Fabric。落地模块仍是 Token Hub。
@@ -72,4 +85,4 @@ KodaX-Fabric 首次按切法发布。当前落地模块是 Token Hub（Go 单进
 
 - 控制台 TypeScript 路径配置，去掉已弃用的 `baseUrl`
 
-<!-- last-sync: e4882bb -->
+<!-- last-sync: 50ab05f -->

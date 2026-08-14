@@ -1,4 +1,4 @@
-# Local KodaX-Fabric / Token Hub (v0.0.7)
+# Local KodaX-Fabric / Token Hub (v0.0.8)
 
 ```sh
 export DEEPSEEK_API_KEY='sk-...'
