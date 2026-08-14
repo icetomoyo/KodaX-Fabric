@@ -1,6 +1,6 @@
 # KNOWN_ISSUES
 
-Last Updated: 2026-08-14 11:57
+Last Updated: 2026-08-14 12:02
 
 来源：v0.0.1→v0.1.0 累计回归（2026-08-14）。当前发布 **v0.1.0**，不建议判定生产完全落地。
 
@@ -12,7 +12,7 @@ Last Updated: 2026-08-14 11:57
 | 002 | 发布镜像嵌入陈旧前端（缺 org/audit） | High | Resolved | v0.1.0 | unreleased (f089696) |
 | 003 | 模型别名与 Provider RPM 未接入生产路径 | Medium | ready | v0.0.4 / v0.0.6 | — |
 | 004 | restore 后再启 gateway 会重跑 bootstrap | High | Resolved | v0.1.0 | unreleased (cb47308) |
-| 005 | Redis 挂了 /health 仍 200 | Medium | ready | v0.1.0 | — |
+| 005 | Redis 挂了 /health 仍 200 | Medium | Resolved | v0.1.0 | unreleased (8849fb6) |
 
 ## Issue Details
 
@@ -145,8 +145,9 @@ Dockerfile 增加 Node 阶段：`npm ci && npm run build`，再覆盖 `internal/
 | 字段 | 内容 |
 |------|------|
 | Priority | **Medium** |
-| Status | **ready** |
+| Status | **Resolved** |
 | Introduced | v0.1.0（health 覆盖层） |
+| Fixed | unreleased（`8849fb6`，在 v0.1.0 之后） |
 | Created | 2026-08-14 |
 
 **Original Problem**
@@ -163,6 +164,14 @@ HLD V1 要求 PG+Redis。限流/缓存仍在进程内，Redis 挂了网关热路
 
 `redis` 失败时 `ok: false` 且非 200；探测改为发 `PING`。进程内 T1 的 `/health`（hub stub）保持简单 200，避免夹具依赖 Redis。
 
+**Resolution**
+
+`REDIS_URL` 有值时发 RESP `PING`，无 `PONG` 则 503 且 `ok`/`redis` 为 false。裸 TCP 不算活。未配置 `REDIS_URL` 仍只看 Postgres。hub T1 `/health` 不变。
+
+- **Resolution Date**: 2026-08-14
+- **Files Changed**: `cmd/gateway/health.go`, `cmd/gateway/health_test.go`, `cmd/gateway/main.go`, `deploy/README.md`
+- **Tests Added**: `TestPingRedisRejectsBareTCP`, `TestPingRedisAcceptsPong`, `TestHealthStatusRequiresRedisWhenConfigured`
+
 ---
 
 ## 不入库
@@ -178,10 +187,10 @@ HLD V1 要求 PG+Redis。限流/缓存仍在进程内，Redis 挂了网关热路
 | 指标 | 数量 |
 |------|------|
 | Total | 5 |
-| Open / needs-info / ready | 2 |
-| Resolved | 3 |
+| Open / needs-info / ready | 1 |
+| Resolved | 4 |
 | High | 0 open / 3 resolved |
-| Medium | 2 |
+| Medium | 1 open / 1 resolved |
 | Low | 0 |
 
-Next to resolve: **005**（Redis 挂了 /health 仍 200）。
+Next to resolve: **003**（模型别名与 Provider RPM 未接入生产路径）。
