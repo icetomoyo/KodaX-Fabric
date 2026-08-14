@@ -36,4 +36,4 @@ docker compose -p tokenhub -f compose.yaml up --build --wait
 | [docs/features/v0.1.2.md](docs/features/v0.1.2.md) | 本版规格与票 |
 | [deploy/README.md](deploy/README.md) | 本地 compose、备份/回滚、0.1.0 验收清单 |
 | [docs/UI_DESIGN.md](docs/UI_DESIGN.md) | 控制台线框 |
-| [docs/ProductDraft.md](docs/ProductDraft.md) | 早期设想；不要当入门 |
+| [docs/archive/ProductDraft.md](docs/archive/ProductDraft.md) | 早期设想（历史）；不要当入门 |
