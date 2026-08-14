@@ -4,6 +4,18 @@
 
 ---
 
+## [0.1.0] - 2026-08-14
+
+KodaX-Fabric。落地模块仍是 Token Hub。切法 0.0.1～0.1.0 收口。
+
+### Added
+
+- Postgres 命名卷 `pgdata`：`docker compose -p tokenhub` 重建容器不丢编目
+- 库备份/还原：`deploy/backup.sh`、`deploy/restore.sh`
+- 部署文档：发布、回滚、Cursor 与 Claude Code 同一把 `fab-`、切法 0.1.0 六条验收清单
+
+---
+
 ## [0.0.8] - 2026-08-14
 
 KodaX-Fabric。落地模块仍是 Token Hub。
@@ -85,4 +97,4 @@ KodaX-Fabric 首次按切法发布。当前落地模块是 Token Hub（Go 单进
 
 - 控制台 TypeScript 路径配置，去掉已弃用的 `baseUrl`
 
-<!-- last-sync: 50ab05f -->
+<!-- last-sync: 55311f2 -->

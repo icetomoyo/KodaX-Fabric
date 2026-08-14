@@ -1,13 +1,13 @@
 # FEATURE_LIST
 
-Last Updated: 2026-08-14 11:01
+Last Updated: 2026-08-14 11:10
 
 ## Version Info
 
 | 项 | 值 |
 |----|-----|
-| Current Release | **v0.0.8** |
-| Planned Version | **v0.1.0** |
+| Current Release | **v0.1.0** |
+| Planned Version | — |
 
 ## Version Summary
 
@@ -21,7 +21,7 @@ Last Updated: 2026-08-14 11:01
 | v0.0.6 | Released | 1/1 | 限流 + 熔断 |
 | v0.0.7 | Released | 1/1 | 预算闸 + 流式估算 |
 | v0.0.8 | Released | 1/1 | 缓存 + 运营面 |
-| v0.1.0 | In Progress | 1/1 | 独立部署收口 |
+| v0.1.0 | Released | 1/1 | 独立部署收口 |
 
 切法全文：[token-hub-slices.md](token-hub-slices.md)（遵守 PRD + HLD）。手测：[TokenHub_VISION.md](TokenHub_VISION.md)。
 
