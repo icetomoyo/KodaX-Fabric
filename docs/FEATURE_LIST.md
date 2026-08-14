@@ -1,6 +1,6 @@
 # FEATURE_LIST
 
-Last Updated: 2026-08-13 23:50
+Last Updated: 2026-08-14 10:12
 
 ## Version Info
 
@@ -20,7 +20,7 @@ Last Updated: 2026-08-13 23:50
 | v0.0.5 | Released | 1/1 | VK 绑池与分组 |
 | v0.0.6 | Released | 1/1 | 限流 + 熔断 |
 | v0.0.7 | Released | 1/1 | 预算闸 + 流式估算 |
-| v0.0.8 | In Progress | 0/1 | 缓存 + 运营面 |
+| v0.0.8 | In Progress | 1/1 | 缓存 + 运营面 |
 | v0.1.0 | — | — | 独立部署收口 |
 
 切法全文：[token-hub-slices.md](token-hub-slices.md)（遵守 PRD + HLD）。手测：[TokenHub_VISION.md](TokenHub_VISION.md)。
@@ -36,7 +36,7 @@ Last Updated: 2026-08-13 23:50
 | 005 | VK 绑池与分组 | **Completed** | Critical | New | v0.0.5 | [设计](features/v0.0.5.md#feature_005) |
 | 006 | 限流与熔断 | **Completed** | Critical | New | v0.0.6 | [设计](features/v0.0.6.md#feature_006) |
 | 007 | 预算闸与流式估算 | **Completed** | Critical | New | v0.0.7 | [设计](features/v0.0.7.md#feature_007) |
-| 008 | 缓存与运营面 | **InProgress** | Critical | New | v0.0.8 | [设计](features/v0.0.8.md#feature_008) |
+| 008 | 缓存与运营面 | **Completed** | Critical | New | v0.0.8 | [设计](features/v0.0.8.md#feature_008) |
 
 ## Feature Details
 
@@ -200,14 +200,14 @@ VK 月预算软/硬；边流边估 Token，结束用官方 usage 校准。快到
 |------|------|
 | ID | 008 |
 | Title | 缓存与运营面 |
-| Status | **InProgress** |
+| Status | **Completed** |
 | Priority | Critical |
 | Category | New |
 | Planned Version | v0.0.8 |
-| Released Version | — |
+| Released Version | v0.0.8 |
 | Created | 2026-08-13 |
 | Started | 2026-08-13 |
-| Completed | — |
+| Completed | 2026-08-14 |
 | Design | [docs/features/v0.0.8.md#feature_008](features/v0.0.8.md#feature_008) |
 
 **Description**
@@ -222,6 +222,6 @@ Prompt/响应缓存；VK 申请审批、IP 白名单、官方 Key 轮换。重�
 |------|------|
 | Total | 8 |
 | Planned | 0 |
-| In Progress | 1 |
-| Completed | 7 |
+| In Progress | 0 |
+| Completed | 8 |
 | Critical | 8 |
