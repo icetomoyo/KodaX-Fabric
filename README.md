@@ -1,6 +1,6 @@
 # KodaX-Fabric
 
-企业级 Token 统一接入与效能管理。发布 **v0.0.6**。当前落地模块是 **Token Hub**（HLD：Go 单进程网关）。
+企业级 Token 统一接入与效能管理。发布 **v0.0.7**。当前落地模块是 **Token Hub**（HLD：Go 单进程网关）。
 
 遵守 [docs/PRD.md](docs/PRD.md) 与 [docs/HLD.md](docs/HLD.md)。
 
@@ -32,7 +32,7 @@ docker compose -f compose.yaml up --build --wait
 | [docs/HLD.md](docs/HLD.md) | 高层设计（网关 Go、零转换、V1 单进程） |
 | [docs/token-hub-slices.md](docs/token-hub-slices.md) | 0.0.1～0.1.0 切片 |
 | [docs/TokenHub_VISION.md](docs/TokenHub_VISION.md) | 57 点 + 人话版（手测） |
-| [docs/FEATURE_LIST.md](docs/FEATURE_LIST.md) | Feature 索引（当前 v0.0.6） |
-| [docs/features/v0.0.6.md](docs/features/v0.0.6.md) | 本版规格与票 |
+| [docs/FEATURE_LIST.md](docs/FEATURE_LIST.md) | Feature 索引（当前 v0.0.7） |
+| [docs/features/v0.0.7.md](docs/features/v0.0.7.md) | 本版规格与票 |
 | [docs/UI_DESIGN.md](docs/UI_DESIGN.md) | 控制台线框 |
 | [docs/ProductDraft.md](docs/ProductDraft.md) | 早期设想；不要当入门 |

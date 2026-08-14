@@ -4,6 +4,18 @@
 
 ---
 
+## [0.0.7] - 2026-08-13
+
+KodaX-Fabric。落地模块仍是 Token Hub。
+
+### Added
+
+- VK 本月 Token 预算：软 80% 提醒仍放行，硬 100% 返回 402 `budget_exceeded`
+- 长流 SSE 注释显示用量递增；结束以厂家 `usage` 校准入账
+- 管理后台团队项目页：左侧选团队，右侧只看该队项目
+
+---
+
 ## [0.0.6] - 2026-08-13
 
 KodaX-Fabric。落地模块仍是 Token Hub。
@@ -60,4 +72,4 @@ KodaX-Fabric 首次按切法发布。当前落地模块是 Token Hub（Go 单进
 
 - 控制台 TypeScript 路径配置，去掉已弃用的 `baseUrl`
 
-<!-- last-sync: b66797f -->
+<!-- last-sync: e4882bb -->

@@ -1,13 +1,13 @@
 # FEATURE_LIST
 
-Last Updated: 2026-08-13 22:40
+Last Updated: 2026-08-13 23:20
 
 ## Version Info
 
 | 项 | 值 |
 |----|-----|
-| Current Release | **v0.0.6** |
-| Planned Version | **v0.0.7** |
+| Current Release | **v0.0.7** |
+| Planned Version | — |
 
 ## Version Summary
 
@@ -19,7 +19,7 @@ Last Updated: 2026-08-13 22:40
 | v0.0.4 | Released | 1/1 | 同协议多渠 failover |
 | v0.0.5 | Released | 1/1 | VK 绑池与分组 |
 | v0.0.6 | Released | 1/1 | 限流 + 熔断 |
-| v0.0.7 | In Progress | 0/1 | 预算闸 + 流式估算 |
+| v0.0.7 | Released | 1/1 | 预算闸 + 流式估算 |
 | v0.0.8 | — | — | 缓存 + 运营面 |
 | v0.1.0 | — | — | 独立部署收口 |
 
@@ -35,7 +35,7 @@ Last Updated: 2026-08-13 22:40
 | 004 | 同协议多渠 failover | **Completed** | Critical | New | v0.0.4 | [设计](features/v0.0.4.md#feature_004) |
 | 005 | VK 绑池与分组 | **Completed** | Critical | New | v0.0.5 | [设计](features/v0.0.5.md#feature_005) |
 | 006 | 限流与熔断 | **Completed** | Critical | New | v0.0.6 | [设计](features/v0.0.6.md#feature_006) |
-| 007 | 预算闸与流式估算 | **InProgress** | Critical | New | v0.0.7 | [设计](features/v0.0.7.md#feature_007) |
+| 007 | 预算闸与流式估算 | **Completed** | Critical | New | v0.0.7 | [设计](features/v0.0.7.md#feature_007) |
 
 ## Feature Details
 
@@ -177,14 +177,14 @@ Key / Provider 硬拒绝 + 突发桶；摘病路、半开、池内切流。超 R
 |------|------|
 | ID | 007 |
 | Title | 预算闸与流式估算 |
-| Status | **InProgress** |
+| Status | **Completed** |
 | Priority | Critical |
 | Category | New |
 | Planned Version | v0.0.7 |
-| Released Version | — |
+| Released Version | v0.0.7 |
 | Created | 2026-08-13 |
 | Started | 2026-08-13 |
-| Completed | — |
+| Completed | 2026-08-13 |
 | Design | [docs/features/v0.0.7.md#feature_007](features/v0.0.7.md#feature_007) |
 
 **Description**
@@ -199,6 +199,6 @@ VK 月预算软/硬；边流边估 Token，结束用官方 usage 校准。快到
 |------|------|
 | Total | 7 |
 | Planned | 0 |
-| In Progress | 1 |
-| Completed | 6 |
+| In Progress | 0 |
+| Completed | 7 |
 | Critical | 7 |
