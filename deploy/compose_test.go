@@ -53,15 +53,15 @@ func TestComposeUpNoDepsIsValid(t *testing.T) {
 	}
 }
 
-func TestReadmeMarksAliasAndProviderRPMUnshipped(t *testing.T) {
+func TestReadmeDocumentsAliasAndProviderRPM(t *testing.T) {
 	raw, err := os.ReadFile("README.md")
 	if err != nil {
 		t.Fatal(err)
 	}
 	text := string(raw)
-	for _, want := range []string{"模型别名", "Provider RPM", "未产品化"} {
+	for _, want := range []string{"模型别名", "Provider RPM", "rpm_limit", "model-aliases"} {
 		if !strings.Contains(text, want) {
-			t.Errorf("deploy README must say %q is not productized", want)
+			t.Errorf("deploy README missing %q", want)
 		}
 	}
 }

@@ -37,6 +37,8 @@ type Memory struct {
 	nextProj int64
 
 	Decisions []RouteDecision
+
+	AliasList []ModelAlias
 }
 
 func (m *Memory) AddVKUsage(_ context.Context, vkID int64, tokens int, month string) error {
@@ -90,7 +92,26 @@ func (m *Memory) ResolveVK(_ context.Context, rawKey string) (*ResolvedVK, error
 	cp := *vk
 	cp.PoolGroup = NormalizePoolGroup(cp.PoolGroup)
 	cp.Channels = IsolateChannels(&cp, vk.Channels)
+	if cp.ProviderRPM == nil {
+		cp.ProviderRPM = ProviderRPMFromKeys(m.ProviderKeys)
+	}
 	return &cp, nil
+}
+
+func (m *Memory) ModelAliases(_ context.Context) (map[string]string, error) {
+	if m == nil {
+		return nil, nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := map[string]string{}
+	for _, a := range m.AliasList {
+		if a.Protocol == "" || a.Model == "" || a.Fallback == "" {
+			continue
+		}
+		out[AliasKey(a.Protocol, a.Model)] = a.Fallback
+	}
+	return out, nil
 }
 
 func (m *Memory) DisableProviderKey(_ context.Context, channelID int64) error {

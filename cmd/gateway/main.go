@@ -56,6 +56,11 @@ func run() error {
 	h.Console = pg
 	h.Sessions = hub.NewSessions()
 	h.UI = webui.Handler()
+	aliases, err := pg.ModelAliases(ctx)
+	if err != nil {
+		return fmt.Errorf("model aliases: %w", err)
+	}
+	h.Aliases = aliases
 	switch strings.ToLower(strings.TrimSpace(os.Getenv("TRUST_PROXY"))) {
 	case "1", "true", "yes":
 		h.TrustProxy = true

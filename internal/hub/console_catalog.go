@@ -20,13 +20,14 @@ func (s *Server) handleCreateProviderKey(w http.ResponseWriter, r *http.Request,
 		ProviderCode string `json:"provider_code"`
 		Secret       string `json:"secret"`
 		TeamID       int64  `json:"team_id"`
+		RPMLimit     int    `json:"rpm_limit"`
 	}
 	if err := decodeJSON(r, &body); err != nil {
 		writeConsoleErr(w, http.StatusBadRequest, "invalid", "invalid json")
 		return
 	}
 	row, err := s.Console.CreateProviderKey(r.Context(), store.ProviderKeyCreate{
-		ProviderCode: body.ProviderCode, Secret: body.Secret, TeamID: body.TeamID,
+		ProviderCode: body.ProviderCode, Secret: body.Secret, TeamID: body.TeamID, RPMLimit: body.RPMLimit,
 	})
 	if err != nil {
 		writeStoreErr(w, err)
@@ -202,6 +203,29 @@ func (s *Server) handleApproveVK(w http.ResponseWriter, r *http.Request, _ *stor
 		return
 	}
 	row, err := s.Console.ApproveVirtualKey(r.Context(), id)
+	if err != nil {
+		writeStoreErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, row)
+}
+
+func (s *Server) handleListAliases(w http.ResponseWriter, r *http.Request, _ *store.Operator) {
+	rows, err := s.Console.ListModelAliases(r.Context())
+	if err != nil {
+		writeStoreErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"model_aliases": rows})
+}
+
+func (s *Server) handlePutAlias(w http.ResponseWriter, r *http.Request, _ *store.Operator) {
+	var body store.ModelAlias
+	if err := decodeJSON(r, &body); err != nil {
+		writeConsoleErr(w, http.StatusBadRequest, "invalid", "invalid json")
+		return
+	}
+	row, err := s.Console.PutModelAlias(r.Context(), body)
 	if err != nil {
 		writeStoreErr(w, err)
 		return

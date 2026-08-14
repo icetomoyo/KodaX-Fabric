@@ -187,7 +187,7 @@ func (m *Memory) CreateProviderKey(_ context.Context, in ProviderKeyCreate) (*Pr
 		return nil, ErrInvalid
 	}
 	m.nextPK++
-	row := ProviderKeyView{ID: m.nextPK, ProviderCode: code, Status: StatusActive, TeamID: in.TeamID}
+	row := ProviderKeyView{ID: m.nextPK, ProviderCode: code, Status: StatusActive, TeamID: in.TeamID, RPMLimit: in.RPMLimit}
 	m.ProviderKeys = append(m.ProviderKeys, row)
 	if m.PKSecrets == nil {
 		m.PKSecrets = map[int64]string{}
@@ -215,6 +215,12 @@ func (m *Memory) UpdateProviderKey(_ context.Context, id int64, in ProviderKeyUp
 				return nil, ErrInvalid
 			}
 			m.ProviderKeys[i].TeamID = *in.TeamID
+		}
+		if in.RPMLimit != nil {
+			if *in.RPMLimit < 0 {
+				return nil, ErrInvalid
+			}
+			m.ProviderKeys[i].RPMLimit = *in.RPMLimit
 		}
 		cp := m.ProviderKeys[i]
 		return &cp, nil
@@ -588,4 +594,32 @@ func (m *Memory) ListRouteDecisions(_ context.Context, limit int) ([]RouteDecisi
 		out[len(out)-1-i] = d
 	}
 	return out, nil
+}
+
+func (m *Memory) ListModelAliases(_ context.Context) ([]ModelAlias, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]ModelAlias, len(m.AliasList))
+	copy(out, m.AliasList)
+	if out == nil {
+		out = []ModelAlias{}
+	}
+	return out, nil
+}
+
+func (m *Memory) PutModelAlias(_ context.Context, in ModelAlias) (*ModelAlias, error) {
+	row, err := NormalizeModelAlias(in)
+	if err != nil {
+		return nil, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for i := range m.AliasList {
+		if m.AliasList[i].Protocol == row.Protocol && m.AliasList[i].Model == row.Model {
+			m.AliasList[i] = row
+			return &row, nil
+		}
+	}
+	m.AliasList = append(m.AliasList, row)
+	return &row, nil
 }

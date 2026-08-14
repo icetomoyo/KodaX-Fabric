@@ -91,6 +91,13 @@ ALTER TABLE virtual_keys ADD COLUMN IF NOT EXISTS budget_limit int NOT NULL DEFA
 ALTER TABLE virtual_keys ADD COLUMN IF NOT EXISTS budget_used int NOT NULL DEFAULT 0;
 ALTER TABLE virtual_keys ADD COLUMN IF NOT EXISTS budget_month varchar(7) NOT NULL DEFAULT '';
 ALTER TABLE virtual_keys ADD COLUMN IF NOT EXISTS ip_allow text NOT NULL DEFAULT '';
+ALTER TABLE provider_keys ADD COLUMN IF NOT EXISTS rpm_limit int NOT NULL DEFAULT 0;
+CREATE TABLE IF NOT EXISTS model_aliases (
+  protocol varchar(32) NOT NULL,
+  model varchar(128) NOT NULL,
+  fallback varchar(128) NOT NULL,
+  PRIMARY KEY (protocol, model)
+);
 ALTER TABLE channels ADD COLUMN IF NOT EXISTS priority int NOT NULL DEFAULT 0;
 ALTER TABLE channels ADD COLUMN IF NOT EXISTS weight int NOT NULL DEFAULT 0;
 ALTER TABLE channels ADD COLUMN IF NOT EXISTS models text NOT NULL DEFAULT '';
@@ -179,7 +186,51 @@ ORDER BY c.id
 	}
 	out.PoolGroup = NormalizePoolGroup(out.PoolGroup)
 	out.Channels = IsolateChannels(out, out.Channels)
+	rpmRows, err := p.DB.QueryContext(ctx, `
+SELECT COALESCE(pk.provider_code,''), COALESCE(pk.rpm_limit,0)
+FROM provider_keys pk
+JOIN channels c ON c.provider_key_id = pk.id
+WHERE c.pool_id = $1 AND c.status = 'active'
+`, poolID)
+	if err != nil {
+		return nil, err
+	}
+	defer rpmRows.Close()
+	prpm := map[string]int{}
+	for rpmRows.Next() {
+		var code string
+		var lim int
+		if err := rpmRows.Scan(&code, &lim); err != nil {
+			return nil, err
+		}
+		if code != "" && lim > 0 {
+			prpm[code] = lim
+		}
+	}
+	if err := rpmRows.Err(); err != nil {
+		return nil, err
+	}
+	if len(prpm) > 0 {
+		out.ProviderRPM = prpm
+	}
 	return out, nil
+}
+
+func (p *Postgres) ModelAliases(ctx context.Context) (map[string]string, error) {
+	rows, err := p.DB.QueryContext(ctx, `SELECT protocol, model, fallback FROM model_aliases`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]string{}
+	for rows.Next() {
+		var proto, model, fb string
+		if err := rows.Scan(&proto, &model, &fb); err != nil {
+			return nil, err
+		}
+		out[AliasKey(proto, model)] = fb
+	}
+	return out, rows.Err()
 }
 
 func (p *Postgres) AddVKUsage(ctx context.Context, vkID int64, tokens int, month string) error {

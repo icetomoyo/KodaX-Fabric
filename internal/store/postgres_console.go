@@ -193,7 +193,7 @@ func (p *Postgres) Overview(ctx context.Context) (*Overview, error) {
 }
 
 func (p *Postgres) ListProviderKeys(ctx context.Context) ([]ProviderKeyView, error) {
-	rows, err := p.DB.QueryContext(ctx, `SELECT id, provider_code, status, COALESCE(team_id,0) FROM provider_keys ORDER BY id`)
+	rows, err := p.DB.QueryContext(ctx, `SELECT id, provider_code, status, COALESCE(team_id,0), COALESCE(rpm_limit,0) FROM provider_keys ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
@@ -201,7 +201,7 @@ func (p *Postgres) ListProviderKeys(ctx context.Context) ([]ProviderKeyView, err
 	var out []ProviderKeyView
 	for rows.Next() {
 		var r ProviderKeyView
-		if err := rows.Scan(&r.ID, &r.ProviderCode, &r.Status, &r.TeamID); err != nil {
+		if err := rows.Scan(&r.ID, &r.ProviderCode, &r.Status, &r.TeamID, &r.RPMLimit); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
@@ -223,12 +223,12 @@ func (p *Postgres) CreateProviderKey(ctx context.Context, in ProviderKeyCreate) 
 	}
 	var id int64
 	if err := p.DB.QueryRowContext(ctx, `
-INSERT INTO provider_keys (provider_code, secret_encrypted, status, team_id)
-VALUES ($1, $2, 'active', $3) RETURNING id
-`, code, enc, in.TeamID).Scan(&id); err != nil {
+INSERT INTO provider_keys (provider_code, secret_encrypted, status, team_id, rpm_limit)
+VALUES ($1, $2, 'active', $3, $4) RETURNING id
+`, code, enc, in.TeamID, in.RPMLimit).Scan(&id); err != nil {
 		return nil, err
 	}
-	return &ProviderKeyView{ID: id, ProviderCode: code, Status: StatusActive, TeamID: in.TeamID}, nil
+	return &ProviderKeyView{ID: id, ProviderCode: code, Status: StatusActive, TeamID: in.TeamID, RPMLimit: in.RPMLimit}, nil
 }
 
 func (p *Postgres) UpdateProviderKey(ctx context.Context, id int64, in ProviderKeyUpdate) (*ProviderKeyView, error) {
@@ -256,8 +256,21 @@ func (p *Postgres) UpdateProviderKey(ctx context.Context, id int64, in ProviderK
 			return nil, ErrNotFound
 		}
 	}
+	if in.RPMLimit != nil {
+		if *in.RPMLimit < 0 {
+			return nil, ErrInvalid
+		}
+		res, err := p.DB.ExecContext(ctx, `UPDATE provider_keys SET rpm_limit=$2 WHERE id=$1`, id, *in.RPMLimit)
+		if err != nil {
+			return nil, err
+		}
+		n, _ := res.RowsAffected()
+		if n == 0 {
+			return nil, ErrNotFound
+		}
+	}
 	var r ProviderKeyView
-	err := p.DB.QueryRowContext(ctx, `SELECT id, provider_code, status, COALESCE(team_id,0) FROM provider_keys WHERE id=$1`, id).Scan(&r.ID, &r.ProviderCode, &r.Status, &r.TeamID)
+	err := p.DB.QueryRowContext(ctx, `SELECT id, provider_code, status, COALESCE(team_id,0), COALESCE(rpm_limit,0) FROM provider_keys WHERE id=$1`, id).Scan(&r.ID, &r.ProviderCode, &r.Status, &r.TeamID, &r.RPMLimit)
 	if err == sql.ErrNoRows {
 		return nil, ErrNotFound
 	}
@@ -633,4 +646,35 @@ RETURNING id, pool_id, COALESCE(owner_id,0), COALESCE(project_id,0), status, key
 	}
 	view.KeyMasked = MaskPrefix(view.KeyPrefix)
 	return &VirtualKeyCreated{VirtualKeyView: view, Secret: raw}, nil
+}
+
+func (p *Postgres) ListModelAliases(ctx context.Context) ([]ModelAlias, error) {
+	rows, err := p.DB.QueryContext(ctx, `SELECT protocol, model, fallback FROM model_aliases ORDER BY protocol, model`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []ModelAlias{}
+	for rows.Next() {
+		var a ModelAlias
+		if err := rows.Scan(&a.Protocol, &a.Model, &a.Fallback); err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+func (p *Postgres) PutModelAlias(ctx context.Context, in ModelAlias) (*ModelAlias, error) {
+	row, err := NormalizeModelAlias(in)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := p.DB.ExecContext(ctx, `
+INSERT INTO model_aliases (protocol, model, fallback) VALUES ($1,$2,$3)
+ON CONFLICT (protocol, model) DO UPDATE SET fallback = EXCLUDED.fallback
+`, row.Protocol, row.Model, row.Fallback); err != nil {
+		return nil, err
+	}
+	return &row, nil
 }

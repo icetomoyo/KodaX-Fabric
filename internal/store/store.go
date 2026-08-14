@@ -58,6 +58,24 @@ type Store interface {
 	DisableProviderKey(ctx context.Context, channelID int64) error
 	SaveRouteDecision(ctx context.Context, d RouteDecision) error
 	AddVKUsage(ctx context.Context, vkID int64, tokens int, month string) error
+	ModelAliases(ctx context.Context) (map[string]string, error)
+}
+
+func AliasKey(protocol, model string) string {
+	return protocol + "|" + model
+}
+
+func ProviderRPMFromKeys(keys []ProviderKeyView) map[string]int {
+	out := map[string]int{}
+	for _, k := range keys {
+		if k.RPMLimit > 0 && k.ProviderCode != "" {
+			out[k.ProviderCode] = k.RPMLimit
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 func ModelAllowed(scope []string, model string) bool {

@@ -24,14 +24,12 @@ docker compose -p tokenhub -f compose.yaml up --build --wait
 
 Postgres 数据在命名卷 `pgdata`。重建容器不丢编目。
 
-## 未产品化（仅 T1 夹具）
+## 模型别名与 Provider RPM
 
-下列能力只在进程内单测接通，**compose / Postgres 生产路径未交付**：
+生产路径已接通（ISSUE_003）：
 
-- **模型别名 fallback**（004）：`hub.Server.Aliases` 无配置加载，网关启动不读别名表。
-- **Provider RPM**（006）：`ResolvedVK.ProviderRPM` 在 `Postgres.ResolveVK` 中不填充。VK 自己的 `rpm_limit` 与熔断仍生效。
-
-不要按这两项做生产验收。
+- **Provider RPM**：`PATCH /console/v1/provider-keys/{id}` 设 `rpm_limit`。同 `provider_code` 共用桶；0 或不设 = 不限。VK 自己的 `rpm_limit` 仍独立生效。
+- **模型别名**：`PUT /console/v1/model-aliases` `{"protocol":"openai_chat","model":"gpt-4","fallback":"gpt-4o"}`。网关启动时从库加载；主模型全挂后只改发出去的 `model`，不跨协议。`GET /console/v1/model-aliases` 列出。
 
 ## 回滚
 

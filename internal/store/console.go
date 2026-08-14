@@ -84,17 +84,26 @@ type ProviderKeyView struct {
 	ProviderCode string `json:"provider_code"`
 	Status       string `json:"status"`
 	TeamID       int64  `json:"team_id"`
+	RPMLimit     int    `json:"rpm_limit"`
 }
 
 type ProviderKeyCreate struct {
 	ProviderCode string
 	Secret       string
 	TeamID       int64 `json:"team_id"`
+	RPMLimit     int   `json:"rpm_limit"`
 }
 
 type ProviderKeyUpdate struct {
-	Status *string `json:"status"`
-	TeamID *int64  `json:"team_id"`
+	Status   *string `json:"status"`
+	TeamID   *int64  `json:"team_id"`
+	RPMLimit *int    `json:"rpm_limit"`
+}
+
+type ModelAlias struct {
+	Protocol string `json:"protocol"`
+	Model    string `json:"model"`
+	Fallback string `json:"fallback"`
 }
 
 type PoolView struct {
@@ -198,6 +207,9 @@ type Console interface {
 	UpdateVirtualKey(ctx context.Context, id int64, in VirtualKeyUpdate) (*VirtualKeyView, error)
 	ApplyVirtualKey(ctx context.Context, in VirtualKeyCreate) (*VirtualKeyView, error)
 	ApproveVirtualKey(ctx context.Context, id int64) (*VirtualKeyCreated, error)
+
+	ListModelAliases(ctx context.Context) ([]ModelAlias, error)
+	PutModelAlias(ctx context.Context, in ModelAlias) (*ModelAlias, error)
 }
 
 func NormalizeRole(role string) (string, error) {
@@ -231,6 +243,19 @@ func NormalizeGroup(g string) string {
 	default:
 		return ""
 	}
+}
+
+func NormalizeModelAlias(in ModelAlias) (ModelAlias, error) {
+	proto, err := NormalizeProtocol(in.Protocol)
+	if err != nil {
+		return ModelAlias{}, err
+	}
+	model := strings.TrimSpace(in.Model)
+	fb := strings.TrimSpace(in.Fallback)
+	if model == "" || fb == "" || model == fb {
+		return ModelAlias{}, ErrInvalid
+	}
+	return ModelAlias{Protocol: proto, Model: model, Fallback: fb}, nil
 }
 
 func NormalizeProtocol(p string) (string, error) {

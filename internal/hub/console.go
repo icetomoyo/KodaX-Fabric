@@ -129,6 +129,8 @@ func (s *Server) mountConsole(mux *http.ServeMux) {
 	mux.HandleFunc("PATCH /console/v1/virtual-keys/{id}", s.withAuth(true, s.handlePatchVK))
 	mux.HandleFunc("POST /console/v1/vk-requests", s.withAuth(false, s.handleApplyVK))
 	mux.HandleFunc("POST /console/v1/vk-requests/{id}/approve", s.withAuth(true, s.handleApproveVK))
+	mux.HandleFunc("GET /console/v1/model-aliases", s.withAuth(true, s.handleListAliases))
+	mux.HandleFunc("PUT /console/v1/model-aliases", s.withAuth(true, s.handlePutAlias))
 }
 
 type authHandler func(http.ResponseWriter, *http.Request, *store.Operator)
