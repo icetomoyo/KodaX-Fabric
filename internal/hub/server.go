@@ -27,12 +27,14 @@ type Server struct {
 	BreakerOpenRate   float64
 	BreakerCoolDown   time.Duration
 	BreakerHalfProbes int
+	CacheTTL          time.Duration
 
 	mu          sync.Mutex
 	rr          map[string]uint64
 	vkBuckets   map[int64]*tokenBucket
 	provBuckets map[string]*tokenBucket
 	breakers    map[int64]*breaker
+	respCache   map[string]cacheEntry
 }
 
 func New(st store.Store, client *http.Client) *Server {
@@ -109,7 +111,7 @@ func (s *Server) relay(w http.ResponseWriter, r *http.Request, protocol, upstrea
 		writeModelNotAllowed(w, protocol)
 		return
 	}
-	if !s.allowVK(resolved.VirtualKeyID, resolved.RPMLimit, now) {
+	if !s.vkHasQuota(resolved.VirtualKeyID, resolved.RPMLimit, now) {
 		writeRateLimited(w, protocol)
 		return
 	}
@@ -117,12 +119,58 @@ func (s *Server) relay(w http.ResponseWriter, r *http.Request, protocol, upstrea
 		writeBudgetExceeded(w, protocol)
 		return
 	}
+	if !ipAllowed(resolved.IPAllow, r) {
+		writeForbidden(w, protocol, "ip not allowed")
+		return
+	}
 	stampBudgetWarn(w, resolved, now)
 
-	s.dispatch(w, r, resolved, protocol, upstreamPath, body, reqMeta.Stream, reqMeta.Model, now)
+	cacheKey := ""
+	if !reqMeta.Stream && requestCacheable(r, body) {
+		cacheKey = responseCacheKey(protocol, reqMeta.Model, body)
+		if hit, ok := s.cacheGet(cacheKey); ok {
+			w.Header().Set("X-Fabric-Cache", "hit")
+			writeFetched(w, hit)
+			return
+		}
+		w.Header().Set("X-Fabric-Cache", "miss")
+	}
+	if !s.allowVK(resolved.VirtualKeyID, resolved.RPMLimit, now) {
+		writeRateLimited(w, protocol)
+		return
+	}
+
+	s.dispatch(w, r, resolved, protocol, upstreamPath, body, reqMeta.Stream, reqMeta.Model, now, cacheKey)
 }
 
-func (s *Server) dispatch(w http.ResponseWriter, r *http.Request, resolved *store.ResolvedVK, protocol, upstreamPath string, body []byte, stream bool, model string, now time.Time) {
+func callerIP(r *http.Request) string {
+	if xff := strings.TrimSpace(r.Header.Get("X-Forwarded-For")); xff != "" {
+		if i := strings.IndexByte(xff, ','); i >= 0 {
+			return strings.TrimSpace(xff[:i])
+		}
+		return xff
+	}
+	host := r.RemoteAddr
+	if i := strings.LastIndex(host, ":"); i >= 0 {
+		host = host[:i]
+	}
+	return strings.Trim(host, "[]")
+}
+
+func ipAllowed(allow []string, r *http.Request) bool {
+	if len(allow) == 0 {
+		return true
+	}
+	ip := callerIP(r)
+	for _, a := range allow {
+		if a == ip {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Server) dispatch(w http.ResponseWriter, r *http.Request, resolved *store.ResolvedVK, protocol, upstreamPath string, body []byte, stream bool, model string, now time.Time, cacheKey string) {
 	rid := newRequestID()
 	models := []string{model}
 	if fb := s.aliasOf(protocol, model); fb != "" && fb != model {
@@ -204,6 +252,7 @@ func (s *Server) dispatch(w http.ResponseWriter, r *http.Request, resolved *stor
 			writeFetched(w, res)
 			if res.status >= 200 && res.status < 400 {
 				s.creditUsage(resolved, parseUsageTokens(res.body), 0, now)
+				s.cachePut(cacheKey, res)
 			}
 			return
 		}

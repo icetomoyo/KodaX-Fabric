@@ -37,6 +37,8 @@ type ResolvedVK struct {
 	BudgetLimit  int
 	BudgetUsed   int
 	BudgetMonth  string
+	Status       string
+	IPAllow      []string
 	ExpiresAt    *time.Time
 	ModelScope   []string
 	Channels     []Channel
@@ -73,7 +75,7 @@ func ModelAllowed(scope []string, model string) bool {
 	return false
 }
 
-func parseModelScope(raw string) []string {
+func parseCSV(raw string) []string {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return nil
@@ -86,6 +88,10 @@ func parseModelScope(raw string) []string {
 		}
 	}
 	return out
+}
+
+func parseModelScope(raw string) []string {
+	return parseCSV(raw)
 }
 
 func NormalizePoolGroup(g string) string {

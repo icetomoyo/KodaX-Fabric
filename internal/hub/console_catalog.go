@@ -179,3 +179,32 @@ func (s *Server) handlePatchVK(w http.ResponseWriter, r *http.Request, _ *store.
 	}
 	writeJSON(w, http.StatusOK, row)
 }
+
+func (s *Server) handleApplyVK(w http.ResponseWriter, r *http.Request, op *store.Operator) {
+	var body store.VirtualKeyCreate
+	if err := decodeJSON(r, &body); err != nil {
+		writeConsoleErr(w, http.StatusBadRequest, "invalid", "invalid json")
+		return
+	}
+	body.OwnerID = op.ID
+	row, err := s.Console.ApplyVirtualKey(r.Context(), body)
+	if err != nil {
+		writeStoreErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, row)
+}
+
+func (s *Server) handleApproveVK(w http.ResponseWriter, r *http.Request, _ *store.Operator) {
+	id, err := pathID(r)
+	if err != nil {
+		writeConsoleErr(w, http.StatusBadRequest, "invalid", "bad id")
+		return
+	}
+	row, err := s.Console.ApproveVirtualKey(r.Context(), id)
+	if err != nil {
+		writeStoreErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, row)
+}

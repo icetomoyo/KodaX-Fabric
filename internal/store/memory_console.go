@@ -399,6 +399,9 @@ func (m *Memory) UpdateVirtualKey(_ context.Context, id int64, in VirtualKeyUpda
 			if err != nil {
 				return nil, err
 			}
+			if m.VKs[i].Status == StatusPending && st == StatusActive {
+				return nil, ErrInvalid
+			}
 			m.VKs[i].Status = st
 		}
 		if in.OwnerID != nil {
@@ -421,6 +424,57 @@ func (m *Memory) UpdateVirtualKey(_ context.Context, id int64, in VirtualKeyUpda
 		}
 		cp := m.VKs[i]
 		return &cp, nil
+	}
+	return nil, ErrNotFound
+}
+
+func (m *Memory) ApplyVirtualKey(_ context.Context, in VirtualKeyCreate) (*VirtualKeyView, error) {
+	if in.PoolID == 0 {
+		return nil, ErrInvalid
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !m.hasPool(in.PoolID) {
+		return nil, ErrInvalid
+	}
+	m.nextVK++
+	view := VirtualKeyView{
+		ID: m.nextVK, PoolID: in.PoolID, OwnerID: in.OwnerID, ProjectID: in.ProjectID,
+		Status: StatusPending, KeyPrefix: "fab-", KeyMasked: MaskPrefix("fab-"),
+	}
+	m.VKs = append(m.VKs, view)
+	return &view, nil
+}
+
+func (m *Memory) ApproveVirtualKey(_ context.Context, id int64) (*VirtualKeyCreated, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for i := range m.VKs {
+		if m.VKs[i].ID != id {
+			continue
+		}
+		if m.VKs[i].Status != StatusPending {
+			return nil, ErrInvalid
+		}
+		raw, prefix := GenerateVK()
+		m.VKs[i].Status = StatusActive
+		m.VKs[i].KeyPrefix = prefix
+		m.VKs[i].KeyMasked = MaskPrefix(prefix)
+		if m.VKRaw == nil {
+			m.VKRaw = map[int64]string{}
+		}
+		m.VKRaw[id] = raw
+		if m.ByRawKey == nil {
+			m.ByRawKey = map[string]*ResolvedVK{}
+		}
+		var teamID int64
+		if pr := m.project(m.VKs[i].ProjectID); pr != nil {
+			teamID = pr.TeamID
+		}
+		m.ByRawKey[raw] = &ResolvedVK{
+			VirtualKeyID: id, PoolID: m.VKs[i].PoolID, ProjectID: m.VKs[i].ProjectID, TeamID: teamID,
+		}
+		return &VirtualKeyCreated{VirtualKeyView: m.VKs[i], Secret: raw}, nil
 	}
 	return nil, ErrNotFound
 }

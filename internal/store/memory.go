@@ -84,6 +84,9 @@ func (m *Memory) ResolveVK(_ context.Context, rawKey string) (*ResolvedVK, error
 	if !ok {
 		return nil, nil
 	}
+	if vk.Status != "" && vk.Status != StatusActive {
+		return nil, nil
+	}
 	cp := *vk
 	cp.PoolGroup = NormalizePoolGroup(cp.PoolGroup)
 	cp.Channels = IsolateChannels(&cp, vk.Channels)

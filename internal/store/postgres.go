@@ -90,6 +90,7 @@ ALTER TABLE virtual_keys ADD COLUMN IF NOT EXISTS rpm_limit int NOT NULL DEFAULT
 ALTER TABLE virtual_keys ADD COLUMN IF NOT EXISTS budget_limit int NOT NULL DEFAULT 0;
 ALTER TABLE virtual_keys ADD COLUMN IF NOT EXISTS budget_used int NOT NULL DEFAULT 0;
 ALTER TABLE virtual_keys ADD COLUMN IF NOT EXISTS budget_month varchar(7) NOT NULL DEFAULT '';
+ALTER TABLE virtual_keys ADD COLUMN IF NOT EXISTS ip_allow text NOT NULL DEFAULT '';
 ALTER TABLE channels ADD COLUMN IF NOT EXISTS priority int NOT NULL DEFAULT 0;
 ALTER TABLE channels ADD COLUMN IF NOT EXISTS weight int NOT NULL DEFAULT 0;
 ALTER TABLE channels ADD COLUMN IF NOT EXISTS models text NOT NULL DEFAULT '';
@@ -112,18 +113,18 @@ func (p *Postgres) ResolveVK(ctx context.Context, rawKey string) (*ResolvedVK, e
 	hash := secret.HashVK(rawKey)
 	var vkID, poolID, projectID, teamID, poolTeam int64
 	var rpm, budgetLimit, budgetUsed int
-	var status, groupName, budgetMonth string
+	var status, groupName, budgetMonth, ipAllow string
 	var expires sql.NullTime
 	var scope string
 	err := p.DB.QueryRowContext(ctx, `
 SELECT v.id, v.pool_id, v.status, v.expires_at, COALESCE(v.model_scope,''), COALESCE(v.project_id,0),
        COALESCE(p.team_id,0), COALESCE(cp.group_name,'standard'), COALESCE(cp.team_id,0), COALESCE(v.rpm_limit,0),
-       COALESCE(v.budget_limit,0), COALESCE(v.budget_used,0), COALESCE(v.budget_month,'')
+       COALESCE(v.budget_limit,0), COALESCE(v.budget_used,0), COALESCE(v.budget_month,''), COALESCE(v.ip_allow,'')
 FROM virtual_keys v
 LEFT JOIN projects p ON p.id = v.project_id
 LEFT JOIN channel_pools cp ON cp.id = v.pool_id
 WHERE v.key_hash = $1
-`, hash).Scan(&vkID, &poolID, &status, &expires, &scope, &projectID, &teamID, &groupName, &poolTeam, &rpm, &budgetLimit, &budgetUsed, &budgetMonth)
+`, hash).Scan(&vkID, &poolID, &status, &expires, &scope, &projectID, &teamID, &groupName, &poolTeam, &rpm, &budgetLimit, &budgetUsed, &budgetMonth, &ipAllow)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -153,7 +154,7 @@ ORDER BY c.id
 	out := &ResolvedVK{
 		VirtualKeyID: vkID, PoolID: poolID, ProjectID: projectID, TeamID: teamID,
 		PoolGroup: groupName, RPMLimit: rpm, BudgetLimit: budgetLimit, BudgetUsed: budgetUsed, BudgetMonth: budgetMonth,
-		ModelScope: parseModelScope(scope),
+		ModelScope: parseModelScope(scope), IPAllow: parseCSV(ipAllow),
 	}
 	if expires.Valid {
 		t := expires.Time.UTC()

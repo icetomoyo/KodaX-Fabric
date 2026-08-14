@@ -476,6 +476,9 @@ SELECT id, pool_id, COALESCE(owner_id,0), COALESCE(project_id,0), status, key_pr
 		if err != nil {
 			return nil, err
 		}
+		if r.Status == StatusPending && st == StatusActive {
+			return nil, ErrInvalid
+		}
 		r.Status = st
 	}
 	if in.OwnerID != nil {
@@ -582,4 +585,52 @@ FROM route_decisions ORDER BY id DESC LIMIT $1
 		out = append(out, d)
 	}
 	return out, rows.Err()
+}
+
+func (p *Postgres) ApplyVirtualKey(ctx context.Context, in VirtualKeyCreate) (*VirtualKeyView, error) {
+	if in.PoolID == 0 {
+		return nil, ErrInvalid
+	}
+	var owner any
+	if in.OwnerID > 0 {
+		owner = in.OwnerID
+	}
+	var id int64
+	err := p.DB.QueryRowContext(ctx, `
+INSERT INTO virtual_keys (key_hash, key_prefix, pool_id, status, owner_id, project_id)
+VALUES ($1,$2,$3,'pending',$4,$5) RETURNING id
+`, secret.HashVK(pendingKeyPlaceholder()), "fab-", in.PoolID, owner, in.ProjectID).Scan(&id)
+	if err != nil {
+		return nil, ErrInvalid
+	}
+	return &VirtualKeyView{
+		ID: id, PoolID: in.PoolID, OwnerID: in.OwnerID, ProjectID: in.ProjectID,
+		Status: StatusPending, KeyPrefix: "fab-", KeyMasked: MaskPrefix("fab-"),
+	}, nil
+}
+
+func (p *Postgres) ApproveVirtualKey(ctx context.Context, id int64) (*VirtualKeyCreated, error) {
+	raw, prefix := GenerateVK()
+	var view VirtualKeyView
+	err := p.DB.QueryRowContext(ctx, `
+UPDATE virtual_keys SET key_hash=$2, key_prefix=$3, status='active'
+WHERE id=$1 AND status='pending'
+RETURNING id, pool_id, COALESCE(owner_id,0), COALESCE(project_id,0), status, key_prefix
+`, id, secret.HashVK(raw), prefix).Scan(&view.ID, &view.PoolID, &view.OwnerID, &view.ProjectID, &view.Status, &view.KeyPrefix)
+	if err == sql.ErrNoRows {
+		var status string
+		qerr := p.DB.QueryRowContext(ctx, `SELECT status FROM virtual_keys WHERE id=$1`, id).Scan(&status)
+		if qerr == sql.ErrNoRows {
+			return nil, ErrNotFound
+		}
+		if qerr != nil {
+			return nil, qerr
+		}
+		return nil, ErrInvalid
+	}
+	if err != nil {
+		return nil, err
+	}
+	view.KeyMasked = MaskPrefix(view.KeyPrefix)
+	return &VirtualKeyCreated{VirtualKeyView: view, Secret: raw}, nil
 }

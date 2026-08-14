@@ -21,6 +21,7 @@ const (
 	RoleDeveloper  = "developer"
 	StatusActive   = "active"
 	StatusDisabled = "disabled"
+	StatusPending  = "pending"
 )
 
 type Operator struct {
@@ -195,6 +196,8 @@ type Console interface {
 	ListVirtualKeys(ctx context.Context, ownerID int64) ([]VirtualKeyView, error)
 	CreateVirtualKey(ctx context.Context, in VirtualKeyCreate) (*VirtualKeyCreated, error)
 	UpdateVirtualKey(ctx context.Context, id int64, in VirtualKeyUpdate) (*VirtualKeyView, error)
+	ApplyVirtualKey(ctx context.Context, in VirtualKeyCreate) (*VirtualKeyView, error)
+	ApproveVirtualKey(ctx context.Context, id int64) (*VirtualKeyCreated, error)
 }
 
 func NormalizeRole(role string) (string, error) {
@@ -259,4 +262,12 @@ func GenerateVK() (raw, prefix string) {
 		prefix = prefix[:12]
 	}
 	return raw, prefix
+}
+
+func pendingKeyPlaceholder() string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		panic(err)
+	}
+	return "pending:" + hex.EncodeToString(b[:])
 }

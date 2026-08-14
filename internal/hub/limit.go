@@ -67,6 +67,13 @@ func (b *tokenBucket) take(now time.Time, rpm int) bool {
 	return true
 }
 
+func (s *Server) vkHasQuota(vkID int64, rpm int, now time.Time) bool {
+	if rpm <= 0 {
+		return true
+	}
+	return s.vkBucket(vkID).available(now, rpm)
+}
+
 func (s *Server) allowVK(vkID int64, rpm int, now time.Time) bool {
 	if rpm <= 0 {
 		return true

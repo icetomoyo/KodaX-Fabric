@@ -53,6 +53,26 @@ func writeModelNotAllowed(w http.ResponseWriter, protocol string) {
 	})
 }
 
+func writeForbidden(w http.ResponseWriter, protocol, msg string) {
+	if protocol == store.ProtocolAnthropic {
+		writeJSON(w, http.StatusForbidden, map[string]any{
+			"type": "error",
+			"error": map[string]any{
+				"type":    "permission_error",
+				"message": msg,
+			},
+		})
+		return
+	}
+	writeJSON(w, http.StatusForbidden, map[string]any{
+		"error": map[string]any{
+			"message": msg,
+			"type":    "invalid_request_error",
+			"code":    "forbidden",
+		},
+	})
+}
+
 func writeBudgetExceeded(w http.ResponseWriter, protocol string) {
 	if protocol == store.ProtocolAnthropic {
 		writeJSON(w, http.StatusPaymentRequired, map[string]any{
