@@ -16,11 +16,11 @@
 |----|-----|
 | 更新于 | 2026-08-14 |
 | 当前发布 | **v0.1.2** |
-| 进行中 feature | **011** 各角色自助改资料与密码（InProgress，v0.1.3） |
+| 进行中 feature | 无（011 已 Completed，v0.1.3 待发） |
 | 进行中 issue | 无 |
-| 阶段 | `complete` |
-| 下一步命令 | `完成 feature 011` |
-| 说明 | FEATURE_011 #1–#2 已实现并提交。下一步结案（可选先 `/human-test-guide`）。 |
+| 阶段 | `release` |
+| 下一步命令 | `/smart-release` |
+| 说明 | FEATURE_011 已结案。v0.1.3 本版 feature 均 Completed，package 仍是 0.1.2。 |
 
 **回答格式（只回命令，可附一句理由）：**
 

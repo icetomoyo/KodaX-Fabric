@@ -1,13 +1,13 @@
 # FEATURE_LIST
 
-Last Updated: 2026-08-14 18:20
+Last Updated: 2026-08-14 18:30
 
 ## Version Info
 
 | 项 | 值 |
 |----|-----|
 | Current Release | **v0.1.2** |
-| Planned Version | **v0.1.3** |
+| Planned Version | — |
 
 ## Version Summary
 
@@ -24,7 +24,7 @@ Last Updated: 2026-08-14 18:20
 | v0.1.0 | Released | 1/1 | 独立部署收口 |
 | v0.1.1 | Released | 1/1 | 回归补丁（KNOWN_ISSUES 001–005） |
 | v0.1.2 | Released | 1/1 | 单一企业三角色控制台 |
-| v0.1.3 | InProgress | 0/1 | 各角色自助改资料与密码 |
+| v0.1.3 | Complete | 1/1 | 各角色自助改资料与密码（待 `/smart-release`） |
 
 切法全文：[token-hub-slices.md](token-hub-slices.md)（遵守 PRD + HLD）。手测：[TokenHub_VISION.md](TokenHub_VISION.md)。
 
@@ -43,7 +43,7 @@ Last Updated: 2026-08-14 18:20
 | 009 | 独立部署收口 | **Completed** | Critical | Internal | v0.1.0 | [设计](features/v0.1.0.md#feature_009) |
 | — | 0.1.0 回归补丁 | **Completed** | High | Internal | v0.1.1 | [设计](features/v0.1.1.md) |
 | 010 | 单一企业三角色控制台 | **Completed** | Critical | New | v0.1.2 | [设计](features/v0.1.2.md#feature_010) |
-| 011 | 各角色自助改资料与密码 | **InProgress** | High | Enhancement | v0.1.3 | [设计](features/v0.1.3.md#feature_011) |
+| 011 | 各角色自助改资料与密码 | **Completed** | High | Enhancement | v0.1.3 | [设计](features/v0.1.3.md#feature_011) |
 
 ## Feature Details
 
@@ -295,21 +295,21 @@ v0.1.0 收口后的回归五条：XFF 白名单、镜像嵌前端、restore 不�
 |------|------|
 | ID | 011 |
 | Title | 各角色自助改资料与密码 |
-| Status | **InProgress** |
+| Status | **Completed** |
 | Priority | High |
 | Category | Enhancement |
 | Planned Version | v0.1.3 |
-| Released Version | — |
+| Released Version | **v0.1.3** |
 | Created | 2026-08-14 |
 | Started | 2026-08-14 |
-| Completed | — |
+| Completed | 2026-08-14 |
 | Design | [docs/features/v0.1.3.md#feature_011](features/v0.1.3.md#feature_011) |
 
 **Description**
 
 企业管理员、团队管理员、开发者都能改自己的显示名和登录密码。后端 `GET/PATCH /console/v1/me` 已有（`accessAny`）。0.1.2 撤掉 `/app` 后表单不在路由里，本版把入口接到共用 `/admin` 壳。不能改别人的角色、团队或密码。
 
-**Spec**：已综合（T1，2026-08-14 `/to-spec`）。**Tickets**：#1–#2 **Done**。实现已提交，待 Complete。
+**Spec**：已综合（T1，2026-08-14 `/to-spec`）。**Tickets**：#1–#2 **Done**。实现提交 `db629cf`。
 
 ## Summary
 
@@ -317,6 +317,6 @@ v0.1.0 收口后的回归五条：XFF 白名单、镜像嵌前端、restore 不�
 |------|------|
 | Total | 12 |
 | Planned | 0 |
-| In Progress | 1 |
-| Completed | 11 |
+| In Progress | 0 |
+| Completed | 12 |
 | Critical | 10 |
