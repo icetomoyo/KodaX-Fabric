@@ -189,6 +189,53 @@ func TestPendingVKAndIPAllow(t *testing.T) {
 	}
 }
 
+func TestSpoofedForwardedForDoesNotBypassIPAllow(t *testing.T) {
+	var hits int32
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(openaiUsageBody()))
+	}))
+	t.Cleanup(up.Close)
+	st := &store.Memory{ByRawKey: map[string]*store.ResolvedVK{
+		"fab-ip": {
+			VirtualKeyID: 1, PoolID: 1, IPAllow: []string{"1.2.3.4"},
+			Channels: []store.Channel{{ID: 1, Protocol: store.ProtocolOpenAI, BaseURL: up.URL, Secret: "sk"}},
+		},
+	}}
+
+	post := func(s *hub.Server) int {
+		gw := httptest.NewServer(s.Handler())
+		t.Cleanup(gw.Close)
+		req, _ := http.NewRequest(http.MethodPost, gw.URL+"/v1/chat/completions", strings.NewReader(`{"model":"gpt-4"}`))
+		req.Header.Set("Authorization", "Bearer fab-ip")
+		req.Header.Set("X-Forwarded-For", "1.2.3.4")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		return resp.StatusCode
+	}
+
+	plain := hub.New(st, http.DefaultClient)
+	if got := post(plain); got != 403 {
+		t.Fatalf("untrusted XFF status %d want 403", got)
+	}
+	if atomic.LoadInt32(&hits) != 0 {
+		t.Fatalf("untrusted XFF hit upstream %d", hits)
+	}
+
+	trusted := hub.New(st, http.DefaultClient)
+	trusted.TrustProxy = true
+	if got := post(trusted); got != 200 {
+		t.Fatalf("trusted XFF status %d want 200", got)
+	}
+	if atomic.LoadInt32(&hits) != 1 {
+		t.Fatalf("trusted XFF hits %d", hits)
+	}
+}
+
 func TestApplyApproveVKOnce(t *testing.T) {
 	var hits int32
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

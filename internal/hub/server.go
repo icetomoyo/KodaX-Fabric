@@ -18,9 +18,10 @@ type Server struct {
 	UI       http.Handler
 	Client   *http.Client
 
-	Now     func() time.Time
-	Aliases map[string]string
-	Audit   func(store.RouteDecision) error
+	Now        func() time.Time
+	Aliases    map[string]string
+	Audit      func(store.RouteDecision) error
+	TrustProxy bool
 
 	BreakerWindow     int
 	BreakerMinFail    int
@@ -119,7 +120,7 @@ func (s *Server) relay(w http.ResponseWriter, r *http.Request, protocol, upstrea
 		writeBudgetExceeded(w, protocol)
 		return
 	}
-	if !ipAllowed(resolved.IPAllow, r) {
+	if !s.ipAllowed(resolved.IPAllow, r) {
 		writeForbidden(w, protocol, "ip not allowed")
 		return
 	}
@@ -143,13 +144,7 @@ func (s *Server) relay(w http.ResponseWriter, r *http.Request, protocol, upstrea
 	s.dispatch(w, r, resolved, protocol, upstreamPath, body, reqMeta.Stream, reqMeta.Model, now, cacheKey)
 }
 
-func callerIP(r *http.Request) string {
-	if xff := strings.TrimSpace(r.Header.Get("X-Forwarded-For")); xff != "" {
-		if i := strings.IndexByte(xff, ','); i >= 0 {
-			return strings.TrimSpace(xff[:i])
-		}
-		return xff
-	}
+func remoteIP(r *http.Request) string {
 	host := r.RemoteAddr
 	if i := strings.LastIndex(host, ":"); i >= 0 {
 		host = host[:i]
@@ -157,11 +152,23 @@ func callerIP(r *http.Request) string {
 	return strings.Trim(host, "[]")
 }
 
-func ipAllowed(allow []string, r *http.Request) bool {
+func (s *Server) callerIP(r *http.Request) string {
+	if s != nil && s.TrustProxy {
+		if xff := strings.TrimSpace(r.Header.Get("X-Forwarded-For")); xff != "" {
+			if i := strings.IndexByte(xff, ','); i >= 0 {
+				return strings.TrimSpace(xff[:i])
+			}
+			return xff
+		}
+	}
+	return remoteIP(r)
+}
+
+func (s *Server) ipAllowed(allow []string, r *http.Request) bool {
 	if len(allow) == 0 {
 		return true
 	}
-	ip := callerIP(r)
+	ip := s.callerIP(r)
 	for _, a := range allow {
 		if a == ip {
 			return true

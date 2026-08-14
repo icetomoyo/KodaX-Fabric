@@ -57,6 +57,10 @@ func run() error {
 	h.Console = pg
 	h.Sessions = hub.NewSessions()
 	h.UI = webui.Handler()
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("TRUST_PROXY"))) {
+	case "1", "true", "yes":
+		h.TrustProxy = true
+	}
 	mux := http.NewServeMux()
 	mux.Handle("/", h.Handler())
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
