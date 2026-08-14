@@ -10,6 +10,8 @@ cd deploy
 docker compose -p tokenhub -f compose.yaml up --build --wait
 ```
 
+镜像构建会先 `npm run build` 再 embed 控制台，侧栏含团队项目 / 路由审计。
+
 - Origin：`http://127.0.0.1:8080`
 - 登录：http://127.0.0.1:8080/
 - 管理员：`18612243416` / `Hz@123456`

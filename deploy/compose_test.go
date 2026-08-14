@@ -36,3 +36,14 @@ func TestRestoreStartsGatewayWithoutDeps(t *testing.T) {
 		}
 	}
 }
+
+func TestDockerfileBuildsFrontend(t *testing.T) {
+	raw, err := os.ReadFile("Dockerfile")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(raw)
+	if !strings.Contains(text, "npm run build") {
+		t.Fatal("image build must compile the console before go embed")
+	}
+}
