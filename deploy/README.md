@@ -24,6 +24,15 @@ docker compose -p tokenhub -f compose.yaml up --build --wait
 
 Postgres 数据在命名卷 `pgdata`。重建容器不丢编目。
 
+## 未产品化（仅 T1 夹具）
+
+下列能力只在进程内单测接通，**compose / Postgres 生产路径未交付**：
+
+- **模型别名 fallback**（004）：`hub.Server.Aliases` 无配置加载，网关启动不读别名表。
+- **Provider RPM**（006）：`ResolvedVK.ProviderRPM` 在 `Postgres.ResolveVK` 中不填充。VK 自己的 `rpm_limit` 与熔断仍生效。
+
+不要按这两项做生产验收。
+
 ## 回滚
 
 1. 需要时先还原库：`./restore.sh backups/tokenhub.sql`

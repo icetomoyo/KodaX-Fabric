@@ -37,6 +37,19 @@ func TestRestoreStartsGatewayWithoutDeps(t *testing.T) {
 	}
 }
 
+func TestReadmeMarksAliasAndProviderRPMUnshipped(t *testing.T) {
+	raw, err := os.ReadFile("README.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(raw)
+	for _, want := range []string{"模型别名", "Provider RPM", "未产品化"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("deploy README must say %q is not productized", want)
+		}
+	}
+}
+
 func TestDockerfileBuildsFrontend(t *testing.T) {
 	raw, err := os.ReadFile("Dockerfile")
 	if err != nil {

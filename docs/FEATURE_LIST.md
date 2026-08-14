@@ -125,7 +125,7 @@ Token Hub 按 `docs/PRD.md` §3 从 0 重开的第一刀：OpenAI / Anthropic �
 
 **Description**
 
-同协议多渠：优先级主备、同级权重、5xx/429 换路、4xx 不换、模型别名 fallback、审计头回放。禁止跨协议。
+同协议多渠：优先级主备、同级权重、5xx/429 换路、4xx 不换、模型别名 fallback（仅 T1，生产未产品化）、审计头回放。禁止跨协议。
 
 **Spec**：已综合（T1，2026-08-13 用户确认「是」）。**Tickets**：#1–#5 **Done**。
 
@@ -169,7 +169,7 @@ VK → Project → Team → ChannelPool → Provider Key。两把 VK 走不同�
 
 **Description**
 
-Key / Provider 硬拒绝 + 突发桶；摘病路、半开、池内切流。超 RPM 立刻 429；连续失败的渠被摘掉再半开。#42 本版只先两维。
+Key / Provider 硬拒绝 + 突发桶；摘病路、半开、池内切流。超 RPM 立刻 429；连续失败的渠被摘掉再半开。#42 本版只先两维。Provider RPM 仅 T1 夹具，Postgres 路径未产品化。
 
 **Spec**：已综合（T1，2026-08-13 用户确认「是」）。**Tickets**：#1–#4 **Done**。
 
