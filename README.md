@@ -14,7 +14,7 @@
 
 ```sh
 cd deploy
-docker compose -f compose.yaml up --build --wait
+docker compose -p tokenhub -f compose.yaml up --build --wait
 ```
 
 - Origin：http://127.0.0.1:8080
@@ -34,5 +34,6 @@ docker compose -f compose.yaml up --build --wait
 | [docs/TokenHub_VISION.md](docs/TokenHub_VISION.md) | 57 点 + 人话版（手测） |
 | [docs/FEATURE_LIST.md](docs/FEATURE_LIST.md) | Feature 索引（当前 v0.0.8） |
 | [docs/features/v0.0.8.md](docs/features/v0.0.8.md) | 本版规格与票 |
+| [deploy/README.md](deploy/README.md) | 本地 compose、备份/回滚、0.1.0 验收清单 |
 | [docs/UI_DESIGN.md](docs/UI_DESIGN.md) | 控制台线框 |
 | [docs/ProductDraft.md](docs/ProductDraft.md) | 早期设想；不要当入门 |

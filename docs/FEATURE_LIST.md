@@ -1,13 +1,13 @@
 # FEATURE_LIST
 
-Last Updated: 2026-08-14 10:20
+Last Updated: 2026-08-14 10:29
 
 ## Version Info
 
 | 项 | 值 |
 |----|-----|
 | Current Release | **v0.0.8** |
-| Planned Version | — |
+| Planned Version | **v0.1.0** |
 
 ## Version Summary
 
@@ -21,7 +21,7 @@ Last Updated: 2026-08-14 10:20
 | v0.0.6 | Released | 1/1 | 限流 + 熔断 |
 | v0.0.7 | Released | 1/1 | 预算闸 + 流式估算 |
 | v0.0.8 | Released | 1/1 | 缓存 + 运营面 |
-| v0.1.0 | — | — | 独立部署收口 |
+| v0.1.0 | In Progress | 0/1 | 独立部署收口 |
 
 切法全文：[token-hub-slices.md](token-hub-slices.md)（遵守 PRD + HLD）。手测：[TokenHub_VISION.md](TokenHub_VISION.md)。
 
@@ -37,6 +37,7 @@ Last Updated: 2026-08-14 10:20
 | 006 | 限流与熔断 | **Completed** | Critical | New | v0.0.6 | [设计](features/v0.0.6.md#feature_006) |
 | 007 | 预算闸与流式估算 | **Completed** | Critical | New | v0.0.7 | [设计](features/v0.0.7.md#feature_007) |
 | 008 | 缓存与运营面 | **Completed** | Critical | New | v0.0.8 | [设计](features/v0.0.8.md#feature_008) |
+| 009 | 独立部署收口 | **InProgress** | Critical | Internal | v0.1.0 | [设计](features/v0.1.0.md#feature_009) |
 
 ## Feature Details
 
@@ -216,12 +217,34 @@ Prompt/响应缓存；VK 申请审批、IP 白名单、官方 Key 轮换。重�
 
 **Spec**：已综合（T1，2026-08-13 用户确认「是」）。**Tickets**：#1–#4 **Done**。
 
+### FEATURE_009: 独立部署收口
+
+| 字段 | 内容 |
+|------|------|
+| ID | 009 |
+| Title | 独立部署收口 |
+| Status | **InProgress** |
+| Priority | Critical |
+| Category | Internal |
+| Planned Version | v0.1.0 |
+| Released Version | — |
+| Created | 2026-08-14 |
+| Started | 2026-08-14 |
+| Completed | — |
+| Design | [docs/features/v0.1.0.md#feature_009](features/v0.1.0.md#feature_009) |
+
+**Description**
+
+Token Hub 到 0.1.0 只收口、不加新能力：镜像/compose、备份、健康、双端验收、模块文档。对照切法 6 条独立部署标准勾选。Claude Code 与 Cursor 同一把 `fab-` 走通。
+
+**Spec**：已综合（T1 + D1，2026-08-14 用户确认「是」）。**Tickets**：#1–#3 **Done**。
+
 ## Summary
 
 | 指标 | 数量 |
 |------|------|
-| Total | 8 |
+| Total | 9 |
 | Planned | 0 |
-| In Progress | 0 |
+| In Progress | 1 |
 | Completed | 8 |
-| Critical | 8 |
+| Critical | 9 |
