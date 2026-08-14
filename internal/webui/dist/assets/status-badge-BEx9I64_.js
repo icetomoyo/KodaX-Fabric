@@ -1,0 +1,1 @@
+import{j as r,c as a}from"./index-02Tebm-q.js";import{B as n}from"./badge-CjHMCIem.js";function i({status:e}){const t=e==="active";return r.jsx(n,{variant:"outline",className:a("border-transparent font-normal",t?"bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200":"bg-slate-100 text-slate-500 ring-1 ring-slate-200"),children:t?"启用":"停用"})}export{i as S};

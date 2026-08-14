@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -240,6 +241,9 @@ func (s *Server) handlePatchMe(w http.ResponseWriter, r *http.Request, op *store
 	if err := decodeJSON(r, &body); err != nil {
 		writeConsoleErr(w, http.StatusBadRequest, "invalid", "invalid json")
 		return
+	}
+	if body.Password != nil && strings.TrimSpace(*body.Password) == "" {
+		body.Password = nil
 	}
 	updated, err := s.Console.UpdateOperator(r.Context(), op.ID, store.OperatorUpdate{
 		Name:     body.Name,

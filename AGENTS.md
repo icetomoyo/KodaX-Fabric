@@ -16,11 +16,11 @@
 |----|-----|
 | 更新于 | 2026-08-14 |
 | 当前发布 | **v0.1.2** |
-| 进行中 feature | 无（Planned 0 / InProgress 0） |
+| 进行中 feature | **011** 各角色自助改资料与密码（InProgress，v0.1.3） |
 | 进行中 issue | 无 |
-| 阶段 | `idle` |
-| 下一步命令 | `添加一个 feature：<一句话描述>` |
-| 说明 | 0.0.1–0.1.2 已全部 Completed。下一刀先改 [docs/token-hub-slices.md](docs/token-hub-slices.md)，再登记 FEATURE_LIST。超管 / 多租户仍不进本序列。 |
+| 阶段 | `complete` |
+| 下一步命令 | `完成 feature 011` |
+| 说明 | FEATURE_011 #1–#2 已实现并提交。下一步结案（可选先 `/human-test-guide`）。 |
 
 **回答格式（只回命令，可附一句理由）：**
 

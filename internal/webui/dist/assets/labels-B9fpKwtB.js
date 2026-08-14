@@ -1,1 +1,0 @@
-const n=[{value:"premium",label:"优质",hint:"高优先、低延迟"},{value:"standard",label:"标准",hint:"日常默认"},{value:"bulk",label:"跑批",hint:"低成本、量大"}];function t(a){const l=n.find(e=>e.value===a);return l?`${l.label}（${l.hint}）`:a||"—"}export{n as P,t as p};

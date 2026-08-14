@@ -3,6 +3,7 @@ import {
   Activity,
   BookOpen,
   Building2,
+  CircleUser,
   KeyRound,
   Layers,
   LogOut,
@@ -26,6 +27,7 @@ const nav = [
   { to: "/admin/org", label: "团队项目", icon: Building2, staff: true },
   { to: "/admin/audit", label: "路由审计", icon: ScrollText, staff: false },
   { to: "/admin/docs", label: "接口文档", icon: BookOpen, staff: false },
+  { to: "/admin/profile", label: "我的资料", icon: CircleUser, staff: false },
 ];
 
 export default function AdminLayout() {
@@ -91,9 +93,12 @@ export default function AdminLayout() {
             {health.data?.ok ? "服务正常" : "状态未知"}
           </span>
           <div className="flex items-center gap-3">
-            <span className="text-sm text-muted-foreground">
+            <NavLink
+              to="/admin/profile"
+              className="text-sm text-muted-foreground transition-colors hover:text-foreground"
+            >
               {operator?.name || operator?.phone}
-            </span>
+            </NavLink>
             <button
               onClick={() => void logout()}
               className="flex items-center gap-1.5 rounded-md px-2 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
