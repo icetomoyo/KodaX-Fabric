@@ -1,13 +1,13 @@
 # KodaX-Fabric
 
-企业级 Token 统一接入与效能管理。发布 **v0.1.1**。当前落地模块是 **Token Hub**（HLD：Go 单进程网关）。
+企业级 Token 统一接入与效能管理。发布 **v0.1.2**。当前落地模块是 **Token Hub**（HLD：Go 单进程网关）。
 
 遵守 [docs/PRD.md](docs/PRD.md) 与 [docs/HLD.md](docs/HLD.md)。
 
 | 项 | 说明 |
 |----|------|
 | 对外 | `POST /v1/chat/completions`、`POST /v1/messages`，调用方持 `fab-` VK |
-| 控制台 | `/` 登录；管理员 `/admin`；开发者 `/app` |
+| 控制台 | `/` 登录；企业管理员 / 团队管理员 / 开发者共用 `/admin`，按角色裁菜单 |
 | 健康 | `GET /health` |
 
 ## 本地启动
@@ -32,8 +32,8 @@ docker compose -p tokenhub -f compose.yaml up --build --wait
 | [docs/HLD.md](docs/HLD.md) | 高层设计（网关 Go、零转换、V1 单进程） |
 | [docs/token-hub-slices.md](docs/token-hub-slices.md) | 0.0.1～0.1.0 切片 |
 | [docs/TokenHub_VISION.md](docs/TokenHub_VISION.md) | 57 点 + 人话版（手测） |
-| [docs/FEATURE_LIST.md](docs/FEATURE_LIST.md) | Feature 索引（当前 v0.1.1） |
-| [docs/features/v0.1.0.md](docs/features/v0.1.0.md) | 本版规格与票 |
+| [docs/FEATURE_LIST.md](docs/FEATURE_LIST.md) | Feature 索引（当前 v0.1.2） |
+| [docs/features/v0.1.2.md](docs/features/v0.1.2.md) | 本版规格与票 |
 | [deploy/README.md](deploy/README.md) | 本地 compose、备份/回滚、0.1.0 验收清单 |
 | [docs/UI_DESIGN.md](docs/UI_DESIGN.md) | 控制台线框 |
 | [docs/ProductDraft.md](docs/ProductDraft.md) | 早期设想；不要当入门 |

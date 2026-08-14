@@ -1,13 +1,13 @@
 # FEATURE_LIST
 
-Last Updated: 2026-08-14 16:00
+Last Updated: 2026-08-14 16:45
 
 ## Version Info
 
 | 项 | 值 |
 |----|-----|
-| Current Release | **v0.1.1** |
-| Planned Version | **v0.1.2** |
+| Current Release | **v0.1.2** |
+| Planned Version | — |
 
 ## Version Summary
 
@@ -23,7 +23,7 @@ Last Updated: 2026-08-14 16:00
 | v0.0.8 | Released | 1/1 | 缓存 + 运营面 |
 | v0.1.0 | Released | 1/1 | 独立部署收口 |
 | v0.1.1 | Released | 1/1 | 回归补丁（KNOWN_ISSUES 001–005） |
-| v0.1.2 | InProgress | 0/1 | 单一企业三角色控制台 |
+| v0.1.2 | Released | 1/1 | 单一企业三角色控制台 |
 
 切法全文：[token-hub-slices.md](token-hub-slices.md)（遵守 PRD + HLD）。手测：[TokenHub_VISION.md](TokenHub_VISION.md)。
 
@@ -41,7 +41,7 @@ Last Updated: 2026-08-14 16:00
 | 008 | 缓存与运营面 | **Completed** | Critical | New | v0.0.8 | [设计](features/v0.0.8.md#feature_008) |
 | 009 | 独立部署收口 | **Completed** | Critical | Internal | v0.1.0 | [设计](features/v0.1.0.md#feature_009) |
 | — | 0.1.0 回归补丁 | **Completed** | High | Internal | v0.1.1 | [设计](features/v0.1.1.md) |
-| 010 | 单一企业三角色控制台 | **InProgress** | Critical | New | v0.1.2 | [设计](features/v0.1.2.md#feature_010) |
+| 010 | 单一企业三角色控制台 | **Completed** | Critical | New | v0.1.2 | [设计](features/v0.1.2.md#feature_010) |
 
 ## Feature Details
 
@@ -271,21 +271,21 @@ v0.1.0 收口后的回归五条：XFF 白名单、镜像嵌前端、restore 不�
 |------|------|
 | ID | 010 |
 | Title | 单一企业三角色控制台 |
-| Status | **InProgress** |
+| Status | **Completed** |
 | Priority | Critical |
 | Category | New |
 | Planned Version | v0.1.2 |
-| Released Version | — |
+| Released Version | v0.1.2 |
 | Created | 2026-08-14 |
 | Started | 2026-08-14 |
-| Completed | — |
+| Completed | 2026-08-14 |
 | Design | [docs/features/v0.1.2.md#feature_010](features/v0.1.2.md#feature_010) |
 
 **Description**
 
 单一企业三档角色共用现有 `/admin` 壳：企业管理员、团队管理员、开发者。按角色裁菜单和数据；开发者申请钥匙，队长批本队；官方 Key 与渠道只给企业管理员。撤掉简陋 `/app` 工作台。超管 / 多租户不做。
 
-**Spec**：已综合（T1，2026-08-14 `/to-spec`）。**Tickets**：#1–#4 **Done**。
+**Spec**：已综合（T1，2026-08-14 `/to-spec`）。**Tickets**：#1–#4 **Done**。实现提交 `8b38214`。
 
 ## Summary
 
@@ -293,6 +293,6 @@ v0.1.0 收口后的回归五条：XFF 白名单、镜像嵌前端、restore 不�
 |------|------|
 | Total | 11 |
 | Planned | 0 |
-| In Progress | 1 |
-| Completed | 10 |
+| In Progress | 0 |
+| Completed | 11 |
 | Critical | 10 |
