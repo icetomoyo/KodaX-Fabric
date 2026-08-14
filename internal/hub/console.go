@@ -236,6 +236,7 @@ func (s *Server) handleMe(w http.ResponseWriter, _ *http.Request, op *store.Oper
 func (s *Server) handlePatchMe(w http.ResponseWriter, r *http.Request, op *store.Operator) {
 	var body struct {
 		Name     *string `json:"name"`
+		Phone    *string `json:"phone"`
 		Password *string `json:"password"`
 	}
 	if err := decodeJSON(r, &body); err != nil {
@@ -247,6 +248,7 @@ func (s *Server) handlePatchMe(w http.ResponseWriter, r *http.Request, op *store
 	}
 	updated, err := s.Console.UpdateOperator(r.Context(), op.ID, store.OperatorUpdate{
 		Name:     body.Name,
+		Phone:    body.Phone,
 		Password: body.Password,
 	})
 	if err != nil {

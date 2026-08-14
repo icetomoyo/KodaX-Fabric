@@ -47,10 +47,19 @@ type OperatorCreate struct {
 
 type OperatorUpdate struct {
 	Name     *string `json:"name"`
+	Phone    *string `json:"phone"`
 	Role     *string `json:"role"`
 	Status   *string `json:"status"`
 	Password *string `json:"password"`
 	TeamID   *int64  `json:"team_id"`
+}
+
+func NormalizePhone(raw string) (string, error) {
+	phone := strings.TrimSpace(raw)
+	if phone == "" || len(phone) > 20 {
+		return "", ErrInvalid
+	}
+	return phone, nil
 }
 
 func RequireTeamForRole(role string, teamID int64) error {

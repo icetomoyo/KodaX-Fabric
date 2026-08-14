@@ -20,7 +20,7 @@
 | 进行中 issue | 无 |
 | 阶段 | `release` |
 | 下一步命令 | `/smart-release` |
-| 说明 | FEATURE_011 已结案。v0.1.3 本版 feature 均 Completed，package 仍是 0.1.2。 |
+| 说明 | FEATURE_011 已结案（显示名、手机号、密码）。v0.1.3 待 `/smart-release`，package 仍是 0.1.2。 |
 
 **回答格式（只回命令，可附一句理由）：**
 

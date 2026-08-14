@@ -144,12 +144,23 @@ const me = rest("me", "当前用户", "GET", "/console/v1/me", "读取登录身�
   exampleResponse: { operator: operatorExample },
 });
 
-const patchMe = rest("patch-me", "更新资料", "PATCH", "/console/v1/me", "改自己的显示名或密码。", {
-  body: [f("name", "string", "显示名。"), f("password", "string", "新密码，至少 8 位。")],
-  response: [f("operator", "object", "更新后的用户。", { children: operatorFields })],
-  exampleBody: { name: "张三", password: "" },
-  exampleResponse: { operator: { ...operatorExample, name: "张三" } },
-});
+const patchMe = rest(
+  "patch-me",
+  "更新资料",
+  "PATCH",
+  "/console/v1/me",
+  "改自己的显示名、手机号或密码。",
+  {
+    body: [
+      f("name", "string", "显示名。"),
+      f("phone", "string", "登录手机号，唯一。"),
+      f("password", "string", "新密码，至少 8 位。"),
+    ],
+    response: [f("operator", "object", "更新后的用户。", { children: operatorFields })],
+    exampleBody: { name: "张三", phone: "13800138000", password: "" },
+    exampleResponse: { operator: { ...operatorExample, name: "张三" } },
+  },
+);
 
 const myKeys = rest(
   "me-keys",

@@ -21,7 +21,7 @@ export const authApi = {
     }),
   logout: () => request<{ ok: boolean }>("/console/v1/logout", { method: "POST" }),
   me: () => request<{ operator: Operator }>("/console/v1/me"),
-  patchMe: (body: { name?: string; password?: string }) =>
+  patchMe: (body: { name?: string; phone?: string; password?: string }) =>
     request<{ operator: Operator }>("/console/v1/me", {
       method: "PATCH",
       body: JSON.stringify(body),

@@ -122,6 +122,13 @@ func (p *Postgres) UpdateOperator(ctx context.Context, id int64, in OperatorUpda
 	if in.Name != nil {
 		next.Name = strings.TrimSpace(*in.Name)
 	}
+	if in.Phone != nil {
+		phone, err := NormalizePhone(*in.Phone)
+		if err != nil {
+			return nil, err
+		}
+		next.Phone = phone
+	}
 	if in.Role != nil {
 		role, err := NormalizeRole(*in.Role)
 		if err != nil {
@@ -152,13 +159,19 @@ func (p *Postgres) UpdateOperator(ctx context.Context, id int64, in OperatorUpda
 			return nil, err
 		}
 		if _, err := p.DB.ExecContext(ctx, `
-UPDATE operators SET name=$2, role=$3, status=$4, password_hash=$5 WHERE id=$1
-`, id, next.Name, next.Role, next.Status, string(h)); err != nil {
+UPDATE operators SET phone=$2, name=$3, role=$4, status=$5, password_hash=$6 WHERE id=$1
+`, id, next.Phone, next.Name, next.Role, next.Status, string(h)); err != nil {
+			if strings.Contains(err.Error(), "unique") || strings.Contains(err.Error(), "duplicate") {
+				return nil, ErrConflict
+			}
 			return nil, err
 		}
 	} else if _, err := p.DB.ExecContext(ctx, `
-UPDATE operators SET name=$2, role=$3, status=$4 WHERE id=$1
-`, id, next.Name, next.Role, next.Status); err != nil {
+UPDATE operators SET phone=$2, name=$3, role=$4, status=$5 WHERE id=$1
+`, id, next.Phone, next.Name, next.Role, next.Status); err != nil {
+		if strings.Contains(err.Error(), "unique") || strings.Contains(err.Error(), "duplicate") {
+			return nil, ErrConflict
+		}
 		return nil, err
 	}
 	return p.GetOperator(ctx, id)

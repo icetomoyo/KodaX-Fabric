@@ -132,7 +132,7 @@ func TestPatchMeIgnoresIdentityFields(t *testing.T) {
 	ts, _, c := newConsole(t)
 	_ = readBody(t, login(t, c, ts.URL, "13800138000", "Dev@123456"))
 
-	got := patchMe(t, c, ts.URL, `{"name":"开发者","role":"org_admin","team_id":99,"phone":"19900000000","status":"disabled"}`)
+	got := patchMe(t, c, ts.URL, `{"name":"开发者","role":"org_admin","team_id":99,"status":"disabled"}`)
 	raw := readBody(t, got)
 	if got.StatusCode != 200 {
 		t.Fatalf("status %d %s", got.StatusCode, raw)
@@ -154,6 +154,58 @@ func TestPatchMeIgnoresIdentityFields(t *testing.T) {
 	}
 	if wrap.Operator.Status != store.StatusActive {
 		t.Fatalf("status mutated: %s", wrap.Operator.Status)
+	}
+}
+
+func TestPatchMeCanChangePhone(t *testing.T) {
+	ts, _, c := newConsole(t)
+	_ = readBody(t, login(t, c, ts.URL, "13800138000", "Dev@123456"))
+
+	got := patchMe(t, c, ts.URL, `{"phone":"13900008888"}`)
+	raw := readBody(t, got)
+	if got.StatusCode != 200 {
+		t.Fatalf("status %d %s", got.StatusCode, raw)
+	}
+	var wrap struct {
+		Operator store.Operator `json:"operator"`
+	}
+	if err := json.Unmarshal([]byte(raw), &wrap); err != nil {
+		t.Fatal(err)
+	}
+	if wrap.Operator.Phone != "13900008888" {
+		t.Fatalf("phone %s", wrap.Operator.Phone)
+	}
+
+	oldLogin := login(t, freshClient(t), ts.URL, "13800138000", "Dev@123456")
+	if oldLogin.StatusCode != 401 {
+		t.Fatalf("old phone still works %d %s", oldLogin.StatusCode, readBody(t, oldLogin))
+	}
+	_ = oldLogin.Body.Close()
+
+	newLogin := login(t, freshClient(t), ts.URL, "13900008888", "Dev@123456")
+	if newLogin.StatusCode != 200 {
+		t.Fatalf("new phone %d %s", newLogin.StatusCode, readBody(t, newLogin))
+	}
+	_ = newLogin.Body.Close()
+}
+
+func TestPatchMePhoneConflict(t *testing.T) {
+	ts, _, c := newConsole(t)
+	_ = readBody(t, login(t, c, ts.URL, "13800138000", "Dev@123456"))
+
+	got := patchMe(t, c, ts.URL, `{"phone":"18612243416"}`)
+	if got.StatusCode != 409 {
+		t.Fatalf("status %d %s", got.StatusCode, readBody(t, got))
+	}
+}
+
+func TestPatchMeEmptyPhoneRejected(t *testing.T) {
+	ts, _, c := newConsole(t)
+	_ = readBody(t, login(t, c, ts.URL, "13800138000", "Dev@123456"))
+
+	got := patchMe(t, c, ts.URL, `{"phone":""}`)
+	if got.StatusCode != 400 {
+		t.Fatalf("status %d %s", got.StatusCode, readBody(t, got))
 	}
 }
 

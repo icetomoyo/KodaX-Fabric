@@ -110,6 +110,18 @@ func (m *Memory) UpdateOperator(_ context.Context, id int64, in OperatorUpdate) 
 	if in.Name != nil {
 		next.Name = strings.TrimSpace(*in.Name)
 	}
+	if in.Phone != nil {
+		phone, err := NormalizePhone(*in.Phone)
+		if err != nil {
+			return nil, err
+		}
+		for _, op := range m.Operators {
+			if op.ID != id && op.Phone == phone {
+				return nil, ErrConflict
+			}
+		}
+		next.Phone = phone
+	}
 	if in.Role != nil {
 		role, err := NormalizeRole(*in.Role)
 		if err != nil {
