@@ -1,6 +1,6 @@
 # KNOWN_ISSUES
 
-Last Updated: 2026-08-14 12:02
+Last Updated: 2026-08-14 12:06
 
 来源：v0.0.1→v0.1.0 累计回归（2026-08-14）。当前发布 **v0.1.0**，不建议判定生产完全落地。
 
@@ -10,7 +10,7 @@ Last Updated: 2026-08-14 12:02
 |----|-------|----------|--------|------------|-------|
 | 001 | IP 白名单可被伪造 X-Forwarded-For 绕过 | High | Resolved | v0.0.8 | unreleased (8ef74e0) |
 | 002 | 发布镜像嵌入陈旧前端（缺 org/audit） | High | Resolved | v0.1.0 | unreleased (f089696) |
-| 003 | 模型别名与 Provider RPM 未接入生产路径 | Medium | ready | v0.0.4 / v0.0.6 | — |
+| 003 | 模型别名与 Provider RPM 未接入生产路径 | Medium | Resolved | v0.0.4 / v0.0.6 | unreleased (d45e916) |
 | 004 | restore 后再启 gateway 会重跑 bootstrap | High | Resolved | v0.1.0 | unreleased (cb47308) |
 | 005 | Redis 挂了 /health 仍 200 | Medium | Resolved | v0.1.0 | unreleased (8849fb6) |
 
@@ -90,8 +90,9 @@ Dockerfile 增加 Node 阶段：`npm ci && npm run build`，再覆盖 `internal/
 | 字段 | 内容 |
 |------|------|
 | Priority | **Medium** |
-| Status | **ready** |
+| Status | **Resolved** |
 | Introduced | 别名 v0.0.4；Provider RPM v0.0.6 |
+| Fixed | unreleased（`d45e916`，在 v0.1.0 之后） |
 | Created | 2026-08-14 |
 
 **Original Problem**
@@ -103,6 +104,14 @@ Dockerfile 增加 Node 阶段：`npm ci && npm run build`，再覆盖 `internal/
 **Context**
 
 回归结论：部分能力只在单元测试接通。与 004/005 控制台配置债同类，但是网关热路径缺口。
+
+**Resolution**
+
+不接线。文档标明模型别名与 Provider RPM 仅 T1 夹具、生产未交付。VK `rpm_limit` 与熔断仍生效。
+
+- **Resolution Date**: 2026-08-14
+- **Files Changed**: `deploy/README.md`, `deploy/compose_test.go`, `docs/FEATURE_LIST.md`, `docs/features/v0.0.4.md`, `docs/features/v0.0.6.md`
+- **Tests Added**: `TestReadmeMarksAliasAndProviderRPMUnshipped`
 
 ---
 
@@ -187,10 +196,10 @@ HLD V1 要求 PG+Redis。限流/缓存仍在进程内，Redis 挂了网关热路
 | 指标 | 数量 |
 |------|------|
 | Total | 5 |
-| Open / needs-info / ready | 1 |
-| Resolved | 4 |
+| Open / needs-info / ready | 0 |
+| Resolved | 5 |
 | High | 0 open / 3 resolved |
-| Medium | 1 open / 1 resolved |
+| Medium | 0 open / 2 resolved |
 | Low | 0 |
 
-Next to resolve: **003**（模型别名与 Provider RPM 未接入生产路径）。
+Next to resolve: 无。回归五条阻断项均已关闭。
