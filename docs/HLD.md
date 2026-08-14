@@ -2,6 +2,8 @@
 
 > 基于 PRD.md 和 UI_DESIGN.md，定义 Fabric 的技术架构、服务拆分、数据模型和关键流程设计。
 > 本文档面向研发团队，作为详细设计（LLD）和实现的输入。
+>
+> **现行 Token Hub（v0.1.3）**：`operators.role` 仅 `org_admin` / `team_admin` / `developer`。表是 `operators`（手机号登录），不是下文 `users` + email。§6.1 含 `super_admin` 的四角色与 RLS 是目标架构。
 
 ---
 
@@ -347,7 +349,7 @@
 
 | 表 | 关键字段 | 说明 |
 |---|---|---|
-| `users` | id, tenant_id, org_id, role (super_admin/org_admin/team_admin/developer), email, status | 用户与角色 |
+| `users` | id, tenant_id, org_id, role (super_admin/org_admin/team_admin/developer), email, status | 目标模型。现行表是 `operators`，role 无 super_admin |
 | `audit_logs` | id, actor_id, action, target_type, target_id, detail (JSONB), created_at | 审计日志 |
 | `data_retention_policies` | id, project_id, mode (full/redacted/metadata/zero/local), ttl_days, archive_enabled, legal_hold | 数据保存策略 |
 
@@ -1168,6 +1170,8 @@ Credit 计算:
 ## 6. 治理层设计
 
 ### 6.1 RBAC 与多租户
+
+现行控制台不实现 `super_admin`，也不按 `tenant_id` 过滤。落地权限是 session 里的三角色 + `team_id`。
 
 ```text
 ┌──────────────────────────────────────────────────────────────┐

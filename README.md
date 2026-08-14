@@ -7,7 +7,7 @@
 | 项 | 说明 |
 |----|------|
 | 对外 | `POST /v1/chat/completions`、`POST /v1/messages`，调用方持 `fab-` VK |
-| 控制台 | `/` 登录；企业管理员 / 团队管理员 / 开发者共用 `/admin`，按角色裁菜单 |
+| 控制台 | `/` 登录；`role` 三值 `org_admin` / `team_admin` / `developer` 共用 `/admin`，按角色裁菜单 |
 | 健康 | `GET /health` |
 
 ## 本地启动

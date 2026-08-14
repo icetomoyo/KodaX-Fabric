@@ -33,12 +33,20 @@ const jsonHeader: DocField[] = [
   },
 ];
 
+const roleEnum =
+  "`org_admin`（企业管理员）/ `team_admin`（团队管理员，须挂队）/ `developer`（开发者）。遗留 `admin` 读作 `org_admin`。无超管。";
+
 const operatorFields: DocField[] = [
   { name: "id", type: "integer", description: "用户 ID。" },
-  { name: "phone", type: "string", description: "手机号。" },
+  { name: "phone", type: "string", description: "登录手机号，唯一。" },
   { name: "name", type: "string", description: "显示名。" },
-  { name: "role", type: "enum<string>", description: "`admin` 或 `developer`。" },
+  { name: "role", type: "enum<string>", description: roleEnum },
   { name: "status", type: "enum<string>", description: "`active` 或 `disabled`。" },
+  {
+    name: "team_id",
+    type: "integer",
+    description: "所属团队。`org_admin` 可为 0（全公司）。`team_admin` 必须 > 0。",
+  },
   { name: "created_at", type: "string", description: "创建时间。" },
 ];
 
@@ -46,8 +54,9 @@ const operatorExample = {
   id: 1,
   phone: "18612243416",
   name: "管理员",
-  role: "admin",
+  role: "org_admin",
   status: "active",
+  team_id: 0,
   created_at: "2026-08-13T00:00:00Z",
 };
 
@@ -87,7 +96,11 @@ function rest(
     summary,
     description:
       opts.description ??
-      (opts.adminOnly ? "需要管理员 Session。" : cookie ? "需要已登录 Session。" : "无需鉴权。"),
+      (opts.adminOnly
+        ? "需要企业管理员或团队管理员 Session。仅企业管理员的接口会在说明里写明。"
+        : cookie
+          ? "需要已登录 Session（三角色均可）。"
+          : "无需鉴权。"),
     adminOnly: opts.adminOnly,
     auth: cookie ? cookieAuth : [],
     headers: opts.headers ?? (method === "GET" ? [] : jsonHeader),
@@ -169,7 +182,7 @@ const myKeys = rest(
   "/console/v1/me/keys",
   "列出发给当前用户的 VK。",
   {
-    description: "只返回掩码与前缀，没有明文。开发者工作台用这个接口。",
+    description: "只返回掩码与前缀，没有明文。任意登录角色可调，只看见发给自己的钥匙。",
     response: [f("virtual_keys", "object[]", "该用户的虚拟钥匙。")],
     exampleResponse: {
       virtual_keys: [
@@ -188,7 +201,6 @@ const myKeys = rest(
 );
 
 const overview = rest("overview", "总览", "GET", "/console/v1/overview", "控制台计数卡片。", {
-  adminOnly: true,
   response: [
     f("operators", "integer", "用户数。"),
     f("provider_keys", "integer", "上游钥匙总数。"),
@@ -220,6 +232,7 @@ const listTeams = rest("list-teams", "团队列表", "GET", "/console/v1/teams",
 
 const createTeam = rest("create-team", "创建团队", "POST", "/console/v1/teams", "新建团队。", {
   adminOnly: true,
+  description: "仅企业管理员。",
   body: [f("name", "string", "团队名。", { required: true })],
   response: [f("id", "integer", "新团队 ID。"), f("name", "string", "名称。")],
   exampleBody: { name: "研发" },
@@ -246,6 +259,7 @@ const createProject = rest(
   "在团队下建项目。",
   {
     adminOnly: true,
+    description: "企业管理员或团队管理员。队长只能在本队下建。",
     body: [
       f("team_id", "integer", "所属团队。", { required: true }),
       f("name", "string", "项目名。", { required: true }),
@@ -260,8 +274,9 @@ const createProject = rest(
   },
 );
 
-const listUsers = rest("list-users", "用户列表", "GET", "/console/v1/users", "列出全部操作员。", {
+const listUsers = rest("list-users", "用户列表", "GET", "/console/v1/users", "列出操作员。", {
   adminOnly: true,
+  description: "企业管理员看全公司；团队管理员只看本队。开发者 403。",
   response: [f("users", "object[]", "用户数组。", { children: operatorFields })],
   exampleResponse: { users: [operatorExample] },
 });
@@ -271,14 +286,16 @@ const createUser = rest(
   "创建用户",
   "POST",
   "/console/v1/users",
-  "创建管理员或开发者。",
+  "创建企业管理员、团队管理员或开发者。",
   {
     adminOnly: true,
+    description: "企业管理员或团队管理员。队长不能创建 `org_admin`，且新用户强制挂本队。",
     body: [
       f("phone", "string", "手机号，唯一。", { required: true }),
       f("name", "string", "显示名。", { required: true }),
-      f("role", "enum<string>", "`admin` 或 `developer`。", { required: true }),
+      f("role", "enum<string>", roleEnum, { required: true }),
       f("password", "string", "初始密码。", { required: true }),
+      f("team_id", "integer", "`team_admin` 必填且 > 0。"),
     ],
     response: [f("user", "object", "新建用户。", { children: operatorFields })],
     exampleBody: {
@@ -301,12 +318,14 @@ const patchUser = rest(
   "改角色、状态、姓名或密码。",
   {
     adminOnly: true,
-    description: "不能停用最后一个管理员。路径 `{id}` 为用户 ID。",
+    description:
+      "企业管理员或本队团队管理员。不能停用最后一个 `org_admin`。路径 `{id}` 为用户 ID。",
     body: [
       f("name", "string", "显示名。"),
-      f("role", "enum<string>", "`admin` / `developer`。"),
+      f("role", "enum<string>", roleEnum),
       f("status", "enum<string>", "`active` / `disabled`。"),
       f("password", "string", "重置密码。"),
+      f("team_id", "integer", "所属团队。"),
     ],
     response: [f("user", "object", "更新后的用户。", { children: operatorFields })],
     exampleBody: { status: "disabled" },
@@ -322,6 +341,7 @@ const listPKs = rest(
   "列出官方 Key 元数据，不含明文。",
   {
     adminOnly: true,
+    description: "仅企业管理员。",
     response: [f("provider_keys", "object[]", "上游钥匙。")],
     exampleResponse: {
       provider_keys: [
@@ -339,7 +359,7 @@ const createPK = rest(
   "加密入库一把官方 Key。",
   {
     adminOnly: true,
-    description: "明文只在请求里出现一次，库内加密。响应不回 secret。",
+    description: "仅企业管理员。明文只在请求里出现一次，库内加密。响应不回 secret。",
     body: [
       f("provider_code", "string", "供应商编码，如 `deepseek` / `openai`。", { required: true }),
       f("secret", "string", "官方 Key 明文。", { required: true }),
@@ -372,6 +392,7 @@ const patchPK = rest(
   "停用、换团队或改 RPM。",
   {
     adminOnly: true,
+    description: "仅企业管理员。",
     body: [
       f("status", "enum<string>", "`active` / `disabled`。"),
       f("team_id", "integer", "归属团队。"),
@@ -456,6 +477,7 @@ const listChannels = rest(
   "列出池内渠。",
   {
     adminOnly: true,
+    description: "仅企业管理员。",
     response: [f("channels", "object[]", "渠：池、官方 Key、协议、上游地址、状态。")],
     exampleResponse: {
       channels: [
@@ -480,6 +502,7 @@ const createChannel = rest(
   "把官方 Key 挂进池。",
   {
     adminOnly: true,
+    description: "仅企业管理员。",
     body: [
       f("pool_id", "integer", "所属池。", { required: true }),
       f("provider_key_id", "integer", "上游钥匙。", { required: true }),
@@ -519,6 +542,7 @@ const patchChannel = rest(
   "停用或改上游地址。",
   {
     adminOnly: true,
+    description: "仅企业管理员。",
     body: [
       f("status", "enum<string>", "`active` / `disabled`。"),
       f("base_url", "string", "上游根地址。"),
@@ -548,9 +572,9 @@ const listVKs = rest(
   "虚拟钥匙列表",
   "GET",
   "/console/v1/virtual-keys",
-  "管理员查看全部 VK。",
+  "按角色查看 VK。",
   {
-    adminOnly: true,
+    description: "任意登录角色。企业管理员看全部，团队管理员看本队，开发者看自己的。",
     response: [f("virtual_keys", "object[]", "不含明文。")],
     exampleResponse: {
       virtual_keys: [
@@ -573,13 +597,14 @@ const createVK = rest(
   "发放虚拟钥匙",
   "POST",
   "/console/v1/virtual-keys",
-  "管理员直接发放。明文只在这次响应里出现。",
+  "企业管理员或团队管理员直接发放。明文只在这次响应里出现。",
   {
     adminOnly: true,
+    description: "项目与池必须同团队。开发者请走申请接口。",
     body: [
-      f("pool_id", "integer", "绑定的池。", { required: true }),
-      f("owner_id", "integer", "持有人。", { required: true }),
-      f("project_id", "integer", "可选项目。"),
+      f("pool_id", "integer", "绑定的池，须与项目同团队。", { required: true }),
+      f("owner_id", "integer", "持有人；若填须与项目同团队。"),
+      f("project_id", "integer", "项目，须与池同团队。", { required: true }),
     ],
     response: [
       f("id", "integer", "VK ID。"),
@@ -642,8 +667,8 @@ const applyVK = rest(
   {
     description: "主人固定为当前登录用户。批准前不能打 `/v1`。响应没有明文。",
     body: [
-      f("pool_id", "integer", "想绑定的池。", { required: true }),
-      f("project_id", "integer", "可选项目。"),
+      f("pool_id", "integer", "想绑定的池，须与项目同团队。", { required: true }),
+      f("project_id", "integer", "项目，须与池同团队。", { required: true }),
     ],
     response: [f("id", "integer", "申请 ID。"), f("status", "string", "`pending`。")],
     exampleBody: { pool_id: 1 },
@@ -664,7 +689,7 @@ const approveVK = rest(
   "批准申请",
   "POST",
   "/console/v1/vk-requests/{id}/approve",
-  "管理员批准后亮一次明文。",
+  "企业管理员或本队团队管理员批准后亮一次明文。",
   {
     adminOnly: true,
     headers: [],
@@ -690,6 +715,7 @@ const listAliases = rest(
   "列出同协议 fallback。",
   {
     adminOnly: true,
+    description: "仅企业管理员。",
     response: [f("model_aliases", "object[]", "`protocol` / `model` / `fallback`。")],
     exampleResponse: {
       model_aliases: [{ protocol: "openai_chat", model: "gpt-4", fallback: "gpt-4o" }],
@@ -705,7 +731,8 @@ const putAlias = rest(
   "主模型全挂后只改写出站 model。",
   {
     adminOnly: true,
-    description: "不跨协议。网关启动时从库加载；本进程内新写入要重启才进热路径（以现网实现为准）。",
+    description:
+      "仅企业管理员。不跨协议。网关启动时从库加载；本进程内新写入要重启才进热路径（以现网实现为准）。",
     body: [
       f("protocol", "string", "`openai_chat` 或 `anthropic_messages`。", { required: true }),
       f("model", "string", "请求里的主模型。", { required: true }),
@@ -728,7 +755,6 @@ const routeDecisions = rest(
   "/console/v1/route-decisions",
   "最近选路记录。",
   {
-    adminOnly: true,
     query: [f("limit", "integer", "条数，默认 50。")],
     response: [f("route_decisions", "object[]", "对应响应头 `X-Fabric-*`。")],
     exampleResponse: {

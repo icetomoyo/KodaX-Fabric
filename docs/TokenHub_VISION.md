@@ -2,7 +2,8 @@
 
 > **来源**：[PRD.md](PRD.md) §3「Token Hub 接入管理」及 §11.1（行为）。架构落地见 [HLD.md](HLD.md) §3。  
 > **用途**：功能点定义 + **人工测试对照**。测某一版时，打开 [token-hub-slices.md](token-hub-slices.md) 看该版覆盖的 `#`，用人话版当步骤和期望。  
-> **不是现网说明书。** Node 试点不是 HLD 基线。
+> **不是现网说明书。** Node 试点不是 HLD 基线。  
+> **现行角色**：`org_admin` / `team_admin` / `developer`。无超管。测控制台以 [v0.1.2](features/v0.1.2.md) / [v0.1.3](features/v0.1.3.md) 为准。
 
 愿景一句话：**所有 LLM 调用进一个网关，统一路由、限流、故障转移。**
 
