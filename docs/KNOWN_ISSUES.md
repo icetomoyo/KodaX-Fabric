@@ -1,6 +1,6 @@
 # KNOWN_ISSUES
 
-Last Updated: 2026-08-14 11:42
+Last Updated: 2026-08-14 11:49
 
 来源：v0.0.1→v0.1.0 累计回归（2026-08-14）。当前发布 **v0.1.0**，不建议判定生产完全落地。
 
@@ -8,7 +8,7 @@ Last Updated: 2026-08-14 11:42
 
 | ID | Title | Priority | Status | Introduced | Fixed |
 |----|-------|----------|--------|------------|-------|
-| 001 | IP 白名单可被伪造 X-Forwarded-For 绕过 | High | ready | v0.0.8 | — |
+| 001 | IP 白名单可被伪造 X-Forwarded-For 绕过 | High | Resolved | v0.0.8 | unreleased (8ef74e0) |
 | 002 | 发布镜像嵌入陈旧前端（缺 org/audit） | High | ready | v0.1.0 | — |
 | 003 | 模型别名与 Provider RPM 未接入生产路径 | Medium | ready | v0.0.4 / v0.0.6 | — |
 | 004 | restore 后再启 gateway 会重跑 bootstrap | High | ready | v0.1.0 | — |
@@ -21,8 +21,9 @@ Last Updated: 2026-08-14 11:42
 | 字段 | 内容 |
 |------|------|
 | Priority | **High** |
-| Status | **ready** |
+| Status | **Resolved** |
 | Introduced | v0.0.8 |
+| Fixed | unreleased（`8ef74e0`，在 v0.1.0 之后） |
 | Created | 2026-08-14 |
 
 **Original Problem**
@@ -39,6 +40,14 @@ Last Updated: 2026-08-14 11:42
 **Proposed Solution**
 
 默认只用 `RemoteAddr`。仅当显式配置信任代理（如 `TRUST_PROXY=1` 或 CIDR 名单）时才读 `X-Forwarded-For`。
+
+**Resolution**
+
+默认 `callerIP` 只用 `RemoteAddr`。`TRUST_PROXY=1`/`true`/`yes` 时才认 `X-Forwarded-For` 第一段。伪造 XFF 不再绕过白名单。
+
+- **Resolution Date**: 2026-08-14
+- **Files Changed**: `internal/hub/server.go`, `internal/hub/v008_test.go`, `cmd/gateway/main.go`, `deploy/README.md`
+- **Tests Added**: `TestSpoofedForwardedForDoesNotBypassIPAllow`（未信任 403 + 0 上游；信任代理后 200）
 
 ---
 
@@ -151,10 +160,10 @@ HLD V1 要求 PG+Redis。限流/缓存仍在进程内，Redis 挂了网关热路
 | 指标 | 数量 |
 |------|------|
 | Total | 5 |
-| Open / needs-info / ready | 5 |
-| Resolved | 0 |
-| High | 3 |
+| Open / needs-info / ready | 4 |
+| Resolved | 1 |
+| High | 2 open / 1 resolved |
 | Medium | 2 |
 | Low | 0 |
 
-Next to resolve: **001**（伪造 XFF 绕过 IP 白名单）。
+Next to resolve: **004**（restore 重跑 bootstrap）。
