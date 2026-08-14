@@ -1,4 +1,4 @@
-# Local KodaX-Fabric / Token Hub (v0.1.0)
+# Local KodaX-Fabric / Token Hub (v0.1.1)
 
 Compose 项目名：**`tokenhub`**。单进程 Gateway + PostgreSQL + Redis。
 

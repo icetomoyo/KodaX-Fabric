@@ -1,12 +1,12 @@
 # FEATURE_LIST
 
-Last Updated: 2026-08-14 11:10
+Last Updated: 2026-08-14 12:40
 
 ## Version Info
 
 | 项 | 值 |
 |----|-----|
-| Current Release | **v0.1.0** |
+| Current Release | **v0.1.1** |
 | Planned Version | — |
 
 ## Version Summary

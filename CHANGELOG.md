@@ -4,6 +4,24 @@
 
 ---
 
+## [0.1.1] - 2026-08-14
+
+KodaX-Fabric。v0.1.0 回归阻断项补丁。
+
+### Added
+
+- 模型别名入库（`model_aliases`），网关启动加载；`PUT/GET /console/v1/model-aliases`
+- Provider RPM：`provider_keys.rpm_limit`，`ResolveVK` 填入共用桶
+
+### Fixed
+
+- IP 白名单默认只认 `RemoteAddr`；伪造 `X-Forwarded-For` 不再绕过。反代后设 `TRUST_PROXY=1`
+- Docker 镜像先 `npm run build` 再 embed，侧栏含团队项目 / 路由审计
+- `restore.sh` 用 `up -d --no-deps gateway`，不重跑 bootstrap（`compose start` 不支持 `--no-deps`）
+- 已配置 `REDIS_URL` 时 Redis `PING` 失败则 `/health` 503
+
+---
+
 ## [0.1.0] - 2026-08-14
 
 KodaX-Fabric。落地模块仍是 Token Hub。切法 0.0.1～0.1.0 收口。
@@ -97,4 +115,4 @@ KodaX-Fabric 首次按切法发布。当前落地模块是 Token Hub（Go 单进
 
 - 控制台 TypeScript 路径配置，去掉已弃用的 `baseUrl`
 
-<!-- last-sync: 55311f2 -->
+<!-- last-sync: af73f2f -->
