@@ -43,7 +43,7 @@ cd deploy
 ./restore.sh backups/tokenhub.sql
 ```
 
-还原会先停 `gateway`，灌 dump，再启动。不断言 Redis。
+还原会先停 `gateway`，灌 dump，再 `start --no-deps gateway`（不重跑 bootstrap）。不要用 `compose up` 代替 `restore.sh` 收尾，否则 bootstrap 会盖掉还原数据。不断言 Redis。
 
 ## 双端同一把钥匙
 

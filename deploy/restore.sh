@@ -10,7 +10,7 @@ FILE="${1:?usage: restore.sh dump.sql}"
 started=0
 cleanup() {
 	if [ "$started" = 1 ]; then
-		docker compose -p "$PROJECT" -f compose.yaml start gateway || true
+		docker compose -p "$PROJECT" -f compose.yaml start --no-deps gateway || true
 	fi
 }
 trap cleanup EXIT
@@ -18,7 +18,7 @@ docker compose -p "$PROJECT" -f compose.yaml stop gateway
 started=1
 docker compose -p "$PROJECT" -f compose.yaml exec -T postgres \
   psql -U tokenhub -d tokenhub -v ON_ERROR_STOP=1 <"$FILE"
-docker compose -p "$PROJECT" -f compose.yaml start gateway
+docker compose -p "$PROJECT" -f compose.yaml start --no-deps gateway
 started=0
 trap - EXIT
 echo "restored $FILE"
