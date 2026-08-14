@@ -87,6 +87,9 @@ ALTER TABLE virtual_keys ADD COLUMN IF NOT EXISTS expires_at timestamptz;
 ALTER TABLE virtual_keys ADD COLUMN IF NOT EXISTS model_scope text NOT NULL DEFAULT '';
 ALTER TABLE virtual_keys ADD COLUMN IF NOT EXISTS project_id bigint NOT NULL DEFAULT 0;
 ALTER TABLE virtual_keys ADD COLUMN IF NOT EXISTS rpm_limit int NOT NULL DEFAULT 0;
+ALTER TABLE virtual_keys ADD COLUMN IF NOT EXISTS budget_limit int NOT NULL DEFAULT 0;
+ALTER TABLE virtual_keys ADD COLUMN IF NOT EXISTS budget_used int NOT NULL DEFAULT 0;
+ALTER TABLE virtual_keys ADD COLUMN IF NOT EXISTS budget_month varchar(7) NOT NULL DEFAULT '';
 ALTER TABLE channels ADD COLUMN IF NOT EXISTS priority int NOT NULL DEFAULT 0;
 ALTER TABLE channels ADD COLUMN IF NOT EXISTS weight int NOT NULL DEFAULT 0;
 ALTER TABLE channels ADD COLUMN IF NOT EXISTS models text NOT NULL DEFAULT '';
@@ -108,18 +111,19 @@ ALTER TABLE route_decisions ADD COLUMN IF NOT EXISTS pool_group varchar(32) NOT 
 func (p *Postgres) ResolveVK(ctx context.Context, rawKey string) (*ResolvedVK, error) {
 	hash := secret.HashVK(rawKey)
 	var vkID, poolID, projectID, teamID, poolTeam int64
-	var rpm int
-	var status, groupName string
+	var rpm, budgetLimit, budgetUsed int
+	var status, groupName, budgetMonth string
 	var expires sql.NullTime
 	var scope string
 	err := p.DB.QueryRowContext(ctx, `
 SELECT v.id, v.pool_id, v.status, v.expires_at, COALESCE(v.model_scope,''), COALESCE(v.project_id,0),
-       COALESCE(p.team_id,0), COALESCE(cp.group_name,'standard'), COALESCE(cp.team_id,0), COALESCE(v.rpm_limit,0)
+       COALESCE(p.team_id,0), COALESCE(cp.group_name,'standard'), COALESCE(cp.team_id,0), COALESCE(v.rpm_limit,0),
+       COALESCE(v.budget_limit,0), COALESCE(v.budget_used,0), COALESCE(v.budget_month,'')
 FROM virtual_keys v
 LEFT JOIN projects p ON p.id = v.project_id
 LEFT JOIN channel_pools cp ON cp.id = v.pool_id
 WHERE v.key_hash = $1
-`, hash).Scan(&vkID, &poolID, &status, &expires, &scope, &projectID, &teamID, &groupName, &poolTeam, &rpm)
+`, hash).Scan(&vkID, &poolID, &status, &expires, &scope, &projectID, &teamID, &groupName, &poolTeam, &rpm, &budgetLimit, &budgetUsed, &budgetMonth)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -148,7 +152,8 @@ ORDER BY c.id
 	defer rows.Close()
 	out := &ResolvedVK{
 		VirtualKeyID: vkID, PoolID: poolID, ProjectID: projectID, TeamID: teamID,
-		PoolGroup: groupName, RPMLimit: rpm, ModelScope: parseModelScope(scope),
+		PoolGroup: groupName, RPMLimit: rpm, BudgetLimit: budgetLimit, BudgetUsed: budgetUsed, BudgetMonth: budgetMonth,
+		ModelScope: parseModelScope(scope),
 	}
 	if expires.Valid {
 		t := expires.Time.UTC()
@@ -174,6 +179,19 @@ ORDER BY c.id
 	out.PoolGroup = NormalizePoolGroup(out.PoolGroup)
 	out.Channels = IsolateChannels(out, out.Channels)
 	return out, nil
+}
+
+func (p *Postgres) AddVKUsage(ctx context.Context, vkID int64, tokens int, month string) error {
+	if tokens <= 0 {
+		return nil
+	}
+	_, err := p.DB.ExecContext(ctx, `
+UPDATE virtual_keys
+SET budget_used = CASE WHEN budget_month = $3 THEN budget_used + $2 ELSE $2 END,
+    budget_month = $3
+WHERE id = $1
+`, vkID, tokens, month)
+	return err
 }
 
 func (p *Postgres) SaveRouteDecision(ctx context.Context, d RouteDecision) error {

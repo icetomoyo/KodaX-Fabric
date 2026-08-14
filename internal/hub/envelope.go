@@ -53,6 +53,26 @@ func writeModelNotAllowed(w http.ResponseWriter, protocol string) {
 	})
 }
 
+func writeBudgetExceeded(w http.ResponseWriter, protocol string) {
+	if protocol == store.ProtocolAnthropic {
+		writeJSON(w, http.StatusPaymentRequired, map[string]any{
+			"type": "error",
+			"error": map[string]any{
+				"type":    "billing_error",
+				"message": "budget exceeded",
+			},
+		})
+		return
+	}
+	writeJSON(w, http.StatusPaymentRequired, map[string]any{
+		"error": map[string]any{
+			"message": "budget exceeded",
+			"type":    "billing_error",
+			"code":    "budget_exceeded",
+		},
+	})
+}
+
 func writeRateLimited(w http.ResponseWriter, protocol string) {
 	if protocol == store.ProtocolAnthropic {
 		writeJSON(w, http.StatusTooManyRequests, map[string]any{

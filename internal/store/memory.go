@@ -39,6 +39,25 @@ type Memory struct {
 	Decisions []RouteDecision
 }
 
+func (m *Memory) AddVKUsage(_ context.Context, vkID int64, tokens int, month string) error {
+	if m == nil || tokens <= 0 {
+		return nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, vk := range m.ByRawKey {
+		if vk == nil || vk.VirtualKeyID != vkID {
+			continue
+		}
+		if vk.BudgetMonth != month {
+			vk.BudgetUsed = 0
+			vk.BudgetMonth = month
+		}
+		vk.BudgetUsed += tokens
+	}
+	return nil
+}
+
 func (m *Memory) SaveRouteDecision(_ context.Context, d RouteDecision) error {
 	if m == nil {
 		return nil

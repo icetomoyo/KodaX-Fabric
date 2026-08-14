@@ -34,6 +34,9 @@ type ResolvedVK struct {
 	PoolGroup    string
 	RPMLimit     int
 	ProviderRPM  map[string]int
+	BudgetLimit  int
+	BudgetUsed   int
+	BudgetMonth  string
 	ExpiresAt    *time.Time
 	ModelScope   []string
 	Channels     []Channel
@@ -52,6 +55,7 @@ type Store interface {
 	ResolveVK(ctx context.Context, rawKey string) (*ResolvedVK, error)
 	DisableProviderKey(ctx context.Context, channelID int64) error
 	SaveRouteDecision(ctx context.Context, d RouteDecision) error
+	AddVKUsage(ctx context.Context, vkID int64, tokens int, month string) error
 }
 
 func ModelAllowed(scope []string, model string) bool {

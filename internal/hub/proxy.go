@@ -1,7 +1,9 @@
 package hub
 
 import (
+	"bufio"
 	"bytes"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -108,12 +110,56 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request, ch *store.Channel
 	}
 	w.WriteHeader(resp.StatusCode)
 	flusher, _ := w.(http.Flusher)
-	buf := make([]byte, 4096)
+	_, _, err = s.copySSE(w, resp.Body, flusher)
+	return resp.StatusCode, err
+}
+
+func (s *Server) proxyStream(w http.ResponseWriter, r *http.Request, ch *store.Channel, path string, body []byte) (status, official, estimate int, err error) {
+	upReq, err := s.newUpstreamReq(r, ch, path, body)
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	resp, err := s.Client.Do(upReq)
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	defer resp.Body.Close()
+	copyRateLimitHeaders(w.Header(), resp.Header)
+	if w.Header().Get("Content-Type") == "" {
+		w.Header().Set("Content-Type", "text/event-stream")
+	}
+	w.WriteHeader(resp.StatusCode)
+	flusher, _ := w.(http.Flusher)
+	official, estimate, err = s.copySSE(w, resp.Body, flusher)
+	return resp.StatusCode, official, estimate, err
+}
+
+func (s *Server) copySSE(w http.ResponseWriter, src io.Reader, flusher http.Flusher) (official, estimate int, err error) {
+	br := bufio.NewReader(src)
 	for {
-		n, readErr := resp.Body.Read(buf)
-		if n > 0 {
-			if _, werr := w.Write(buf[:n]); werr != nil {
-				return resp.StatusCode, werr
+		line, readErr := br.ReadBytes('\n')
+		if len(line) > 0 {
+			if _, werr := w.Write(line); werr != nil {
+				return official, estimate, werr
+			}
+			trim := bytes.TrimSpace(line)
+			if bytes.HasPrefix(trim, []byte("data:")) {
+				payload := bytes.TrimSpace(bytes.TrimPrefix(trim, []byte("data:")))
+				if !bytes.Equal(payload, []byte("[DONE]")) {
+					if n := parseUsageTokens(payload); n > 0 {
+						official = n
+					}
+					if c := extractDeltaChars(payload); c > 0 {
+						add := (c + 3) / 4
+						if add < 1 {
+							add = 1
+						}
+						estimate += add
+						if _, werr := fmt.Fprintf(w, ": fabric-usage %d\n\n", estimate); werr != nil {
+							return official, estimate, werr
+						}
+					}
+				}
 			}
 			if flusher != nil {
 				flusher.Flush()
@@ -121,9 +167,9 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request, ch *store.Channel
 		}
 		if readErr != nil {
 			if readErr == io.EOF {
-				return resp.StatusCode, nil
+				return official, estimate, nil
 			}
-			return resp.StatusCode, readErr
+			return official, estimate, readErr
 		}
 	}
 }

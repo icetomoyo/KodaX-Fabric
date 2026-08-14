@@ -113,6 +113,11 @@ func (s *Server) relay(w http.ResponseWriter, r *http.Request, protocol, upstrea
 		writeRateLimited(w, protocol)
 		return
 	}
+	if budgetHard(resolved, now) {
+		writeBudgetExceeded(w, protocol)
+		return
+	}
+	stampBudgetWarn(w, resolved, now)
 
 	s.dispatch(w, r, resolved, protocol, upstreamPath, body, reqMeta.Stream, reqMeta.Model, now)
 }
@@ -148,16 +153,24 @@ func (s *Server) dispatch(w http.ResponseWriter, r *http.Request, resolved *stor
 
 			if stream {
 				s.stampRoute(w, rid, ch, hops, mi > 0, resolved.PoolGroup)
-				status, err := s.proxy(w, r, ch, upstreamPath, outBody, true)
+				status, official, estimate, err := s.proxyStream(w, r, ch, upstreamPath, outBody)
 				if err != nil && attempt < 2 && s.pickChannel(resolved, protocol, m, used, now) != nil {
 					lastErr = err
+					s.observeChannel(ch.ID, false, now)
 					continue
 				}
 				if err != nil {
+					s.observeChannel(ch.ID, false, now)
 					return
 				}
 				if status == http.StatusUnauthorized || status == http.StatusForbidden {
 					_ = s.Store.DisableProviderKey(r.Context(), ch.ID)
+				}
+				if status >= 200 && status < 400 {
+					s.creditUsage(resolved, official, estimate, now)
+					s.observeChannel(ch.ID, true, now)
+				} else if status >= 500 {
+					s.observeChannel(ch.ID, false, now)
 				}
 				return
 			}
@@ -189,6 +202,9 @@ func (s *Server) dispatch(w http.ResponseWriter, r *http.Request, resolved *stor
 			}
 			s.stampRoute(w, rid, ch, hops, mi > 0, resolved.PoolGroup)
 			writeFetched(w, res)
+			if res.status >= 200 && res.status < 400 {
+				s.creditUsage(resolved, parseUsageTokens(res.body), 0, now)
+			}
 			return
 		}
 	}
