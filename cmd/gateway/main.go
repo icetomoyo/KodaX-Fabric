@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -65,22 +64,15 @@ func run() error {
 	mux.Handle("/", h.Handler())
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		pgOK := db.PingContext(r.Context()) == nil
+		ru := os.Getenv("REDIS_URL")
 		redisOK := true
-		if ru := os.Getenv("REDIS_URL"); ru != "" {
+		if ru != "" {
 			redisOK = pingRedis(ru)
 		}
+		status, body := healthStatus(pgOK, ru != "", redisOK)
 		w.Header().Set("Content-Type", "application/json")
-		status := http.StatusOK
-		if !pgOK {
-			status = http.StatusServiceUnavailable
-		}
 		w.WriteHeader(status)
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"ok":       pgOK,
-			"service":  "kodax-fabric-gateway",
-			"postgres": pgOK,
-			"redis":    redisOK,
-		})
+		_ = json.NewEncoder(w).Encode(body)
 	})
 
 	fmt.Println("token-hub gateway listening on", addr)
@@ -92,14 +84,4 @@ func envOr(k, def string) string {
 		return v
 	}
 	return def
-}
-
-func pingRedis(url string) bool {
-	host := strings.TrimPrefix(url, "redis://")
-	conn, err := net.DialTimeout("tcp", host, 400*time.Millisecond)
-	if err != nil {
-		return false
-	}
-	_ = conn.Close()
-	return true
 }

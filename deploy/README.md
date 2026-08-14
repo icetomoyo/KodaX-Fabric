@@ -17,7 +17,7 @@ docker compose -p tokenhub -f compose.yaml up --build --wait
 - 管理员：`18612243416` / `Hz@123456`
 - 开发者：`13800138000` / `Dev@123456`
 - 本地调用方 VK：`fab-local-bootstrap-01`
-- `GET /health` — Postgres 不通则非 200；有 `REDIS_URL` 时报告 redis
+- `GET /health` — Postgres 或（已配置 `REDIS_URL` 时）Redis `PING` 失败则非 200，`ok: false`
 - IP 白名单默认只认 `RemoteAddr`。网关在反代后才设 `TRUST_PROXY=1`，才会认 `X-Forwarded-For` 第一段
 - `POST /v1/chat/completions` `Authorization: Bearer fab-local-bootstrap-01`
 - `POST /v1/messages` 同一把 `fab-`
