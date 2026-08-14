@@ -1,6 +1,6 @@
 # KNOWN_ISSUES
 
-Last Updated: 2026-08-14 12:25
+Last Updated: 2026-08-14 12:35
 
 来源：v0.0.1→v0.1.0 累计回归（2026-08-14）。当前发布 **v0.1.0**，不建议判定生产完全落地。
 
@@ -10,7 +10,7 @@ Last Updated: 2026-08-14 12:25
 |----|-------|----------|--------|------------|-------|
 | 001 | IP 白名单可被伪造 X-Forwarded-For 绕过 | High | Resolved | v0.0.8 | unreleased (8ef74e0) |
 | 002 | 发布镜像嵌入陈旧前端（缺 org/audit） | High | Resolved | v0.1.0 | unreleased (f089696) |
-| 003 | 模型别名与 Provider RPM 未接入生产路径 | Medium | ready | v0.0.4 / v0.0.6 | — |
+| 003 | 模型别名与 Provider RPM 未接入生产路径 | Medium | Resolved | v0.0.4 / v0.0.6 | unreleased (2628606) |
 | 004 | restore 后再启 gateway 会重跑 bootstrap | High | Resolved | v0.1.0 | unreleased (3cac814) |
 | 005 | Redis 挂了 /health 仍 200 | Medium | Resolved | v0.1.0 | unreleased (8849fb6) |
 
@@ -90,10 +90,11 @@ Dockerfile 增加 Node 阶段：`npm ci && npm run build`，再覆盖 `internal/
 | 字段 | 内容 |
 |------|------|
 | Priority | **Medium** |
-| Status | **ready** |
+| Status | **Resolved** |
 | Introduced | 别名 v0.0.4；Provider RPM v0.0.6 |
+| Fixed | unreleased（`2628606`，在 v0.1.0 之后） |
 | Created | 2026-08-14 |
-| Rework | 2026-08-14 由「文档降级」改为生产接线，待你确认 |
+| Rework | 2026-08-14 由「文档降级」改为生产接线 |
 
 **Original Problem**
 
@@ -107,7 +108,15 @@ Dockerfile 增加 Node 阶段：`npm ci && npm run build`，再覆盖 `internal/
 
 **Rework**
 
-第一次只写文档。已改为生产接线：`provider_keys.rpm_limit`、`model_aliases` 表、网关启动加载别名、`ResolveVK` 填 ProviderRPM、控制台 PATCH/PUT。待实跑确认后标 Resolved。
+第一次只写文档。已改为生产接线：`provider_keys.rpm_limit`、`model_aliases` 表、网关启动加载别名、`ResolveVK` 填 ProviderRPM、控制台 PATCH/PUT。本机 compose 已 `--build` gateway，migrate 已建表。
+
+**Resolution**
+
+生产路径接通，不再用「未产品化」搪塞。`PATCH provider-keys` 设 `rpm_limit`；`PUT/GET /console/v1/model-aliases` 配别名。
+
+- **Resolution Date**: 2026-08-14
+- **Files Changed**: `internal/store/*`, `internal/hub/console*.go`, `internal/hub/v003_prod_test.go`, `cmd/gateway/main.go`, `deploy/README.md`
+- **Tests Added**: `TestProviderRPMFromCatalog`, `TestAliasesFromStore`
 
 ---
 
@@ -193,10 +202,10 @@ HLD V1 要求 PG+Redis。限流/缓存仍在进程内，Redis 挂了网关热路
 | 指标 | 数量 |
 |------|------|
 | Total | 5 |
-| Open / needs-info / ready | 1 |
-| Resolved | 4 |
+| Open / needs-info / ready | 0 |
+| Resolved | 5 |
 | High | 0 open / 3 resolved |
-| Medium | 1 open / 1 resolved |
+| Medium | 0 open / 2 resolved |
 | Low | 0 |
 
-Next to resolve: **003**（已接线，待确认后标 Resolved）。
+Next to resolve: 无。回归五条均已关闭。
