@@ -4,6 +4,23 @@
 
 ---
 
+## [0.1.3] - 2026-08-14
+
+KodaX-Fabric。各角色自助改资料、手机号与密码。
+
+### Added
+
+- 三角色在 `/admin`「我的资料」改自己的显示名、登录手机号和密码（`PATCH /console/v1/me`）
+- 空密码不改密；空手机号 400；手机号占用 409；角色/团队不能自己改
+
+### Documentation
+
+- `AGENTS.md`：FEATURE 流程与当前阶段
+- `guide_skills/`：Claude skills 导读
+- `ProductDraft.md` 归档到 `docs/archive/`
+
+---
+
 ## [0.1.2] - 2026-08-14
 
 KodaX-Fabric。单一企业三角色控制台。
@@ -126,4 +143,4 @@ KodaX-Fabric 首次按切法发布。当前落地模块是 Token Hub（Go 单进
 
 - 控制台 TypeScript 路径配置，去掉已弃用的 `baseUrl`
 
-<!-- last-sync: af73f2f -->
+<!-- last-sync: fe9259e -->

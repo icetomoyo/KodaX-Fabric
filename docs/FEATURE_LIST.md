@@ -1,12 +1,12 @@
 # FEATURE_LIST
 
-Last Updated: 2026-08-14 18:55
+Last Updated: 2026-08-14 19:10
 
 ## Version Info
 
 | 项 | 值 |
 |----|-----|
-| Current Release | **v0.1.2** |
+| Current Release | **v0.1.3** |
 | Planned Version | — |
 
 ## Version Summary
@@ -24,7 +24,7 @@ Last Updated: 2026-08-14 18:55
 | v0.1.0 | Released | 1/1 | 独立部署收口 |
 | v0.1.1 | Released | 1/1 | 回归补丁（KNOWN_ISSUES 001–005） |
 | v0.1.2 | Released | 1/1 | 单一企业三角色控制台 |
-| v0.1.3 | Complete | 1/1 | 各角色自助改资料、手机号与密码（待 `/smart-release`） |
+| v0.1.3 | Released | 1/1 | 各角色自助改资料、手机号与密码 |
 
 切法全文：[token-hub-slices.md](token-hub-slices.md)（遵守 PRD + HLD）。手测：[TokenHub_VISION.md](TokenHub_VISION.md)。
 
