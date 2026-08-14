@@ -2,6 +2,7 @@ package deploy_test
 
 import (
 	"os"
+	"os/exec"
 	"strings"
 	"testing"
 )
@@ -26,14 +27,29 @@ func TestRestoreStartsGatewayWithoutDeps(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(raw)
-	if !strings.Contains(text, "start --no-deps gateway") {
-		t.Fatal("restore must start gateway with --no-deps so bootstrap does not rerun")
+	if strings.Contains(text, "start --no-deps") {
+		t.Fatal("compose start does not accept --no-deps")
 	}
-	for _, line := range strings.Split(text, "\n") {
-		line = strings.TrimSpace(line)
-		if strings.Contains(line, "start gateway") && !strings.Contains(line, "--no-deps") {
-			t.Fatalf("bare start gateway would rerun bootstrap: %s", line)
-		}
+	if !strings.Contains(text, "up -d --no-deps gateway") {
+		t.Fatal("restore must up -d --no-deps gateway so bootstrap does not rerun")
+	}
+}
+
+func TestComposeUpNoDepsIsValid(t *testing.T) {
+	if _, err := exec.LookPath("docker"); err != nil {
+		t.Skip("docker not in PATH")
+	}
+	startHelp, err := exec.Command("docker", "compose", "start", "--help").CombinedOutput()
+	if err != nil {
+		t.Skipf("docker compose start --help: %v", err)
+	}
+	if strings.Contains(string(startHelp), "--no-deps") {
+		t.Fatal("compose start unexpectedly lists --no-deps; restore assumed it did not")
+	}
+	cmd := exec.Command("docker", "compose", "-p", "tokenhub", "-f", "compose.yaml", "up", "-d", "--no-deps", "--dry-run", "gateway")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("up -d --no-deps --dry-run gateway: %v\n%s", err, out)
 	}
 }
 

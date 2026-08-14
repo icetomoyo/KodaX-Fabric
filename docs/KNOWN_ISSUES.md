@@ -1,6 +1,6 @@
 # KNOWN_ISSUES
 
-Last Updated: 2026-08-14 12:06
+Last Updated: 2026-08-14 12:21
 
 来源：v0.0.1→v0.1.0 累计回归（2026-08-14）。当前发布 **v0.1.0**，不建议判定生产完全落地。
 
@@ -11,7 +11,7 @@ Last Updated: 2026-08-14 12:06
 | 001 | IP 白名单可被伪造 X-Forwarded-For 绕过 | High | Resolved | v0.0.8 | unreleased (8ef74e0) |
 | 002 | 发布镜像嵌入陈旧前端（缺 org/audit） | High | Resolved | v0.1.0 | unreleased (f089696) |
 | 003 | 模型别名与 Provider RPM 未接入生产路径 | Medium | Resolved | v0.0.4 / v0.0.6 | unreleased (d45e916) |
-| 004 | restore 后再启 gateway 会重跑 bootstrap | High | Resolved | v0.1.0 | unreleased (cb47308) |
+| 004 | restore 后再启 gateway 会重跑 bootstrap | High | ready | v0.1.0 | — |
 | 005 | Redis 挂了 /health 仍 200 | Medium | Resolved | v0.1.0 | unreleased (8849fb6) |
 
 ## Issue Details
@@ -120,10 +120,10 @@ Dockerfile 增加 Node 阶段：`npm ci && npm run build`，再覆盖 `internal/
 | 字段 | 内容 |
 |------|------|
 | Priority | **High** |
-| Status | **Resolved** |
+| Status | **ready** |
 | Introduced | v0.1.0 |
-| Fixed | unreleased（`cb47308`，在 v0.1.0 之后） |
 | Created | 2026-08-14 |
+| Reopened | 2026-08-14（二次验证：`compose start` 不支持 `--no-deps`） |
 
 **Original Problem**
 
@@ -133,19 +133,11 @@ Dockerfile 增加 Node 阶段：`npm ci && npm run build`，再覆盖 `internal/
 
 **Context**
 
-009 收口的备份路径。脚本本身没有调 bootstrap，是 Compose 依赖边导致的。
+009 收口的备份路径。第一次修复误用 `start --no-deps`。二次验证：Compose 报 `unknown flag: --no-deps`，灌库成功但 gateway 未拉起。
 
 **Proposed Solution**
 
-`start --no-deps gateway`（或等价），并在文档写明禁止用 `up` 代替 `start` 做还原后拉起。
-
-**Resolution**
-
-`restore.sh` 与失败 cleanup 都改为 `start --no-deps gateway`。文档写明不要用 `compose up` 收尾还原。
-
-- **Resolution Date**: 2026-08-14
-- **Files Changed**: `deploy/restore.sh`, `deploy/compose_test.go`, `deploy/README.md`
-- **Tests Added**: `TestRestoreStartsGatewayWithoutDeps`
+`docker compose up -d --no-deps gateway`（cleanup 同样）。测试须校验 `compose start --help` 无 `--no-deps`，并对 `up -d --no-deps --dry-run gateway` 做真实 CLI 校验。
 
 ---
 
@@ -196,10 +188,10 @@ HLD V1 要求 PG+Redis。限流/缓存仍在进程内，Redis 挂了网关热路
 | 指标 | 数量 |
 |------|------|
 | Total | 5 |
-| Open / needs-info / ready | 0 |
-| Resolved | 5 |
-| High | 0 open / 3 resolved |
+| Open / needs-info / ready | 1 |
+| Resolved | 4 |
+| High | 1 open / 2 resolved |
 | Medium | 0 open / 2 resolved |
 | Low | 0 |
 
-Next to resolve: 无。回归五条阻断项均已关闭。
+Next to resolve: **004**（restore：`start` 不支持 `--no-deps`，已改 `up -d --no-deps`，待真实 restore 回归后标 Resolved）。
