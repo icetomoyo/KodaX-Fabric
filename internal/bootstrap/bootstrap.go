@@ -14,13 +14,13 @@ import (
 )
 
 type Config struct {
-	AdminPhone     string
-	AdminPassword  string
-	DeepSeekKey    string
-	DeepSeekBase   string
-	VirtualKey     string
-	VKOutPath      string
-	EncryptKey     []byte
+	AdminPhone    string
+	AdminPassword string
+	DeepSeekKey   string
+	DeepSeekBase  string
+	VirtualKey    string
+	VKOutPath     string
+	EncryptKey    []byte
 }
 
 func DefaultConfig(enc []byte) Config {
@@ -64,8 +64,8 @@ func Run(ctx context.Context, db *sql.DB, cfg Config) error {
 	}
 	if _, err := db.ExecContext(ctx, `
 INSERT INTO operators (phone, password_hash, role, name, status)
-VALUES ($1, $2, 'admin', '管理员', 'active')
-ON CONFLICT (phone) DO UPDATE SET password_hash = EXCLUDED.password_hash, role = 'admin', status = 'active'
+VALUES ($1, $2, 'org_admin', '管理员', 'active')
+ON CONFLICT (phone) DO UPDATE SET password_hash = EXCLUDED.password_hash, role = 'org_admin', status = 'active'
 `, cfg.AdminPhone, string(hash)); err != nil {
 		return fmt.Errorf("operator: %w", err)
 	}

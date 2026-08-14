@@ -45,7 +45,13 @@ export const adminApi = {
     request<{ route_decisions: RouteDecision[] }>("/console/v1/route-decisions"),
 
   users: () => request<{ users: Operator[] }>("/console/v1/users"),
-  createUser: (body: { phone: string; name: string; role: string; password: string }) =>
+  createUser: (body: {
+    phone: string;
+    name: string;
+    role: string;
+    password: string;
+    team_id?: number;
+  }) =>
     request<{ user: Operator }>("/console/v1/users", {
       method: "POST",
       body: JSON.stringify(body),
@@ -85,11 +91,18 @@ export const adminApi = {
     request<Channel>(`/console/v1/channels/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
 
   virtualKeys: () => request<{ virtual_keys: VirtualKey[] }>("/console/v1/virtual-keys"),
-  createVK: (body: { pool_id: number; owner_id: number; project_id?: number }) =>
+  createVK: (body: { pool_id: number; owner_id?: number; project_id: number }) =>
     request<VirtualKey>("/console/v1/virtual-keys", { method: "POST", body: JSON.stringify(body) }),
   patchVK: (id: number, body: Record<string, unknown>) =>
     request<VirtualKey>(`/console/v1/virtual-keys/${id}`, {
       method: "PATCH",
       body: JSON.stringify(body),
+    }),
+  applyVK: (body: { pool_id: number; project_id: number }) =>
+    request<VirtualKey>("/console/v1/vk-requests", { method: "POST", body: JSON.stringify(body) }),
+  approveVK: (id: number) =>
+    request<VirtualKey>(`/console/v1/vk-requests/${id}/approve`, {
+      method: "POST",
+      body: "{}",
     }),
 };

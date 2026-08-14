@@ -155,6 +155,14 @@ export function useCreateVK() {
   const invalidate = useInvalidateAdmin();
   return useMutation({ mutationFn: adminApi.createVK, onSuccess: invalidate });
 }
+export function useApplyVK() {
+  const invalidate = useInvalidateAdmin();
+  return useMutation({ mutationFn: adminApi.applyVK, onSuccess: invalidate });
+}
+export function useApproveVK() {
+  const invalidate = useInvalidateAdmin();
+  return useMutation({ mutationFn: adminApi.approveVK, onSuccess: invalidate });
+}
 export function usePatchVK() {
   const invalidate = useInvalidateAdmin();
   return useMutation({

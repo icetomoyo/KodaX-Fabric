@@ -18,12 +18,11 @@ export function RequireAuth() {
   return <Outlet />;
 }
 
-/** Requires an admin; non-admins fall back to their workbench. */
+/** Requires a signed-in operator; the admin shell is shared by all three roles. */
 export function RequireAdmin() {
-  const { status, operator } = useAuth();
+  const { status } = useAuth();
   const loc = useLocation();
   if (status === "loading") return <FullScreenLoader />;
   if (status === "guest") return <Navigate to="/" replace state={{ from: loc.pathname }} />;
-  if (operator?.role !== "admin") return <Navigate to="/app" replace />;
   return <Outlet />;
 }

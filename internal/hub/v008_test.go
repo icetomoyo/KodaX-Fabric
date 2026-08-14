@@ -250,9 +250,38 @@ func TestApplyApproveVKOnce(t *testing.T) {
 	dev := &http.Client{}
 	jar, _ := cookiejar.New(nil)
 	dev.Jar = jar
-	_ = readBody(t, login(t, dev, ts.URL, "13800138000", "Dev@123456"))
 
-	applied, err := dev.Post(ts.URL+"/console/v1/vk-requests", "application/json", strings.NewReader(`{"pool_id":1}`))
+	if tr, err := admin.Post(ts.URL+"/console/v1/teams", "application/json", strings.NewReader(`{"name":"t0"}`)); err != nil {
+		t.Fatal(err)
+	} else if tr.StatusCode != 201 {
+		t.Fatalf("team %d %s", tr.StatusCode, readBody(t, tr))
+	} else {
+		_ = readBody(t, tr)
+	}
+	if pr, err := admin.Post(ts.URL+"/console/v1/projects", "application/json", strings.NewReader(`{"name":"p0","team_id":1}`)); err != nil {
+		t.Fatal(err)
+	} else if pr.StatusCode != 201 {
+		t.Fatalf("project %d %s", pr.StatusCode, readBody(t, pr))
+	} else {
+		_ = readBody(t, pr)
+	}
+	if po, err := admin.Post(ts.URL+"/console/v1/pools", "application/json", strings.NewReader(`{"name":"p-apply","group_name":"standard","team_id":1}`)); err != nil {
+		t.Fatal(err)
+	} else if po.StatusCode != 201 {
+		t.Fatalf("pool %d %s", po.StatusCode, readBody(t, po))
+	} else {
+		_ = readBody(t, po)
+	}
+	if ur, err := admin.Post(ts.URL+"/console/v1/users", "application/json", strings.NewReader(
+		`{"phone":"13900008888","name":"申请人","role":"developer","password":"Dev@12345","team_id":1}`)); err != nil {
+		t.Fatal(err)
+	} else if ur.StatusCode != 201 {
+		t.Fatalf("user %d %s", ur.StatusCode, readBody(t, ur))
+	} else {
+		_ = readBody(t, ur)
+	}
+	_ = readBody(t, login(t, dev, ts.URL, "13900008888", "Dev@12345"))
+	applied, err := dev.Post(ts.URL+"/console/v1/vk-requests", "application/json", strings.NewReader(`{"pool_id":2,"project_id":1}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -289,9 +318,11 @@ func TestApplyApproveVKOnce(t *testing.T) {
 	}
 
 	// wire relay channel for this VK
-	ch := store.Channel{ID: 99, Protocol: store.ProtocolOpenAI, BaseURL: up.URL, Secret: "sk"}
 	if vk := st.ByRawKey[created.Secret]; vk != nil {
-		vk.Channels = []store.Channel{ch}
+		vk.Channels = []store.Channel{{
+			ID: 99, Protocol: store.ProtocolOpenAI, BaseURL: up.URL, Secret: "sk",
+			PoolID: vk.PoolID, TeamID: vk.TeamID, KeyTeamID: vk.TeamID,
+		}}
 	}
 
 	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/v1/chat/completions", strings.NewReader(`{"model":"gpt-4"}`))

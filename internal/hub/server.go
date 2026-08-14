@@ -51,6 +51,12 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/chat/completions", s.handleChatCompletions)
 	mux.HandleFunc("POST /v1/messages", s.handleMessages)
 	s.mountConsole(mux)
+	mux.HandleFunc("GET /app", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/admin", http.StatusFound)
+	})
+	mux.HandleFunc("GET /app/", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/admin", http.StatusFound)
+	})
 	if s.UI != nil {
 		mux.Handle("/", s.UI)
 	}

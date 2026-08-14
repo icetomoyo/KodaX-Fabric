@@ -98,44 +98,65 @@ func (s *Server) mountConsole(mux *http.ServeMux) {
 	}
 	mux.HandleFunc("POST /console/v1/login", s.handleLogin)
 	mux.HandleFunc("POST /console/v1/logout", s.handleLogout)
-	mux.HandleFunc("GET /console/v1/me", s.withAuth(false, s.handleMe))
-	mux.HandleFunc("PATCH /console/v1/me", s.withAuth(false, s.handlePatchMe))
-	mux.HandleFunc("GET /console/v1/me/keys", s.withAuth(false, s.handleMyKeys))
+	mux.HandleFunc("GET /console/v1/me", s.withAuth(accessAny, s.handleMe))
+	mux.HandleFunc("PATCH /console/v1/me", s.withAuth(accessAny, s.handlePatchMe))
+	mux.HandleFunc("GET /console/v1/me/keys", s.withAuth(accessAny, s.handleMyKeys))
 
-	mux.HandleFunc("GET /console/v1/overview", s.withAuth(true, s.handleOverview))
-	mux.HandleFunc("GET /console/v1/teams", s.withAuth(false, s.handleListTeams))
-	mux.HandleFunc("POST /console/v1/teams", s.withAuth(true, s.handleCreateTeam))
-	mux.HandleFunc("GET /console/v1/projects", s.withAuth(false, s.handleListProjects))
-	mux.HandleFunc("POST /console/v1/projects", s.withAuth(true, s.handleCreateProject))
-	mux.HandleFunc("GET /console/v1/route-decisions", s.withAuth(true, s.handleListRouteDecisions))
-	mux.HandleFunc("GET /console/v1/users", s.withAuth(true, s.handleListUsers))
-	mux.HandleFunc("POST /console/v1/users", s.withAuth(true, s.handleCreateUser))
-	mux.HandleFunc("PATCH /console/v1/users/{id}", s.withAuth(true, s.handlePatchUser))
+	mux.HandleFunc("GET /console/v1/overview", s.withAuth(accessAny, s.handleOverview))
+	mux.HandleFunc("GET /console/v1/teams", s.withAuth(accessAny, s.handleListTeams))
+	mux.HandleFunc("POST /console/v1/teams", s.withAuth(accessOrg, s.handleCreateTeam))
+	mux.HandleFunc("GET /console/v1/projects", s.withAuth(accessAny, s.handleListProjects))
+	mux.HandleFunc("POST /console/v1/projects", s.withAuth(accessStaff, s.handleCreateProject))
+	mux.HandleFunc("GET /console/v1/route-decisions", s.withAuth(accessAny, s.handleListRouteDecisions))
+	mux.HandleFunc("GET /console/v1/users", s.withAuth(accessStaff, s.handleListUsers))
+	mux.HandleFunc("POST /console/v1/users", s.withAuth(accessStaff, s.handleCreateUser))
+	mux.HandleFunc("PATCH /console/v1/users/{id}", s.withAuth(accessStaff, s.handlePatchUser))
 
-	mux.HandleFunc("GET /console/v1/provider-keys", s.withAuth(true, s.handleListProviderKeys))
-	mux.HandleFunc("POST /console/v1/provider-keys", s.withAuth(true, s.handleCreateProviderKey))
-	mux.HandleFunc("PATCH /console/v1/provider-keys/{id}", s.withAuth(true, s.handlePatchProviderKey))
+	mux.HandleFunc("GET /console/v1/provider-keys", s.withAuth(accessOrg, s.handleListProviderKeys))
+	mux.HandleFunc("POST /console/v1/provider-keys", s.withAuth(accessOrg, s.handleCreateProviderKey))
+	mux.HandleFunc("PATCH /console/v1/provider-keys/{id}", s.withAuth(accessOrg, s.handlePatchProviderKey))
 
-	mux.HandleFunc("GET /console/v1/pools", s.withAuth(false, s.handleListPools))
-	mux.HandleFunc("POST /console/v1/pools", s.withAuth(true, s.handleCreatePool))
-	mux.HandleFunc("PATCH /console/v1/pools/{id}", s.withAuth(true, s.handlePatchPool))
+	mux.HandleFunc("GET /console/v1/pools", s.withAuth(accessAny, s.handleListPools))
+	mux.HandleFunc("POST /console/v1/pools", s.withAuth(accessStaff, s.handleCreatePool))
+	mux.HandleFunc("PATCH /console/v1/pools/{id}", s.withAuth(accessStaff, s.handlePatchPool))
 
-	mux.HandleFunc("GET /console/v1/channels", s.withAuth(true, s.handleListChannels))
-	mux.HandleFunc("POST /console/v1/channels", s.withAuth(true, s.handleCreateChannel))
-	mux.HandleFunc("PATCH /console/v1/channels/{id}", s.withAuth(true, s.handlePatchChannel))
+	mux.HandleFunc("GET /console/v1/channels", s.withAuth(accessOrg, s.handleListChannels))
+	mux.HandleFunc("POST /console/v1/channels", s.withAuth(accessOrg, s.handleCreateChannel))
+	mux.HandleFunc("PATCH /console/v1/channels/{id}", s.withAuth(accessOrg, s.handlePatchChannel))
 
-	mux.HandleFunc("GET /console/v1/virtual-keys", s.withAuth(true, s.handleListVKs))
-	mux.HandleFunc("POST /console/v1/virtual-keys", s.withAuth(true, s.handleCreateVK))
-	mux.HandleFunc("PATCH /console/v1/virtual-keys/{id}", s.withAuth(true, s.handlePatchVK))
-	mux.HandleFunc("POST /console/v1/vk-requests", s.withAuth(false, s.handleApplyVK))
-	mux.HandleFunc("POST /console/v1/vk-requests/{id}/approve", s.withAuth(true, s.handleApproveVK))
-	mux.HandleFunc("GET /console/v1/model-aliases", s.withAuth(true, s.handleListAliases))
-	mux.HandleFunc("PUT /console/v1/model-aliases", s.withAuth(true, s.handlePutAlias))
+	mux.HandleFunc("GET /console/v1/virtual-keys", s.withAuth(accessAny, s.handleListVKs))
+	mux.HandleFunc("POST /console/v1/virtual-keys", s.withAuth(accessStaff, s.handleCreateVK))
+	mux.HandleFunc("PATCH /console/v1/virtual-keys/{id}", s.withAuth(accessStaff, s.handlePatchVK))
+	mux.HandleFunc("POST /console/v1/vk-requests", s.withAuth(accessAny, s.handleApplyVK))
+	mux.HandleFunc("POST /console/v1/vk-requests/{id}/approve", s.withAuth(accessStaff, s.handleApproveVK))
+	mux.HandleFunc("GET /console/v1/model-aliases", s.withAuth(accessOrg, s.handleListAliases))
+	mux.HandleFunc("PUT /console/v1/model-aliases", s.withAuth(accessOrg, s.handlePutAlias))
 }
+
+type access int
+
+const (
+	accessAny access = iota
+	accessStaff
+	accessOrg
+)
 
 type authHandler func(http.ResponseWriter, *http.Request, *store.Operator)
 
-func (s *Server) withAuth(adminOnly bool, fn authHandler) http.HandlerFunc {
+func allowed(op *store.Operator, level access) bool {
+	switch level {
+	case accessAny:
+		return true
+	case accessStaff:
+		return store.IsOrgAdmin(op.Role) || op.Role == store.RoleTeamAdmin
+	case accessOrg:
+		return store.IsOrgAdmin(op.Role)
+	default:
+		return false
+	}
+}
+
+func (s *Server) withAuth(level access, fn authHandler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		c, err := r.Cookie(sessionCookie)
 		if err != nil || c.Value == "" {
@@ -152,7 +173,7 @@ func (s *Server) withAuth(adminOnly bool, fn authHandler) http.HandlerFunc {
 			writeConsoleErr(w, http.StatusUnauthorized, "unauthorized", "not signed in")
 			return
 		}
-		if adminOnly && op.Role != store.RoleAdmin {
+		if !allowed(op, level) {
 			writeConsoleErr(w, http.StatusForbidden, "forbidden", "admin only")
 			return
 		}
@@ -249,28 +270,45 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request, _ *store
 	writeJSON(w, http.StatusOK, ov)
 }
 
-func (s *Server) handleListUsers(w http.ResponseWriter, r *http.Request, _ *store.Operator) {
+func (s *Server) handleListUsers(w http.ResponseWriter, r *http.Request, op *store.Operator) {
 	users, err := s.Console.ListOperators(r.Context())
 	if err != nil {
 		writeStoreErr(w, err)
 		return
 	}
+	if teamID, scoped := visibleTeam(op); scoped {
+		filtered := users[:0]
+		for _, u := range users {
+			if u.TeamID == teamID {
+				filtered = append(filtered, u)
+			}
+		}
+		users = filtered
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"users": users})
 }
 
-func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request, _ *store.Operator) {
+func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request, actor *store.Operator) {
 	var body struct {
 		Phone    string `json:"phone"`
 		Name     string `json:"name"`
 		Role     string `json:"role"`
 		Password string `json:"password"`
+		TeamID   int64  `json:"team_id"`
 	}
 	if err := decodeJSON(r, &body); err != nil {
 		writeConsoleErr(w, http.StatusBadRequest, "invalid", "invalid json")
 		return
 	}
+	if actor.Role == store.RoleTeamAdmin {
+		if store.CanonicalRole(body.Role) == store.RoleOrgAdmin {
+			writeConsoleErr(w, http.StatusForbidden, "forbidden", "cannot create org admin")
+			return
+		}
+		body.TeamID = actor.TeamID
+	}
 	op, err := s.Console.CreateOperator(r.Context(), store.OperatorCreate{
-		Phone: body.Phone, Name: body.Name, Role: body.Role, Password: body.Password,
+		Phone: body.Phone, Name: body.Name, Role: body.Role, Password: body.Password, TeamID: body.TeamID,
 	})
 	if err != nil {
 		writeStoreErr(w, err)
@@ -279,10 +317,18 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request, _ *sto
 	writeJSON(w, http.StatusCreated, map[string]any{"user": op})
 }
 
-func (s *Server) handlePatchUser(w http.ResponseWriter, r *http.Request, _ *store.Operator) {
+func (s *Server) handlePatchUser(w http.ResponseWriter, r *http.Request, actor *store.Operator) {
 	id, err := pathID(r)
 	if err != nil {
 		writeConsoleErr(w, http.StatusBadRequest, "invalid", "bad id")
+		return
+	}
+	cur, err := s.Console.GetOperator(r.Context(), id)
+	if err != nil {
+		writeStoreErr(w, err)
+		return
+	}
+	if s.forbidIfOutsideTeam(w, actor, cur.TeamID) {
 		return
 	}
 	var body store.OperatorUpdate

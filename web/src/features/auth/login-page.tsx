@@ -16,7 +16,7 @@ const schema = z.object({
 type Values = z.infer<typeof schema>;
 
 export function LoginPage() {
-  const { status, operator, login } = useAuth();
+  const { status, login } = useAuth();
   const nav = useNavigate();
   const loc = useLocation();
   const [err, setErr] = useState("");
@@ -31,15 +31,15 @@ export function LoginPage() {
 
   if (status === "authed") {
     const from = (loc.state as { from?: string } | null)?.from;
-    const dest = from && from !== "/" ? from : operator?.role === "admin" ? "/admin" : "/app";
+    const dest = from && from !== "/" && from !== "/app" ? from : "/admin";
     return <Navigate to={dest} replace />;
   }
 
   async function onSubmit(v: Values) {
     setErr("");
     try {
-      const op = await login(v.phone, v.password);
-      nav(op.role === "admin" ? "/admin" : "/app", { replace: true });
+      await login(v.phone, v.password);
+      nav("/admin", { replace: true });
     } catch (e) {
       setErr(errMsg(e, "无法连接网关"));
     }
@@ -96,7 +96,7 @@ export function LoginPage() {
         </form>
 
         <p className="mt-6 text-center text-xs leading-5 text-muted-foreground">
-          管理员进入控制台，开发者进入自己的工作台。
+          登录后进入控制台。角色决定你能看见哪些页。
         </p>
       </div>
     </div>

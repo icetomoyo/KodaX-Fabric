@@ -1,4 +1,4 @@
-import { NavLink, Link, Outlet } from "react-router-dom";
+import { NavLink, Outlet } from "react-router-dom";
 import {
   Activity,
   BookOpen,
@@ -12,19 +12,20 @@ import {
   Waypoints,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
+import { isOrgAdmin, isTeamAdmin, roleLabel } from "@/lib/labels";
 import { useHealth } from "@/lib/query/hooks";
 import { cn } from "@/lib/utils";
 
 const nav = [
-  { to: "/admin/overview", label: "总览", icon: Activity },
-  { to: "/admin/users", label: "用户", icon: Users },
-  { to: "/admin/providers", label: "上游钥匙", icon: Server },
-  { to: "/admin/pools", label: "渠道池", icon: Layers },
-  { to: "/admin/channels", label: "渠道", icon: Waypoints },
-  { to: "/admin/keys", label: "虚拟钥匙", icon: KeyRound },
-  { to: "/admin/org", label: "团队项目", icon: Building2 },
-  { to: "/admin/audit", label: "路由审计", icon: ScrollText },
-  { to: "/admin/docs", label: "接口文档", icon: BookOpen },
+  { to: "/admin/overview", label: "总览", icon: Activity, staff: false },
+  { to: "/admin/users", label: "用户", icon: Users, staff: true },
+  { to: "/admin/providers", label: "上游钥匙", icon: Server, orgOnly: true },
+  { to: "/admin/pools", label: "渠道池", icon: Layers, staff: true },
+  { to: "/admin/channels", label: "渠道", icon: Waypoints, orgOnly: true },
+  { to: "/admin/keys", label: "虚拟钥匙", icon: KeyRound, staff: false },
+  { to: "/admin/org", label: "团队项目", icon: Building2, staff: true },
+  { to: "/admin/audit", label: "路由审计", icon: ScrollText, staff: false },
+  { to: "/admin/docs", label: "接口文档", icon: BookOpen, staff: false },
 ];
 
 export default function AdminLayout() {
@@ -45,35 +46,36 @@ export default function AdminLayout() {
         </div>
 
         <nav className="flex-1 space-y-0.5 px-3">
-          {nav.map((t) => {
-            const Icon = t.icon;
-            return (
-              <NavLink
-                key={t.to}
-                to={t.to}
-                className={({ isActive }) =>
-                  cn(
-                    "flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-sm transition-colors",
-                    isActive
-                      ? "bg-accent font-medium text-accent-foreground"
-                      : "text-muted-foreground hover:bg-muted hover:text-foreground",
-                  )
-                }
-              >
-                <Icon size={16} strokeWidth={1.8} />
-                {t.label}
-              </NavLink>
-            );
-          })}
+          {nav
+            .filter((t) => {
+              if (t.orgOnly) return isOrgAdmin(operator?.role);
+              if (t.staff) return isOrgAdmin(operator?.role) || isTeamAdmin(operator?.role);
+              return true;
+            })
+            .map((t) => {
+              const Icon = t.icon;
+              return (
+                <NavLink
+                  key={t.to}
+                  to={t.to}
+                  className={({ isActive }) =>
+                    cn(
+                      "flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-sm transition-colors",
+                      isActive
+                        ? "bg-accent font-medium text-accent-foreground"
+                        : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                    )
+                  }
+                >
+                  <Icon size={16} strokeWidth={1.8} />
+                  {t.label}
+                </NavLink>
+              );
+            })}
         </nav>
 
         <div className="border-t border-border px-5 py-4">
-          <Link
-            to="/app"
-            className="block text-sm text-muted-foreground transition-colors hover:text-foreground"
-          >
-            切换到我的工作台
-          </Link>
+          <span className="block text-xs text-muted-foreground">{roleLabel(operator?.role)}</span>
         </div>
       </aside>
 

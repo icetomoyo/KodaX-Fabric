@@ -17,11 +17,14 @@ var (
 )
 
 const (
-	RoleAdmin      = "admin"
-	RoleDeveloper  = "developer"
-	StatusActive   = "active"
-	StatusDisabled = "disabled"
-	StatusPending  = "pending"
+	RoleAdmin       = "org_admin"
+	RoleOrgAdmin    = "org_admin"
+	RoleTeamAdmin   = "team_admin"
+	RoleDeveloper   = "developer"
+	RoleLegacyAdmin = "admin"
+	StatusActive    = "active"
+	StatusDisabled  = "disabled"
+	StatusPending   = "pending"
 )
 
 type Operator struct {
@@ -30,6 +33,7 @@ type Operator struct {
 	Name      string    `json:"name"`
 	Role      string    `json:"role"`
 	Status    string    `json:"status"`
+	TeamID    int64     `json:"team_id"`
 	CreatedAt time.Time `json:"created_at"`
 }
 
@@ -38,6 +42,7 @@ type OperatorCreate struct {
 	Name     string
 	Role     string
 	Password string
+	TeamID   int64
 }
 
 type OperatorUpdate struct {
@@ -45,6 +50,14 @@ type OperatorUpdate struct {
 	Role     *string `json:"role"`
 	Status   *string `json:"status"`
 	Password *string `json:"password"`
+	TeamID   *int64  `json:"team_id"`
+}
+
+func RequireTeamForRole(role string, teamID int64) error {
+	if role == RoleTeamAdmin && teamID <= 0 {
+		return ErrInvalid
+	}
+	return nil
 }
 
 type Overview struct {
@@ -212,10 +225,25 @@ type Console interface {
 	PutModelAlias(ctx context.Context, in ModelAlias) (*ModelAlias, error)
 }
 
+func CanonicalRole(role string) string {
+	switch strings.TrimSpace(role) {
+	case "", RoleAdmin, RoleLegacyAdmin:
+		return RoleOrgAdmin
+	default:
+		return strings.TrimSpace(role)
+	}
+}
+
+func IsOrgAdmin(role string) bool {
+	return CanonicalRole(role) == RoleOrgAdmin
+}
+
 func NormalizeRole(role string) (string, error) {
 	switch strings.TrimSpace(role) {
-	case "", RoleAdmin:
-		return RoleAdmin, nil
+	case "", RoleLegacyAdmin, RoleOrgAdmin:
+		return RoleOrgAdmin, nil
+	case RoleTeamAdmin:
+		return RoleTeamAdmin, nil
 	case RoleDeveloper:
 		return RoleDeveloper, nil
 	default:

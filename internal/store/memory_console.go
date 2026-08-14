@@ -24,6 +24,7 @@ func (m *Memory) AuthenticateOperator(_ context.Context, phone, password string)
 			return nil, nil
 		}
 		cp := op
+		cp.Role = CanonicalRole(cp.Role)
 		return &cp, nil
 	}
 	return nil, nil
@@ -35,6 +36,7 @@ func (m *Memory) GetOperator(_ context.Context, id int64) (*Operator, error) {
 	for i := range m.Operators {
 		if m.Operators[i].ID == id {
 			cp := m.Operators[i]
+			cp.Role = CanonicalRole(cp.Role)
 			return &cp, nil
 		}
 	}
@@ -46,12 +48,18 @@ func (m *Memory) ListOperators(_ context.Context) ([]Operator, error) {
 	defer m.mu.Unlock()
 	out := make([]Operator, len(m.Operators))
 	copy(out, m.Operators)
+	for i := range out {
+		out[i].Role = CanonicalRole(out[i].Role)
+	}
 	return out, nil
 }
 
 func (m *Memory) CreateOperator(_ context.Context, in OperatorCreate) (*Operator, error) {
 	role, err := NormalizeRole(in.Role)
 	if err != nil {
+		return nil, err
+	}
+	if err := RequireTeamForRole(role, in.TeamID); err != nil {
 		return nil, err
 	}
 	phone := strings.TrimSpace(in.Phone)
@@ -70,9 +78,12 @@ func (m *Memory) CreateOperator(_ context.Context, in OperatorCreate) (*Operator
 		return nil, err
 	}
 	m.nextOp++
+	if in.TeamID > 0 && !m.hasTeam(in.TeamID) {
+		return nil, ErrInvalid
+	}
 	op := Operator{
 		ID: m.nextOp, Phone: phone, Name: strings.TrimSpace(in.Name),
-		Role: role, Status: StatusActive, CreatedAt: time.Now().UTC(),
+		Role: role, Status: StatusActive, TeamID: in.TeamID, CreatedAt: time.Now().UTC(),
 	}
 	m.Operators = append(m.Operators, op)
 	if m.Passwords == nil {
@@ -133,11 +144,11 @@ func (m *Memory) UpdateOperator(_ context.Context, id int64, in OperatorUpdate) 
 func guardLastAdmin(ops []Operator, next Operator) error {
 	activeAdmins := 0
 	for _, op := range ops {
-		if op.Role == RoleAdmin && op.Status == StatusActive && op.ID != next.ID {
+		if IsOrgAdmin(op.Role) && op.Status == StatusActive && op.ID != next.ID {
 			activeAdmins++
 		}
 	}
-	if next.Role == RoleAdmin && next.Status == StatusActive {
+	if IsOrgAdmin(next.Role) && next.Status == StatusActive {
 		activeAdmins++
 	}
 	if activeAdmins < 1 {

@@ -17,16 +17,17 @@ func scanOperator(s interface {
 	var op Operator
 	var hash string
 	var created time.Time
-	if err := s.Scan(&op.ID, &op.Phone, &op.Name, &op.Role, &op.Status, &hash, &created); err != nil {
+	if err := s.Scan(&op.ID, &op.Phone, &op.Name, &op.Role, &op.Status, &hash, &created, &op.TeamID); err != nil {
 		return nil, "", err
 	}
 	op.CreatedAt = created.UTC()
+	op.Role = CanonicalRole(op.Role)
 	return &op, hash, nil
 }
 
 func (p *Postgres) AuthenticateOperator(ctx context.Context, phone, password string) (*Operator, error) {
 	row := p.DB.QueryRowContext(ctx, `
-SELECT id, phone, COALESCE(name,''), role, COALESCE(status,'active'), password_hash, COALESCE(created_at, now())
+SELECT id, phone, COALESCE(name,''), role, COALESCE(status,'active'), password_hash, COALESCE(created_at, now()), COALESCE(team_id,0)
 FROM operators WHERE phone = $1
 `, strings.TrimSpace(phone))
 	op, hash, err := scanOperator(row)
@@ -47,7 +48,7 @@ FROM operators WHERE phone = $1
 
 func (p *Postgres) GetOperator(ctx context.Context, id int64) (*Operator, error) {
 	row := p.DB.QueryRowContext(ctx, `
-SELECT id, phone, COALESCE(name,''), role, COALESCE(status,'active'), password_hash, COALESCE(created_at, now())
+SELECT id, phone, COALESCE(name,''), role, COALESCE(status,'active'), password_hash, COALESCE(created_at, now()), COALESCE(team_id,0)
 FROM operators WHERE id = $1
 `, id)
 	op, _, err := scanOperator(row)
@@ -59,7 +60,7 @@ FROM operators WHERE id = $1
 
 func (p *Postgres) ListOperators(ctx context.Context) ([]Operator, error) {
 	rows, err := p.DB.QueryContext(ctx, `
-SELECT id, phone, COALESCE(name,''), role, COALESCE(status,'active'), password_hash, COALESCE(created_at, now())
+SELECT id, phone, COALESCE(name,''), role, COALESCE(status,'active'), password_hash, COALESCE(created_at, now()), COALESCE(team_id,0)
 FROM operators ORDER BY id
 `)
 	if err != nil {
@@ -85,6 +86,9 @@ func (p *Postgres) CreateOperator(ctx context.Context, in OperatorCreate) (*Oper
 	if err != nil {
 		return nil, err
 	}
+	if err := RequireTeamForRole(role, in.TeamID); err != nil {
+		return nil, err
+	}
 	phone := strings.TrimSpace(in.Phone)
 	if phone == "" || len(in.Password) < 8 {
 		return nil, ErrInvalid
@@ -96,17 +100,17 @@ func (p *Postgres) CreateOperator(ctx context.Context, in OperatorCreate) (*Oper
 	var id int64
 	var created time.Time
 	err = p.DB.QueryRowContext(ctx, `
-INSERT INTO operators (phone, password_hash, role, name, status)
-VALUES ($1, $2, $3, $4, $5)
+INSERT INTO operators (phone, password_hash, role, name, status, team_id)
+VALUES ($1, $2, $3, $4, $5, $6)
 RETURNING id, created_at
-`, phone, string(h), role, strings.TrimSpace(in.Name), StatusActive).Scan(&id, &created)
+`, phone, string(h), role, strings.TrimSpace(in.Name), StatusActive, in.TeamID).Scan(&id, &created)
 	if err != nil {
 		if strings.Contains(err.Error(), "unique") || strings.Contains(err.Error(), "duplicate") {
 			return nil, ErrConflict
 		}
 		return nil, err
 	}
-	return &Operator{ID: id, Phone: phone, Name: strings.TrimSpace(in.Name), Role: role, Status: StatusActive, CreatedAt: created.UTC()}, nil
+	return &Operator{ID: id, Phone: phone, Name: strings.TrimSpace(in.Name), Role: role, Status: StatusActive, TeamID: in.TeamID, CreatedAt: created.UTC()}, nil
 }
 
 func (p *Postgres) UpdateOperator(ctx context.Context, id int64, in OperatorUpdate) (*Operator, error) {

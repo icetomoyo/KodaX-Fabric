@@ -7,6 +7,8 @@ import type { VirtualKey } from "@/types/api";
 export function vkColumns(
   onToggle: (k: VirtualKey) => void,
   busy: boolean,
+  onApprove?: (k: VirtualKey) => void,
+  approving?: boolean,
 ): ColumnDef<VirtualKey, unknown>[] {
   return [
     { accessorKey: "id", header: "ID" },
@@ -38,6 +40,13 @@ export function vkColumns(
       header: "",
       cell: ({ row }) => {
         const k = row.original;
+        if (k.status === "pending" && onApprove) {
+          return (
+            <Button variant="ghost" size="sm" disabled={approving} onClick={() => onApprove(k)}>
+              批准
+            </Button>
+          );
+        }
         return (
           <Button variant="ghost" size="sm" disabled={busy} onClick={() => onToggle(k)}>
             {k.status === "active" ? "停用" : "启用"}

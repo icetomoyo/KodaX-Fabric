@@ -2,6 +2,7 @@ import { type ColumnDef } from "@tanstack/react-table";
 import { ArrowUpDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/shared/status-badge";
+import { roleLabel } from "@/lib/labels";
 import type { Operator } from "@/types/api";
 
 export function userColumns(
@@ -31,7 +32,7 @@ export function userColumns(
     {
       accessorKey: "role",
       header: "角色",
-      cell: ({ row }) => (row.original.role === "admin" ? "管理员" : "开发者"),
+      cell: ({ row }) => roleLabel(row.original.role),
     },
     {
       accessorKey: "status",

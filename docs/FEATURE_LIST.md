@@ -1,13 +1,13 @@
 # FEATURE_LIST
 
-Last Updated: 2026-08-14 12:40
+Last Updated: 2026-08-14 16:00
 
 ## Version Info
 
 | 项 | 值 |
 |----|-----|
 | Current Release | **v0.1.1** |
-| Planned Version | — |
+| Planned Version | **v0.1.2** |
 
 ## Version Summary
 
@@ -22,6 +22,8 @@ Last Updated: 2026-08-14 12:40
 | v0.0.7 | Released | 1/1 | 预算闸 + 流式估算 |
 | v0.0.8 | Released | 1/1 | 缓存 + 运营面 |
 | v0.1.0 | Released | 1/1 | 独立部署收口 |
+| v0.1.1 | Released | 1/1 | 回归补丁（KNOWN_ISSUES 001–005） |
+| v0.1.2 | InProgress | 0/1 | 单一企业三角色控制台 |
 
 切法全文：[token-hub-slices.md](token-hub-slices.md)（遵守 PRD + HLD）。手测：[TokenHub_VISION.md](TokenHub_VISION.md)。
 
@@ -38,6 +40,8 @@ Last Updated: 2026-08-14 12:40
 | 007 | 预算闸与流式估算 | **Completed** | Critical | New | v0.0.7 | [设计](features/v0.0.7.md#feature_007) |
 | 008 | 缓存与运营面 | **Completed** | Critical | New | v0.0.8 | [设计](features/v0.0.8.md#feature_008) |
 | 009 | 独立部署收口 | **Completed** | Critical | Internal | v0.1.0 | [设计](features/v0.1.0.md#feature_009) |
+| — | 0.1.0 回归补丁 | **Completed** | High | Internal | v0.1.1 | [设计](features/v0.1.1.md) |
+| 010 | 单一企业三角色控制台 | **InProgress** | Critical | New | v0.1.2 | [设计](features/v0.1.2.md#feature_010) |
 
 ## Feature Details
 
@@ -239,12 +243,56 @@ Token Hub 到 0.1.0 只收口、不加新能力：镜像/compose、备份、健�
 
 **Spec**：已综合（T1 + D1，2026-08-14 用户确认「是」）。**Tickets**：#1–#3 **Done**。
 
+### v0.1.1: 0.1.0 回归补丁
+
+| 字段 | 内容 |
+|------|------|
+| ID | —（走 [KNOWN_ISSUES](KNOWN_ISSUES.md) 001–005，不占 feature 序号） |
+| Title | 0.1.0 回归补丁 |
+| Status | **Completed** |
+| Priority | High |
+| Category | Internal |
+| Planned Version | v0.1.1 |
+| Released Version | v0.1.1 |
+| Created | 2026-08-14 |
+| Started | 2026-08-14 |
+| Completed | 2026-08-14 |
+| Design | [docs/features/v0.1.1.md](features/v0.1.1.md) |
+
+**Description**
+
+v0.1.0 收口后的回归五条：XFF 白名单、镜像嵌前端、restore 不重跑 bootstrap、Redis 健康、别名与 Provider RPM 接到生产。无新 VISION 功能点。
+
+**Spec**：按 issue 关闭记录。提交 `8ef74e0` / `f089696` / `2628606` / `3cac814` / `8849fb6`。
+
+### FEATURE_010: 单一企业三角色控制台
+
+| 字段 | 内容 |
+|------|------|
+| ID | 010 |
+| Title | 单一企业三角色控制台 |
+| Status | **InProgress** |
+| Priority | Critical |
+| Category | New |
+| Planned Version | v0.1.2 |
+| Released Version | — |
+| Created | 2026-08-14 |
+| Started | 2026-08-14 |
+| Completed | — |
+| Design | [docs/features/v0.1.2.md#feature_010](features/v0.1.2.md#feature_010) |
+
+**Description**
+
+单一企业三档角色共用现有 `/admin` 壳：企业管理员、团队管理员、开发者。按角色裁菜单和数据；开发者申请钥匙，队长批本队；官方 Key 与渠道只给企业管理员。撤掉简陋 `/app` 工作台。超管 / 多租户不做。
+
+**Spec**：已综合（T1，2026-08-14 `/to-spec`）。**Tickets**：#1–#4 **Done**。
+
 ## Summary
 
 | 指标 | 数量 |
 |------|------|
-| Total | 9 |
+| Total | 11 |
 | Planned | 0 |
-| In Progress | 0 |
-| Completed | 9 |
-| Critical | 9 |
+| In Progress | 1 |
+| Completed | 10 |
+| Critical | 10 |

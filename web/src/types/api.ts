@@ -2,8 +2,9 @@ export type Operator = {
   id: number;
   phone: string;
   name: string;
-  role: "admin" | "developer" | string;
+  role: "org_admin" | "team_admin" | "developer" | "admin" | string;
   status: string;
+  team_id: number;
   created_at: string;
 };
 

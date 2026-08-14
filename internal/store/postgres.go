@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS operators (
 ALTER TABLE operators ADD COLUMN IF NOT EXISTS name varchar(100) NOT NULL DEFAULT '';
 ALTER TABLE operators ADD COLUMN IF NOT EXISTS status varchar(32) NOT NULL DEFAULT 'active';
 ALTER TABLE operators ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now();
+ALTER TABLE operators ADD COLUMN IF NOT EXISTS team_id bigint NOT NULL DEFAULT 0;
 CREATE TABLE IF NOT EXISTS teams (
   id bigserial PRIMARY KEY,
   name varchar(100) NOT NULL

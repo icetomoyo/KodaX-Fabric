@@ -53,7 +53,7 @@ func TestLoginSuccessAndMe(t *testing.T) {
 	if resp.StatusCode != 200 {
 		t.Fatalf("login %d %s", resp.StatusCode, body)
 	}
-	if !strings.Contains(body, `"role":"admin"`) {
+	if !strings.Contains(body, `"role":"org_admin"`) {
 		t.Fatalf("login body %s", body)
 	}
 	if strings.Contains(body, "password_hash") {
@@ -188,8 +188,37 @@ func TestProviderKeyNeverLeaksSecret(t *testing.T) {
 func TestCreateVKPlaintextOnce(t *testing.T) {
 	ts, _, c := newConsole(t)
 	_ = readBody(t, login(t, c, ts.URL, "18612243416", "Hz@123456"))
+	if tr, err := c.Post(ts.URL+"/console/v1/teams", "application/json", strings.NewReader(`{"name":"t0"}`)); err != nil {
+		t.Fatal(err)
+	} else if tr.StatusCode != 201 {
+		t.Fatalf("team %d %s", tr.StatusCode, readBody(t, tr))
+	} else {
+		_ = readBody(t, tr)
+	}
+	if pr, err := c.Post(ts.URL+"/console/v1/projects", "application/json", strings.NewReader(`{"name":"p0","team_id":1}`)); err != nil {
+		t.Fatal(err)
+	} else if pr.StatusCode != 201 {
+		t.Fatalf("project %d %s", pr.StatusCode, readBody(t, pr))
+	} else {
+		_ = readBody(t, pr)
+	}
+	if po, err := c.Post(ts.URL+"/console/v1/pools", "application/json", strings.NewReader(`{"name":"p-issue","group_name":"standard","team_id":1}`)); err != nil {
+		t.Fatal(err)
+	} else if po.StatusCode != 201 {
+		t.Fatalf("pool %d %s", po.StatusCode, readBody(t, po))
+	} else {
+		_ = readBody(t, po)
+	}
+	if ur, err := c.Post(ts.URL+"/console/v1/users", "application/json", strings.NewReader(
+		`{"phone":"13900007777","name":"持有人","role":"developer","password":"Dev@12345","team_id":1}`)); err != nil {
+		t.Fatal(err)
+	} else if ur.StatusCode != 201 {
+		t.Fatalf("holder %d %s", ur.StatusCode, readBody(t, ur))
+	} else {
+		_ = readBody(t, ur)
+	}
 	created, err := c.Post(ts.URL+"/console/v1/virtual-keys", "application/json", strings.NewReader(
-		`{"pool_id":1,"owner_id":2}`))
+		`{"pool_id":2,"project_id":1,"owner_id":3}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -216,7 +245,7 @@ func TestCreateVKPlaintextOnce(t *testing.T) {
 	dev := &http.Client{}
 	jar, _ := cookiejar.New(nil)
 	dev.Jar = jar
-	_ = readBody(t, login(t, dev, ts.URL, "13800138000", "Dev@123456"))
+	_ = readBody(t, login(t, dev, ts.URL, "13900007777", "Dev@12345"))
 	mine, err := dev.Get(ts.URL + "/console/v1/me/keys")
 	if err != nil {
 		t.Fatal(err)

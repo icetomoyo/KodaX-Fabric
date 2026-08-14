@@ -28,31 +28,51 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { useCreateUser } from "@/lib/query/hooks";
+import { useCreateUser, useTeams } from "@/lib/query/hooks";
 import { errMsg } from "@/lib/error";
+import { ROLES } from "@/lib/labels";
 
-const schema = z.object({
-  phone: z
-    .string()
-    .trim()
-    .regex(/^1\d{10}$/, "请输入 11 位手机号"),
-  name: z.string().trim().min(1, "请输入姓名").max(100),
-  role: z.enum(["developer", "admin"]),
-  password: z.string().min(8, "密码至少 8 位"),
-});
+const schema = z
+  .object({
+    phone: z
+      .string()
+      .trim()
+      .regex(/^1\d{10}$/, "请输入 11 位手机号"),
+    name: z.string().trim().min(1, "请输入姓名").max(100),
+    role: z.enum(["developer", "org_admin", "team_admin"]),
+    team_id: z.string(),
+    password: z.string().min(8, "密码至少 8 位"),
+  })
+  .superRefine((v, ctx) => {
+    if (v.role === "team_admin" && (!v.team_id || v.team_id === "0")) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "团队管理员必须挂队",
+        path: ["team_id"],
+      });
+    }
+  });
 type Values = z.infer<typeof schema>;
 
 export function CreateUserDialog() {
   const [open, setOpen] = useState(false);
   const create = useCreateUser();
+  const teams = useTeams();
   const form = useForm<Values>({
     resolver: zodResolver(schema),
-    defaultValues: { phone: "", name: "", role: "developer", password: "" },
+    defaultValues: { phone: "", name: "", role: "developer", team_id: "0", password: "" },
   });
+  const role = form.watch("role");
 
   async function onSubmit(v: Values) {
     try {
-      await create.mutateAsync(v);
+      await create.mutateAsync({
+        phone: v.phone,
+        name: v.name,
+        role: v.role,
+        password: v.password,
+        team_id: Number(v.team_id) || 0,
+      });
       toast.success("用户已创建");
       form.reset();
       setOpen(false);
@@ -113,14 +133,44 @@ export function CreateUserDialog() {
                       </SelectTrigger>
                     </FormControl>
                     <SelectContent>
-                      <SelectItem value="developer">开发者</SelectItem>
-                      <SelectItem value="admin">管理员</SelectItem>
+                      {ROLES.map((r) => (
+                        <SelectItem key={r.value} value={r.value}>
+                          {r.label}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                   <FormMessage />
                 </FormItem>
               )}
             />
+            {role === "team_admin" ? (
+              <FormField
+                control={form.control}
+                name="team_id"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>所属团队</FormLabel>
+                    <Select onValueChange={field.onChange} defaultValue={field.value}>
+                      <FormControl>
+                        <SelectTrigger>
+                          <SelectValue placeholder="选择团队" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        <SelectItem value="0">请选择团队</SelectItem>
+                        {(teams.data ?? []).map((t) => (
+                          <SelectItem key={t.id} value={String(t.id)}>
+                            {t.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            ) : null}
             <FormField
               control={form.control}
               name="password"

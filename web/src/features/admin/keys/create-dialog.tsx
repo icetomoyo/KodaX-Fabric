@@ -35,7 +35,7 @@ import { errMsg } from "@/lib/error";
 const schema = z.object({
   pool_id: z.string().min(1, "请选择池"),
   owner_id: z.string(),
-  project_id: z.string(),
+  project_id: z.string().min(1, "请选择项目"),
 });
 type Values = z.infer<typeof schema>;
 
@@ -48,7 +48,7 @@ export function CreateKeyDialog() {
   const create = useCreateVK();
   const form = useForm<Values>({
     resolver: zodResolver(schema),
-    defaultValues: { pool_id: "", owner_id: "0", project_id: "0" },
+    defaultValues: { pool_id: "", owner_id: "0", project_id: "" },
   });
 
   function handleOpen(next: boolean) {
@@ -60,8 +60,8 @@ export function CreateKeyDialog() {
     try {
       const vk = await create.mutateAsync({
         pool_id: Number(v.pool_id),
-        owner_id: Number(v.owner_id),
-        project_id: Number(v.project_id) || 0,
+        owner_id: Number(v.owner_id) || undefined,
+        project_id: Number(v.project_id),
       });
       setOnce(vk.secret ?? "");
       toast.success("VK 已生成，明文只这一次");
@@ -155,11 +155,10 @@ export function CreateKeyDialog() {
                     <Select onValueChange={field.onChange} defaultValue={field.value}>
                       <FormControl>
                         <SelectTrigger>
-                          <SelectValue placeholder="无项目" />
+                          <SelectValue placeholder="选择项目" />
                         </SelectTrigger>
                       </FormControl>
                       <SelectContent>
-                        <SelectItem value="0">无项目</SelectItem>
                         {(projects.data ?? []).map((p) => (
                           <SelectItem key={p.id} value={String(p.id)}>
                             {p.name}
