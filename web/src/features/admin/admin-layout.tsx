@@ -1,6 +1,7 @@
 import { NavLink, Link, Outlet } from "react-router-dom";
 import {
   Activity,
+  BookOpen,
   Building2,
   KeyRound,
   Layers,
@@ -23,6 +24,7 @@ const nav = [
   { to: "/admin/keys", label: "虚拟钥匙", icon: KeyRound },
   { to: "/admin/org", label: "团队项目", icon: Building2 },
   { to: "/admin/audit", label: "路由审计", icon: ScrollText },
+  { to: "/admin/docs", label: "接口文档", icon: BookOpen },
 ];
 
 export default function AdminLayout() {
