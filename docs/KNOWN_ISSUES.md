@@ -1,6 +1,6 @@
 # KNOWN_ISSUES
 
-Last Updated: 2026-08-14 11:52
+Last Updated: 2026-08-14 11:57
 
 来源：v0.0.1→v0.1.0 累计回归（2026-08-14）。当前发布 **v0.1.0**，不建议判定生产完全落地。
 
@@ -9,7 +9,7 @@ Last Updated: 2026-08-14 11:52
 | ID | Title | Priority | Status | Introduced | Fixed |
 |----|-------|----------|--------|------------|-------|
 | 001 | IP 白名单可被伪造 X-Forwarded-For 绕过 | High | Resolved | v0.0.8 | unreleased (8ef74e0) |
-| 002 | 发布镜像嵌入陈旧前端（缺 org/audit） | High | ready | v0.1.0 | — |
+| 002 | 发布镜像嵌入陈旧前端（缺 org/audit） | High | Resolved | v0.1.0 | unreleased (f089696) |
 | 003 | 模型别名与 Provider RPM 未接入生产路径 | Medium | ready | v0.0.4 / v0.0.6 | — |
 | 004 | restore 后再启 gateway 会重跑 bootstrap | High | Resolved | v0.1.0 | unreleased (cb47308) |
 | 005 | Redis 挂了 /health 仍 200 | Medium | ready | v0.1.0 | — |
@@ -56,8 +56,9 @@ Last Updated: 2026-08-14 11:52
 | 字段 | 内容 |
 |------|------|
 | Priority | **High** |
-| Status | **ready** |
+| Status | **Resolved** |
 | Introduced | v0.1.0（源码路由已有，embed 未跟上） |
+| Fixed | unreleased（`f089696`，在 v0.1.0 之后） |
 | Created | 2026-08-14 |
 
 **Original Problem**
@@ -73,6 +74,14 @@ Last Updated: 2026-08-14 11:52
 **Proposed Solution**
 
 Dockerfile 增加 Node 阶段 `npm ci && npm run build`，把 `web/dist` 拷进 `internal/webui/dist` 再编 Go；或 CI 检查 dist 与源码同步。
+
+**Resolution**
+
+Dockerfile 增加 Node 阶段：`npm ci && npm run build`，再覆盖 `internal/webui/dist` 后编 Go。仓库 dist 已重编，侧栏含团队项目 / 路由审计。
+
+- **Resolution Date**: 2026-08-14
+- **Files Changed**: `deploy/Dockerfile`, `deploy/compose_test.go`, `internal/webui/ui_test.go`, `internal/webui/dist/**`, `deploy/README.md`
+- **Tests Added**: `TestEmbeddedAdminHasOrgAndAudit`, `TestDockerfileBuildsFrontend`
 
 ---
 
@@ -169,10 +178,10 @@ HLD V1 要求 PG+Redis。限流/缓存仍在进程内，Redis 挂了网关热路
 | 指标 | 数量 |
 |------|------|
 | Total | 5 |
-| Open / needs-info / ready | 3 |
-| Resolved | 2 |
-| High | 1 open / 2 resolved |
+| Open / needs-info / ready | 2 |
+| Resolved | 3 |
+| High | 0 open / 3 resolved |
 | Medium | 2 |
 | Low | 0 |
 
-Next to resolve: **002**（发布镜像嵌入陈旧前端）。
+Next to resolve: **005**（Redis 挂了 /health 仍 200）。
