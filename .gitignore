@@ -72,6 +72,11 @@ $RECYCLE.BIN/
 # Linux
 *~
 
+# ---- Go ----
+/bin/
+/fabric
+*.exe
+
 # ---- Misc ----
 .DS_Store
 .tmp/
