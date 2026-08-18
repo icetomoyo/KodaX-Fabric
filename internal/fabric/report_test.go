@@ -148,10 +148,14 @@ func usageRows(t *testing.T, admin *http.Client, base, project, day string) []us
 
 func usageCell(t *testing.T, admin *http.Client, base, project, day, model string) usageView {
 	t.Helper()
-	for _, row := range usageRows(t, admin, base, project, day) {
-		if row.Project == project && row.Model == model && row.Day == day {
-			return row
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		for _, row := range usageRows(t, admin, base, project, day) {
+			if row.Project == project && row.Model == model && row.Day == day {
+				return row
+			}
 		}
+		time.Sleep(5 * time.Millisecond)
 	}
 	t.Fatalf("no cell %s %s %s", project, model, day)
 	return usageView{}

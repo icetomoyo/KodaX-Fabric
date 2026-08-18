@@ -96,6 +96,7 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handlePassthrough(w http.ResponseWriter, r *http.Request, family string, invoke func(context.Context, []byte) (int, map[string]string, io.ReadCloser, error)) {
 	ctx := r.Context()
 	started := s.Now()
+	startedWall := time.Now()
 
 	token, ok := virtualKey(r)
 	if !ok {
@@ -157,7 +158,7 @@ func (s *Server) handlePassthrough(w http.ResponseWriter, r *http.Request, famil
 
 	status, header, rc, err := s.callUpstream(ctx, family, route, raw, invoke)
 	if err != nil {
-		s.appendRequest(ctx, vk, head.Model, 0, 0, 0, 0, http.StatusBadGateway, started, fabCtx)
+		s.enqueueRequest(context.WithoutCancel(ctx), vk, head.Model, 0, 0, 0, 0, http.StatusBadGateway, started, time.Since(startedWall), fabCtx)
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "provider"})
 		return
 	}
@@ -197,10 +198,14 @@ func (s *Server) handlePassthrough(w http.ResponseWriter, r *http.Request, famil
 		}
 	}
 	cost := costCNY(in, out, cached, price)
-	s.appendRequest(context.WithoutCancel(ctx), vk, head.Model, in, out, cached, cost, status, started, fabCtx)
+	s.enqueueRequest(context.WithoutCancel(ctx), vk, head.Model, in, out, cached, cost, status, started, time.Since(startedWall), fabCtx)
 }
 
-func (s *Server) appendRequest(ctx context.Context, vk VirtualKeyRecord, model string, in, out, cached int, cost float64, status int, started time.Time, fabCtx fabricContext) {
+func (s *Server) enqueueRequest(ctx context.Context, vk VirtualKeyRecord, model string, in, out, cached int, cost float64, status int, started time.Time, latency time.Duration, fabCtx fabricContext) {
+	go s.appendRequest(ctx, vk, model, in, out, cached, cost, status, started, latency, fabCtx)
+}
+
+func (s *Server) appendRequest(ctx context.Context, vk VirtualKeyRecord, model string, in, out, cached int, cost float64, status int, started time.Time, latency time.Duration, fabCtx fabricContext) {
 	_ = s.Store.AppendRequest(ctx, RequestRow{
 		VirtualKeyHash: vk.Hash,
 		Project:        vk.Project,
@@ -210,6 +215,7 @@ func (s *Server) appendRequest(ctx context.Context, vk VirtualKeyRecord, model s
 		CachedTokens:   cached,
 		CostCNY:        cost,
 		Status:         status,
+		LatencyMS:      latency.Milliseconds(),
 		RunID:          fabCtx.RunID,
 		TaskType:       fabCtx.TaskType,
 		CreatedAt:      started,
@@ -718,16 +724,18 @@ func (s *Server) handleRequests(w http.ResponseWriter, r *http.Request) {
 		rows = []RequestRow{}
 	}
 	type view struct {
-		VirtualKeyHash string  `json:"virtual_key_hash"`
-		Project        string  `json:"project"`
-		Model          string  `json:"model"`
-		InputTokens    int     `json:"input_tokens"`
-		OutputTokens   int     `json:"output_tokens"`
-		CachedTokens   int     `json:"cached_tokens"`
-		CostCNY        float64 `json:"cost_cny"`
-		Status         int     `json:"status"`
-		RunID          string  `json:"run_id"`
-		TaskType       string  `json:"task_type"`
+		VirtualKeyHash string    `json:"virtual_key_hash"`
+		Project        string    `json:"project"`
+		Model          string    `json:"model"`
+		InputTokens    int       `json:"input_tokens"`
+		OutputTokens   int       `json:"output_tokens"`
+		CachedTokens   int       `json:"cached_tokens"`
+		CostCNY        float64   `json:"cost_cny"`
+		Status         int       `json:"status"`
+		LatencyMS      int64     `json:"latency_ms"`
+		RunID          string    `json:"run_id"`
+		TaskType       string    `json:"task_type"`
+		CreatedAt      time.Time `json:"created_at"`
 	}
 	out := make([]view, 0, len(rows))
 	for _, row := range rows {
@@ -740,8 +748,10 @@ func (s *Server) handleRequests(w http.ResponseWriter, r *http.Request) {
 			CachedTokens:   row.CachedTokens,
 			CostCNY:        row.CostCNY,
 			Status:         row.Status,
+			LatencyMS:      row.LatencyMS,
 			RunID:          row.RunID,
 			TaskType:       row.TaskType,
+			CreatedAt:      row.CreatedAt,
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"project": project, "requests": out})

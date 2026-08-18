@@ -267,7 +267,7 @@ func newTestServer(t *testing.T) *httptestServer {
 	}
 	hs := httptest.NewServer(app.Handler())
 	t.Cleanup(hs.Close)
-	return &httptestServer{URL: hs.URL, provider: provider, app: app, Client: func() *http.Client {
+	return &httptestServer{URL: hs.URL, provider: provider, store: store, app: app, Client: func() *http.Client {
 		return hs.Client()
 	}}
 }
@@ -275,6 +275,7 @@ func newTestServer(t *testing.T) *httptestServer {
 type httptestServer struct {
 	URL      string
 	provider *fabric.FixtureProvider
+	store    *fabric.MemoryStore
 	app      *fabric.Server
 	Client   func() *http.Client
 }

@@ -64,6 +64,7 @@ type RequestRow struct {
 	CachedTokens   int
 	CostCNY        float64
 	Status         int
+	LatencyMS      int64
 	RunID          string
 	TaskType       string
 	CreatedAt      time.Time
@@ -122,8 +123,9 @@ type MemoryStore struct {
 	models    map[string]ModelRoute
 	prices    map[string]Price
 	upstreams map[string]Upstream
-	requests  []RequestRow
-	adminHash string
+	requests    []RequestRow
+	adminHash   string
+	AppendDelay time.Duration
 }
 
 func NewSeededMemoryStore(adminHash string) *MemoryStore {
@@ -277,6 +279,9 @@ func (s *MemoryStore) LookupPrice(_ context.Context, model string) (Price, bool,
 }
 
 func (s *MemoryStore) AppendRequest(_ context.Context, row RequestRow) error {
+	if s.AppendDelay > 0 {
+		time.Sleep(s.AppendDelay)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.requests = append(s.requests, row)

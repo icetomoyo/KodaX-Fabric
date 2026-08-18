@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/icetomoyo/kodax-fabric/internal/fabric"
 )
@@ -238,16 +239,26 @@ type RunView struct {
 
 func listRequestDetails(t *testing.T, admin *http.Client, base, project string) []RunView {
 	t.Helper()
-	resp, err := admin.Get(base + "/admin/api/requests?project=" + project)
-	if err != nil {
-		t.Fatal(err)
+	deadline := time.Now().Add(time.Second)
+	var last []RunView
+	for time.Now().Before(deadline) {
+		resp, err := admin.Get(base + "/admin/api/requests?project=" + project)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var payload struct {
+			Requests []RunView `json:"requests"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+			resp.Body.Close()
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		last = payload.Requests
+		if len(last) > 0 {
+			return last
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
-	defer resp.Body.Close()
-	var payload struct {
-		Requests []RunView `json:"requests"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-		t.Fatal(err)
-	}
-	return payload.Requests
+	return last
 }

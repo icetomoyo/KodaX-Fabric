@@ -1,4 +1,4 @@
-import{j as h,r as $,c as y,I as Pe,B as se}from"./index-CXSvQytt.js";function Mt({title:e,description:o,actions:t}){return h.jsxs("div",{className:"mb-6 flex items-start justify-between gap-4",children:[h.jsxs("div",{children:[h.jsx("h1",{className:"text-xl font-semibold tracking-tight text-foreground",children:e}),o?h.jsx("div",{className:"mt-1 text-sm text-muted-foreground",children:o}):null]}),t]})}/**
+import{j as h,r as $,c as y,I as Pe,B as se}from"./index-dRhEAqmB.js";function Mt({title:e,description:o,actions:t}){return h.jsxs("div",{className:"mb-6 flex items-start justify-between gap-4",children:[h.jsxs("div",{children:[h.jsx("h1",{className:"text-xl font-semibold tracking-tight text-foreground",children:e}),o?h.jsx("div",{className:"mt-1 text-sm text-muted-foreground",children:o}):null]}),t]})}/**
    * table-core
    *
    * Copyright (c) TanStack

@@ -106,8 +106,15 @@ export function usePrices() {
 export function useUpsertPrice() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ model, ...body }: { model: string; input_cny: number; output_cny: number; cached_cny: number }) =>
-      adminApi.upsertPrice(model, body),
+    mutationFn: ({
+      model,
+      ...body
+    }: {
+      model: string;
+      input_cny: number;
+      output_cny: number;
+      cached_cny: number;
+    }) => adminApi.upsertPrice(model, body),
     onSuccess: () => invalidateAdmin(qc),
   });
 }
@@ -123,5 +130,12 @@ export function useUsage(day?: string, project?: string) {
   return useQuery({
     queryKey: qk.admin.usage(day, project),
     queryFn: () => adminApi.usage(day, project),
+  });
+}
+
+export function useRequests(project?: string) {
+  return useQuery({
+    queryKey: qk.admin.requests(project),
+    queryFn: () => adminApi.requests(project),
   });
 }

@@ -4,6 +4,7 @@ import {
   BookOpen,
   Building2,
   KeyRound,
+  ListOrdered,
   LogOut,
   Server,
   Table2,
@@ -15,6 +16,7 @@ import { cn } from "@/lib/utils";
 
 const nav = [
   { to: "/admin/overview", label: "用量总览", icon: Activity },
+  { to: "/admin/requests", label: "请求流水", icon: ListOrdered },
   { to: "/admin/projects", label: "项目", icon: Building2 },
   { to: "/admin/keys", label: "虚拟钥匙", icon: KeyRound },
   { to: "/admin/providers", label: "上游 Provider", icon: Server },

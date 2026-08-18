@@ -8,6 +8,8 @@ export const qk = {
     providers: () => [...qk.admin.all, "providers"] as const,
     models: () => [...qk.admin.all, "models"] as const,
     prices: () => [...qk.admin.all, "prices"] as const,
-    usage: (day?: string, project?: string) => [...qk.admin.all, "usage", day ?? "", project ?? ""] as const,
+    usage: (day?: string, project?: string) =>
+      [...qk.admin.all, "usage", day ?? "", project ?? ""] as const,
+    requests: (project?: string) => [...qk.admin.all, "requests", project ?? ""] as const,
   },
 };

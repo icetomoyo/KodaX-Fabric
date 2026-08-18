@@ -11,6 +11,7 @@ const KeysPage = lazy(() => import("@/features/admin/keys/page"));
 const ProjectsPage = lazy(() => import("@/features/admin/projects/page"));
 const PricesPage = lazy(() => import("@/features/admin/prices/page"));
 const DocsPage = lazy(() => import("@/features/admin/docs/page"));
+const RequestsPage = lazy(() => import("@/features/admin/requests/page"));
 
 function ChunkLoader() {
   return (
@@ -29,6 +30,7 @@ export function AppRouter() {
           <Route path="/admin" element={<AdminLayout />}>
             <Route index element={<Navigate to="/admin/overview" replace />} />
             <Route path="overview" element={<OverviewPage />} />
+            <Route path="requests" element={<RequestsPage />} />
             <Route path="projects" element={<ProjectsPage />} />
             <Route path="keys" element={<KeysPage />} />
             <Route path="providers" element={<ProvidersPage />} />

@@ -34,6 +34,21 @@ export type Price = {
   cached_cny: number;
 };
 
+export type RequestRow = {
+  virtual_key_hash: string;
+  project: string;
+  model: string;
+  input_tokens: number;
+  output_tokens: number;
+  cached_tokens: number;
+  cost_cny: number;
+  status: number;
+  latency_ms: number;
+  run_id: string;
+  task_type: string;
+  created_at: string;
+};
+
 export type UsageCell = {
   project: string;
   model: string;

@@ -24,6 +24,7 @@ type FixtureProvider struct {
 	MessagesBody       []byte
 	MessagesStreamBody []byte
 	ChunkDelay         time.Duration
+	Delay              time.Duration
 	Status             int
 
 	mu        sync.Mutex
@@ -54,6 +55,13 @@ func (p *FixtureProvider) replay(ctx context.Context, rawBody, jsonBody, sseBody
 	status := http.StatusOK
 	if p.Status != 0 {
 		status = p.Status
+	}
+	if p.Delay > 0 {
+		select {
+		case <-ctx.Done():
+			return 0, nil, nil, ctx.Err()
+		case <-time.After(p.Delay):
+		}
 	}
 	if wantsStream(rawBody) && len(sseBody) > 0 {
 		header := map[string]string{"Content-Type": "text/event-stream"}

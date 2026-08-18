@@ -279,11 +279,11 @@ func (s *PostgresStore) AppendRequest(ctx context.Context, row RequestRow) error
 		INSERT INTO requests (
 			virtual_key_hash, project_name, model,
 			input_tokens, output_tokens, cached_tokens,
-			cost_cny, status, created_at, run_id, task_type
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+			cost_cny, status, latency_ms, created_at, run_id, task_type
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
 		row.VirtualKeyHash, row.Project, row.Model,
 		row.InputTokens, row.OutputTokens, row.CachedTokens,
-		row.CostCNY, row.Status, row.CreatedAt, row.RunID, row.TaskType)
+		row.CostCNY, row.Status, row.LatencyMS, row.CreatedAt, row.RunID, row.TaskType)
 	return err
 }
 
@@ -291,7 +291,7 @@ func (s *PostgresStore) ListRequests(ctx context.Context, project string) ([]Req
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT virtual_key_hash, project_name, model,
 		       input_tokens, output_tokens, cached_tokens,
-		       cost_cny, status, created_at, run_id, task_type
+		       cost_cny, status, latency_ms, created_at, run_id, task_type
 		FROM requests
 		WHERE project_name = $1
 		ORDER BY id`, project)
@@ -304,7 +304,7 @@ func (s *PostgresStore) ListRequests(ctx context.Context, project string) ([]Req
 		var row RequestRow
 		if err := rows.Scan(&row.VirtualKeyHash, &row.Project, &row.Model,
 			&row.InputTokens, &row.OutputTokens, &row.CachedTokens,
-			&row.CostCNY, &row.Status, &row.CreatedAt, &row.RunID, &row.TaskType); err != nil {
+			&row.CostCNY, &row.Status, &row.LatencyMS, &row.CreatedAt, &row.RunID, &row.TaskType); err != nil {
 			return nil, err
 		}
 		out = append(out, row)

@@ -1,5 +1,15 @@
 import { request } from "./http";
-import type { Health, Model, Operator, Price, Project, Provider, UsageCell, VirtualKey } from "@/types/api";
+import type {
+  Health,
+  Model,
+  Operator,
+  Price,
+  Project,
+  Provider,
+  RequestRow,
+  UsageCell,
+  VirtualKey,
+} from "@/types/api";
 
 export const authApi = {
   login: (username: string, password: string) =>
@@ -40,10 +50,21 @@ export const adminApi = {
     request<{ status: string }>(`/admin/api/models/${name}/disable`, { method: "POST" }),
 
   prices: () => request<{ prices: Price[] }>("/admin/api/prices"),
-  upsertPrice: (model: string, body: { input_cny: number; output_cny: number; cached_cny: number }) =>
-    request<Price>(`/admin/api/prices/${model}`, { method: "PUT", body: JSON.stringify(body) }),
+  upsertPrice: (
+    model: string,
+    body: { input_cny: number; output_cny: number; cached_cny: number },
+  ) => request<Price>(`/admin/api/prices/${model}`, { method: "PUT", body: JSON.stringify(body) }),
   deletePrice: (model: string) =>
     request<{ status: string }>(`/admin/api/prices/${model}`, { method: "DELETE" }),
+
+  requests: (project?: string) => {
+    const q = new URLSearchParams();
+    if (project) q.set("project", project);
+    const s = q.toString();
+    return request<{ project: string; requests: RequestRow[] }>(
+      `/admin/api/requests${s ? `?${s}` : ""}`,
+    );
+  },
 
   usage: (day?: string, project?: string) => {
     const q = new URLSearchParams();

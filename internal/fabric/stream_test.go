@@ -186,25 +186,38 @@ func postStream(t *testing.T, srv *httptestServer, vk string, raw []byte) *http.
 	return resp
 }
 
-func listRequests(t *testing.T, admin *http.Client, base string) []struct {
+type requestView struct {
 	InputTokens  int     `json:"input_tokens"`
 	OutputTokens int     `json:"output_tokens"`
 	CostCNY      float64 `json:"cost_cny"`
 	Status       int     `json:"status"`
-} {
+	LatencyMS    int64   `json:"latency_ms"`
+	CreatedAt    string  `json:"created_at"`
+}
+
+func listRequests(t *testing.T, admin *http.Client, base string) []requestView {
 	t.Helper()
-	resp, err := admin.Get(base + "/admin/api/requests?project=demo")
+	deadline := time.Now().Add(time.Second)
+	var last []requestView
+	for time.Now().Before(deadline) {
+		last = fetchRequests(t, admin, base+"/admin/api/requests?project=demo")
+		if len(last) > 0 {
+			return last
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	return last
+}
+
+func fetchRequests(t *testing.T, admin *http.Client, url string) []requestView {
+	t.Helper()
+	resp, err := admin.Get(url)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer resp.Body.Close()
 	var payload struct {
-		Requests []struct {
-			InputTokens  int     `json:"input_tokens"`
-			OutputTokens int     `json:"output_tokens"`
-			CostCNY      float64 `json:"cost_cny"`
-			Status       int     `json:"status"`
-		} `json:"requests"`
+		Requests []requestView `json:"requests"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
 		t.Fatal(err)
