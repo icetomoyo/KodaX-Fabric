@@ -90,6 +90,13 @@ func (s *PostgresStore) Seed(ctx context.Context, adminHash, model string) error
 		ON CONFLICT (username) DO UPDATE SET password_hash = EXCLUDED.password_hash`, SeedAdminUser, adminHash); err != nil {
 		return err
 	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO users (username, password_hash, role, enterprise_name, disabled)
+		VALUES ($1, $2, $3, NULL, FALSE)
+		ON CONFLICT (username) DO UPDATE SET password_hash = EXCLUDED.password_hash, role = EXCLUDED.role`,
+		SeedAdminUser, adminHash, RoleSuperAdmin); err != nil {
+		return err
+	}
 	return tx.Commit()
 }
 
@@ -349,9 +356,66 @@ func (s *PostgresStore) UsageByProjectModelDay(ctx context.Context, project, day
 	return out, rows.Err()
 }
 
-func (s *PostgresStore) CreateProject(ctx context.Context, name string) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO projects (name, enterprise_name) VALUES ($1, $2) ON CONFLICT DO NOTHING`, name, SeedEnterprise)
+func (s *PostgresStore) CreateProject(ctx context.Context, name, enterprise string) error {
+	if enterprise == "" {
+		enterprise = SeedEnterprise
+	}
+	var ent string
+	err := s.db.QueryRowContext(ctx, `SELECT name FROM enterprises WHERE name = $1`, enterprise).Scan(&ent)
+	if err == sql.ErrNoRows {
+		return errUnknownEnterprise
+	}
+	if err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, `INSERT INTO projects (name, enterprise_name) VALUES ($1, $2) ON CONFLICT DO NOTHING`, name, enterprise)
 	return err
+}
+
+func (s *PostgresStore) AddMember(ctx context.Context, username, team string) error {
+	if ok, err := s.ProjectExists(ctx, team); err != nil {
+		return err
+	} else if !ok {
+		return errUnknownProject
+	}
+	if _, ok, err := s.GetUser(ctx, username); err != nil {
+		return err
+	} else if !ok {
+		return errUnknownUser
+	}
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO memberships (username, team_name) VALUES ($1, $2)
+		ON CONFLICT DO NOTHING`, username, team)
+	return err
+}
+
+func (s *PostgresStore) RemoveMember(ctx context.Context, username, team string) (bool, error) {
+	res, err := s.db.ExecContext(ctx, `DELETE FROM memberships WHERE username = $1 AND team_name = $2`, username, team)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
+func (s *PostgresStore) UserTeams(ctx context.Context, username string) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT team_name FROM memberships WHERE username = $1 ORDER BY team_name`, username)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		out = append(out, name)
+	}
+	if out == nil {
+		out = []string{}
+	}
+	return out, rows.Err()
 }
 
 func (s *PostgresStore) CreateEnterprise(ctx context.Context, name string) error {
@@ -485,13 +549,60 @@ func (s *PostgresStore) DisableVirtualKey(ctx context.Context, hash string) (boo
 }
 
 func (s *PostgresStore) AdminPasswordHash(ctx context.Context, username string) (string, bool, error) {
-	var hash string
-	err := s.db.QueryRowContext(ctx, `SELECT password_hash FROM admins WHERE username = $1`, username).Scan(&hash)
+	rec, ok, err := s.GetUser(ctx, username)
+	if err != nil || !ok || rec.Disabled {
+		if err != nil {
+			return "", false, err
+		}
+		var hash string
+		err = s.db.QueryRowContext(ctx, `SELECT password_hash FROM admins WHERE username = $1`, username).Scan(&hash)
+		if err == sql.ErrNoRows {
+			return "", false, nil
+		}
+		if err != nil {
+			return "", false, err
+		}
+		return hash, true, nil
+	}
+	return rec.PasswordHash, rec.PasswordHash != "", nil
+}
+
+func (s *PostgresStore) GetUser(ctx context.Context, username string) (UserRecord, bool, error) {
+	var rec UserRecord
+	var enterprise sql.NullString
+	err := s.db.QueryRowContext(ctx, `
+		SELECT username, password_hash, role, enterprise_name, disabled
+		FROM users WHERE username = $1`, username).
+		Scan(&rec.Username, &rec.PasswordHash, &rec.Role, &enterprise, &rec.Disabled)
 	if err == sql.ErrNoRows {
-		return "", false, nil
+		return UserRecord{}, false, nil
 	}
 	if err != nil {
-		return "", false, err
+		return UserRecord{}, false, err
 	}
-	return hash, true, nil
+	if enterprise.Valid {
+		rec.Enterprise = enterprise.String
+	}
+	return rec, true, nil
+}
+
+func (s *PostgresStore) CreateUser(ctx context.Context, rec UserRecord) error {
+	if rec.Enterprise != "" {
+		var name string
+		err := s.db.QueryRowContext(ctx, `SELECT name FROM enterprises WHERE name = $1`, rec.Enterprise).Scan(&name)
+		if err == sql.ErrNoRows {
+			return errUnknownEnterprise
+		}
+		if err != nil {
+			return err
+		}
+	}
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO users (username, password_hash, role, enterprise_name, disabled)
+		VALUES ($1, $2, $3, $4, $5)`,
+		rec.Username, rec.PasswordHash, rec.Role, nullIfEmpty(rec.Enterprise), rec.Disabled)
+	if err != nil && strings.Contains(strings.ToLower(err.Error()), "duplicate") {
+		return errDuplicate
+	}
+	return err
 }

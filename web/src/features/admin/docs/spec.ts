@@ -439,6 +439,12 @@ export const fabricErrors: FabricError[] = [
     sample: `{"error":"provider"}`,
   },
   {
+    status: 403,
+    code: "forbidden",
+    when: "已登录但角色不能调用该接口（开发者打平台/企业 API，或企业管理员打平台线路 API）。",
+    sample: `{"error":"forbidden"}`,
+  },
+  {
     status: 401,
     code: "unauthorized",
     when: "控制台接口缺少或过期 `fabric_session` Cookie。",
@@ -459,7 +465,7 @@ export const fabricErrors: FabricError[] = [
   {
     status: 409,
     code: "duplicate",
-    when: "创建企业、Provider 或 Model 时名称已存在。",
+    when: "创建企业、User、Provider 或 Model 时名称已存在。",
     sample: `{"error":"duplicate"}`,
   },
 ];

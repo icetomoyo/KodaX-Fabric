@@ -11,7 +11,16 @@ import (
 
 var errUnknownProject = errors.New("unknown team")
 var errUnknownModel = errors.New("unknown model")
+var errUnknownEnterprise = errors.New("unknown enterprise")
+var errUnknownUser = errors.New("unknown user")
 var errDuplicate = errors.New("duplicate")
+
+const (
+	RoleSuperAdmin      = "super_admin"
+	RoleEnterpriseAdmin = "enterprise_admin"
+	RoleTeamAdmin       = "team_admin"
+	RoleDeveloper       = "developer"
+)
 
 const (
 	SeedVirtualKey     = "sk-fabric-demo"
@@ -31,6 +40,14 @@ const (
 type Enterprise struct {
 	Name     string
 	Disabled bool
+}
+
+type UserRecord struct {
+	Username     string
+	Role         string
+	Enterprise   string
+	Disabled     bool
+	PasswordHash string
 }
 
 type VirtualKeyRecord struct {
@@ -98,12 +115,17 @@ type Store interface {
 	ListRequests(ctx context.Context, project string) ([]RequestRow, error)
 	UsageByProjectModelDay(ctx context.Context, project, day string) ([]UsageCell, error)
 	AdminPasswordHash(ctx context.Context, username string) (string, bool, error)
+	GetUser(ctx context.Context, username string) (UserRecord, bool, error)
+	CreateUser(ctx context.Context, rec UserRecord) error
+	AddMember(ctx context.Context, username, team string) error
+	RemoveMember(ctx context.Context, username, team string) (bool, error)
+	UserTeams(ctx context.Context, username string) ([]string, error)
 	ProjectExists(ctx context.Context, name string) (bool, error)
 	CreateVirtualKey(ctx context.Context, rec VirtualKeyRecord) error
 	GetVirtualKey(ctx context.Context, hash string) (VirtualKeyRecord, bool, error)
 	ListVirtualKeys(ctx context.Context) ([]VirtualKeyRecord, error)
 	DisableVirtualKey(ctx context.Context, hash string) (bool, error)
-	CreateProject(ctx context.Context, name string) error
+	CreateProject(ctx context.Context, name, enterprise string) error
 	ListProjects(ctx context.Context) ([]string, error)
 	CreateEnterprise(ctx context.Context, name string) error
 	ListEnterprises(ctx context.Context) ([]Enterprise, error)
@@ -132,11 +154,12 @@ type MemoryStore struct {
 	keys        map[string]VirtualKeyRecord
 	projects    map[string]string
 	enterprises map[string]Enterprise
-	models    map[string]ModelRoute
-	prices    map[string]Price
-	upstreams map[string]Upstream
+	models      map[string]ModelRoute
+	prices      map[string]Price
+	upstreams   map[string]Upstream
 	requests    []RequestRow
-	adminHash   string
+	users       map[string]UserRecord
+	memberships map[string]map[string]struct{}
 	AppendDelay time.Duration
 }
 
@@ -156,7 +179,10 @@ func NewSeededMemoryStore(adminHash string) *MemoryStore {
 			SeedAnthropicModel: {Model: SeedAnthropicModel, InputCNY: SeedInputPriceCNY, OutputCNY: SeedOutputPriceCNY, CachedCNY: SeedCachedPriceCNY},
 		},
 		upstreams: map[string]Upstream{},
-		adminHash: adminHash,
+		users: map[string]UserRecord{
+			SeedAdminUser: {Username: SeedAdminUser, Role: RoleSuperAdmin, PasswordHash: adminHash},
+		},
+		memberships: map[string]map[string]struct{}{},
 	}
 }
 
@@ -354,11 +380,17 @@ func addUsage(cell *UsageCell, r RequestRow) {
 	}
 }
 
-func (s *MemoryStore) CreateProject(_ context.Context, name string) error {
+func (s *MemoryStore) CreateProject(_ context.Context, name, enterprise string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if enterprise == "" {
+		enterprise = SeedEnterprise
+	}
+	if _, ok := s.enterprises[enterprise]; !ok {
+		return errUnknownEnterprise
+	}
 	if _, ok := s.projects[name]; !ok {
-		s.projects[name] = SeedEnterprise
+		s.projects[name] = enterprise
 	}
 	return nil
 }
@@ -465,11 +497,75 @@ func (s *MemoryStore) DisableVirtualKey(_ context.Context, hash string) (bool, e
 	return true, nil
 }
 
-func (s *MemoryStore) AdminPasswordHash(_ context.Context, username string) (string, bool, error) {
-	if username != SeedAdminUser {
-		return "", false, nil
+func (s *MemoryStore) AdminPasswordHash(ctx context.Context, username string) (string, bool, error) {
+	rec, ok, err := s.GetUser(ctx, username)
+	if err != nil || !ok || rec.Disabled {
+		return "", false, err
 	}
-	return s.adminHash, s.adminHash != "", nil
+	return rec.PasswordHash, rec.PasswordHash != "", nil
+}
+
+func (s *MemoryStore) GetUser(_ context.Context, username string) (UserRecord, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rec, ok := s.users[username]
+	return rec, ok, nil
+}
+
+func (s *MemoryStore) CreateUser(_ context.Context, rec UserRecord) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.users[rec.Username]; ok {
+		return errDuplicate
+	}
+	if rec.Enterprise != "" {
+		if _, ok := s.enterprises[rec.Enterprise]; !ok {
+			return errUnknownEnterprise
+		}
+	}
+	s.users[rec.Username] = rec
+	return nil
+}
+
+func (s *MemoryStore) AddMember(_ context.Context, username, team string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.projects[team]; !ok {
+		return errUnknownProject
+	}
+	if _, ok := s.users[username]; !ok {
+		return errUnknownUser
+	}
+	if s.memberships[username] == nil {
+		s.memberships[username] = map[string]struct{}{}
+	}
+	s.memberships[username][team] = struct{}{}
+	return nil
+}
+
+func (s *MemoryStore) RemoveMember(_ context.Context, username, team string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	teams, ok := s.memberships[username]
+	if !ok {
+		return false, nil
+	}
+	if _, ok := teams[team]; !ok {
+		return false, nil
+	}
+	delete(teams, team)
+	return true, nil
+}
+
+func (s *MemoryStore) UserTeams(_ context.Context, username string) ([]string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	teams := s.memberships[username]
+	out := make([]string, 0, len(teams))
+	for name := range teams {
+		out = append(out, name)
+	}
+	return out, nil
 }
 
 func shanghai() *time.Location {

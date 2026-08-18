@@ -48,6 +48,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /admin/api/enterprises", s.handleCreateEnterprise)
 	mux.HandleFunc("GET /admin/api/enterprises", s.handleListEnterprises)
 	mux.HandleFunc("POST /admin/api/enterprises/{name}/disable", s.handleDisableEnterprise)
+	mux.HandleFunc("POST /admin/api/users", s.handleCreateUser)
+	mux.HandleFunc("POST /admin/api/teams/{name}/members", s.handleAddMember)
+	mux.HandleFunc("DELETE /admin/api/teams/{name}/members/{username}", s.handleRemoveMember)
 	mux.HandleFunc("POST /admin/api/projects", s.handleCreateProject)
 	mux.HandleFunc("GET /admin/api/projects", s.handleListProjects)
 	mux.HandleFunc("POST /admin/api/virtual-keys", s.handleCreateVirtualKey)
@@ -307,17 +310,203 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
-	user, ok := s.sessionUser(r)
+	actor, ok := s.requireUser(w, r)
 	if !ok {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"username": user, "name": user, "role": "super_admin"})
+	teams, err := s.Store.UserTeams(r.Context(), actor.Username)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "store"})
+		return
+	}
+	if teams == nil {
+		teams = []string{}
+	}
+	writeJSON(w, http.StatusOK, publicUser(actor, teams))
+}
+
+func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
+	actor, ok := s.requireUser(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		Username   string `json:"username"`
+		Password   string `json:"password"`
+		Role       string `json:"role"`
+		Enterprise string `json:"enterprise"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad_body"})
+		return
+	}
+	body.Username = strings.TrimSpace(body.Username)
+	body.Password = strings.TrimSpace(body.Password)
+	body.Role = strings.TrimSpace(body.Role)
+	body.Enterprise = strings.TrimSpace(body.Enterprise)
+	if body.Username == "" || body.Password == "" || body.Role == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad_user"})
+		return
+	}
+	if !canCreateUser(actor, body.Role) {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
+		return
+	}
+	if actor.Role == RoleEnterpriseAdmin {
+		body.Enterprise = actor.Enterprise
+	}
+	if body.Role == RoleEnterpriseAdmin || body.Role == RoleTeamAdmin || body.Role == RoleDeveloper {
+		if body.Enterprise == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing_enterprise"})
+			return
+		}
+	}
+	if body.Role == RoleSuperAdmin {
+		body.Enterprise = ""
+	}
+	rec := UserRecord{
+		Username:     body.Username,
+		Role:         body.Role,
+		Enterprise:   body.Enterprise,
+		PasswordHash: HashAdminPassword(body.Password),
+	}
+	if err := s.Store.CreateUser(r.Context(), rec); err != nil {
+		if errors.Is(err, errDuplicate) {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "duplicate"})
+			return
+		}
+		if errors.Is(err, errUnknownEnterprise) {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown_enterprise"})
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "store"})
+		return
+	}
+	writeJSON(w, http.StatusCreated, publicUser(rec, nil))
+}
+
+func (s *Server) handleAddMember(w http.ResponseWriter, r *http.Request) {
+	actor, ok := s.requireUser(w, r)
+	if !ok {
+		return
+	}
+	team := r.PathValue("name")
+	var body struct {
+		Username string `json:"username"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.Username) == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing_username"})
+		return
+	}
+	body.Username = strings.TrimSpace(body.Username)
+	if !s.canManageMember(r.Context(), actor, team, body.Username) {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
+		return
+	}
+	if err := s.Store.AddMember(r.Context(), body.Username, team); err != nil {
+		if errors.Is(err, errUnknownProject) {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown_team"})
+			return
+		}
+		if errors.Is(err, errUnknownUser) {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown_user"})
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "store"})
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]string{"username": body.Username, "team": team})
+}
+
+func (s *Server) handleRemoveMember(w http.ResponseWriter, r *http.Request) {
+	actor, ok := s.requireUser(w, r)
+	if !ok {
+		return
+	}
+	team := r.PathValue("name")
+	username := r.PathValue("username")
+	if !s.canManageMember(r.Context(), actor, team, username) {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
+		return
+	}
+	okDel, err := s.Store.RemoveMember(r.Context(), username, team)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "store"})
+		return
+	}
+	if !okDel {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not_found"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (s *Server) canManageMember(ctx context.Context, actor UserRecord, team, username string) bool {
+	ent, found, err := s.Store.TeamEnterprise(ctx, team)
+	if err != nil || !found {
+		return false
+	}
+	target, found, err := s.Store.GetUser(ctx, username)
+	if err != nil || !found {
+		return false
+	}
+	if target.Enterprise != ent.Name {
+		return false
+	}
+	switch actor.Role {
+	case RoleEnterpriseAdmin:
+		return actor.Enterprise == ent.Name && (target.Role == RoleTeamAdmin || target.Role == RoleDeveloper)
+	case RoleTeamAdmin:
+		if target.Role != RoleDeveloper {
+			return false
+		}
+		teams, err := s.Store.UserTeams(ctx, actor.Username)
+		if err != nil {
+			return false
+		}
+		return actor.Enterprise == ent.Name && containsString(teams, team)
+	default:
+		return false
+	}
+}
+
+func containsString(items []string, want string) bool {
+	for _, item := range items {
+		if item == want {
+			return true
+		}
+	}
+	return false
+}
+
+func canCreateUser(actor UserRecord, role string) bool {
+	switch actor.Role {
+	case RoleSuperAdmin:
+		return role == RoleEnterpriseAdmin || role == RoleSuperAdmin
+	case RoleEnterpriseAdmin:
+		return role == RoleTeamAdmin || role == RoleDeveloper
+	default:
+		return false
+	}
+}
+
+func publicUser(u UserRecord, teams []string) map[string]any {
+	out := map[string]any{
+		"username": u.Username,
+		"name":     u.Username,
+		"role":     u.Role,
+	}
+	if u.Enterprise != "" {
+		out["enterprise"] = u.Enterprise
+	}
+	if teams != nil {
+		out["teams"] = teams
+	}
+	return out
 }
 
 func (s *Server) handleCreateEnterprise(w http.ResponseWriter, r *http.Request) {
-	if !s.authed(r) {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+	if _, ok := s.requireRoles(w, r, RoleSuperAdmin); !ok {
 		return
 	}
 	var body struct {
@@ -344,8 +533,12 @@ func (s *Server) handleCreateEnterprise(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) handleListEnterprises(w http.ResponseWriter, r *http.Request) {
-	if !s.authed(r) {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+	actor, ok := s.requireUser(w, r)
+	if !ok {
+		return
+	}
+	if actor.Role != RoleSuperAdmin && actor.Role != RoleEnterpriseAdmin {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
 		return
 	}
 	ents, err := s.Store.ListEnterprises(r.Context())
@@ -359,14 +552,16 @@ func (s *Server) handleListEnterprises(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]item, 0, len(ents))
 	for _, e := range ents {
+		if actor.Role == RoleEnterpriseAdmin && e.Name != actor.Enterprise {
+			continue
+		}
 		out = append(out, item{Name: e.Name, Disabled: e.Disabled})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"enterprises": out})
 }
 
 func (s *Server) handleDisableEnterprise(w http.ResponseWriter, r *http.Request) {
-	if !s.authed(r) {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+	if _, ok := s.requireRoles(w, r, RoleSuperAdmin); !ok {
 		return
 	}
 	ok, err := s.Store.DisableEnterprise(r.Context(), r.PathValue("name"))
@@ -386,8 +581,12 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleCreateProject(w http.ResponseWriter, r *http.Request) {
-	if !s.authed(r) {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+	actor, ok := s.requireUser(w, r)
+	if !ok {
+		return
+	}
+	if actor.Role != RoleSuperAdmin && actor.Role != RoleEnterpriseAdmin {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
 		return
 	}
 	var body struct {
@@ -402,7 +601,15 @@ func (s *Server) handleCreateProject(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing_name"})
 		return
 	}
-	if err := s.Store.CreateProject(r.Context(), body.Name); err != nil {
+	enterprise := SeedEnterprise
+	if actor.Role == RoleEnterpriseAdmin {
+		enterprise = actor.Enterprise
+	}
+	if err := s.Store.CreateProject(r.Context(), body.Name, enterprise); err != nil {
+		if errors.Is(err, errUnknownEnterprise) {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown_enterprise"})
+			return
+		}
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "store"})
 		return
 	}
@@ -410,8 +617,8 @@ func (s *Server) handleCreateProject(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleListProjects(w http.ResponseWriter, r *http.Request) {
-	if !s.authed(r) {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+	actor, ok := s.requireUser(w, r)
+	if !ok {
 		return
 	}
 	names, err := s.Store.ListProjects(r.Context())
@@ -419,19 +626,73 @@ func (s *Server) handleListProjects(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "store"})
 		return
 	}
+	visible, err := s.visibleTeams(r.Context(), actor, names)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "store"})
+		return
+	}
 	type item struct {
 		Name string `json:"name"`
 	}
-	out := make([]item, 0, len(names))
-	for _, n := range names {
+	out := make([]item, 0, len(visible))
+	for _, n := range visible {
 		out = append(out, item{Name: n})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"projects": out})
 }
 
+func (s *Server) canSeeTeam(ctx context.Context, actor UserRecord, team string) (bool, error) {
+	names, err := s.Store.ListProjects(ctx)
+	if err != nil {
+		return false, err
+	}
+	visible, err := s.visibleTeams(ctx, actor, names)
+	if err != nil {
+		return false, err
+	}
+	return containsString(visible, team), nil
+}
+
+func (s *Server) visibleTeams(ctx context.Context, actor UserRecord, names []string) ([]string, error) {
+	if actor.Role == RoleSuperAdmin {
+		return names, nil
+	}
+	mine := map[string]struct{}{}
+	if actor.Role == RoleTeamAdmin || actor.Role == RoleDeveloper {
+		teams, err := s.Store.UserTeams(ctx, actor.Username)
+		if err != nil {
+			return nil, err
+		}
+		for _, t := range teams {
+			mine[t] = struct{}{}
+		}
+	}
+	out := make([]string, 0, len(names))
+	for _, name := range names {
+		ent, ok, err := s.Store.TeamEnterprise(ctx, name)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			continue
+		}
+		switch actor.Role {
+		case RoleEnterpriseAdmin:
+			if ent.Name == actor.Enterprise {
+				out = append(out, name)
+			}
+		case RoleTeamAdmin, RoleDeveloper:
+			if _, yes := mine[name]; yes {
+				out = append(out, name)
+			}
+		}
+	}
+	return out, nil
+}
+
 func (s *Server) handleCreateVirtualKey(w http.ResponseWriter, r *http.Request) {
-	if !s.authed(r) {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+	actor, ok := s.requireUser(w, r)
+	if !ok {
 		return
 	}
 	var body struct {
@@ -441,13 +702,20 @@ func (s *Server) handleCreateVirtualKey(w http.ResponseWriter, r *http.Request) 
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing_project"})
 		return
 	}
-	ok, err := s.Store.ProjectExists(r.Context(), body.Project)
+	exists, err := s.Store.ProjectExists(r.Context(), body.Project)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "store"})
 		return
 	}
-	if !ok {
+	if !exists {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown_project"})
+		return
+	}
+	if allowed, err := s.canSeeTeam(r.Context(), actor, body.Project); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "store"})
+		return
+	} else if !allowed {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
 		return
 	}
 	plain := newVirtualKeyPlaintext()
@@ -465,8 +733,8 @@ func (s *Server) handleCreateVirtualKey(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) handleListVirtualKeys(w http.ResponseWriter, r *http.Request) {
-	if !s.authed(r) {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+	actor, ok := s.requireUser(w, r)
+	if !ok {
 		return
 	}
 	keys, err := s.Store.ListVirtualKeys(r.Context())
@@ -474,15 +742,23 @@ func (s *Server) handleListVirtualKeys(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "store"})
 		return
 	}
-	if keys == nil {
-		keys = []VirtualKeyRecord{}
+	visible := make([]VirtualKeyRecord, 0, len(keys))
+	for _, rec := range keys {
+		allowed, err := s.canSeeTeam(r.Context(), actor, rec.Project)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "store"})
+			return
+		}
+		if allowed {
+			visible = append(visible, rec)
+		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"keys": vkPublicList(keys)})
+	writeJSON(w, http.StatusOK, map[string]any{"keys": vkPublicList(visible)})
 }
 
 func (s *Server) handleGetVirtualKey(w http.ResponseWriter, r *http.Request) {
-	if !s.authed(r) {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+	actor, ok := s.requireUser(w, r)
+	if !ok {
 		return
 	}
 	rec, found, err := s.Store.GetVirtualKey(r.Context(), r.PathValue("hash"))
@@ -494,15 +770,38 @@ func (s *Server) handleGetVirtualKey(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not_found"})
 		return
 	}
+	if allowed, err := s.canSeeTeam(r.Context(), actor, rec.Project); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "store"})
+		return
+	} else if !allowed {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
+		return
+	}
 	writeJSON(w, http.StatusOK, vkPublic(rec))
 }
 
 func (s *Server) handleDisableVirtualKey(w http.ResponseWriter, r *http.Request) {
-	if !s.authed(r) {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+	actor, ok := s.requireUser(w, r)
+	if !ok {
 		return
 	}
-	ok, err := s.Store.DisableVirtualKey(r.Context(), r.PathValue("hash"))
+	rec, found, err := s.Store.GetVirtualKey(r.Context(), r.PathValue("hash"))
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "store"})
+		return
+	}
+	if !found {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not_found"})
+		return
+	}
+	if allowed, err := s.canSeeTeam(r.Context(), actor, rec.Project); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "store"})
+		return
+	} else if !allowed {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
+		return
+	}
+	ok, err = s.Store.DisableVirtualKey(r.Context(), r.PathValue("hash"))
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "store"})
 		return
@@ -533,8 +832,7 @@ func newVirtualKeyPlaintext() string {
 }
 
 func (s *Server) handleCreateProvider(w http.ResponseWriter, r *http.Request) {
-	if !s.authed(r) {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+	if _, ok := s.requireRoles(w, r, RoleSuperAdmin); !ok {
 		return
 	}
 	var body struct {
@@ -572,8 +870,7 @@ func (s *Server) handleCreateProvider(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleListProviders(w http.ResponseWriter, r *http.Request) {
-	if !s.authed(r) {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+	if _, ok := s.requireRoles(w, r, RoleSuperAdmin); !ok {
 		return
 	}
 	list, err := s.Store.ListUpstreams(r.Context())
@@ -589,8 +886,7 @@ func (s *Server) handleListProviders(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleGetProvider(w http.ResponseWriter, r *http.Request) {
-	if !s.authed(r) {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+	if _, ok := s.requireRoles(w, r, RoleSuperAdmin); !ok {
 		return
 	}
 	u, found, err := s.Store.GetUpstream(r.Context(), r.PathValue("name"))
@@ -606,8 +902,7 @@ func (s *Server) handleGetProvider(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDisableProvider(w http.ResponseWriter, r *http.Request) {
-	if !s.authed(r) {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+	if _, ok := s.requireRoles(w, r, RoleSuperAdmin); !ok {
 		return
 	}
 	ok, err := s.Store.DisableUpstream(r.Context(), r.PathValue("name"))
@@ -623,8 +918,7 @@ func (s *Server) handleDisableProvider(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleCreateModel(w http.ResponseWriter, r *http.Request) {
-	if !s.authed(r) {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+	if _, ok := s.requireRoles(w, r, RoleSuperAdmin); !ok {
 		return
 	}
 	var body struct {
@@ -658,8 +952,7 @@ func (s *Server) handleCreateModel(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleListModels(w http.ResponseWriter, r *http.Request) {
-	if !s.authed(r) {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+	if _, ok := s.requireRoles(w, r, RoleSuperAdmin); !ok {
 		return
 	}
 	list, err := s.Store.ListModels(r.Context())
@@ -681,8 +974,7 @@ func (s *Server) handleListModels(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDisableModel(w http.ResponseWriter, r *http.Request) {
-	if !s.authed(r) {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+	if _, ok := s.requireRoles(w, r, RoleSuperAdmin); !ok {
 		return
 	}
 	ok, err := s.Store.DisableModel(r.Context(), r.PathValue("name"))
@@ -707,8 +999,7 @@ func publicUpstream(u Upstream) map[string]any {
 }
 
 func (s *Server) handleListPrices(w http.ResponseWriter, r *http.Request) {
-	if !s.authed(r) {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+	if _, ok := s.requireRoles(w, r, RoleSuperAdmin); !ok {
 		return
 	}
 	prices, err := s.Store.ListPrices(r.Context())
@@ -723,8 +1014,7 @@ func (s *Server) handleListPrices(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleUpsertPrice(w http.ResponseWriter, r *http.Request) {
-	if !s.authed(r) {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+	if _, ok := s.requireRoles(w, r, RoleSuperAdmin); !ok {
 		return
 	}
 	model := r.PathValue("model")
@@ -751,8 +1041,7 @@ func (s *Server) handleUpsertPrice(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDeletePrice(w http.ResponseWriter, r *http.Request) {
-	if !s.authed(r) {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+	if _, ok := s.requireRoles(w, r, RoleSuperAdmin); !ok {
 		return
 	}
 	ok, err := s.Store.DeletePrice(r.Context(), r.PathValue("model"))
@@ -768,11 +1057,20 @@ func (s *Server) handleDeletePrice(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleUsage(w http.ResponseWriter, r *http.Request) {
-	if !s.authed(r) {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+	actor, ok := s.requireUser(w, r)
+	if !ok {
 		return
 	}
 	project := r.URL.Query().Get("project")
+	if project != "" {
+		if allowed, err := s.canSeeTeam(r.Context(), actor, project); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "store"})
+			return
+		} else if !allowed {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
+			return
+		}
+	}
 	day := r.URL.Query().Get("day")
 	if day == "" {
 		day = s.Now().In(shanghai()).Format("2006-01-02")
@@ -785,17 +1083,38 @@ func (s *Server) handleUsage(w http.ResponseWriter, r *http.Request) {
 	if cells == nil {
 		cells = []UsageCell{}
 	}
+	if project == "" {
+		filtered := cells[:0]
+		for _, cell := range cells {
+			allowed, err := s.canSeeTeam(r.Context(), actor, cell.Project)
+			if err != nil {
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "store"})
+				return
+			}
+			if allowed {
+				filtered = append(filtered, cell)
+			}
+		}
+		cells = filtered
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"project": project, "day": day, "rows": cells})
 }
 
 func (s *Server) handleRequests(w http.ResponseWriter, r *http.Request) {
-	if !s.authed(r) {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+	actor, ok := s.requireUser(w, r)
+	if !ok {
 		return
 	}
 	project := r.URL.Query().Get("project")
 	if project == "" {
 		project = SeedProject
+	}
+	if allowed, err := s.canSeeTeam(r.Context(), actor, project); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "store"})
+		return
+	} else if !allowed {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
+		return
 	}
 	rows, err := s.Store.ListRequests(r.Context(), project)
 	if err != nil {
@@ -842,6 +1161,42 @@ func (s *Server) handleRequests(w http.ResponseWriter, r *http.Request) {
 func (s *Server) authed(r *http.Request) bool {
 	_, ok := s.sessionUser(r)
 	return ok
+}
+
+func (s *Server) requireRoles(w http.ResponseWriter, r *http.Request, roles ...string) (UserRecord, bool) {
+	actor, ok := s.requireUser(w, r)
+	if !ok {
+		return UserRecord{}, false
+	}
+	for _, role := range roles {
+		if actor.Role == role {
+			return actor, true
+		}
+	}
+	writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
+	return UserRecord{}, false
+}
+
+func (s *Server) requireUser(w http.ResponseWriter, r *http.Request) (UserRecord, bool) {
+	name, ok := s.sessionUser(r)
+	if !ok {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return UserRecord{}, false
+	}
+	rec, found, err := s.Store.GetUser(r.Context(), name)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "store"})
+		return UserRecord{}, false
+	}
+	if !found {
+		// Seed login via legacy admins table.
+		return UserRecord{Username: name, Role: RoleSuperAdmin}, true
+	}
+	if rec.Disabled {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
+		return UserRecord{}, false
+	}
+	return rec, true
 }
 
 func (s *Server) sessionUser(r *http.Request) (string, bool) {

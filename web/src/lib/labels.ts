@@ -7,6 +7,7 @@ export const POOL_GROUPS = [
 
 export const ROLES = [
   { value: "super_admin", label: "超级管理员" },
+  { value: "enterprise_admin", label: "企业管理员" },
   { value: "org_admin", label: "企业管理员" },
   { value: "team_admin", label: "团队管理员" },
   { value: "developer", label: "开发者" },
@@ -19,7 +20,7 @@ export function roleLabel(role?: string | null): string {
 }
 
 export function isOrgAdmin(role?: string | null): boolean {
-  return role === "org_admin" || role === "admin";
+  return role === "enterprise_admin" || role === "org_admin" || role === "admin";
 }
 
 export function isTeamAdmin(role?: string | null): boolean {

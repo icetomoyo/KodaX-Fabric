@@ -45,8 +45,8 @@ describe("admin API docs", () => {
       (n, g) => n + g.items.filter((i) => i.kind === "api").length,
       0,
     );
-    expect(allEndpoints).toHaveLength(27);
-    expect(apiCount).toBe(27);
+    expect(allEndpoints).toHaveLength(30);
+    expect(apiCount).toBe(30);
     for (const title of [
       "模型 API",
       "系统",
@@ -64,6 +64,7 @@ describe("admin API docs", () => {
     expect(screen.getByRole("button", { name: /登录/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /健康检查/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /创建企业/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /创建用户/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /用量聚合/ })).toBeInTheDocument();
     expect(screen.queryByText("/console/v1/login")).not.toBeInTheDocument();
     expect(screen.queryByText("渠道池")).not.toBeInTheDocument();

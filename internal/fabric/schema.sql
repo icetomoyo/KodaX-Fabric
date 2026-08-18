@@ -63,3 +63,17 @@ CREATE TABLE IF NOT EXISTS admins (
     username TEXT PRIMARY KEY,
     password_hash TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS users (
+    username TEXT PRIMARY KEY,
+    password_hash TEXT NOT NULL,
+    role TEXT NOT NULL,
+    enterprise_name TEXT,
+    disabled BOOLEAN NOT NULL DEFAULT FALSE
+);
+
+CREATE TABLE IF NOT EXISTS memberships (
+    username TEXT NOT NULL REFERENCES users (username),
+    team_name TEXT NOT NULL REFERENCES projects (name),
+    PRIMARY KEY (username, team_name)
+);

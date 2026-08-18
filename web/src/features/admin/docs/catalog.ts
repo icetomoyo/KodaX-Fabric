@@ -148,10 +148,67 @@ const me = rest("me", "当前用户", "GET", "/admin/api/me", "读取登录身�
   response: [
     f("username", "string", "登录用户名。"),
     f("name", "string", "当前等于 username。"),
-    f("role", "string", "种子账号为 `super_admin`。"),
+    f("role", "string", "`super_admin` / `enterprise_admin` / `team_admin` / `developer`。"),
+    f("enterprise", "string", "所属企业。超级管理员无此字段。"),
+    f("teams", "string[]", "团队管理员/开发者加入的 Team。"),
   ],
-  exampleResponse: { username: "admin", name: "admin", role: "super_admin" },
+  exampleResponse: { username: "admin", name: "admin", role: "super_admin", teams: [] },
 });
+
+const createUser = rest(
+  "create-user",
+  "创建用户",
+  "POST",
+  "/admin/api/users",
+  "按角色创建 User。超级管理员创建企业管理员；企业管理员创建团队管理员和开发者。",
+  {
+    body: [
+      f("username", "string", "登录名，唯一。", { required: true }),
+      f("password", "string", "本地密码。响应永不回传。", { required: true }),
+      f("role", "enum<string>", "`enterprise_admin` / `team_admin` / `developer`。", { required: true }),
+      f("enterprise", "string", "企业名。超级管理员创建企业管理员时必填；企业管理员创建时用自己的企业。"),
+    ],
+    response: [
+      f("username", "string", "登录名。"),
+      f("role", "string", "角色。"),
+      f("enterprise", "string", "所属企业。"),
+    ],
+    exampleBody: {
+      username: "acme-boss",
+      password: "secret-pass",
+      role: "enterprise_admin",
+      enterprise: "acme",
+    },
+    exampleResponse: { username: "acme-boss", name: "acme-boss", role: "enterprise_admin", enterprise: "acme" },
+  },
+);
+
+const addMember = rest(
+  "add-member",
+  "加入 Team",
+  "POST",
+  "/admin/api/teams/{name}/members",
+  "企业管理员可派团队管理员/开发者；团队管理员只能加本 Team 的开发者。",
+  {
+    body: [f("username", "string", "已存在的 User。", { required: true })],
+    response: [f("username", "string", "成员。"), f("team", "string", "Team 名。")],
+    exampleBody: { username: "acme-dev" },
+    exampleResponse: { username: "acme-dev", team: "billing" },
+  },
+);
+
+const removeMember = rest(
+  "remove-member",
+  "撤出 Team",
+  "DELETE",
+  "/admin/api/teams/{name}/members/{username}",
+  "撤掉后立刻看不见该 Team；已发 VK 仍能打。",
+  {
+    headers: [],
+    response: [f("status", "string", "固定 `ok`。")],
+    exampleResponse: { status: "ok" },
+  },
+);
 
 const listEnterprises = rest(
   "list-enterprises",
@@ -576,6 +633,9 @@ export const navGroups: NavGroup[] = [
       { kind: "api", doc: login },
       { kind: "api", doc: logout },
       { kind: "api", doc: me },
+      { kind: "api", doc: createUser },
+      { kind: "api", doc: addMember },
+      { kind: "api", doc: removeMember },
     ],
   },
   {
@@ -650,6 +710,8 @@ export function restSamples(ep: EndpointDoc, origin: string): Record<LangId, Cod
   const path = ep.path
     .replace("{hash}", "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08")
     .replace("/enterprises/{name}", "/enterprises/acme")
+    .replace("/teams/{name}/members/{username}", "/teams/billing/members/acme-dev")
+    .replace("/teams/{name}", "/teams/billing")
     .replace("{name}", "deepseek")
     .replace("{model}", "gpt-4o-mini");
   const url = `${base}${path}`;
