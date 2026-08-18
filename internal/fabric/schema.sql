@@ -31,8 +31,13 @@ CREATE TABLE IF NOT EXISTS requests (
     cached_tokens INT NOT NULL,
     cost_cny DOUBLE PRECISION NOT NULL,
     status INT NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL
+    created_at TIMESTAMPTZ NOT NULL,
+    run_id TEXT NOT NULL DEFAULT '',
+    task_type TEXT NOT NULL DEFAULT ''
 );
+
+ALTER TABLE requests ADD COLUMN IF NOT EXISTS run_id TEXT NOT NULL DEFAULT '';
+ALTER TABLE requests ADD COLUMN IF NOT EXISTS task_type TEXT NOT NULL DEFAULT '';
 
 CREATE TABLE IF NOT EXISTS admins (
     username TEXT PRIMARY KEY,

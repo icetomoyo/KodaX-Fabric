@@ -6,8 +6,8 @@
 
 **Status:** ready-for-agent
 
-- [ ] 管理员可创建 Project；创建后不能改名、不能删除
-- [ ] 创建 VK 时必须绑到一个 Project；该调用的 Request.Project 等于 VK 的绑定，不听 header 改记
-- [ ] 未传 `project_id` 或与绑定一致 → 调用成功；不一致或头畸形 → 拒绝且不打到 Provider
-- [ ] 显式 `run_id` 出现在 Request 上；不传则 Run 为空，不做时间窗口推断
-- [ ] `task_type` 原样出现在 Request 上，不影响路由
+- [x] 管理员可创建 Project；创建后不能改名、不能删除
+- [x] 创建 VK 时必须绑到一个 Project；该调用的 Request.Project 等于 VK 的绑定，不听 header 改记
+- [x] 未传 `project_id` 或与绑定一致 → 调用成功；不一致或头畸形 → 拒绝且不打到 Provider
+- [x] 显式 `run_id` 出现在 Request 上；不传则 Run 为空，不做时间窗口推断
+- [x] `task_type` 原样出现在 Request 上，不影响路由

@@ -37,6 +37,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/chat/completions", s.handleChatCompletions)
 	mux.HandleFunc("POST /v1/messages", s.handleMessages)
 	mux.HandleFunc("POST /admin/api/login", s.handleLogin)
+	mux.HandleFunc("POST /admin/api/projects", s.handleCreateProject)
+	mux.HandleFunc("GET /admin/api/projects", s.handleListProjects)
 	mux.HandleFunc("POST /admin/api/virtual-keys", s.handleCreateVirtualKey)
 	mux.HandleFunc("GET /admin/api/virtual-keys", s.handleListVirtualKeys)
 	mux.HandleFunc("GET /admin/api/virtual-keys/{hash}", s.handleGetVirtualKey)
@@ -83,6 +85,16 @@ func (s *Server) handlePassthrough(w http.ResponseWriter, r *http.Request, famil
 		return
 	}
 
+	fabCtx, err := parseFabricContext(r.Header.Get("x-fabric-context"))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad_fabric_context"})
+		return
+	}
+	if fabCtx.ProjectID != "" && fabCtx.ProjectID != vk.Project {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "project_mismatch"})
+		return
+	}
+
 	raw, err := io.ReadAll(r.Body)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad_body"})
@@ -118,7 +130,7 @@ func (s *Server) handlePassthrough(w http.ResponseWriter, r *http.Request, famil
 
 	status, header, rc, err := invoke(ctx, raw)
 	if err != nil {
-		s.appendRequest(ctx, vk, head.Model, 0, 0, 0, 0, http.StatusBadGateway, started)
+		s.appendRequest(ctx, vk, head.Model, 0, 0, 0, 0, http.StatusBadGateway, started, fabCtx)
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "provider"})
 		return
 	}
@@ -158,10 +170,10 @@ func (s *Server) handlePassthrough(w http.ResponseWriter, r *http.Request, famil
 		}
 	}
 	cost := costCNY(in, out, cached, price)
-	s.appendRequest(context.WithoutCancel(ctx), vk, head.Model, in, out, cached, cost, status, started)
+	s.appendRequest(context.WithoutCancel(ctx), vk, head.Model, in, out, cached, cost, status, started, fabCtx)
 }
 
-func (s *Server) appendRequest(ctx context.Context, vk VirtualKeyRecord, model string, in, out, cached int, cost float64, status int, started time.Time) {
+func (s *Server) appendRequest(ctx context.Context, vk VirtualKeyRecord, model string, in, out, cached int, cost float64, status int, started time.Time, fabCtx fabricContext) {
 	_ = s.Store.AppendRequest(ctx, RequestRow{
 		VirtualKeyHash: vk.Hash,
 		Project:        vk.Project,
@@ -171,8 +183,27 @@ func (s *Server) appendRequest(ctx context.Context, vk VirtualKeyRecord, model s
 		CachedTokens:   cached,
 		CostCNY:        cost,
 		Status:         status,
+		RunID:          fabCtx.RunID,
+		TaskType:       fabCtx.TaskType,
 		CreatedAt:      started,
 	})
+}
+
+type fabricContext struct {
+	ProjectID string `json:"project_id"`
+	TaskType  string `json:"task_type"`
+	RunID     string `json:"run_id"`
+}
+
+func parseFabricContext(raw string) (fabricContext, error) {
+	if strings.TrimSpace(raw) == "" {
+		return fabricContext{}, nil
+	}
+	var ctx fabricContext
+	if err := json.Unmarshal([]byte(raw), &ctx); err != nil {
+		return fabricContext{}, err
+	}
+	return ctx, nil
 }
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
@@ -195,6 +226,50 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	s.mu.Unlock()
 	http.SetCookie(w, &http.Cookie{Name: "fabric_session", Value: id, Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (s *Server) handleCreateProject(w http.ResponseWriter, r *http.Request) {
+	if !s.authed(r) {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+	var body struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing_name"})
+		return
+	}
+	body.Name = strings.TrimSpace(body.Name)
+	if body.Name == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing_name"})
+		return
+	}
+	if err := s.Store.CreateProject(r.Context(), body.Name); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "store"})
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]string{"name": body.Name})
+}
+
+func (s *Server) handleListProjects(w http.ResponseWriter, r *http.Request) {
+	if !s.authed(r) {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+	names, err := s.Store.ListProjects(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "store"})
+		return
+	}
+	type item struct {
+		Name string `json:"name"`
+	}
+	out := make([]item, 0, len(names))
+	for _, n := range names {
+		out = append(out, item{Name: n})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"projects": out})
 }
 
 func (s *Server) handleCreateVirtualKey(w http.ResponseWriter, r *http.Request) {
@@ -350,6 +425,8 @@ func (s *Server) handleRequests(w http.ResponseWriter, r *http.Request) {
 		CachedTokens   int     `json:"cached_tokens"`
 		CostCNY        float64 `json:"cost_cny"`
 		Status         int     `json:"status"`
+		RunID          string  `json:"run_id"`
+		TaskType       string  `json:"task_type"`
 	}
 	out := make([]view, 0, len(rows))
 	for _, row := range rows {
@@ -362,6 +439,8 @@ func (s *Server) handleRequests(w http.ResponseWriter, r *http.Request) {
 			CachedTokens:   row.CachedTokens,
 			CostCNY:        row.CostCNY,
 			Status:         row.Status,
+			RunID:          row.RunID,
+			TaskType:       row.TaskType,
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"project": project, "requests": out})
@@ -537,6 +616,12 @@ const adminHTML = `<!doctype html>
   <input name="password" type="password" value="fabric-admin" />
   <button>登录</button>
 </form>
+<h2>Project</h2>
+<form id="proj">
+  <input name="name" value="billing" />
+  <button>创建</button>
+</form>
+<ul id="projects"></ul>
 <h2>Virtual Key</h2>
 <form id="vk">
   <input name="project" value="demo" />
@@ -553,6 +638,15 @@ const keys = document.getElementById('keys');
 async function refresh() {
   const u = await fetch('/admin/api/usage');
   out.textContent = await u.text();
+  const p = await fetch('/admin/api/projects');
+  const pdata = await p.json();
+  const plist = document.getElementById('projects');
+  plist.innerHTML = '';
+  (pdata.projects || []).forEach(row => {
+    const li = document.createElement('li');
+    li.textContent = row.name;
+    plist.appendChild(li);
+  });
   const k = await fetch('/admin/api/virtual-keys');
   const data = await k.json();
   keys.innerHTML = '';
@@ -575,6 +669,12 @@ document.getElementById('login').onsubmit = async (e) => {
   e.preventDefault();
   const fd = new FormData(e.target);
   await fetch('/admin/api/login', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({username:fd.get('username'), password:fd.get('password')})});
+  refresh();
+};
+document.getElementById('proj').onsubmit = async (e) => {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  await fetch('/admin/api/projects', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({name:fd.get('name')})});
   refresh();
 };
 document.getElementById('vk').onsubmit = async (e) => {

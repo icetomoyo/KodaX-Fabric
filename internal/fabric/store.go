@@ -51,6 +51,8 @@ type RequestRow struct {
 	CachedTokens   int
 	CostCNY        float64
 	Status         int
+	RunID          string
+	TaskType       string
 	CreatedAt      time.Time
 }
 
@@ -77,6 +79,8 @@ type Store interface {
 	GetVirtualKey(ctx context.Context, hash string) (VirtualKeyRecord, bool, error)
 	ListVirtualKeys(ctx context.Context) ([]VirtualKeyRecord, error)
 	DisableVirtualKey(ctx context.Context, hash string) (bool, error)
+	CreateProject(ctx context.Context, name string) error
+	ListProjects(ctx context.Context) ([]string, error)
 }
 
 func HashVirtualKey(plaintext string) string {
@@ -179,6 +183,23 @@ func (s *MemoryStore) UsageByProjectModelDay(_ context.Context, project, day str
 	out := make([]UsageCell, 0, len(agg))
 	for _, c := range agg {
 		out = append(out, *c)
+	}
+	return out, nil
+}
+
+func (s *MemoryStore) CreateProject(_ context.Context, name string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.projects[name] = struct{}{}
+	return nil
+}
+
+func (s *MemoryStore) ListProjects(_ context.Context) ([]string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]string, 0, len(s.projects))
+	for name := range s.projects {
+		out = append(out, name)
 	}
 	return out, nil
 }

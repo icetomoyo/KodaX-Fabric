@@ -135,11 +135,11 @@ func (s *PostgresStore) AppendRequest(ctx context.Context, row RequestRow) error
 		INSERT INTO requests (
 			virtual_key_hash, project_name, model,
 			input_tokens, output_tokens, cached_tokens,
-			cost_cny, status, created_at
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+			cost_cny, status, created_at, run_id, task_type
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
 		row.VirtualKeyHash, row.Project, row.Model,
 		row.InputTokens, row.OutputTokens, row.CachedTokens,
-		row.CostCNY, row.Status, row.CreatedAt)
+		row.CostCNY, row.Status, row.CreatedAt, row.RunID, row.TaskType)
 	return err
 }
 
@@ -147,7 +147,7 @@ func (s *PostgresStore) ListRequests(ctx context.Context, project string) ([]Req
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT virtual_key_hash, project_name, model,
 		       input_tokens, output_tokens, cached_tokens,
-		       cost_cny, status, created_at
+		       cost_cny, status, created_at, run_id, task_type
 		FROM requests
 		WHERE project_name = $1
 		ORDER BY id`, project)
@@ -160,7 +160,7 @@ func (s *PostgresStore) ListRequests(ctx context.Context, project string) ([]Req
 		var row RequestRow
 		if err := rows.Scan(&row.VirtualKeyHash, &row.Project, &row.Model,
 			&row.InputTokens, &row.OutputTokens, &row.CachedTokens,
-			&row.CostCNY, &row.Status, &row.CreatedAt); err != nil {
+			&row.CostCNY, &row.Status, &row.CreatedAt, &row.RunID, &row.TaskType); err != nil {
 			return nil, err
 		}
 		out = append(out, row)
@@ -192,6 +192,28 @@ func (s *PostgresStore) UsageByProjectModelDay(ctx context.Context, project, day
 		cell.OutputTokens = int(outTok)
 		cell.CachedTokens = int(cached)
 		out = append(out, cell)
+	}
+	return out, rows.Err()
+}
+
+func (s *PostgresStore) CreateProject(ctx context.Context, name string) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO projects (name) VALUES ($1) ON CONFLICT DO NOTHING`, name)
+	return err
+}
+
+func (s *PostgresStore) ListProjects(ctx context.Context) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT name FROM projects ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		out = append(out, name)
 	}
 	return out, rows.Err()
 }
