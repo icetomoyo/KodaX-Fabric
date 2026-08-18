@@ -17,6 +17,13 @@ type Provider interface {
 	Messages(ctx context.Context, rawBody []byte) (status int, header map[string]string, body io.ReadCloser, err error)
 }
 
+// FixtureStep is one programmed upstream replay (call n uses Steps[n] when set).
+type FixtureStep struct {
+	Status     int
+	Body       []byte
+	StreamBody []byte
+}
+
 // FixtureProvider replays a recorded Chat Completions body (JSON or SSE).
 type FixtureProvider struct {
 	Body               []byte
@@ -26,6 +33,7 @@ type FixtureProvider struct {
 	ChunkDelay         time.Duration
 	Delay              time.Duration
 	Status             int
+	Steps              []FixtureStep
 
 	mu        sync.Mutex
 	calls     int
@@ -44,8 +52,10 @@ func (p *FixtureProvider) Messages(ctx context.Context, rawBody []byte) (int, ma
 func (p *FixtureProvider) replay(ctx context.Context, rawBody, jsonBody, sseBody []byte) (int, map[string]string, io.ReadCloser, error) {
 	p.mu.Lock()
 	p.calls++
+	stepIdx := p.calls - 1
 	p.emitted = 0
 	p.cancelled = false
+	steps := p.Steps
 	p.mu.Unlock()
 	select {
 	case <-ctx.Done():
@@ -55,6 +65,21 @@ func (p *FixtureProvider) replay(ctx context.Context, rawBody, jsonBody, sseBody
 	status := http.StatusOK
 	if p.Status != 0 {
 		status = p.Status
+	}
+	if n := len(steps); n > 0 {
+		if stepIdx >= n {
+			stepIdx = n - 1
+		}
+		st := steps[stepIdx]
+		if st.Status != 0 {
+			status = st.Status
+		}
+		if st.Body != nil {
+			jsonBody = st.Body
+		}
+		if st.StreamBody != nil {
+			sseBody = st.StreamBody
+		}
 	}
 	if p.Delay > 0 {
 		select {

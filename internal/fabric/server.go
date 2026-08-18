@@ -17,11 +17,13 @@ import (
 )
 
 type Server struct {
-	Store       Store
-	Provider    Provider
-	Now         func() time.Time
-	MasterKey   []byte
-	UseRegistry bool
+	Store          Store
+	Provider       Provider
+	Now            func() time.Time
+	MasterKey      []byte
+	UseRegistry    bool
+	MaxAttempts    int
+	AttemptTimeout time.Duration
 
 	mu       sync.Mutex
 	sessions map[string]string
@@ -170,66 +172,126 @@ func (s *Server) handlePassthrough(w http.ResponseWriter, r *http.Request, famil
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown_model"})
 		return
 	}
-	selected, price, okPool, err := s.selectChannel(ctx, route, family)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "store"})
-		return
-	}
-	if !okPool {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "no_price"})
-		return
+	skip := map[string]struct{}{}
+	maxTry := s.maxAttempts()
+	timeout := s.attemptTimeout()
+	var attempts []AttemptSnap
+	var lastStatus int
+	var lastHeader map[string]string
+	var lastBody []byte
+	var lastErr error
+	wrote := false
+	var finalIn, finalOut, finalCached int
+	var finalStatus int
+
+	for i := 0; i < maxTry && !wrote; i++ {
+		selected, price, okPool, err := s.selectChannel(ctx, route, family, skip)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "store"})
+			return
+		}
+		if !okPool {
+			if i == 0 {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "no_price"})
+				return
+			}
+			break
+		}
+		if selected.ID == "" {
+			maxTry = 1
+		} else {
+			skip[selected.ID] = struct{}{}
+		}
+
+		actx, cancel := context.WithTimeout(ctx, timeout)
+		status, header, rc, err := s.callUpstream(actx, family, route, selected, raw, invoke)
+		if err != nil {
+			cancel()
+			attempts = append(attempts, AttemptSnap{ChannelID: selected.ID, Status: http.StatusBadGateway})
+			lastErr = err
+			lastStatus = http.StatusBadGateway
+			lastBody = nil
+			continue
+		}
+
+		streamOK := head.Stream && !shouldFailover(status, nil)
+		var collected []byte
+		if streamOK {
+			for k, v := range header {
+				w.Header().Set(k, v)
+			}
+			if w.Header().Get("Content-Type") == "" {
+				w.Header().Set("Content-Type", "text/event-stream")
+			}
+			w.Header().Set("Cache-Control", "no-cache")
+			w.WriteHeader(status)
+			wrote = true
+			collected = copyFlush(w, rc)
+			_ = rc.Close()
+			cancel()
+		} else {
+			collected, _ = io.ReadAll(rc)
+			_ = rc.Close()
+			cancel()
+		}
+
+		in, out, cached := usageFromBody(collected, head.Stream)
+		att := AttemptSnap{
+			ChannelID:    selected.ID,
+			Status:       status,
+			InputTokens:  in,
+			OutputTokens: out,
+			CachedTokens: cached,
+			CostCNY:      costCNY(in, out, cached, price),
+		}
+		lastStatus = status
+		lastHeader = header
+		lastBody = collected
+		lastErr = nil
+		finalIn, finalOut, finalCached, finalStatus = in, out, cached, status
+
+		if streamOK || !shouldFailover(status, nil) {
+			att.SeenByCaller = true
+			attempts = append(attempts, att)
+			if !wrote {
+				writeUpstream(w, head.Stream, status, header, collected)
+				wrote = true
+			}
+			break
+		}
+		attempts = append(attempts, att)
 	}
 
-	status, header, rc, err := s.callUpstream(ctx, family, route, selected, raw, invoke)
-	if err != nil {
-		s.enqueueRequest(context.WithoutCancel(ctx), vk, head.Model, 0, 0, 0, 0, http.StatusBadGateway, started, time.Since(startedWall), fabCtx)
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "provider"})
-		return
-	}
-	defer rc.Close()
-
-	for k, v := range header {
-		w.Header().Set(k, v)
-	}
-	if head.Stream {
-		if w.Header().Get("Content-Type") == "" {
-			w.Header().Set("Content-Type", "text/event-stream")
+	if !wrote {
+		if lastErr != nil || lastBody == nil {
+			if len(attempts) > 0 {
+				attempts[len(attempts)-1].SeenByCaller = true
+				finalStatus = attempts[len(attempts)-1].Status
+			} else {
+				finalStatus = http.StatusBadGateway
+			}
+			s.enqueueRequest(context.WithoutCancel(ctx), vk, head.Model, 0, 0, 0, sumAttemptCost(attempts), finalStatus, started, time.Since(startedWall), fabCtx, attempts)
+			writeJSON(w, http.StatusBadGateway, map[string]string{"error": "provider"})
+			return
 		}
-		w.Header().Set("Cache-Control", "no-cache")
-	}
-	w.WriteHeader(status)
-
-	var collected []byte
-	if head.Stream {
-		collected = copyFlush(w, rc)
-	} else {
-		body, _ := io.ReadAll(rc)
-		collected = body
-		_, _ = w.Write(body)
+		if len(attempts) > 0 {
+			attempts[len(attempts)-1].SeenByCaller = true
+		}
+		writeUpstream(w, head.Stream, lastStatus, lastHeader, lastBody)
+		finalStatus = lastStatus
 	}
 
-	in, out, cached := parseUsage(collected)
-	if head.Stream {
-		sin, sout, scached := parseUsageFromSSE(collected)
-		if sin != 0 {
-			in = sin
-		}
-		if sout != 0 {
-			out = sout
-		}
-		if scached != 0 {
-			cached = scached
-		}
-	}
-	cost := costCNY(in, out, cached, price)
-	s.enqueueRequest(context.WithoutCancel(ctx), vk, head.Model, in, out, cached, cost, status, started, time.Since(startedWall), fabCtx)
+	s.enqueueRequest(context.WithoutCancel(ctx), vk, head.Model, finalIn, finalOut, finalCached, sumAttemptCost(attempts), finalStatus, started, time.Since(startedWall), fabCtx, attempts)
 }
 
-func (s *Server) enqueueRequest(ctx context.Context, vk VirtualKeyRecord, model string, in, out, cached int, cost float64, status int, started time.Time, latency time.Duration, fabCtx fabricContext) {
-	go s.appendRequest(ctx, vk, model, in, out, cached, cost, status, started, latency, fabCtx)
+func (s *Server) enqueueRequest(ctx context.Context, vk VirtualKeyRecord, model string, in, out, cached int, cost float64, status int, started time.Time, latency time.Duration, fabCtx fabricContext, attempts []AttemptSnap) {
+	go s.appendRequest(ctx, vk, model, in, out, cached, cost, status, started, latency, fabCtx, attempts)
 }
 
-func (s *Server) appendRequest(ctx context.Context, vk VirtualKeyRecord, model string, in, out, cached int, cost float64, status int, started time.Time, latency time.Duration, fabCtx fabricContext) {
+func (s *Server) appendRequest(ctx context.Context, vk VirtualKeyRecord, model string, in, out, cached int, cost float64, status int, started time.Time, latency time.Duration, fabCtx fabricContext, attempts []AttemptSnap) {
+	if attempts == nil {
+		attempts = []AttemptSnap{}
+	}
 	_ = s.Store.AppendRequest(ctx, RequestRow{
 		VirtualKeyHash: vk.Hash,
 		Project:        vk.Project,
@@ -243,7 +305,75 @@ func (s *Server) appendRequest(ctx context.Context, vk VirtualKeyRecord, model s
 		RunID:          fabCtx.RunID,
 		TaskType:       fabCtx.TaskType,
 		CreatedAt:      started,
+		Attempts:       attempts,
 	})
+}
+
+func (s *Server) maxAttempts() int {
+	if s.MaxAttempts > 0 {
+		return s.MaxAttempts
+	}
+	return 3
+}
+
+func (s *Server) attemptTimeout() time.Duration {
+	if s.AttemptTimeout > 0 {
+		return s.AttemptTimeout
+	}
+	return 30 * time.Second
+}
+
+func shouldFailover(status int, err error) bool {
+	if err != nil {
+		return true
+	}
+	switch status {
+	case http.StatusBadRequest, http.StatusUnprocessableEntity:
+		return false
+	case http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound, http.StatusTooManyRequests:
+		return true
+	}
+	return status >= 500
+}
+
+func usageFromBody(collected []byte, stream bool) (in, out, cached int) {
+	in, out, cached = parseUsage(collected)
+	if !stream {
+		return in, out, cached
+	}
+	sin, sout, scached := parseUsageFromSSE(collected)
+	if sin != 0 {
+		in = sin
+	}
+	if sout != 0 {
+		out = sout
+	}
+	if scached != 0 {
+		cached = scached
+	}
+	return in, out, cached
+}
+
+func sumAttemptCost(attempts []AttemptSnap) float64 {
+	var sum float64
+	for _, a := range attempts {
+		sum += a.CostCNY
+	}
+	return sum
+}
+
+func writeUpstream(w http.ResponseWriter, stream bool, status int, header map[string]string, body []byte) {
+	for k, v := range header {
+		w.Header().Set(k, v)
+	}
+	if stream {
+		if w.Header().Get("Content-Type") == "" {
+			w.Header().Set("Content-Type", "text/event-stream")
+		}
+		w.Header().Set("Cache-Control", "no-cache")
+	}
+	w.WriteHeader(status)
+	_, _ = w.Write(body)
 }
 
 type fabricContext struct {
@@ -264,12 +394,15 @@ func parseFabricContext(raw string) (fabricContext, error) {
 	return ctx, nil
 }
 
-func (s *Server) selectChannel(ctx context.Context, route ModelRoute, family string) (Channel, Price, bool, error) {
+func (s *Server) selectChannel(ctx context.Context, route ModelRoute, family string, skip map[string]struct{}) (Channel, Price, bool, error) {
 	chs, err := s.Store.ListChannels(ctx, route.Name)
 	if err != nil {
 		return Channel{}, Price{}, false, err
 	}
 	if len(chs) == 0 {
+		if len(skip) > 0 {
+			return Channel{}, Price{}, false, nil
+		}
 		if route.ProviderDisabled {
 			return Channel{}, Price{}, false, nil
 		}
@@ -279,9 +412,11 @@ func (s *Server) selectChannel(ctx context.Context, route ModelRoute, family str
 		}
 		return Channel{}, price, true, nil
 	}
-	var best Channel
-	var found bool
+	var positive, backup []Channel
 	for _, ch := range chs {
+		if _, skipped := skip[ch.ID]; skipped {
+			continue
+		}
 		ok, err := s.channelCallable(ctx, route, ch, family)
 		if err != nil {
 			return Channel{}, Price{}, false, err
@@ -289,15 +424,32 @@ func (s *Server) selectChannel(ctx context.Context, route ModelRoute, family str
 		if !ok {
 			continue
 		}
-		if !found || ch.Priority > best.Priority || (ch.Priority == best.Priority && ch.Weight > best.Weight) {
-			best = ch
-			found = true
+		if ch.Weight > 0 {
+			positive = append(positive, ch)
+		} else {
+			backup = append(backup, ch)
 		}
+	}
+	best, found := pickPreferred(positive)
+	if !found {
+		best, found = pickPreferred(backup)
 	}
 	if !found {
 		return Channel{}, Price{}, false, nil
 	}
 	return best, Price{Model: route.Name, InputCNY: best.InputCNY, OutputCNY: best.OutputCNY, CachedCNY: best.CachedCNY}, true, nil
+}
+
+func pickPreferred(chs []Channel) (Channel, bool) {
+	var best Channel
+	var found bool
+	for _, ch := range chs {
+		if !found || ch.Priority > best.Priority || (ch.Priority == best.Priority && ch.Weight > best.Weight) {
+			best = ch
+			found = true
+		}
+	}
+	return best, found
 }
 
 func (s *Server) channelCallable(ctx context.Context, route ModelRoute, ch Channel, family string) (bool, error) {
@@ -1417,21 +1569,26 @@ func (s *Server) handleRequests(w http.ResponseWriter, r *http.Request) {
 		rows = []RequestRow{}
 	}
 	type view struct {
-		VirtualKeyHash string    `json:"virtual_key_hash"`
-		Project        string    `json:"project"`
-		Model          string    `json:"model"`
-		InputTokens    int       `json:"input_tokens"`
-		OutputTokens   int       `json:"output_tokens"`
-		CachedTokens   int       `json:"cached_tokens"`
-		CostCNY        float64   `json:"cost_cny"`
-		Status         int       `json:"status"`
-		LatencyMS      int64     `json:"latency_ms"`
-		RunID          string    `json:"run_id"`
-		TaskType       string    `json:"task_type"`
-		CreatedAt      time.Time `json:"created_at"`
+		VirtualKeyHash string        `json:"virtual_key_hash"`
+		Project        string        `json:"project"`
+		Model          string        `json:"model"`
+		InputTokens    int           `json:"input_tokens"`
+		OutputTokens   int           `json:"output_tokens"`
+		CachedTokens   int           `json:"cached_tokens"`
+		CostCNY        float64       `json:"cost_cny"`
+		Status         int           `json:"status"`
+		LatencyMS      int64         `json:"latency_ms"`
+		RunID          string        `json:"run_id"`
+		TaskType       string        `json:"task_type"`
+		CreatedAt      time.Time     `json:"created_at"`
+		Attempts       []AttemptSnap `json:"attempts"`
 	}
 	out := make([]view, 0, len(rows))
 	for _, row := range rows {
+		atts := row.Attempts
+		if atts == nil {
+			atts = []AttemptSnap{}
+		}
 		out = append(out, view{
 			VirtualKeyHash: row.VirtualKeyHash,
 			Project:        row.Project,
@@ -1445,6 +1602,7 @@ func (s *Server) handleRequests(w http.ResponseWriter, r *http.Request) {
 			RunID:          row.RunID,
 			TaskType:       row.TaskType,
 			CreatedAt:      row.CreatedAt,
+			Attempts:       atts,
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"project": project, "requests": out})

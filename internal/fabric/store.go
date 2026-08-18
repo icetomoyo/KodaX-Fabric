@@ -100,6 +100,16 @@ type Price struct {
 	CachedCNY float64 `json:"cached_cny"`
 }
 
+type AttemptSnap struct {
+	ChannelID    string  `json:"channel_id"`
+	Status       int     `json:"status"`
+	InputTokens  int     `json:"input_tokens"`
+	OutputTokens int     `json:"output_tokens"`
+	CachedTokens int     `json:"cached_tokens"`
+	CostCNY      float64 `json:"cost_cny"`
+	SeenByCaller bool    `json:"seen_by_caller"`
+}
+
 type RequestRow struct {
 	VirtualKeyHash string
 	Project        string
@@ -113,6 +123,7 @@ type RequestRow struct {
 	RunID          string
 	TaskType       string
 	CreatedAt      time.Time
+	Attempts       []AttemptSnap
 }
 
 type UsageCell struct {

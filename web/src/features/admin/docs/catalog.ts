@@ -722,6 +722,7 @@ const requests = rest(
           f("run_id", "string", "来自 `x-fabric-context.run_id`，未传则为空。"),
           f("task_type", "string", "来自 `x-fabric-context.task_type`。"),
           f("created_at", "string", "入账时刻，RFC3339。报表按此时刻切 Asia/Shanghai 日。"),
+          f("attempts", "object[]", "同一次入口内各次 Channel 尝试快照。usage 以最后一次为准，cost 为各次之和。"),
         ],
       }),
     ],

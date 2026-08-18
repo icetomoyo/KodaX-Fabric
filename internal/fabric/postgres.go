@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	_ "embed"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -285,15 +286,22 @@ func (s *PostgresStore) LookupPrice(ctx context.Context, model string) (Price, b
 }
 
 func (s *PostgresStore) AppendRequest(ctx context.Context, row RequestRow) error {
-	_, err := s.db.ExecContext(ctx, `
+	attempts, err := json.Marshal(row.Attempts)
+	if err != nil {
+		return err
+	}
+	if row.Attempts == nil {
+		attempts = []byte("[]")
+	}
+	_, err = s.db.ExecContext(ctx, `
 		INSERT INTO requests (
 			virtual_key_hash, project_name, model,
 			input_tokens, output_tokens, cached_tokens,
-			cost_cny, status, latency_ms, created_at, run_id, task_type
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+			cost_cny, status, latency_ms, created_at, run_id, task_type, attempts
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
 		row.VirtualKeyHash, row.Project, row.Model,
 		row.InputTokens, row.OutputTokens, row.CachedTokens,
-		row.CostCNY, row.Status, row.LatencyMS, row.CreatedAt, row.RunID, row.TaskType)
+		row.CostCNY, row.Status, row.LatencyMS, row.CreatedAt, row.RunID, row.TaskType, attempts)
 	return err
 }
 
@@ -301,7 +309,8 @@ func (s *PostgresStore) ListRequests(ctx context.Context, project string) ([]Req
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT virtual_key_hash, project_name, model,
 		       input_tokens, output_tokens, cached_tokens,
-		       cost_cny, status, latency_ms, created_at, run_id, task_type
+		       cost_cny, status, latency_ms, created_at, run_id, task_type,
+		       COALESCE(attempts, '[]'::jsonb)
 		FROM requests
 		WHERE project_name = $1
 		ORDER BY id`, project)
@@ -312,10 +321,14 @@ func (s *PostgresStore) ListRequests(ctx context.Context, project string) ([]Req
 	var out []RequestRow
 	for rows.Next() {
 		var row RequestRow
+		var attempts []byte
 		if err := rows.Scan(&row.VirtualKeyHash, &row.Project, &row.Model,
 			&row.InputTokens, &row.OutputTokens, &row.CachedTokens,
-			&row.CostCNY, &row.Status, &row.LatencyMS, &row.CreatedAt, &row.RunID, &row.TaskType); err != nil {
+			&row.CostCNY, &row.Status, &row.LatencyMS, &row.CreatedAt, &row.RunID, &row.TaskType, &attempts); err != nil {
 			return nil, err
+		}
+		if len(attempts) > 0 {
+			_ = json.Unmarshal(attempts, &row.Attempts)
 		}
 		out = append(out, row)
 	}
