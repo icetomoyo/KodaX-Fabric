@@ -69,6 +69,18 @@ func (s *PostgresStore) Seed(ctx context.Context, adminHash, model string) error
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO models (name, family, disabled)
+		VALUES ($1, 'anthropic', FALSE)
+		ON CONFLICT DO NOTHING`, SeedAnthropicModel); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO prices (model_name, input_cny, output_cny, cached_cny)
+		VALUES ($1, $2, $3, $4)
+		ON CONFLICT DO NOTHING`, SeedAnthropicModel, SeedInputPriceCNY, SeedOutputPriceCNY, SeedCachedPriceCNY); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO admins (username, password_hash)
 		VALUES ($1, $2)
 		ON CONFLICT DO NOTHING`, SeedAdminUser, adminHash); err != nil {

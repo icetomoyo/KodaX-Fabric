@@ -1,0 +1,12 @@
+{
+  "id": "msg_fixture_001",
+  "type": "message",
+  "role": "assistant",
+  "model": "claude-haiku-4",
+  "content": [{"type": "text", "text": "hello from anthropic fixture"}],
+  "stop_reason": "end_turn",
+  "usage": {
+    "input_tokens": 8,
+    "output_tokens": 12
+  }
+}

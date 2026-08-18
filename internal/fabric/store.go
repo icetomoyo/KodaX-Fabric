@@ -9,11 +9,12 @@ import (
 )
 
 const (
-	SeedVirtualKey = "sk-fabric-demo"
-	SeedProject    = "demo"
-	SeedModel      = "gpt-4o-mini"
-	SeedAdminUser  = "admin"
-	SeedAdminPass  = "fabric-admin"
+	SeedVirtualKey     = "sk-fabric-demo"
+	SeedProject        = "demo"
+	SeedModel          = "gpt-4o-mini"
+	SeedAnthropicModel = "claude-haiku-4"
+	SeedAdminUser      = "admin"
+	SeedAdminPass      = "fabric-admin"
 	// CNY per 1_000_000 tokens — independent literals for cost checks.
 	SeedInputPriceCNY  = 1.0
 	SeedOutputPriceCNY = 2.0
@@ -91,10 +92,12 @@ func NewSeededMemoryStore(adminHash string) *MemoryStore {
 			HashVirtualKey(SeedVirtualKey): {Hash: HashVirtualKey(SeedVirtualKey), Project: SeedProject},
 		},
 		models: map[string]ModelRoute{
-			SeedModel: {Name: SeedModel, Family: "openai", Disabled: false},
+			SeedModel:          {Name: SeedModel, Family: "openai", Disabled: false},
+			SeedAnthropicModel: {Name: SeedAnthropicModel, Family: "anthropic", Disabled: false},
 		},
 		prices: map[string]Price{
-			SeedModel: {InputCNY: SeedInputPriceCNY, OutputCNY: SeedOutputPriceCNY, CachedCNY: SeedCachedPriceCNY},
+			SeedModel:          {InputCNY: SeedInputPriceCNY, OutputCNY: SeedOutputPriceCNY, CachedCNY: SeedCachedPriceCNY},
+			SeedAnthropicModel: {InputCNY: SeedInputPriceCNY, OutputCNY: SeedOutputPriceCNY, CachedCNY: SeedCachedPriceCNY},
 		},
 		adminHash: adminHash,
 	}

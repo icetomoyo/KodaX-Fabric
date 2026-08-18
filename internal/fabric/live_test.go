@@ -23,7 +23,7 @@ func TestLiveOpenAIProviderForwardsRawBodyAndProviderKey(t *testing.T) {
 	}))
 	t.Cleanup(up.Close)
 
-	p := fabric.NewLiveOpenAIProvider(up.URL, "sk-provider")
+	p := fabric.NewLiveProvider(up.URL, "sk-provider")
 	raw := []byte(`{"model":"deepseek-v4-flash","messages":[{"role":"user","content":"ping"}]}`)
 	status, header, rc, err := p.ChatCompletions(t.Context(), raw)
 	if err != nil {

@@ -10,16 +10,19 @@ import (
 	"time"
 )
 
-// Provider is the outbound seam to an OpenAI-family upstream.
+// Provider is the outbound seam to an upstream family.
 type Provider interface {
 	ChatCompletions(ctx context.Context, rawBody []byte) (status int, header map[string]string, body io.ReadCloser, err error)
+	Messages(ctx context.Context, rawBody []byte) (status int, header map[string]string, body io.ReadCloser, err error)
 }
 
 // FixtureProvider replays a recorded Chat Completions body (JSON or SSE).
 type FixtureProvider struct {
-	Body       []byte
-	StreamBody []byte
-	ChunkDelay time.Duration
+	Body               []byte
+	StreamBody         []byte
+	MessagesBody       []byte
+	MessagesStreamBody []byte
+	ChunkDelay         time.Duration
 
 	mu        sync.Mutex
 	calls     int
@@ -28,6 +31,14 @@ type FixtureProvider struct {
 }
 
 func (p *FixtureProvider) ChatCompletions(ctx context.Context, rawBody []byte) (int, map[string]string, io.ReadCloser, error) {
+	return p.replay(ctx, rawBody, p.Body, p.StreamBody)
+}
+
+func (p *FixtureProvider) Messages(ctx context.Context, rawBody []byte) (int, map[string]string, io.ReadCloser, error) {
+	return p.replay(ctx, rawBody, p.MessagesBody, p.MessagesStreamBody)
+}
+
+func (p *FixtureProvider) replay(ctx context.Context, rawBody, jsonBody, sseBody []byte) (int, map[string]string, io.ReadCloser, error) {
 	p.mu.Lock()
 	p.calls++
 	p.emitted = 0
@@ -38,16 +49,16 @@ func (p *FixtureProvider) ChatCompletions(ctx context.Context, rawBody []byte) (
 		return 0, nil, nil, ctx.Err()
 	default:
 	}
-	if wantsStream(rawBody) && len(p.StreamBody) > 0 {
+	if wantsStream(rawBody) && len(sseBody) > 0 {
 		header := map[string]string{"Content-Type": "text/event-stream"}
-		body := append([]byte(nil), p.StreamBody...)
+		body := append([]byte(nil), sseBody...)
 		if p.ChunkDelay <= 0 {
 			p.markChunk()
 			return 200, header, io.NopCloser(bytes.NewReader(body)), nil
 		}
 		return 200, header, newChunkReader(ctx, p, body, p.ChunkDelay), nil
 	}
-	return 200, map[string]string{"Content-Type": "application/json"}, io.NopCloser(bytes.NewReader(append([]byte(nil), p.Body...))), nil
+	return 200, map[string]string{"Content-Type": "application/json"}, io.NopCloser(bytes.NewReader(append([]byte(nil), jsonBody...))), nil
 }
 
 func (p *FixtureProvider) Calls() int {

@@ -254,8 +254,10 @@ func newTestServer(t *testing.T) *httptestServer {
 	t.Helper()
 	fixture := readFixture(t, "openai/chat_completion.json")
 	provider := &fabric.FixtureProvider{
-		Body:       fixture,
-		StreamBody: readFixture(t, "openai/chat_completion.sse"),
+		Body:               fixture,
+		StreamBody:         readFixture(t, "openai/chat_completion.sse"),
+		MessagesBody:       readFixture(t, "anthropic/message.json"),
+		MessagesStreamBody: readFixture(t, "anthropic/message.sse"),
 	}
 	store := fabric.NewSeededMemoryStore(fabric.HashAdminPassword(fabric.SeedAdminPass))
 	app := fabric.NewServer(store, provider)

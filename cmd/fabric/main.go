@@ -69,7 +69,7 @@ func newProvider() (fabric.Provider, error) {
 			return nil, errProviderConfig
 		}
 		log.Printf("provider live %s", base)
-		return fabric.NewLiveOpenAIProvider(base, key), nil
+		return fabric.NewLiveProvider(base, key), nil
 	}
 	fixturePath := os.Getenv("FIXTURE_PATH")
 	if fixturePath == "" {
@@ -87,8 +87,19 @@ func newProvider() (fabric.Provider, error) {
 	if err != nil {
 		streamBody = nil
 	}
+	msgPath := os.Getenv("FIXTURE_MESSAGES_PATH")
+	if msgPath == "" {
+		msgPath = "testdata/fixtures/anthropic/message.json"
+	}
+	msgBody, _ := os.ReadFile(msgPath)
+	msgStream, _ := os.ReadFile(strings.TrimSuffix(msgPath, ".json") + ".sse")
 	log.Printf("provider fixture %s", fixturePath)
-	return &fabric.FixtureProvider{Body: body, StreamBody: streamBody}, nil
+	return &fabric.FixtureProvider{
+		Body:               body,
+		StreamBody:         streamBody,
+		MessagesBody:       msgBody,
+		MessagesStreamBody: msgStream,
+	}, nil
 }
 
 var errProviderConfig = errors.New("PROVIDER_MODE=live requires PROVIDER_BASE_URL and PROVIDER_KEY")

@@ -35,6 +35,7 @@ func NewServer(store Store, provider Provider) *Server {
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/chat/completions", s.handleChatCompletions)
+	mux.HandleFunc("POST /v1/messages", s.handleMessages)
 	mux.HandleFunc("POST /admin/api/login", s.handleLogin)
 	mux.HandleFunc("GET /admin/api/usage", s.handleUsage)
 	mux.HandleFunc("GET /admin/api/requests", s.handleRequests)
@@ -52,10 +53,18 @@ func (s *Server) handleUnknown(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
+	s.handlePassthrough(w, r, "openai", s.Provider.ChatCompletions)
+}
+
+func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
+	s.handlePassthrough(w, r, "anthropic", s.Provider.Messages)
+}
+
+func (s *Server) handlePassthrough(w http.ResponseWriter, r *http.Request, family string, invoke func(context.Context, []byte) (int, map[string]string, io.ReadCloser, error)) {
 	ctx := r.Context()
 	started := s.Now()
 
-	token, ok := bearer(r.Header.Get("Authorization"))
+	token, ok := virtualKey(r)
 	if !ok {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing_virtual_key"})
 		return
@@ -89,7 +98,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "store"})
 		return
 	}
-	if !found || route.Disabled || route.Family != "openai" {
+	if !found || route.Disabled || route.Family != family {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown_model"})
 		return
 	}
@@ -103,7 +112,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	status, header, rc, err := s.Provider.ChatCompletions(ctx, raw)
+	status, header, rc, err := invoke(ctx, raw)
 	if err != nil {
 		s.appendRequest(ctx, vk, head.Model, 0, 0, 0, 0, http.StatusBadGateway, started)
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "provider"})
@@ -132,8 +141,17 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	in, out, cached := parseUsage(collected)
-	if in == 0 && out == 0 && cached == 0 {
-		in, out, cached = parseUsageFromSSE(collected)
+	if head.Stream {
+		sin, sout, scached := parseUsageFromSSE(collected)
+		if sin != 0 {
+			in = sin
+		}
+		if sout != 0 {
+			out = sout
+		}
+		if scached != 0 {
+			cached = scached
+		}
 	}
 	cost := costCNY(in, out, cached, price)
 	s.appendRequest(context.WithoutCancel(ctx), vk, head.Model, in, out, cached, cost, status, started)
@@ -258,6 +276,16 @@ func (s *Server) authed(r *http.Request) bool {
 	return ok
 }
 
+func virtualKey(r *http.Request) (string, bool) {
+	if tok, ok := bearer(r.Header.Get("Authorization")); ok {
+		return tok, true
+	}
+	if key := strings.TrimSpace(r.Header.Get("x-api-key")); key != "" {
+		return key, true
+	}
+	return "", false
+}
+
 func bearer(h string) (string, bool) {
 	const p = "Bearer "
 	if !strings.HasPrefix(h, p) {
@@ -300,8 +328,14 @@ func parseUsageFromSSE(raw []byte) (input, output, cached int) {
 			continue
 		}
 		in, out, c := parseUsage([]byte(payload))
-		if in != 0 || out != 0 || c != 0 {
-			input, output, cached = in, out, c
+		if in != 0 {
+			input = in
+		}
+		if out != 0 {
+			output = out
+		}
+		if c != 0 {
+			cached = c
 		}
 	}
 	return input, output, cached
@@ -309,16 +343,53 @@ func parseUsageFromSSE(raw []byte) (input, output, cached int) {
 
 func parseUsage(body []byte) (input, output, cached int) {
 	var payload struct {
-		Usage struct {
-			PromptTokens        int `json:"prompt_tokens"`
-			CompletionTokens    int `json:"completion_tokens"`
-			PromptTokensDetails struct {
-				CachedTokens int `json:"cached_tokens"`
-			} `json:"prompt_tokens_details"`
-		} `json:"usage"`
+		Usage   usageBlock `json:"usage"`
+		Message struct {
+			Usage usageBlock `json:"usage"`
+		} `json:"message"`
 	}
 	_ = json.Unmarshal(body, &payload)
-	return payload.Usage.PromptTokens, payload.Usage.CompletionTokens, payload.Usage.PromptTokensDetails.CachedTokens
+	u := payload.Usage
+	if u.empty() {
+		u = payload.Message.Usage
+	}
+	return u.input(), u.output(), u.cached()
+}
+
+type usageBlock struct {
+	PromptTokens         int `json:"prompt_tokens"`
+	CompletionTokens     int `json:"completion_tokens"`
+	InputTokens          int `json:"input_tokens"`
+	OutputTokens         int `json:"output_tokens"`
+	CacheReadInputTokens int `json:"cache_read_input_tokens"`
+	PromptTokensDetails  struct {
+		CachedTokens int `json:"cached_tokens"`
+	} `json:"prompt_tokens_details"`
+}
+
+func (u usageBlock) empty() bool {
+	return u.input() == 0 && u.output() == 0 && u.cached() == 0
+}
+
+func (u usageBlock) input() int {
+	if u.PromptTokens != 0 {
+		return u.PromptTokens
+	}
+	return u.InputTokens
+}
+
+func (u usageBlock) output() int {
+	if u.CompletionTokens != 0 {
+		return u.CompletionTokens
+	}
+	return u.OutputTokens
+}
+
+func (u usageBlock) cached() int {
+	if u.PromptTokensDetails.CachedTokens != 0 {
+		return u.PromptTokensDetails.CachedTokens
+	}
+	return u.CacheReadInputTokens
 }
 
 func costCNY(input, output, cached int, price Price) float64 {
