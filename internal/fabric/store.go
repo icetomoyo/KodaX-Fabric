@@ -4,9 +4,12 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"sync"
 	"time"
 )
+
+var errUnknownProject = errors.New("unknown project")
 
 const (
 	SeedVirtualKey     = "sk-fabric-demo"
@@ -69,6 +72,11 @@ type Store interface {
 	ListRequests(ctx context.Context, project string) ([]RequestRow, error)
 	UsageByProjectModelDay(ctx context.Context, project, day string) ([]UsageCell, error)
 	AdminPasswordHash(ctx context.Context, username string) (string, bool, error)
+	ProjectExists(ctx context.Context, name string) (bool, error)
+	CreateVirtualKey(ctx context.Context, rec VirtualKeyRecord) error
+	GetVirtualKey(ctx context.Context, hash string) (VirtualKeyRecord, bool, error)
+	ListVirtualKeys(ctx context.Context) ([]VirtualKeyRecord, error)
+	DisableVirtualKey(ctx context.Context, hash string) (bool, error)
 }
 
 func HashVirtualKey(plaintext string) string {
@@ -80,6 +88,7 @@ func HashVirtualKey(plaintext string) string {
 type MemoryStore struct {
 	mu        sync.Mutex
 	keys      map[string]VirtualKeyRecord
+	projects  map[string]struct{}
 	models    map[string]ModelRoute
 	prices    map[string]Price
 	requests  []RequestRow
@@ -88,6 +97,7 @@ type MemoryStore struct {
 
 func NewSeededMemoryStore(adminHash string) *MemoryStore {
 	return &MemoryStore{
+		projects: map[string]struct{}{SeedProject: {}},
 		keys: map[string]VirtualKeyRecord{
 			HashVirtualKey(SeedVirtualKey): {Hash: HashVirtualKey(SeedVirtualKey), Project: SeedProject},
 		},
@@ -171,6 +181,52 @@ func (s *MemoryStore) UsageByProjectModelDay(_ context.Context, project, day str
 		out = append(out, *c)
 	}
 	return out, nil
+}
+
+func (s *MemoryStore) ProjectExists(_ context.Context, name string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, ok := s.projects[name]
+	return ok, nil
+}
+
+func (s *MemoryStore) CreateVirtualKey(_ context.Context, rec VirtualKeyRecord) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.projects[rec.Project]; !ok {
+		return errUnknownProject
+	}
+	s.keys[rec.Hash] = rec
+	return nil
+}
+
+func (s *MemoryStore) GetVirtualKey(_ context.Context, hash string) (VirtualKeyRecord, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rec, ok := s.keys[hash]
+	return rec, ok, nil
+}
+
+func (s *MemoryStore) ListVirtualKeys(_ context.Context) ([]VirtualKeyRecord, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]VirtualKeyRecord, 0, len(s.keys))
+	for _, rec := range s.keys {
+		out = append(out, rec)
+	}
+	return out, nil
+}
+
+func (s *MemoryStore) DisableVirtualKey(_ context.Context, hash string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rec, ok := s.keys[hash]
+	if !ok {
+		return false, nil
+	}
+	rec.Disabled = true
+	s.keys[hash] = rec
+	return true, nil
 }
 
 func (s *MemoryStore) AdminPasswordHash(_ context.Context, username string) (string, bool, error) {

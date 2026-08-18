@@ -196,6 +196,62 @@ func (s *PostgresStore) UsageByProjectModelDay(ctx context.Context, project, day
 	return out, rows.Err()
 }
 
+func (s *PostgresStore) ProjectExists(ctx context.Context, name string) (bool, error) {
+	var n string
+	err := s.db.QueryRowContext(ctx, `SELECT name FROM projects WHERE name = $1`, name).Scan(&n)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+func (s *PostgresStore) CreateVirtualKey(ctx context.Context, rec VirtualKeyRecord) error {
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO virtual_keys (hash, project_name, disabled)
+		VALUES ($1, $2, $3)`, rec.Hash, rec.Project, rec.Disabled)
+	return err
+}
+
+func (s *PostgresStore) GetVirtualKey(ctx context.Context, hash string) (VirtualKeyRecord, bool, error) {
+	var rec VirtualKeyRecord
+	err := s.db.QueryRowContext(ctx, `
+		SELECT hash, project_name, disabled FROM virtual_keys WHERE hash = $1`, hash).
+		Scan(&rec.Hash, &rec.Project, &rec.Disabled)
+	if err == sql.ErrNoRows {
+		return VirtualKeyRecord{}, false, nil
+	}
+	if err != nil {
+		return VirtualKeyRecord{}, false, err
+	}
+	return rec, true, nil
+}
+
+func (s *PostgresStore) ListVirtualKeys(ctx context.Context) ([]VirtualKeyRecord, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT hash, project_name, disabled FROM virtual_keys ORDER BY hash`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []VirtualKeyRecord
+	for rows.Next() {
+		var rec VirtualKeyRecord
+		if err := rows.Scan(&rec.Hash, &rec.Project, &rec.Disabled); err != nil {
+			return nil, err
+		}
+		out = append(out, rec)
+	}
+	return out, rows.Err()
+}
+
+func (s *PostgresStore) DisableVirtualKey(ctx context.Context, hash string) (bool, error) {
+	res, err := s.db.ExecContext(ctx, `UPDATE virtual_keys SET disabled = TRUE WHERE hash = $1`, hash)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
 func (s *PostgresStore) AdminPasswordHash(ctx context.Context, username string) (string, bool, error) {
 	var hash string
 	err := s.db.QueryRowContext(ctx, `SELECT password_hash FROM admins WHERE username = $1`, username).Scan(&hash)

@@ -37,6 +37,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/chat/completions", s.handleChatCompletions)
 	mux.HandleFunc("POST /v1/messages", s.handleMessages)
 	mux.HandleFunc("POST /admin/api/login", s.handleLogin)
+	mux.HandleFunc("POST /admin/api/virtual-keys", s.handleCreateVirtualKey)
+	mux.HandleFunc("GET /admin/api/virtual-keys", s.handleListVirtualKeys)
+	mux.HandleFunc("GET /admin/api/virtual-keys/{hash}", s.handleGetVirtualKey)
+	mux.HandleFunc("POST /admin/api/virtual-keys/{hash}/disable", s.handleDisableVirtualKey)
 	mux.HandleFunc("GET /admin/api/usage", s.handleUsage)
 	mux.HandleFunc("GET /admin/api/requests", s.handleRequests)
 	mux.HandleFunc("GET /admin", s.handleAdminPage)
@@ -191,6 +195,109 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	s.mu.Unlock()
 	http.SetCookie(w, &http.Cookie{Name: "fabric_session", Value: id, Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (s *Server) handleCreateVirtualKey(w http.ResponseWriter, r *http.Request) {
+	if !s.authed(r) {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+	var body struct {
+		Project string `json:"project"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Project == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing_project"})
+		return
+	}
+	ok, err := s.Store.ProjectExists(r.Context(), body.Project)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "store"})
+		return
+	}
+	if !ok {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown_project"})
+		return
+	}
+	plain := newVirtualKeyPlaintext()
+	rec := VirtualKeyRecord{Hash: HashVirtualKey(plain), Project: body.Project}
+	if err := s.Store.CreateVirtualKey(r.Context(), rec); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "store"})
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"hash":      rec.Hash,
+		"project":   rec.Project,
+		"disabled":  false,
+		"plaintext": plain,
+	})
+}
+
+func (s *Server) handleListVirtualKeys(w http.ResponseWriter, r *http.Request) {
+	if !s.authed(r) {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+	keys, err := s.Store.ListVirtualKeys(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "store"})
+		return
+	}
+	if keys == nil {
+		keys = []VirtualKeyRecord{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"keys": vkPublicList(keys)})
+}
+
+func (s *Server) handleGetVirtualKey(w http.ResponseWriter, r *http.Request) {
+	if !s.authed(r) {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+	rec, found, err := s.Store.GetVirtualKey(r.Context(), r.PathValue("hash"))
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "store"})
+		return
+	}
+	if !found {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not_found"})
+		return
+	}
+	writeJSON(w, http.StatusOK, vkPublic(rec))
+}
+
+func (s *Server) handleDisableVirtualKey(w http.ResponseWriter, r *http.Request) {
+	if !s.authed(r) {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+	ok, err := s.Store.DisableVirtualKey(r.Context(), r.PathValue("hash"))
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "store"})
+		return
+	}
+	if !ok {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not_found"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "disabled"})
+}
+
+func vkPublic(rec VirtualKeyRecord) map[string]any {
+	return map[string]any{"hash": rec.Hash, "project": rec.Project, "disabled": rec.Disabled}
+}
+
+func vkPublicList(keys []VirtualKeyRecord) []map[string]any {
+	out := make([]map[string]any, 0, len(keys))
+	for _, k := range keys {
+		out = append(out, vkPublic(k))
+	}
+	return out
+}
+
+func newVirtualKeyPlaintext() string {
+	var b [16]byte
+	_, _ = rand.Read(b[:])
+	return "sk-fab-" + hex.EncodeToString(b[:])
 }
 
 func (s *Server) handleUsage(w http.ResponseWriter, r *http.Request) {
@@ -422,23 +529,60 @@ func HashAdminPassword(password string) string {
 const adminHTML = `<!doctype html>
 <html lang="zh-CN">
 <meta charset="utf-8">
-<title>Fabric 用量</title>
+<title>Fabric 管理台</title>
 <body>
-<h1>用量报表</h1>
+<h1>Fabric 管理台</h1>
 <form id="login">
   <input name="username" value="admin" />
   <input name="password" type="password" value="fabric-admin" />
   <button>登录</button>
 </form>
+<h2>Virtual Key</h2>
+<form id="vk">
+  <input name="project" value="demo" />
+  <button>创建</button>
+</form>
+<pre id="created"></pre>
+<ul id="keys"></ul>
+<h2>用量报表</h2>
 <pre id="out"></pre>
 <script>
 const out = document.getElementById('out');
+const created = document.getElementById('created');
+const keys = document.getElementById('keys');
+async function refresh() {
+  const u = await fetch('/admin/api/usage');
+  out.textContent = await u.text();
+  const k = await fetch('/admin/api/virtual-keys');
+  const data = await k.json();
+  keys.innerHTML = '';
+  (data.keys || []).forEach(row => {
+    const li = document.createElement('li');
+    li.textContent = row.hash.slice(0,12) + '… ' + row.project + (row.disabled ? ' 已停用' : '');
+    if (!row.disabled) {
+      const b = document.createElement('button');
+      b.textContent = '停用';
+      b.onclick = async () => {
+        await fetch('/admin/api/virtual-keys/' + row.hash + '/disable', {method:'POST'});
+        refresh();
+      };
+      li.appendChild(b);
+    }
+    keys.appendChild(li);
+  });
+}
 document.getElementById('login').onsubmit = async (e) => {
   e.preventDefault();
   const fd = new FormData(e.target);
   await fetch('/admin/api/login', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({username:fd.get('username'), password:fd.get('password')})});
-  const r = await fetch('/admin/api/usage');
-  out.textContent = await r.text();
+  refresh();
+};
+document.getElementById('vk').onsubmit = async (e) => {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  const r = await fetch('/admin/api/virtual-keys', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({project:fd.get('project')})});
+  created.textContent = await r.text();
+  refresh();
 };
 </script>
 </body>
