@@ -1,6 +1,13 @@
+CREATE TABLE IF NOT EXISTS enterprises (
+    name TEXT PRIMARY KEY,
+    disabled BOOLEAN NOT NULL DEFAULT FALSE
+);
+
 CREATE TABLE IF NOT EXISTS projects (
     name TEXT PRIMARY KEY
 );
+
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS enterprise_name TEXT;
 
 CREATE TABLE IF NOT EXISTS virtual_keys (
     hash TEXT PRIMARY KEY,

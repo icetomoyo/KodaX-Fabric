@@ -68,9 +68,9 @@ func TestRequestProjectComesFromVirtualKeyNotHeader(t *testing.T) {
 	vkDemo := createVK(t, admin, srv.URL, fabric.SeedProject)
 	vkBill := createVK(t, admin, srv.URL, "billing")
 
-	status, _ := postChatWithContext(t, srv, vkDemo.Plaintext, `{"model":"gpt-4o-mini","messages":[{"role":"user","content":"hi"}]}`, `{"project_id":"demo","task_type":"eval"}`)
+	status, _ := postChatWithContext(t, srv, vkDemo.Plaintext, `{"model":"gpt-4o-mini","messages":[{"role":"user","content":"hi"}]}`, `{"team_id":"demo","task_type":"eval"}`)
 	if status != http.StatusOK {
-		t.Fatalf("matching project_id %d", status)
+		t.Fatalf("matching team_id %d", status)
 	}
 	status, _ = postChatWithContext(t, srv, vkDemo.Plaintext, `{"model":"gpt-4o-mini","messages":[{"role":"user","content":"hi"}]}`, "")
 	if status != http.StatusOK {
@@ -78,7 +78,7 @@ func TestRequestProjectComesFromVirtualKeyNotHeader(t *testing.T) {
 	}
 
 	calls := srv.ProviderCalls()
-	status, _ = postChatWithContext(t, srv, vkDemo.Plaintext, `{"model":"gpt-4o-mini","messages":[]}`, `{"project_id":"billing"}`)
+	status, _ = postChatWithContext(t, srv, vkDemo.Plaintext, `{"model":"gpt-4o-mini","messages":[]}`, `{"team_id":"billing"}`)
 	if status != http.StatusBadRequest {
 		t.Fatalf("mismatch %d", status)
 	}

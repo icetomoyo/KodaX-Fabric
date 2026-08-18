@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -44,8 +45,13 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /admin/api/login", s.handleLogin)
 	mux.HandleFunc("POST /admin/api/logout", s.handleLogout)
 	mux.HandleFunc("GET /admin/api/me", s.handleMe)
+	mux.HandleFunc("POST /admin/api/enterprises", s.handleCreateEnterprise)
+	mux.HandleFunc("GET /admin/api/enterprises", s.handleListEnterprises)
+	mux.HandleFunc("POST /admin/api/enterprises/{name}/disable", s.handleDisableEnterprise)
 	mux.HandleFunc("POST /admin/api/projects", s.handleCreateProject)
 	mux.HandleFunc("GET /admin/api/projects", s.handleListProjects)
+	mux.HandleFunc("POST /admin/api/teams", s.handleCreateProject)
+	mux.HandleFunc("GET /admin/api/teams", s.handleListProjects)
 	mux.HandleFunc("POST /admin/api/virtual-keys", s.handleCreateVirtualKey)
 	mux.HandleFunc("GET /admin/api/virtual-keys", s.handleListVirtualKeys)
 	mux.HandleFunc("GET /admin/api/virtual-keys/{hash}", s.handleGetVirtualKey)
@@ -118,8 +124,19 @@ func (s *Server) handlePassthrough(w http.ResponseWriter, r *http.Request, famil
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad_fabric_context"})
 		return
 	}
-	if fabCtx.ProjectID != "" && fabCtx.ProjectID != vk.Project {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "project_mismatch"})
+	if fabCtx.ProjectID != "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "project_id_not_supported"})
+		return
+	}
+	if fabCtx.TeamID != "" && fabCtx.TeamID != vk.Project {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "team_mismatch"})
+		return
+	}
+	if ent, ok, err := s.Store.TeamEnterprise(ctx, vk.Project); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "store"})
+		return
+	} else if ok && ent.Disabled {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "enterprise_disabled"})
 		return
 	}
 
@@ -224,6 +241,7 @@ func (s *Server) appendRequest(ctx context.Context, vk VirtualKeyRecord, model s
 
 type fabricContext struct {
 	ProjectID string `json:"project_id"`
+	TeamID    string `json:"team_id"`
 	TaskType  string `json:"task_type"`
 	RunID     string `json:"run_id"`
 }
@@ -296,7 +314,73 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"username": user, "name": user, "role": "admin"})
+	writeJSON(w, http.StatusOK, map[string]any{"username": user, "name": user, "role": "super_admin"})
+}
+
+func (s *Server) handleCreateEnterprise(w http.ResponseWriter, r *http.Request) {
+	if !s.authed(r) {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+	var body struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing_name"})
+		return
+	}
+	body.Name = strings.TrimSpace(body.Name)
+	if body.Name == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing_name"})
+		return
+	}
+	if err := s.Store.CreateEnterprise(r.Context(), body.Name); err != nil {
+		if errors.Is(err, errDuplicate) {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "duplicate"})
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "store"})
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]string{"name": body.Name})
+}
+
+func (s *Server) handleListEnterprises(w http.ResponseWriter, r *http.Request) {
+	if !s.authed(r) {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+	ents, err := s.Store.ListEnterprises(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "store"})
+		return
+	}
+	type item struct {
+		Name     string `json:"name"`
+		Disabled bool   `json:"disabled"`
+	}
+	out := make([]item, 0, len(ents))
+	for _, e := range ents {
+		out = append(out, item{Name: e.Name, Disabled: e.Disabled})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"enterprises": out})
+}
+
+func (s *Server) handleDisableEnterprise(w http.ResponseWriter, r *http.Request) {
+	if !s.authed(r) {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+	ok, err := s.Store.DisableEnterprise(r.Context(), r.PathValue("name"))
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "store"})
+		return
+	}
+	if !ok {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not_found"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {

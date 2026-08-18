@@ -9,13 +9,15 @@ import (
 	"time"
 )
 
-var errUnknownProject = errors.New("unknown project")
+var errUnknownProject = errors.New("unknown team")
 var errUnknownModel = errors.New("unknown model")
 var errDuplicate = errors.New("duplicate")
 
 const (
 	SeedVirtualKey     = "sk-fabric-demo"
-	SeedProject        = "demo"
+	SeedEnterprise     = "seed"
+	SeedTeam           = "demo"
+	SeedProject        = SeedTeam
 	SeedModel          = "gpt-4o-mini"
 	SeedAnthropicModel = "claude-haiku-4"
 	SeedAdminUser      = "admin"
@@ -25,6 +27,16 @@ const (
 	SeedOutputPriceCNY = 2.0
 	SeedCachedPriceCNY = 0.1
 )
+
+type Enterprise struct {
+	Name     string
+	Disabled bool
+}
+
+type Team struct {
+	Name       string
+	Enterprise string
+}
 
 type VirtualKeyRecord struct {
 	Hash     string
@@ -98,6 +110,10 @@ type Store interface {
 	DisableVirtualKey(ctx context.Context, hash string) (bool, error)
 	CreateProject(ctx context.Context, name string) error
 	ListProjects(ctx context.Context) ([]string, error)
+	CreateEnterprise(ctx context.Context, name string) error
+	ListEnterprises(ctx context.Context) ([]Enterprise, error)
+	DisableEnterprise(ctx context.Context, name string) (bool, error)
+	TeamEnterprise(ctx context.Context, team string) (Enterprise, bool, error)
 	UpsertPrice(ctx context.Context, price Price) error
 	DeletePrice(ctx context.Context, model string) (bool, error)
 	ListPrices(ctx context.Context) ([]Price, error)
@@ -117,9 +133,10 @@ func HashVirtualKey(plaintext string) string {
 
 // MemoryStore is the in-process ledger used by HTTP tests.
 type MemoryStore struct {
-	mu        sync.Mutex
-	keys      map[string]VirtualKeyRecord
-	projects  map[string]struct{}
+	mu          sync.Mutex
+	keys        map[string]VirtualKeyRecord
+	projects    map[string]string
+	enterprises map[string]Enterprise
 	models    map[string]ModelRoute
 	prices    map[string]Price
 	upstreams map[string]Upstream
@@ -130,7 +147,8 @@ type MemoryStore struct {
 
 func NewSeededMemoryStore(adminHash string) *MemoryStore {
 	return &MemoryStore{
-		projects: map[string]struct{}{SeedProject: {}},
+		enterprises: map[string]Enterprise{SeedEnterprise: {Name: SeedEnterprise}},
+		projects:    map[string]string{SeedTeam: SeedEnterprise},
 		keys: map[string]VirtualKeyRecord{
 			HashVirtualKey(SeedVirtualKey): {Hash: HashVirtualKey(SeedVirtualKey), Project: SeedProject},
 		},
@@ -344,7 +362,9 @@ func addUsage(cell *UsageCell, r RequestRow) {
 func (s *MemoryStore) CreateProject(_ context.Context, name string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.projects[name] = struct{}{}
+	if _, ok := s.projects[name]; !ok {
+		s.projects[name] = SeedEnterprise
+	}
 	return nil
 }
 
@@ -363,6 +383,52 @@ func (s *MemoryStore) ProjectExists(_ context.Context, name string) (bool, error
 	defer s.mu.Unlock()
 	_, ok := s.projects[name]
 	return ok, nil
+}
+
+func (s *MemoryStore) CreateEnterprise(_ context.Context, name string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.enterprises[name]; ok {
+		return errDuplicate
+	}
+	s.enterprises[name] = Enterprise{Name: name}
+	return nil
+}
+
+func (s *MemoryStore) ListEnterprises(_ context.Context) ([]Enterprise, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]Enterprise, 0, len(s.enterprises))
+	for _, e := range s.enterprises {
+		out = append(out, e)
+	}
+	return out, nil
+}
+
+func (s *MemoryStore) DisableEnterprise(_ context.Context, name string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	e, ok := s.enterprises[name]
+	if !ok {
+		return false, nil
+	}
+	e.Disabled = true
+	s.enterprises[name] = e
+	return true, nil
+}
+
+func (s *MemoryStore) TeamEnterprise(_ context.Context, team string) (Enterprise, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	entName, ok := s.projects[team]
+	if !ok {
+		return Enterprise{}, false, nil
+	}
+	e, ok := s.enterprises[entName]
+	if !ok {
+		return Enterprise{Name: entName}, true, nil
+	}
+	return e, true, nil
 }
 
 func (s *MemoryStore) CreateVirtualKey(_ context.Context, rec VirtualKeyRecord) error {

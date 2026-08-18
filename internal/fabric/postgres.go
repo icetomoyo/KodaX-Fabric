@@ -48,7 +48,10 @@ func (s *PostgresStore) Seed(ctx context.Context, adminHash, model string) error
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	if _, err := tx.ExecContext(ctx, `INSERT INTO projects (name) VALUES ($1) ON CONFLICT DO NOTHING`, SeedProject); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO enterprises (name, disabled) VALUES ($1, FALSE) ON CONFLICT DO NOTHING`, SeedEnterprise); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO projects (name, enterprise_name) VALUES ($1, $2) ON CONFLICT DO NOTHING`, SeedProject, SeedEnterprise); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `
@@ -347,8 +350,65 @@ func (s *PostgresStore) UsageByProjectModelDay(ctx context.Context, project, day
 }
 
 func (s *PostgresStore) CreateProject(ctx context.Context, name string) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO projects (name) VALUES ($1) ON CONFLICT DO NOTHING`, name)
+	_, err := s.db.ExecContext(ctx, `INSERT INTO projects (name, enterprise_name) VALUES ($1, $2) ON CONFLICT DO NOTHING`, name, SeedEnterprise)
 	return err
+}
+
+func (s *PostgresStore) CreateEnterprise(ctx context.Context, name string) error {
+	res, err := s.db.ExecContext(ctx, `INSERT INTO enterprises (name, disabled) VALUES ($1, FALSE) ON CONFLICT DO NOTHING`, name)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return errDuplicate
+	}
+	return nil
+}
+
+func (s *PostgresStore) ListEnterprises(ctx context.Context) ([]Enterprise, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT name, disabled FROM enterprises ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Enterprise
+	for rows.Next() {
+		var e Enterprise
+		if err := rows.Scan(&e.Name, &e.Disabled); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+func (s *PostgresStore) DisableEnterprise(ctx context.Context, name string) (bool, error) {
+	res, err := s.db.ExecContext(ctx, `UPDATE enterprises SET disabled = TRUE WHERE name = $1`, name)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
+func (s *PostgresStore) TeamEnterprise(ctx context.Context, team string) (Enterprise, bool, error) {
+	var e Enterprise
+	err := s.db.QueryRowContext(ctx, `
+		SELECT e.name, e.disabled
+		FROM projects t
+		JOIN enterprises e ON e.name = COALESCE(t.enterprise_name, $2)
+		WHERE t.name = $1`, team, SeedEnterprise).Scan(&e.Name, &e.Disabled)
+	if err == sql.ErrNoRows {
+		return Enterprise{}, false, nil
+	}
+	if err != nil {
+		return Enterprise{}, false, err
+	}
+	return e, true, nil
 }
 
 func (s *PostgresStore) ListProjects(ctx context.Context) ([]string, error) {

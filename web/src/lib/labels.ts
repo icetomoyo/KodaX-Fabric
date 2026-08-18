@@ -6,6 +6,7 @@ export const POOL_GROUPS = [
 ] as const;
 
 export const ROLES = [
+  { value: "super_admin", label: "超级管理员" },
   { value: "org_admin", label: "企业管理员" },
   { value: "team_admin", label: "团队管理员" },
   { value: "developer", label: "开发者" },
