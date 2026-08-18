@@ -37,7 +37,10 @@ func (s *PostgresStore) Close() error {
 	return s.db.Close()
 }
 
-func (s *PostgresStore) Seed(ctx context.Context, adminHash string) error {
+func (s *PostgresStore) Seed(ctx context.Context, adminHash, model string) error {
+	if model == "" {
+		model = SeedModel
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -56,13 +59,13 @@ func (s *PostgresStore) Seed(ctx context.Context, adminHash string) error {
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO models (name, family, disabled)
 		VALUES ($1, 'openai', FALSE)
-		ON CONFLICT DO NOTHING`, SeedModel); err != nil {
+		ON CONFLICT DO NOTHING`, model); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO prices (model_name, input_cny, output_cny, cached_cny)
 		VALUES ($1, $2, $3, $4)
-		ON CONFLICT DO NOTHING`, SeedModel, SeedInputPriceCNY, SeedOutputPriceCNY, SeedCachedPriceCNY); err != nil {
+		ON CONFLICT DO NOTHING`, model, SeedInputPriceCNY, SeedOutputPriceCNY, SeedCachedPriceCNY); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `

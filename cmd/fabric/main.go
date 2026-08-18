@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log"
 	"net/http"
 	"os"
@@ -24,19 +25,16 @@ func main() {
 		log.Fatalf("postgres: %v", err)
 	}
 	defer store.Close()
-	if err := store.Seed(ctx, fabric.HashAdminPassword(adminPass())); err != nil {
+	model := os.Getenv("SEED_MODEL")
+	if err := store.Seed(ctx, fabric.HashAdminPassword(adminPass()), model); err != nil {
 		log.Fatalf("seed: %v", err)
 	}
 
-	fixturePath := os.Getenv("FIXTURE_PATH")
-	if fixturePath == "" {
-		fixturePath = "testdata/fixtures/openai/chat_completion.json"
-	}
-	body, err := os.ReadFile(fixturePath)
+	provider, err := newProvider()
 	if err != nil {
-		log.Fatalf("fixture: %v", err)
+		log.Fatalf("provider: %v", err)
 	}
-	srv := fabric.NewServer(store, &fabric.FixtureProvider{Body: body})
+	srv := fabric.NewServer(store, provider)
 
 	addr := os.Getenv("LISTEN_ADDR")
 	if addr == "" {
@@ -61,3 +59,27 @@ func adminPass() string {
 	}
 	return fabric.SeedAdminPass
 }
+
+func newProvider() (fabric.Provider, error) {
+	if os.Getenv("PROVIDER_MODE") == "live" {
+		base := os.Getenv("PROVIDER_BASE_URL")
+		key := os.Getenv("PROVIDER_KEY")
+		if base == "" || key == "" {
+			return nil, errProviderConfig
+		}
+		log.Printf("provider live %s", base)
+		return fabric.NewLiveOpenAIProvider(base, key), nil
+	}
+	fixturePath := os.Getenv("FIXTURE_PATH")
+	if fixturePath == "" {
+		fixturePath = "testdata/fixtures/openai/chat_completion.json"
+	}
+	body, err := os.ReadFile(fixturePath)
+	if err != nil {
+		return nil, err
+	}
+	log.Printf("provider fixture %s", fixturePath)
+	return &fabric.FixtureProvider{Body: body}, nil
+}
+
+var errProviderConfig = errors.New("PROVIDER_MODE=live requires PROVIDER_BASE_URL and PROVIDER_KEY")
