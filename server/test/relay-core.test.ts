@@ -14,6 +14,9 @@ const { parseRelayUsage, sanitizeRelayAuditBody, sanitizeRelayHeaderRecord } = a
 const { credentialSupportsProtocol, orderRelayCandidates } = await import(
   "../src/lib/relay/routing.js"
 );
+const { beginCredentialUse, getCredentialLoad } = await import(
+  "../src/lib/relay/credential-load.js"
+);
 const { SseAuditInspector, createSsePassthrough } = await import(
   "../src/lib/relay/sse.js"
 );
@@ -136,6 +139,34 @@ test("equal-rank duplicate routes are weighted before credential deduplication",
 
   assert.equal(result.filter((item) => item.credentialId === 1).length, 1);
   assert.equal(result.find((item) => item.credentialId === 1)?.upstreamModel, "high-weight");
+});
+
+test("equal-priority candidates prefer idle credentials then least-used ones", () => {
+  const load = (credentialId: number) => {
+    if (credentialId === 1) return { inFlight: 2, totalUses: 1 };
+    if (credentialId === 2) return { inFlight: 0, totalUses: 9 };
+    return { inFlight: 0, totalUses: 3 };
+  };
+  const result = orderRelayCandidates(
+    [candidate(1), candidate(2), candidate(3)],
+    () => 0,
+    load,
+  );
+
+  assert.deepEqual(result.map((item) => item.credentialId), [3, 2, 1]);
+});
+
+test("credential load counts in-flight uses and releases idempotently", () => {
+  const credentialId = 990_001;
+  assert.deepEqual(getCredentialLoad(credentialId), { inFlight: 0, totalUses: 0 });
+  const releaseFirst = beginCredentialUse(credentialId);
+  const releaseSecond = beginCredentialUse(credentialId);
+  assert.deepEqual(getCredentialLoad(credentialId), { inFlight: 2, totalUses: 2 });
+  releaseFirst();
+  releaseFirst();
+  assert.deepEqual(getCredentialLoad(credentialId), { inFlight: 1, totalUses: 2 });
+  releaseSecond();
+  assert.deepEqual(getCredentialLoad(credentialId), { inFlight: 0, totalUses: 2 });
 });
 
 test("zero-weight candidates are excluded", () => {

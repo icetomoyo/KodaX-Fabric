@@ -3,6 +3,7 @@ import { env } from "../../config.js";
 import { db } from "../../db/client.js";
 import { upstreamCredentials } from "../../db/schema/index.js";
 import { decryptSecret } from "../crypto-secret.js";
+import { beginCredentialUse } from "./credential-load.js";
 import {
   DEFAULT_RELAY_PROTOCOL,
   type RelayProtocol,
@@ -436,7 +437,22 @@ export async function sendRelayUpstream(
     1,
     Math.min(3_600, Math.trunc(input.cooldownSeconds ?? env.RELAY_COOLDOWN_SECONDS)),
   );
-  const lifetime = createRequestLifetime(timeoutMs, input.signal);
+  const baseLifetime = createRequestLifetime(timeoutMs, input.signal);
+  // Load tracking must span the whole attempt, including streamed bodies, so
+  // release is tied to the same cleanup/abort pair that owns the lifetime.
+  const releaseLoad = beginCredentialUse(input.candidate.credentialId);
+  const lifetime: RequestLifetime = {
+    signal: baseLifetime.signal,
+    didTimeout: baseLifetime.didTimeout,
+    cleanup: () => {
+      releaseLoad();
+      baseLifetime.cleanup();
+    },
+    abort: (reason?: unknown) => {
+      releaseLoad();
+      baseLifetime.abort(reason);
+    },
+  };
 
   const result = (
     partial: Omit<RelayUpstreamAttemptResult, "latencyMs" | "cleanup" | "abort">,

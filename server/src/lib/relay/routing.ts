@@ -7,6 +7,11 @@ import {
   upstreamCredentials,
 } from "../../db/schema/index.js";
 import { effectiveCredentialStatus } from "../credential-status.js";
+import {
+  type CredentialLoad,
+  type CredentialLoadReader,
+  getCredentialLoad,
+} from "./credential-load.js";
 import { resolveProtocolUpstreamConfig } from "../upstream-protocol-config.js";
 import type { RelayProtocol } from "./protocol.js";
 import type {
@@ -240,36 +245,52 @@ function compareRank(a: RelayCandidate, b: RelayCandidate): number {
   return bRoute - aRoute || bCredential - aCredential;
 }
 
-function weightedShuffle(
+function shuffle(
   candidates: RelayCandidate[],
   random: () => number,
 ): RelayCandidate[] {
-  const remaining = [...candidates];
-  const ordered: RelayCandidate[] = [];
-  while (remaining.length) {
-    const weights = remaining.map(
-      (candidate) => candidate.routeWeight * candidate.credentialWeight,
-    );
-    const total = weights.reduce((sum, weight) => sum + Math.max(0, weight), 0);
-    if (total <= 0) break;
-    let cursor = random() * total;
-    let index = weights.length - 1;
-    for (let i = 0; i < weights.length; i += 1) {
-      cursor -= Math.max(0, weights[i]);
-      if (cursor < 0) {
-        index = i;
-        break;
-      }
-    }
-    ordered.push(remaining[index]);
-    remaining.splice(index, 1);
+  const items = [...candidates];
+  for (let i = items.length - 1; i > 0; i -= 1) {
+    const j = Math.min(i, Math.floor(random() * (i + 1)));
+    [items[i], items[j]] = [items[j], items[i]];
   }
-  return ordered;
+  return items;
+}
+
+/**
+ * Least-loaded ordering inside one priority group: fewest in-flight requests
+ * first, then fewest total uses, then higher combined weight (so duplicate
+ * routes of the same credential stay deterministic), and finally random via
+ * the pre-shuffle plus stable sort.
+ */
+function leastLoadedOrder(
+  group: RelayCandidate[],
+  random: () => number,
+  loadOf: CredentialLoadReader,
+): RelayCandidate[] {
+  const loads = new Map<number, CredentialLoad>();
+  for (const candidate of group) {
+    if (!loads.has(candidate.credentialId)) {
+      loads.set(candidate.credentialId, loadOf(candidate.credentialId));
+    }
+  }
+  const loadFor = (candidate: RelayCandidate): CredentialLoad =>
+    loads.get(candidate.credentialId) ?? { inFlight: 0, totalUses: 0 };
+  return shuffle(group, random).sort((a, b) => {
+    const la = loadFor(a);
+    const lb = loadFor(b);
+    return (
+      la.inFlight - lb.inFlight ||
+      la.totalUses - lb.totalUses ||
+      b.routeWeight * b.credentialWeight - a.routeWeight * a.credentialWeight
+    );
+  });
 }
 
 export function orderRelayCandidates(
   candidates: RelayCandidate[],
   random: () => number = Math.random,
+  loadOf: CredentialLoadReader = getCredentialLoad,
 ): RelayCandidate[] {
   const ranked = candidates
     .filter(
@@ -289,9 +310,9 @@ export function orderRelayCandidates(
         candidate.routePriority === first.routePriority &&
         candidate.credentialPriority === first.credentialPriority,
     );
-    for (const candidate of weightedShuffle(group, random)) {
+    for (const candidate of leastLoadedOrder(group, random, loadOf)) {
       // A request must not retry the same credential. Deduplicate only after
-      // weighting equal-priority routes so duplicate mappings do not make the
+      // ordering equal-priority routes so duplicate mappings do not make the
       // database's unspecified row order decide the upstream model.
       if (selectedCredentialIds.has(candidate.credentialId)) continue;
       selectedCredentialIds.add(candidate.credentialId);
