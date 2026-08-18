@@ -4,10 +4,12 @@ import { DataTable } from "@/components/shared/data-table";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { useRequests } from "@/lib/query/hooks";
+import { useAuth } from "@/lib/auth";
+import { homeFor } from "@/lib/consoles";
 import type { RequestRow } from "@/types/api";
 import type { ColumnDef } from "@tanstack/react-table";
 
-const columns: ColumnDef<RequestRow>[] = [
+const baseColumns: ColumnDef<RequestRow>[] = [
   { accessorKey: "created_at", header: "时间" },
   { accessorKey: "project", header: "Project" },
   { accessorKey: "model", header: "Model" },
@@ -21,9 +23,17 @@ const columns: ColumnDef<RequestRow>[] = [
   { accessorKey: "task_type", header: "task_type" },
 ];
 
+const platformColumns: ColumnDef<RequestRow>[] = [
+  { accessorKey: "customer_cny", header: "对客 CNY" },
+  { accessorKey: "profit_cny", header: "毛利 CNY" },
+];
+
 export default function RequestsPage() {
+  const { operator } = useAuth();
   const [project, setProject] = useState("");
   const requests = useRequests(project || undefined);
+  const columns =
+    homeFor(operator?.role) === "/platform" ? [...baseColumns, ...platformColumns] : baseColumns;
 
   return (
     <div>

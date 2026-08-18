@@ -4,10 +4,12 @@ import { DataTable } from "@/components/shared/data-table";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { useUsage } from "@/lib/query/hooks";
+import { useAuth } from "@/lib/auth";
+import { homeFor } from "@/lib/consoles";
 import type { UsageCell } from "@/types/api";
 import type { ColumnDef } from "@tanstack/react-table";
 
-const columns: ColumnDef<UsageCell>[] = [
+const baseColumns: ColumnDef<UsageCell>[] = [
   { accessorKey: "day", header: "日" },
   { accessorKey: "project", header: "Project" },
   { accessorKey: "model", header: "Model" },
@@ -19,10 +21,18 @@ const columns: ColumnDef<UsageCell>[] = [
   { accessorKey: "cost_cny", header: "成本 CNY" },
 ];
 
+const profitColumns: ColumnDef<UsageCell>[] = [
+  { accessorKey: "customer_cny", header: "对客 CNY" },
+  { accessorKey: "profit_cny", header: "毛利 CNY" },
+];
+
 export default function OverviewPage() {
+  const { operator } = useAuth();
   const [day, setDay] = useState("");
   const [project, setProject] = useState("");
   const usage = useUsage(day || undefined, project || undefined);
+  const columns =
+    homeFor(operator?.role) === "/platform" ? [...baseColumns, ...profitColumns] : baseColumns;
 
   return (
     <div>

@@ -1,0 +1,1 @@
+const n=[{value:"super_admin",label:"超级管理员"},{value:"enterprise_admin",label:"企业管理员"},{value:"org_admin",label:"企业管理员"},{value:"team_admin",label:"团队管理员"},{value:"developer",label:"开发者"}];function i(e){if(e==="admin")return"企业管理员";const a=n.find(l=>l.value===e);return(a==null?void 0:a.label)||e||"—"}function r(e){return e==="team_admin"}export{r as i,i as r};

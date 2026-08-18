@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { useDeletePrice, useModels, usePrices, useUpsertPrice } from "@/lib/query/hooks";
+import { adminApi } from "@/lib/api";
 import { errMsg } from "@/lib/error";
 import type { Price } from "@/types/api";
 
@@ -93,7 +94,34 @@ export default function PricesPage() {
           </Dialog>
         }
       />
+      <MarkupForm />
       <DataTable columns={columns} data={list.data ?? []} isLoading={list.isPending} />
     </div>
+  );
+}
+
+function MarkupForm() {
+  const [value, setValue] = useState("1");
+  return (
+    <form
+      className="mb-4 flex flex-wrap items-end gap-3"
+      onSubmit={async (e) => {
+        e.preventDefault();
+        try {
+          await adminApi.setMarkup(Number(value));
+          toast.success("倍率已更新");
+        } catch (err) {
+          toast.error(errMsg(err));
+        }
+      }}
+    >
+      <div>
+        <div className="mb-1 text-xs text-muted-foreground">全局对客倍率</div>
+        <Input value={value} onChange={(e) => setValue(e.target.value)} />
+      </div>
+      <Button type="submit" variant="secondary">
+        保存倍率
+      </Button>
+    </form>
   );
 }

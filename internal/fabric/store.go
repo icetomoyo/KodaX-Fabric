@@ -118,6 +118,8 @@ type RequestRow struct {
 	OutputTokens   int
 	CachedTokens   int
 	CostCNY        float64
+	CustomerCNY    float64
+	ID             string
 	Status         int
 	LatencyMS      int64
 	RunID          string
@@ -139,6 +141,8 @@ type UsageCell struct {
 	OutputTokens   int     `json:"output_tokens"`
 	CachedTokens   int     `json:"cached_tokens"`
 	CostCNY        float64 `json:"cost_cny"`
+	CustomerCNY    float64 `json:"customer_cny,omitempty"`
+	ProfitCNY      float64 `json:"profit_cny,omitempty"`
 	Calls          int     `json:"calls"`
 	FailedCalls    int     `json:"failed_calls"`
 	ZeroUsageCalls int     `json:"zero_usage_calls"`
@@ -194,6 +198,8 @@ type Store interface {
 	TeamBudget(ctx context.Context, team string) (BudgetConfig, error)
 	SetEnterpriseBudget(ctx context.Context, name string, cfg BudgetConfig) error
 	EnterpriseBudget(ctx context.Context, name string) (BudgetConfig, error)
+	Markup(ctx context.Context) (float64, error)
+	SetMarkup(ctx context.Context, markup float64) error
 }
 
 func HashVirtualKey(plaintext string) string {
@@ -219,6 +225,7 @@ type MemoryStore struct {
 	teamRPM      map[string]int
 	teamBudget   map[string]BudgetConfig
 	entBudget    map[string]BudgetConfig
+	markup       float64
 	AppendDelay  time.Duration
 }
 
@@ -248,6 +255,7 @@ func NewSeededMemoryStore(adminHash string) *MemoryStore {
 		teamRPM:     map[string]int{},
 		teamBudget:  map[string]BudgetConfig{},
 		entBudget:   map[string]BudgetConfig{},
+		markup:      1,
 	}
 }
 
@@ -438,6 +446,7 @@ func addUsage(cell *UsageCell, r RequestRow) {
 	cell.OutputTokens += r.OutputTokens
 	cell.CachedTokens += r.CachedTokens
 	cell.CostCNY += r.CostCNY
+	cell.CustomerCNY += r.CustomerCNY
 	if r.Status >= 400 {
 		cell.FailedCalls++
 	} else if r.InputTokens == 0 && r.OutputTokens == 0 && r.CachedTokens == 0 {
@@ -797,6 +806,22 @@ func (s *MemoryStore) EnterpriseBudget(_ context.Context, name string) (BudgetCo
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.entBudget[name], nil
+}
+
+func (s *MemoryStore) Markup(_ context.Context) (float64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.markup <= 0 {
+		return 1, nil
+	}
+	return s.markup, nil
+}
+
+func (s *MemoryStore) SetMarkup(_ context.Context, markup float64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.markup = markup
+	return nil
 }
 
 func shanghai() *time.Location {

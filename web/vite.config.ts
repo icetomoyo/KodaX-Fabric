@@ -10,6 +10,9 @@ export default defineConfig({
   server: {
     proxy: {
       "/admin/api": "http://127.0.0.1:18080",
+      "/platform/api": "http://127.0.0.1:18080",
+      "/enterprise/api": "http://127.0.0.1:18080",
+      "/team/api": "http://127.0.0.1:18080",
       "/health": "http://127.0.0.1:18080",
       "/v1": "http://127.0.0.1:18080",
     },

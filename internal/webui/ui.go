@@ -22,11 +22,13 @@ func Handler() http.Handler {
 			return
 		}
 		p := r.URL.Path
-		if strings.HasPrefix(p, "/admin/api") || strings.HasPrefix(p, "/v1/") {
+		if strings.HasPrefix(p, "/admin/api") || strings.HasPrefix(p, "/platform/api") ||
+			strings.HasPrefix(p, "/enterprise/api") || strings.HasPrefix(p, "/team/api") || strings.HasPrefix(p, "/v1/") {
 			http.NotFound(w, r)
 			return
 		}
-		if p == "/" || p == "/login" || p == "/admin" || strings.HasPrefix(p, "/admin/") {
+		if p == "/" || p == "/login" || p == "/admin" || strings.HasPrefix(p, "/admin/") ||
+			strings.HasPrefix(p, "/platform") || strings.HasPrefix(p, "/enterprise") || strings.HasPrefix(p, "/team") {
 			http.ServeFileFS(w, r, distFS, "dist/index.html")
 			return
 		}

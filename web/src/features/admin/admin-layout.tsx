@@ -1,33 +1,15 @@
 import { NavLink, Outlet } from "react-router-dom";
-import {
-  Activity,
-  BookOpen,
-  Building2,
-  KeyRound,
-  ListOrdered,
-  LogOut,
-  Server,
-  Table2,
-  Tags,
-} from "lucide-react";
+import { LogOut } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { useHealth } from "@/lib/query/hooks";
 import { cn } from "@/lib/utils";
-
-const nav = [
-  { to: "/admin/overview", label: "用量总览", icon: Activity },
-  { to: "/admin/requests", label: "请求流水", icon: ListOrdered },
-  { to: "/admin/projects", label: "项目", icon: Building2 },
-  { to: "/admin/keys", label: "虚拟钥匙", icon: KeyRound },
-  { to: "/admin/providers", label: "上游 Provider", icon: Server },
-  { to: "/admin/models", label: "Model 映射", icon: Tags },
-  { to: "/admin/prices", label: "价格表", icon: Table2 },
-  { to: "/admin/docs", label: "接口文档", icon: BookOpen },
-];
+import { visibleNav } from "@/lib/consoles";
+import { roleLabel } from "@/lib/labels";
 
 export default function AdminLayout() {
   const { operator, logout } = useAuth();
   const health = useHealth();
+  const nav = visibleNav(operator?.role);
 
   return (
     <div className="flex min-h-screen bg-background">
@@ -38,7 +20,7 @@ export default function AdminLayout() {
           </div>
           <div className="leading-tight">
             <div className="text-sm font-semibold text-foreground">KodaX Fabric</div>
-            <div className="text-xs text-muted-foreground">管理控制台</div>
+            <div className="text-xs text-muted-foreground">{roleLabel(operator?.role)}控制台</div>
           </div>
         </div>
         <nav className="flex-1 space-y-0.5 px-3">
@@ -64,7 +46,7 @@ export default function AdminLayout() {
           })}
         </nav>
         <div className="border-t border-border px-5 py-4">
-          <span className="block text-xs text-muted-foreground">管理员</span>
+          <span className="block text-xs text-muted-foreground">{roleLabel(operator?.role)}</span>
         </div>
       </aside>
 

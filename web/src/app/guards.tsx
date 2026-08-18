@@ -26,3 +26,18 @@ export function RequireAdmin() {
   if (status === "guest") return <Navigate to="/" replace state={{ from: loc.pathname }} />;
   return <Outlet />;
 }
+
+export function RequireRoles({ roles }: { roles: string[] }) {
+  const { status, operator } = useAuth();
+  if (status === "loading") return <FullScreenLoader />;
+  const role = operator?.role ?? "";
+  const ok = roles.includes(role) || (roles.includes("enterprise_admin") && (role === "org_admin" || role === "admin"));
+  if (!ok) {
+    return (
+      <div className="p-8 text-sm text-destructive">
+        403 此控制台不属于当前角色
+      </div>
+    );
+  }
+  return <Outlet />;
+}

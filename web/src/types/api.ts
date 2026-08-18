@@ -42,6 +42,8 @@ export type RequestRow = {
   output_tokens: number;
   cached_tokens: number;
   cost_cny: number;
+  customer_cny?: number;
+  profit_cny?: number;
   status: number;
   latency_ms: number;
   run_id: string;
@@ -60,6 +62,8 @@ export type UsageCell = {
   output_tokens: number;
   cached_tokens: number;
   cost_cny: number;
+  customer_cny?: number;
+  profit_cny?: number;
 };
 
 export type Health = { ok: boolean; service?: string };

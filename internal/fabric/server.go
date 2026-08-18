@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -47,12 +48,30 @@ func NewServer(store Store, provider Provider) *Server {
 
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
+	s.mountRoutes(mux)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if cons, prefix, roles, ok := matchConsole(r.URL.Path); ok {
+			if _, allowed := s.requireRoles(w, r, roles...); !allowed {
+				return
+			}
+			next := r.Clone(withConsole(r.Context(), cons))
+			next.URL.Path = "/admin/api/" + strings.TrimPrefix(r.URL.Path, prefix)
+			mux.ServeHTTP(w, next)
+			return
+		}
+		mux.ServeHTTP(w, r)
+	})
+}
+
+func (s *Server) mountRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/chat/completions", s.handleChatCompletions)
 	mux.HandleFunc("POST /v1/messages", s.handleMessages)
 	mux.HandleFunc("GET /health", s.handleHealth)
 	mux.HandleFunc("POST /admin/api/login", s.handleLogin)
 	mux.HandleFunc("POST /admin/api/logout", s.handleLogout)
 	mux.HandleFunc("GET /admin/api/me", s.handleMe)
+	mux.HandleFunc("GET /admin/api/markup", s.handleGetMarkup)
+	mux.HandleFunc("PUT /admin/api/markup", s.handleSetMarkup)
 	mux.HandleFunc("POST /admin/api/enterprises", s.handleCreateEnterprise)
 	mux.HandleFunc("GET /admin/api/enterprises", s.handleListEnterprises)
 	mux.HandleFunc("POST /admin/api/enterprises/{name}/disable", s.handleDisableEnterprise)
@@ -88,7 +107,112 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /admin/api/usage", s.handleUsage)
 	mux.HandleFunc("GET /admin/api/requests", s.handleRequests)
 	mux.Handle("/", s.fallback())
-	return mux
+}
+
+type consoleKind string
+
+const consoleKey consoleKind = "console"
+
+func withConsole(ctx context.Context, name string) context.Context {
+	return context.WithValue(ctx, consoleKey, name)
+}
+
+func consoleOf(r *http.Request) string {
+	if v, ok := r.Context().Value(consoleKey).(string); ok {
+		return v
+	}
+	return "admin"
+}
+
+func matchConsole(path string) (cons, prefix string, roles []string, ok bool) {
+	switch {
+	case strings.HasPrefix(path, "/platform/api/"):
+		return "platform", "/platform/api/", []string{RoleSuperAdmin}, true
+	case strings.HasPrefix(path, "/enterprise/api/"):
+		return "enterprise", "/enterprise/api/", []string{RoleEnterpriseAdmin}, true
+	case strings.HasPrefix(path, "/team/api/"):
+		return "team", "/team/api/", []string{RoleTeamAdmin, RoleDeveloper}, true
+	default:
+		return "", "", nil, false
+	}
+}
+
+func (s *Server) exposeCustomer(r *http.Request) bool {
+	switch consoleOf(r) {
+	case "enterprise", "team":
+		return false
+	case "platform":
+		return true
+	default:
+		name, ok := s.sessionUser(r)
+		if !ok {
+			return false
+		}
+		rec, found, err := s.Store.GetUser(r.Context(), name)
+		return err == nil && found && rec.Role == RoleSuperAdmin
+	}
+}
+
+func (s *Server) setEntryHeaders(w http.ResponseWriter, ctx context.Context, vk VirtualKeyRecord, reqID string, now time.Time) {
+	w.Header().Set("X-Fabric-Request-Id", reqID)
+	s.books()
+	vkLim, _ := s.Store.VirtualKeyRPM(ctx, vk.Hash)
+	teamLim, _ := s.Store.TeamRPM(ctx, vk.Project)
+	vkRem := s.rates.remaining("vk:"+vk.Hash, vkLim)
+	teamRem := s.rates.remaining("team:"+vk.Project, teamLim)
+	rem := vkRem
+	if teamRem >= 0 && (rem < 0 || teamRem < rem) {
+		rem = teamRem
+	}
+	if rem >= 0 {
+		w.Header().Set("X-Fabric-RateLimit-Remaining", strconv.Itoa(rem))
+	}
+	day := "d:" + shanghaiDay(now)
+	best := -1.0
+	if cfg, err := s.Store.TeamBudget(ctx, vk.Project); err == nil && cfg.DailyCNY > 0 {
+		best = cfg.DailyCNY - s.spend.teamSpent(vk.Project, day)
+	}
+	if ent, ok, err := s.Store.TeamEnterprise(ctx, vk.Project); err == nil && ok {
+		if cfg, err := s.Store.EnterpriseBudget(ctx, ent.Name); err == nil && cfg.DailyCNY > 0 {
+			left := cfg.DailyCNY - s.spend.entSpent(ent.Name, day)
+			if best < 0 || left < best {
+				best = left
+			}
+		}
+	}
+	if best >= 0 {
+		w.Header().Set("X-Fabric-Budget-Remaining", strconv.FormatFloat(best, 'f', -1, 64))
+	}
+}
+
+func (s *Server) handleGetMarkup(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireRoles(w, r, RoleSuperAdmin); !ok {
+		return
+	}
+	n, err := s.Store.Markup(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "store"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]float64{"markup": n})
+}
+
+func (s *Server) handleSetMarkup(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireRoles(w, r, RoleSuperAdmin); !ok {
+		return
+	}
+	var body struct {
+		Markup float64 `json:"markup"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Markup <= 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad_markup"})
+		return
+	}
+	if err := s.Store.SetMarkup(r.Context(), body.Markup); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "store"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]float64{"markup": body.Markup})
 }
 
 func (s *Server) fallback() http.Handler {
@@ -182,16 +306,20 @@ func (s *Server) handlePassthrough(w http.ResponseWriter, r *http.Request, famil
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown_model"})
 		return
 	}
+	reqID := newEntityID("req")
 	if !s.allowRPM(ctx, vk) {
-		s.enqueueRequest(context.WithoutCancel(ctx), vk, head.Model, 0, 0, 0, 0, http.StatusTooManyRequests, started, time.Since(startedWall), fabCtx, nil)
+		s.setEntryHeaders(w, ctx, vk, reqID, started)
+		s.enqueueRequest(context.WithoutCancel(ctx), vk, head.Model, 0, 0, 0, 0, http.StatusTooManyRequests, started, time.Since(startedWall), fabCtx, nil, reqID)
 		writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "rate_limited"})
 		return
 	}
 	if !s.allowBudget(ctx, vk, started) {
-		s.enqueueRequest(context.WithoutCancel(ctx), vk, head.Model, 0, 0, 0, 0, http.StatusPaymentRequired, started, time.Since(startedWall), fabCtx, nil)
+		s.setEntryHeaders(w, ctx, vk, reqID, started)
+		s.enqueueRequest(context.WithoutCancel(ctx), vk, head.Model, 0, 0, 0, 0, http.StatusPaymentRequired, started, time.Since(startedWall), fabCtx, nil, reqID)
 		writeJSON(w, http.StatusPaymentRequired, map[string]string{"error": "budget_exceeded"})
 		return
 	}
+	s.setEntryHeaders(w, ctx, vk, reqID, started)
 	skip := map[string]struct{}{}
 	maxTry := s.maxAttempts()
 	timeout := s.attemptTimeout()
@@ -302,7 +430,7 @@ func (s *Server) handlePassthrough(w http.ResponseWriter, r *http.Request, famil
 			} else {
 				finalStatus = http.StatusBadGateway
 			}
-			s.enqueueRequest(context.WithoutCancel(ctx), vk, head.Model, 0, 0, 0, sumAttemptCost(attempts), finalStatus, started, time.Since(startedWall), fabCtx, attempts)
+			s.enqueueRequest(context.WithoutCancel(ctx), vk, head.Model, 0, 0, 0, sumAttemptCost(attempts), finalStatus, started, time.Since(startedWall), fabCtx, attempts, reqID)
 			writeJSON(w, http.StatusBadGateway, map[string]string{"error": "provider"})
 			return
 		}
@@ -313,17 +441,24 @@ func (s *Server) handlePassthrough(w http.ResponseWriter, r *http.Request, famil
 		finalStatus = lastStatus
 	}
 
-	s.enqueueRequest(context.WithoutCancel(ctx), vk, head.Model, finalIn, finalOut, finalCached, sumAttemptCost(attempts), finalStatus, started, time.Since(startedWall), fabCtx, attempts)
+	s.enqueueRequest(context.WithoutCancel(ctx), vk, head.Model, finalIn, finalOut, finalCached, sumAttemptCost(attempts), finalStatus, started, time.Since(startedWall), fabCtx, attempts, reqID)
 }
 
-func (s *Server) enqueueRequest(ctx context.Context, vk VirtualKeyRecord, model string, in, out, cached int, cost float64, status int, started time.Time, latency time.Duration, fabCtx fabricContext, attempts []AttemptSnap) {
+func (s *Server) enqueueRequest(ctx context.Context, vk VirtualKeyRecord, model string, in, out, cached int, cost float64, status int, started time.Time, latency time.Duration, fabCtx fabricContext, attempts []AttemptSnap, reqID string) {
 	if cost > 0 {
 		s.books()
 		ent, _, _ := s.Store.TeamEnterprise(ctx, vk.Project)
 		s.spend.add(vk.Project, ent.Name, "d:"+shanghaiDay(started), cost)
 		s.spend.add(vk.Project, ent.Name, "m:"+shanghaiMonth(started), cost)
 	}
-	go s.appendRequest(ctx, vk, model, in, out, cached, cost, status, started, latency, fabCtx, attempts)
+	markup, err := s.Store.Markup(ctx)
+	if err != nil || markup <= 0 {
+		markup = 1
+	}
+	if reqID == "" {
+		reqID = newEntityID("req")
+	}
+	go s.appendRequest(ctx, vk, model, in, out, cached, cost, cost*markup, reqID, status, started, latency, fabCtx, attempts)
 }
 
 func (s *Server) books() *HealthBook {
@@ -383,7 +518,7 @@ func (s *Server) allowBudget(ctx context.Context, vk VirtualKeyRecord, now time.
 	return true
 }
 
-func (s *Server) appendRequest(ctx context.Context, vk VirtualKeyRecord, model string, in, out, cached int, cost float64, status int, started time.Time, latency time.Duration, fabCtx fabricContext, attempts []AttemptSnap) {
+func (s *Server) appendRequest(ctx context.Context, vk VirtualKeyRecord, model string, in, out, cached int, cost, customer float64, reqID string, status int, started time.Time, latency time.Duration, fabCtx fabricContext, attempts []AttemptSnap) {
 	if attempts == nil {
 		attempts = []AttemptSnap{}
 	}
@@ -395,6 +530,8 @@ func (s *Server) appendRequest(ctx context.Context, vk VirtualKeyRecord, model s
 		OutputTokens:   out,
 		CachedTokens:   cached,
 		CostCNY:        cost,
+		CustomerCNY:    customer,
+		ID:             reqID,
 		Status:         status,
 		LatencyMS:      latency.Milliseconds(),
 		RunID:          fabCtx.RunID,
@@ -1770,7 +1907,23 @@ func (s *Server) handleUsage(w http.ResponseWriter, r *http.Request) {
 		}
 		cells = filtered
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"project": project, "day": day, "rows": cells})
+	show := s.exposeCustomer(r)
+	rows := make([]map[string]any, 0, len(cells))
+	for _, cell := range cells {
+		item := map[string]any{
+			"project": cell.Project, "model": cell.Model, "day": cell.Day,
+			"input_tokens": cell.InputTokens, "output_tokens": cell.OutputTokens,
+			"cached_tokens": cell.CachedTokens, "cost_cny": cell.CostCNY,
+			"calls": cell.Calls, "failed_calls": cell.FailedCalls,
+			"zero_usage_calls": cell.ZeroUsageCalls,
+		}
+		if show {
+			item["customer_cny"] = cell.CustomerCNY
+			item["profit_cny"] = cell.CustomerCNY - cell.CostCNY
+		}
+		rows = append(rows, item)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"project": project, "day": day, "rows": rows})
 }
 
 func (s *Server) handleRequests(w http.ResponseWriter, r *http.Request) {
@@ -1797,42 +1950,34 @@ func (s *Server) handleRequests(w http.ResponseWriter, r *http.Request) {
 	if rows == nil {
 		rows = []RequestRow{}
 	}
-	type view struct {
-		VirtualKeyHash string        `json:"virtual_key_hash"`
-		Project        string        `json:"project"`
-		Model          string        `json:"model"`
-		InputTokens    int           `json:"input_tokens"`
-		OutputTokens   int           `json:"output_tokens"`
-		CachedTokens   int           `json:"cached_tokens"`
-		CostCNY        float64       `json:"cost_cny"`
-		Status         int           `json:"status"`
-		LatencyMS      int64         `json:"latency_ms"`
-		RunID          string        `json:"run_id"`
-		TaskType       string        `json:"task_type"`
-		CreatedAt      time.Time     `json:"created_at"`
-		Attempts       []AttemptSnap `json:"attempts"`
-	}
-	out := make([]view, 0, len(rows))
+	show := s.exposeCustomer(r)
+	out := make([]map[string]any, 0, len(rows))
 	for _, row := range rows {
-		atts := row.Attempts
-		if atts == nil {
-			atts = []AttemptSnap{}
+		item := map[string]any{
+			"id":               row.ID,
+			"virtual_key_hash": row.VirtualKeyHash,
+			"project":          row.Project,
+			"model":            row.Model,
+			"input_tokens":     row.InputTokens,
+			"output_tokens":    row.OutputTokens,
+			"cached_tokens":    row.CachedTokens,
+			"cost_cny":         row.CostCNY,
+			"status":           row.Status,
+			"latency_ms":       row.LatencyMS,
+			"run_id":           row.RunID,
+			"task_type":        row.TaskType,
+			"created_at":       row.CreatedAt,
 		}
-		out = append(out, view{
-			VirtualKeyHash: row.VirtualKeyHash,
-			Project:        row.Project,
-			Model:          row.Model,
-			InputTokens:    row.InputTokens,
-			OutputTokens:   row.OutputTokens,
-			CachedTokens:   row.CachedTokens,
-			CostCNY:        row.CostCNY,
-			Status:         row.Status,
-			LatencyMS:      row.LatencyMS,
-			RunID:          row.RunID,
-			TaskType:       row.TaskType,
-			CreatedAt:      row.CreatedAt,
-			Attempts:       atts,
-		})
+		if show {
+			item["customer_cny"] = row.CustomerCNY
+			item["profit_cny"] = row.CustomerCNY - row.CostCNY
+			atts := row.Attempts
+			if atts == nil {
+				atts = []AttemptSnap{}
+			}
+			item["attempts"] = atts
+		}
+		out = append(out, item)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"project": project, "requests": out})
 }

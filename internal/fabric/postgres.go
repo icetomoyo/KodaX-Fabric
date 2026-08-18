@@ -297,11 +297,11 @@ func (s *PostgresStore) AppendRequest(ctx context.Context, row RequestRow) error
 		INSERT INTO requests (
 			virtual_key_hash, project_name, model,
 			input_tokens, output_tokens, cached_tokens,
-			cost_cny, status, latency_ms, created_at, run_id, task_type, attempts
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+			cost_cny, customer_cny, request_id, status, latency_ms, created_at, run_id, task_type, attempts
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
 		row.VirtualKeyHash, row.Project, row.Model,
 		row.InputTokens, row.OutputTokens, row.CachedTokens,
-		row.CostCNY, row.Status, row.LatencyMS, row.CreatedAt, row.RunID, row.TaskType, attempts)
+		row.CostCNY, row.CustomerCNY, row.ID, row.Status, row.LatencyMS, row.CreatedAt, row.RunID, row.TaskType, attempts)
 	return err
 }
 
@@ -309,7 +309,8 @@ func (s *PostgresStore) ListRequests(ctx context.Context, project string) ([]Req
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT virtual_key_hash, project_name, model,
 		       input_tokens, output_tokens, cached_tokens,
-		       cost_cny, status, latency_ms, created_at, run_id, task_type,
+		       cost_cny, COALESCE(customer_cny, 0), COALESCE(request_id, ''),
+		       status, latency_ms, created_at, run_id, task_type,
 		       COALESCE(attempts, '[]'::jsonb)
 		FROM requests
 		WHERE project_name = $1
@@ -324,7 +325,8 @@ func (s *PostgresStore) ListRequests(ctx context.Context, project string) ([]Req
 		var attempts []byte
 		if err := rows.Scan(&row.VirtualKeyHash, &row.Project, &row.Model,
 			&row.InputTokens, &row.OutputTokens, &row.CachedTokens,
-			&row.CostCNY, &row.Status, &row.LatencyMS, &row.CreatedAt, &row.RunID, &row.TaskType, &attempts); err != nil {
+			&row.CostCNY, &row.CustomerCNY, &row.ID,
+			&row.Status, &row.LatencyMS, &row.CreatedAt, &row.RunID, &row.TaskType, &attempts); err != nil {
 			return nil, err
 		}
 		if len(attempts) > 0 {
@@ -341,7 +343,8 @@ func (s *PostgresStore) UsageByProjectModelDay(ctx context.Context, project, day
 		       COUNT(*)::bigint,
 		       SUM(CASE WHEN status >= 400 THEN 1 ELSE 0 END)::bigint,
 		       SUM(CASE WHEN status < 400 AND input_tokens = 0 AND output_tokens = 0 AND cached_tokens = 0 THEN 1 ELSE 0 END)::bigint,
-		       SUM(input_tokens), SUM(output_tokens), SUM(cached_tokens), SUM(cost_cny)
+		       SUM(input_tokens), SUM(output_tokens), SUM(cached_tokens), SUM(cost_cny),
+		       SUM(COALESCE(customer_cny, 0))
 		FROM requests
 		WHERE ($1 = '' OR project_name = $1)
 		  AND ((created_at AT TIME ZONE 'Asia/Shanghai')::date) = $2::date
@@ -355,7 +358,7 @@ func (s *PostgresStore) UsageByProjectModelDay(ctx context.Context, project, day
 	for rows.Next() {
 		var calls, failed, zero, in, outTok, cached int64
 		cell := UsageCell{Day: day}
-		if err := rows.Scan(&cell.Project, &cell.Model, &calls, &failed, &zero, &in, &outTok, &cached, &cell.CostCNY); err != nil {
+		if err := rows.Scan(&cell.Project, &cell.Model, &calls, &failed, &zero, &in, &outTok, &cached, &cell.CostCNY, &cell.CustomerCNY); err != nil {
 			return nil, err
 		}
 		cell.Calls = int(calls)
@@ -843,4 +846,27 @@ func (s *PostgresStore) EnterpriseBudget(ctx context.Context, name string) (Budg
 		return BudgetConfig{}, nil
 	}
 	return cfg, err
+}
+
+func (s *PostgresStore) Markup(ctx context.Context) (float64, error) {
+	var raw string
+	err := s.db.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = 'markup'`).Scan(&raw)
+	if err == sql.ErrNoRows {
+		return 1, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	var n float64
+	if _, err := fmt.Sscanf(raw, "%f", &n); err != nil || n <= 0 {
+		return 1, nil
+	}
+	return n, nil
+}
+
+func (s *PostgresStore) SetMarkup(ctx context.Context, markup float64) error {
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO settings (key, value) VALUES ('markup', $1)
+		ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`, fmt.Sprintf("%g", markup))
+	return err
 }

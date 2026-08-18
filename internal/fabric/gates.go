@@ -130,6 +130,19 @@ func (r *RateBook) fits(key string, limit int) bool {
 	return len(r.prune(key, r.now())) < limit
 }
 
+func (r *RateBook) remaining(key string, limit int) int {
+	if limit <= 0 {
+		return -1
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	n := limit - len(r.prune(key, r.now()))
+	if n < 0 {
+		return 0
+	}
+	return n
+}
+
 func (r *RateBook) allow(key string, limit int) bool {
 	if limit <= 0 {
 		return true

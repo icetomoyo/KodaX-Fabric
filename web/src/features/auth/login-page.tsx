@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useAuth } from "@/lib/auth";
+import { homeFor } from "@/lib/consoles";
 import { errMsg } from "@/lib/error";
 
 const schema = z.object({
@@ -16,7 +17,7 @@ const schema = z.object({
 type Values = z.infer<typeof schema>;
 
 export function LoginPage() {
-  const { status, login } = useAuth();
+  const { status, login, operator } = useAuth();
   const nav = useNavigate();
   const loc = useLocation();
   const [err, setErr] = useState("");
@@ -31,15 +32,15 @@ export function LoginPage() {
 
   if (status === "authed") {
     const from = (loc.state as { from?: string } | null)?.from;
-    const dest = from && from !== "/" ? from : "/admin";
+    const dest = from && from !== "/" ? from : homeFor(operator?.role);
     return <Navigate to={dest} replace />;
   }
 
   async function onSubmit(v: Values) {
     setErr("");
     try {
-      await login(v.username, v.password);
-      nav("/admin", { replace: true });
+      const op = await login(v.username, v.password);
+      nav(homeFor(op.role), { replace: true });
     } catch (e) {
       setErr(errMsg(e, "无法连接网关"));
     }
