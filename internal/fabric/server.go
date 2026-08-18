@@ -61,6 +61,12 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /admin/api/providers", s.handleListProviders)
 	mux.HandleFunc("GET /admin/api/providers/{name}", s.handleGetProvider)
 	mux.HandleFunc("POST /admin/api/providers/{name}/disable", s.handleDisableProvider)
+	mux.HandleFunc("POST /admin/api/providers/{name}/keys", s.handleCreateProviderKey)
+	mux.HandleFunc("GET /admin/api/providers/{name}/keys", s.handleListProviderKeys)
+	mux.HandleFunc("POST /admin/api/providers/{name}/keys/{id}/disable", s.handleDisableProviderKey)
+	mux.HandleFunc("POST /admin/api/channels", s.handleCreateChannel)
+	mux.HandleFunc("GET /admin/api/channels", s.handleListChannels)
+	mux.HandleFunc("POST /admin/api/channels/{id}/disable", s.handleDisableChannel)
 	mux.HandleFunc("POST /admin/api/models", s.handleCreateModel)
 	mux.HandleFunc("GET /admin/api/models", s.handleListModels)
 	mux.HandleFunc("POST /admin/api/models/{name}/disable", s.handleDisableModel)
@@ -160,21 +166,21 @@ func (s *Server) handlePassthrough(w http.ResponseWriter, r *http.Request, famil
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "store"})
 		return
 	}
-	if !found || route.Disabled || route.ProviderDisabled || route.Family != family {
+	if !found || route.Disabled || route.Family != family {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown_model"})
 		return
 	}
-	price, found, err := s.Store.LookupPrice(ctx, head.Model)
+	selected, price, okPool, err := s.selectChannel(ctx, route, family)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "store"})
 		return
 	}
-	if !found {
+	if !okPool {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "no_price"})
 		return
 	}
 
-	status, header, rc, err := s.callUpstream(ctx, family, route, raw, invoke)
+	status, header, rc, err := s.callUpstream(ctx, family, route, selected, raw, invoke)
 	if err != nil {
 		s.enqueueRequest(context.WithoutCancel(ctx), vk, head.Model, 0, 0, 0, 0, http.StatusBadGateway, started, time.Since(startedWall), fabCtx)
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "provider"})
@@ -258,19 +264,106 @@ func parseFabricContext(raw string) (fabricContext, error) {
 	return ctx, nil
 }
 
-func (s *Server) callUpstream(ctx context.Context, family string, route ModelRoute, raw []byte, fallback func(context.Context, []byte) (int, map[string]string, io.ReadCloser, error)) (int, map[string]string, io.ReadCloser, error) {
-	if !s.UseRegistry || route.Provider == "" {
+func (s *Server) selectChannel(ctx context.Context, route ModelRoute, family string) (Channel, Price, bool, error) {
+	chs, err := s.Store.ListChannels(ctx, route.Name)
+	if err != nil {
+		return Channel{}, Price{}, false, err
+	}
+	if len(chs) == 0 {
+		if route.ProviderDisabled {
+			return Channel{}, Price{}, false, nil
+		}
+		price, found, err := s.Store.LookupPrice(ctx, route.Name)
+		if err != nil || !found {
+			return Channel{}, Price{}, false, err
+		}
+		return Channel{}, price, true, nil
+	}
+	var best Channel
+	var found bool
+	for _, ch := range chs {
+		ok, err := s.channelCallable(ctx, route, ch, family)
+		if err != nil {
+			return Channel{}, Price{}, false, err
+		}
+		if !ok {
+			continue
+		}
+		if !found || ch.Priority > best.Priority || (ch.Priority == best.Priority && ch.Weight > best.Weight) {
+			best = ch
+			found = true
+		}
+	}
+	if !found {
+		return Channel{}, Price{}, false, nil
+	}
+	return best, Price{Model: route.Name, InputCNY: best.InputCNY, OutputCNY: best.OutputCNY, CachedCNY: best.CachedCNY}, true, nil
+}
+
+func (s *Server) channelCallable(ctx context.Context, route ModelRoute, ch Channel, family string) (bool, error) {
+	if ch.Disabled || !ch.HasPrice || route.Disabled || route.Family != family {
+		return false, nil
+	}
+	key, ok, err := s.Store.GetProviderKey(ctx, ch.ProviderKey)
+	if err != nil || !ok || key.Disabled {
+		return false, err
+	}
+	up, ok, err := s.Store.GetUpstream(ctx, key.Provider)
+	if err != nil || !ok || up.Disabled || up.Family != family {
+		return false, err
+	}
+	return true, nil
+}
+
+func (s *Server) callUpstream(ctx context.Context, family string, route ModelRoute, ch Channel, raw []byte, fallback func(context.Context, []byte) (int, map[string]string, io.ReadCloser, error)) (int, map[string]string, io.ReadCloser, error) {
+	if !s.UseRegistry {
+		return fallback(ctx, raw)
+	}
+	if ch.ProviderKey != "" {
+		key, ok, err := s.Store.GetProviderKey(ctx, ch.ProviderKey)
+		if err != nil || !ok {
+			return 0, nil, nil, err
+		}
+		up, ok, err := s.Store.GetUpstream(ctx, key.Provider)
+		if err != nil || !ok {
+			return 0, nil, nil, err
+		}
+		plain, err := OpenSecret(s.MasterKey, key.KeyCiphertext)
+		if err != nil {
+			return 0, nil, nil, err
+		}
+		live := NewLiveProvider(up.BaseURL, plain)
+		if family == "anthropic" {
+			return live.Messages(ctx, raw)
+		}
+		return live.ChatCompletions(ctx, raw)
+	}
+	if route.Provider == "" {
 		return fallback(ctx, raw)
 	}
 	up, found, err := s.Store.GetUpstream(ctx, route.Provider)
 	if err != nil || !found {
 		return 0, nil, nil, err
 	}
-	key, err := OpenSecret(s.MasterKey, up.KeyCiphertext)
+	keys, err := s.Store.ListProviderKeys(ctx, route.Provider)
 	if err != nil {
 		return 0, nil, nil, err
 	}
-	live := NewLiveProvider(up.BaseURL, key)
+	var cipher string
+	for _, k := range keys {
+		if !k.Disabled {
+			cipher = k.KeyCiphertext
+			break
+		}
+	}
+	if cipher == "" {
+		return 0, nil, nil, errUnknownKey
+	}
+	plain, err := OpenSecret(s.MasterKey, cipher)
+	if err != nil {
+		return 0, nil, nil, err
+	}
+	live := NewLiveProvider(up.BaseURL, plain)
 	if family == "anthropic" {
 		return live.Messages(ctx, raw)
 	}
@@ -856,13 +949,19 @@ func (s *Server) handleCreateProvider(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	err = s.Store.CreateUpstream(r.Context(), Upstream{
-		Name: body.Name, Family: body.Family, BaseURL: body.BaseURL, KeyCiphertext: sealed,
+		Name: body.Name, Family: body.Family, BaseURL: body.BaseURL,
 	})
 	if err == errDuplicate {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "duplicate"})
 		return
 	}
 	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "store"})
+		return
+	}
+	if err := s.Store.CreateProviderKey(r.Context(), ProviderKey{
+		ID: newEntityID("pk"), Provider: body.Name, KeyCiphertext: sealed,
+	}); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "store"})
 		return
 	}
@@ -915,6 +1014,199 @@ func (s *Server) handleDisableProvider(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "disabled"})
+}
+
+func (s *Server) handleCreateProviderKey(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireRoles(w, r, RoleSuperAdmin); !ok {
+		return
+	}
+	provider := r.PathValue("name")
+	if _, found, err := s.Store.GetUpstream(r.Context(), provider); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "store"})
+		return
+	} else if !found {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not_found"})
+		return
+	}
+	var body struct {
+		APIKey string `json:"api_key"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.APIKey) == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad_key"})
+		return
+	}
+	sealed, err := SealSecret(s.MasterKey, body.APIKey)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "encrypt"})
+		return
+	}
+	rec := ProviderKey{ID: newEntityID("pk"), Provider: provider, KeyCiphertext: sealed}
+	if err := s.Store.CreateProviderKey(r.Context(), rec); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "store"})
+		return
+	}
+	writeJSON(w, http.StatusCreated, publicProviderKey(rec))
+}
+
+func (s *Server) handleListProviderKeys(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireRoles(w, r, RoleSuperAdmin); !ok {
+		return
+	}
+	keys, err := s.Store.ListProviderKeys(r.Context(), r.PathValue("name"))
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "store"})
+		return
+	}
+	out := make([]map[string]any, 0, len(keys))
+	for _, k := range keys {
+		out = append(out, publicProviderKey(k))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"keys": out})
+}
+
+func (s *Server) handleDisableProviderKey(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireRoles(w, r, RoleSuperAdmin); !ok {
+		return
+	}
+	ok, err := s.Store.DisableProviderKey(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "store"})
+		return
+	}
+	if !ok {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not_found"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "disabled"})
+}
+
+func publicProviderKey(k ProviderKey) map[string]any {
+	return map[string]any{"id": k.ID, "provider": k.Provider, "disabled": k.Disabled}
+}
+
+func (s *Server) handleCreateChannel(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireRoles(w, r, RoleSuperAdmin); !ok {
+		return
+	}
+	var body struct {
+		Model       string   `json:"model"`
+		ProviderKey string   `json:"provider_key"`
+		Weight      int      `json:"weight"`
+		Priority    int      `json:"priority"`
+		InputCNY    *float64 `json:"input_cny"`
+		OutputCNY   *float64 `json:"output_cny"`
+		CachedCNY   *float64 `json:"cached_cny"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad_body"})
+		return
+	}
+	body.Model = strings.TrimSpace(body.Model)
+	body.ProviderKey = strings.TrimSpace(body.ProviderKey)
+	if body.Model == "" || body.ProviderKey == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad_channel"})
+		return
+	}
+	if body.Weight == 0 && body.Priority == 0 {
+		body.Weight = 1
+	}
+	route, found, err := s.Store.LookupModel(r.Context(), body.Model)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "store"})
+		return
+	}
+	if !found {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown_model"})
+		return
+	}
+	key, found, err := s.Store.GetProviderKey(r.Context(), body.ProviderKey)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "store"})
+		return
+	}
+	if !found {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown_key"})
+		return
+	}
+	up, found, err := s.Store.GetUpstream(r.Context(), key.Provider)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "store"})
+		return
+	}
+	if !found || up.Family != route.Family {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad_provider"})
+		return
+	}
+	ch := Channel{
+		ID: newEntityID("ch"), Model: body.Model, ProviderKey: body.ProviderKey,
+		Weight: body.Weight, Priority: body.Priority,
+	}
+	if body.InputCNY != nil && body.OutputCNY != nil && body.CachedCNY != nil {
+		ch.HasPrice = true
+		ch.InputCNY = *body.InputCNY
+		ch.OutputCNY = *body.OutputCNY
+		ch.CachedCNY = *body.CachedCNY
+	}
+	if err := s.Store.CreateChannel(r.Context(), ch); err != nil {
+		if errors.Is(err, errDuplicate) {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "duplicate"})
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "store"})
+		return
+	}
+	writeJSON(w, http.StatusCreated, publicChannel(ch))
+}
+
+func (s *Server) handleListChannels(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireRoles(w, r, RoleSuperAdmin); !ok {
+		return
+	}
+	list, err := s.Store.ListChannels(r.Context(), r.URL.Query().Get("model"))
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "store"})
+		return
+	}
+	out := make([]map[string]any, 0, len(list))
+	for _, ch := range list {
+		out = append(out, publicChannel(ch))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"channels": out})
+}
+
+func (s *Server) handleDisableChannel(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireRoles(w, r, RoleSuperAdmin); !ok {
+		return
+	}
+	ok, err := s.Store.DisableChannel(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "store"})
+		return
+	}
+	if !ok {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not_found"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "disabled"})
+}
+
+func publicChannel(ch Channel) map[string]any {
+	out := map[string]any{
+		"id": ch.ID, "model": ch.Model, "provider_key": ch.ProviderKey,
+		"weight": ch.Weight, "priority": ch.Priority, "disabled": ch.Disabled,
+	}
+	if ch.HasPrice {
+		out["input_cny"] = ch.InputCNY
+		out["output_cny"] = ch.OutputCNY
+		out["cached_cny"] = ch.CachedCNY
+	}
+	return out
+}
+
+func newEntityID(prefix string) string {
+	var b [8]byte
+	_, _ = rand.Read(b[:])
+	return prefix + "-" + hex.EncodeToString(b[:])
 }
 
 func (s *Server) handleCreateModel(w http.ResponseWriter, r *http.Request) {

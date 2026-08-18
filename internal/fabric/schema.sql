@@ -19,9 +19,11 @@ CREATE TABLE IF NOT EXISTS providers (
     name TEXT PRIMARY KEY,
     family TEXT NOT NULL,
     base_url TEXT NOT NULL,
-    key_ciphertext TEXT NOT NULL,
+    key_ciphertext TEXT NOT NULL DEFAULT '',
     disabled BOOLEAN NOT NULL DEFAULT FALSE
 );
+
+ALTER TABLE providers ALTER COLUMN key_ciphertext SET DEFAULT '';
 
 CREATE TABLE IF NOT EXISTS models (
     name TEXT PRIMARY KEY,
@@ -76,4 +78,25 @@ CREATE TABLE IF NOT EXISTS memberships (
     username TEXT NOT NULL REFERENCES users (username),
     team_name TEXT NOT NULL REFERENCES projects (name),
     PRIMARY KEY (username, team_name)
+);
+
+CREATE TABLE IF NOT EXISTS provider_keys (
+    id TEXT PRIMARY KEY,
+    provider_name TEXT NOT NULL REFERENCES providers (name),
+    key_ciphertext TEXT NOT NULL,
+    disabled BOOLEAN NOT NULL DEFAULT FALSE
+);
+
+CREATE TABLE IF NOT EXISTS channels (
+    id TEXT PRIMARY KEY,
+    model_name TEXT NOT NULL REFERENCES models (name),
+    provider_key_id TEXT NOT NULL REFERENCES provider_keys (id),
+    weight INT NOT NULL DEFAULT 1,
+    priority INT NOT NULL DEFAULT 0,
+    disabled BOOLEAN NOT NULL DEFAULT FALSE,
+    has_price BOOLEAN NOT NULL DEFAULT FALSE,
+    input_cny DOUBLE PRECISION NOT NULL DEFAULT 0,
+    output_cny DOUBLE PRECISION NOT NULL DEFAULT 0,
+    cached_cny DOUBLE PRECISION NOT NULL DEFAULT 0,
+    UNIQUE (model_name, provider_key_id)
 );

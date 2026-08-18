@@ -13,6 +13,7 @@ var errUnknownProject = errors.New("unknown team")
 var errUnknownModel = errors.New("unknown model")
 var errUnknownEnterprise = errors.New("unknown enterprise")
 var errUnknownUser = errors.New("unknown user")
+var errUnknownKey = errors.New("unknown provider key")
 var errDuplicate = errors.New("duplicate")
 
 const (
@@ -70,6 +71,26 @@ type Upstream struct {
 	BaseURL       string
 	Disabled      bool
 	KeyCiphertext string
+}
+
+type ProviderKey struct {
+	ID            string
+	Provider      string
+	Disabled      bool
+	KeyCiphertext string
+}
+
+type Channel struct {
+	ID          string
+	Model       string
+	ProviderKey string
+	Weight      int
+	Priority    int
+	Disabled    bool
+	HasPrice    bool
+	InputCNY    float64
+	OutputCNY   float64
+	CachedCNY   float64
 }
 
 type Price struct {
@@ -141,6 +162,14 @@ type Store interface {
 	CreateModel(ctx context.Context, route ModelRoute) error
 	DisableModel(ctx context.Context, name string) (bool, error)
 	ListModels(ctx context.Context) ([]ModelRoute, error)
+	CreateProviderKey(ctx context.Context, rec ProviderKey) error
+	GetProviderKey(ctx context.Context, id string) (ProviderKey, bool, error)
+	ListProviderKeys(ctx context.Context, provider string) ([]ProviderKey, error)
+	DisableProviderKey(ctx context.Context, id string) (bool, error)
+	CreateChannel(ctx context.Context, ch Channel) error
+	ListChannels(ctx context.Context, model string) ([]Channel, error)
+	GetChannel(ctx context.Context, id string) (Channel, bool, error)
+	DisableChannel(ctx context.Context, id string) (bool, error)
 }
 
 func HashVirtualKey(plaintext string) string {
@@ -150,17 +179,19 @@ func HashVirtualKey(plaintext string) string {
 
 // MemoryStore is the in-process ledger used by HTTP tests.
 type MemoryStore struct {
-	mu          sync.Mutex
-	keys        map[string]VirtualKeyRecord
-	projects    map[string]string
-	enterprises map[string]Enterprise
-	models      map[string]ModelRoute
-	prices      map[string]Price
-	upstreams   map[string]Upstream
-	requests    []RequestRow
-	users       map[string]UserRecord
-	memberships map[string]map[string]struct{}
-	AppendDelay time.Duration
+	mu           sync.Mutex
+	keys         map[string]VirtualKeyRecord
+	projects     map[string]string
+	enterprises  map[string]Enterprise
+	models       map[string]ModelRoute
+	prices       map[string]Price
+	upstreams    map[string]Upstream
+	providerKeys map[string]ProviderKey
+	channels     map[string]Channel
+	requests     []RequestRow
+	users        map[string]UserRecord
+	memberships  map[string]map[string]struct{}
+	AppendDelay  time.Duration
 }
 
 func NewSeededMemoryStore(adminHash string) *MemoryStore {
@@ -178,7 +209,9 @@ func NewSeededMemoryStore(adminHash string) *MemoryStore {
 			SeedModel:          {Model: SeedModel, InputCNY: SeedInputPriceCNY, OutputCNY: SeedOutputPriceCNY, CachedCNY: SeedCachedPriceCNY},
 			SeedAnthropicModel: {Model: SeedAnthropicModel, InputCNY: SeedInputPriceCNY, OutputCNY: SeedOutputPriceCNY, CachedCNY: SeedCachedPriceCNY},
 		},
-		upstreams: map[string]Upstream{},
+		upstreams:    map[string]Upstream{},
+		providerKeys: map[string]ProviderKey{},
+		channels:     map[string]Channel{},
 		users: map[string]UserRecord{
 			SeedAdminUser: {Username: SeedAdminUser, Role: RoleSuperAdmin, PasswordHash: adminHash},
 		},
@@ -566,6 +599,108 @@ func (s *MemoryStore) UserTeams(_ context.Context, username string) ([]string, e
 		out = append(out, name)
 	}
 	return out, nil
+}
+
+func (s *MemoryStore) CreateProviderKey(_ context.Context, rec ProviderKey) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.upstreams[rec.Provider]; !ok {
+		return errUnknownKey
+	}
+	if rec.ID == "" {
+		return errUnknownKey
+	}
+	if _, ok := s.providerKeys[rec.ID]; ok {
+		return errDuplicate
+	}
+	s.providerKeys[rec.ID] = rec
+	return nil
+}
+
+func (s *MemoryStore) GetProviderKey(_ context.Context, id string) (ProviderKey, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rec, ok := s.providerKeys[id]
+	return rec, ok, nil
+}
+
+func (s *MemoryStore) ListProviderKeys(_ context.Context, provider string) ([]ProviderKey, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]ProviderKey, 0)
+	for _, rec := range s.providerKeys {
+		if rec.Provider == provider {
+			out = append(out, rec)
+		}
+	}
+	return out, nil
+}
+
+func (s *MemoryStore) DisableProviderKey(_ context.Context, id string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rec, ok := s.providerKeys[id]
+	if !ok {
+		return false, nil
+	}
+	rec.Disabled = true
+	s.providerKeys[id] = rec
+	return true, nil
+}
+
+func (s *MemoryStore) CreateChannel(_ context.Context, ch Channel) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.models[ch.Model]; !ok {
+		return errUnknownModel
+	}
+	if _, ok := s.providerKeys[ch.ProviderKey]; !ok {
+		return errUnknownKey
+	}
+	for _, existing := range s.channels {
+		if existing.Model == ch.Model && existing.ProviderKey == ch.ProviderKey {
+			return errDuplicate
+		}
+	}
+	if ch.ID == "" {
+		return errUnknownKey
+	}
+	if _, ok := s.channels[ch.ID]; ok {
+		return errDuplicate
+	}
+	s.channels[ch.ID] = ch
+	return nil
+}
+
+func (s *MemoryStore) ListChannels(_ context.Context, model string) ([]Channel, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]Channel, 0)
+	for _, ch := range s.channels {
+		if model == "" || ch.Model == model {
+			out = append(out, ch)
+		}
+	}
+	return out, nil
+}
+
+func (s *MemoryStore) GetChannel(_ context.Context, id string) (Channel, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ch, ok := s.channels[id]
+	return ch, ok, nil
+}
+
+func (s *MemoryStore) DisableChannel(_ context.Context, id string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ch, ok := s.channels[id]
+	if !ok {
+		return false, nil
+	}
+	ch.Disabled = true
+	s.channels[id] = ch
+	return true, nil
 }
 
 func shanghai() *time.Location {

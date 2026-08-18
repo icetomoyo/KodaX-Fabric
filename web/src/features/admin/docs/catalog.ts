@@ -369,14 +369,146 @@ const listProviders = rest(
   },
 );
 
+const createProviderKey = rest(
+  "create-provider-key",
+  "录入 Provider Key",
+  "POST",
+  "/admin/api/providers/{name}/keys",
+  "给已有 Provider 再加一把 Key。明文只在请求里出现一次。",
+  {
+    body: [f("api_key", "string", "官方 Key 明文。", { required: true })],
+    response: [
+      f("id", "string", "Key id。"),
+      f("provider", "string", "所属 Provider。"),
+      f("disabled", "boolean", "停用后从所有 Channel 池拿掉。"),
+    ],
+    exampleBody: { api_key: "sk-upstream-secret" },
+    exampleResponse: { id: "pk-demo", provider: "deepseek", disabled: false },
+  },
+);
+
+const listProviderKeys = rest(
+  "list-provider-keys",
+  "Provider Key 列表",
+  "GET",
+  "/admin/api/providers/{name}/keys",
+  "列出该 Provider 下的 Key 元数据，不含明文。",
+  {
+    response: [
+      f("keys", "object[]", "不含 ciphertext。", {
+        children: [
+          f("id", "string", "Key id。"),
+          f("provider", "string", "所属 Provider。"),
+          f("disabled", "boolean", "是否停用。"),
+        ],
+      }),
+    ],
+    exampleResponse: { keys: [{ id: "pk-demo", provider: "deepseek", disabled: false }] },
+  },
+);
+
+const disableProviderKey = rest(
+  "disable-provider-key",
+  "停用 Provider Key",
+  "POST",
+  "/admin/api/providers/{name}/keys/{id}/disable",
+  "停用后挂着它的 Channel 不再入选。",
+  {
+    headers: [],
+    response: [f("status", "string", "固定 `disabled`。")],
+    exampleResponse: { status: "disabled" },
+  },
+);
+
+const createChannel = rest(
+  "create-channel",
+  "创建 Channel",
+  "POST",
+  "/admin/api/channels",
+  "同一 (model, Provider Key) 只能一条。没有成本价的 Channel 不会入选。",
+  {
+    body: [
+      f("model", "string", "已登记的 model。", { required: true }),
+      f("provider_key", "string", "Provider Key id。", { required: true }),
+      f("weight", "integer", "同优先级内的权重。0 为备路。"),
+      f("priority", "integer", "数字越大越先。"),
+      f("input_cny", "number", "每百万 input Token 成本价。"),
+      f("output_cny", "number", "每百万 output Token 成本价。"),
+      f("cached_cny", "number", "每百万 cached Token 成本价。"),
+    ],
+    response: [
+      f("id", "string", "Channel id。"),
+      f("model", "string", "model。"),
+      f("provider_key", "string", "Key id。"),
+    ],
+    exampleBody: {
+      model: "gpt-4o-mini",
+      provider_key: "pk-demo",
+      weight: 1,
+      priority: 10,
+      input_cny: 1,
+      output_cny: 2,
+      cached_cny: 0.1,
+    },
+    exampleResponse: {
+      id: "ch-demo",
+      model: "gpt-4o-mini",
+      provider_key: "pk-demo",
+      weight: 1,
+      priority: 10,
+      disabled: false,
+      input_cny: 1,
+      output_cny: 2,
+      cached_cny: 0.1,
+    },
+  },
+);
+
+const listChannels = rest(
+  "list-channels",
+  "Channel 列表",
+  "GET",
+  "/admin/api/channels",
+  "按 model 过滤可选。调用方看不见 Channel。",
+  {
+    query: [f("model", "string", "只看这个 model 的池。")],
+    response: [f("channels", "object[]", "Channel。")],
+    exampleResponse: {
+      channels: [
+        {
+          id: "ch-demo",
+          model: "gpt-4o-mini",
+          provider_key: "pk-demo",
+          weight: 1,
+          priority: 10,
+          disabled: false,
+        },
+      ],
+    },
+  },
+);
+
+const disableChannel = rest(
+  "disable-channel",
+  "停用 Channel",
+  "POST",
+  "/admin/api/channels/{id}/disable",
+  "管理员手停后这条 Channel 不再入选。",
+  {
+    headers: [],
+    response: [f("status", "string", "固定 `disabled`。")],
+    exampleResponse: { status: "disabled" },
+  },
+);
+
 const createProvider = rest(
   "create-provider",
   "录入 Provider",
   "POST",
   "/admin/api/providers",
-  "加密入库一把官方 Key。明文只在请求里出现一次。",
+  "登记家族 + base URL；请求里的 api_key 会同时建成第一把 Provider Key。",
   {
-    description: "需要已登录 Session。`api_key` 用 AES-GCM 加密后入库，响应永不回 secret。",
+    description: "Provider 本身不含密钥。`api_key` 加密后写成一把 Provider Key，响应永不回 secret。",
     body: [
       f("name", "string", "名称，唯一。", { required: true }),
       f("family", "enum<string>", "`openai` 或 `anthropic`。", { required: true }),
@@ -669,6 +801,9 @@ export const navGroups: NavGroup[] = [
       { kind: "api", doc: createProvider },
       { kind: "api", doc: getProvider },
       { kind: "api", doc: disableProvider },
+      { kind: "api", doc: listProviderKeys },
+      { kind: "api", doc: createProviderKey },
+      { kind: "api", doc: disableProviderKey },
     ],
   },
   {
@@ -677,6 +812,9 @@ export const navGroups: NavGroup[] = [
       { kind: "api", doc: listModels },
       { kind: "api", doc: createModel },
       { kind: "api", doc: disableModel },
+      { kind: "api", doc: listChannels },
+      { kind: "api", doc: createChannel },
+      { kind: "api", doc: disableChannel },
     ],
   },
   {
@@ -712,6 +850,8 @@ export function restSamples(ep: EndpointDoc, origin: string): Record<LangId, Cod
     .replace("/enterprises/{name}", "/enterprises/acme")
     .replace("/teams/{name}/members/{username}", "/teams/billing/members/acme-dev")
     .replace("/teams/{name}", "/teams/billing")
+    .replace("/keys/{id}", "/keys/pk-demo")
+    .replace("/channels/{id}", "/channels/ch-demo")
     .replace("{name}", "deepseek")
     .replace("{model}", "gpt-4o-mini");
   const url = `${base}${path}`;

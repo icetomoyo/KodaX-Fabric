@@ -606,3 +606,124 @@ func (s *PostgresStore) CreateUser(ctx context.Context, rec UserRecord) error {
 	}
 	return err
 }
+
+func (s *PostgresStore) CreateProviderKey(ctx context.Context, rec ProviderKey) error {
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO provider_keys (id, provider_name, key_ciphertext, disabled)
+		VALUES ($1, $2, $3, $4)`, rec.ID, rec.Provider, rec.KeyCiphertext, rec.Disabled)
+	if err != nil && strings.Contains(strings.ToLower(err.Error()), "duplicate") {
+		return errDuplicate
+	}
+	return err
+}
+
+func (s *PostgresStore) GetProviderKey(ctx context.Context, id string) (ProviderKey, bool, error) {
+	var rec ProviderKey
+	err := s.db.QueryRowContext(ctx, `
+		SELECT id, provider_name, key_ciphertext, disabled FROM provider_keys WHERE id = $1`, id).
+		Scan(&rec.ID, &rec.Provider, &rec.KeyCiphertext, &rec.Disabled)
+	if err == sql.ErrNoRows {
+		return ProviderKey{}, false, nil
+	}
+	if err != nil {
+		return ProviderKey{}, false, err
+	}
+	return rec, true, nil
+}
+
+func (s *PostgresStore) ListProviderKeys(ctx context.Context, provider string) ([]ProviderKey, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, provider_name, key_ciphertext, disabled
+		FROM provider_keys WHERE provider_name = $1 ORDER BY id`, provider)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ProviderKey
+	for rows.Next() {
+		var rec ProviderKey
+		if err := rows.Scan(&rec.ID, &rec.Provider, &rec.KeyCiphertext, &rec.Disabled); err != nil {
+			return nil, err
+		}
+		out = append(out, rec)
+	}
+	if out == nil {
+		out = []ProviderKey{}
+	}
+	return out, rows.Err()
+}
+
+func (s *PostgresStore) DisableProviderKey(ctx context.Context, id string) (bool, error) {
+	res, err := s.db.ExecContext(ctx, `UPDATE provider_keys SET disabled = TRUE WHERE id = $1`, id)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
+func (s *PostgresStore) CreateChannel(ctx context.Context, ch Channel) error {
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO channels (
+			id, model_name, provider_key_id, weight, priority, disabled,
+			has_price, input_cny, output_cny, cached_cny
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+		ch.ID, ch.Model, ch.ProviderKey, ch.Weight, ch.Priority, ch.Disabled,
+		ch.HasPrice, ch.InputCNY, ch.OutputCNY, ch.CachedCNY)
+	if err != nil && strings.Contains(strings.ToLower(err.Error()), "duplicate") {
+		return errDuplicate
+	}
+	return err
+}
+
+func (s *PostgresStore) ListChannels(ctx context.Context, model string) ([]Channel, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, model_name, provider_key_id, weight, priority, disabled,
+		       has_price, input_cny, output_cny, cached_cny
+		FROM channels
+		WHERE ($1 = '' OR model_name = $1)
+		ORDER BY priority DESC, id`, model)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Channel
+	for rows.Next() {
+		var ch Channel
+		if err := rows.Scan(&ch.ID, &ch.Model, &ch.ProviderKey, &ch.Weight, &ch.Priority, &ch.Disabled,
+			&ch.HasPrice, &ch.InputCNY, &ch.OutputCNY, &ch.CachedCNY); err != nil {
+			return nil, err
+		}
+		out = append(out, ch)
+	}
+	if out == nil {
+		out = []Channel{}
+	}
+	return out, rows.Err()
+}
+
+func (s *PostgresStore) GetChannel(ctx context.Context, id string) (Channel, bool, error) {
+	var ch Channel
+	err := s.db.QueryRowContext(ctx, `
+		SELECT id, model_name, provider_key_id, weight, priority, disabled,
+		       has_price, input_cny, output_cny, cached_cny
+		FROM channels WHERE id = $1`, id).
+		Scan(&ch.ID, &ch.Model, &ch.ProviderKey, &ch.Weight, &ch.Priority, &ch.Disabled,
+			&ch.HasPrice, &ch.InputCNY, &ch.OutputCNY, &ch.CachedCNY)
+	if err == sql.ErrNoRows {
+		return Channel{}, false, nil
+	}
+	if err != nil {
+		return Channel{}, false, err
+	}
+	return ch, true, nil
+}
+
+func (s *PostgresStore) DisableChannel(ctx context.Context, id string) (bool, error) {
+	res, err := s.db.ExecContext(ctx, `UPDATE channels SET disabled = TRUE WHERE id = $1`, id)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
