@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"time"
 
 	"github.com/icetomoyo/kodax-fabric/internal/fabric"
@@ -78,8 +79,16 @@ func newProvider() (fabric.Provider, error) {
 	if err != nil {
 		return nil, err
 	}
+	streamPath := os.Getenv("FIXTURE_STREAM_PATH")
+	if streamPath == "" && strings.HasSuffix(fixturePath, ".json") {
+		streamPath = strings.TrimSuffix(fixturePath, ".json") + ".sse"
+	}
+	streamBody, err := os.ReadFile(streamPath)
+	if err != nil {
+		streamBody = nil
+	}
 	log.Printf("provider fixture %s", fixturePath)
-	return &fabric.FixtureProvider{Body: body}, nil
+	return &fabric.FixtureProvider{Body: body, StreamBody: streamBody}, nil
 }
 
 var errProviderConfig = errors.New("PROVIDER_MODE=live requires PROVIDER_BASE_URL and PROVIDER_KEY")

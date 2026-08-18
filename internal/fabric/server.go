@@ -76,7 +76,8 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var head struct {
-		Model string `json:"model"`
+		Model  string `json:"model"`
+		Stream bool   `json:"stream"`
 	}
 	if err := json.Unmarshal(raw, &head); err != nil || head.Model == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing_model"})
@@ -102,22 +103,40 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	status, header, body, err := s.Provider.ChatCompletions(ctx, raw)
+	status, header, rc, err := s.Provider.ChatCompletions(ctx, raw)
 	if err != nil {
 		s.appendRequest(ctx, vk, head.Model, 0, 0, 0, 0, http.StatusBadGateway, started)
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "provider"})
 		return
 	}
-
-	in, out, cached := parseUsage(body)
-	cost := costCNY(in, out, cached, price)
-	s.appendRequest(ctx, vk, head.Model, in, out, cached, cost, status, started)
+	defer rc.Close()
 
 	for k, v := range header {
 		w.Header().Set(k, v)
 	}
+	if head.Stream {
+		if w.Header().Get("Content-Type") == "" {
+			w.Header().Set("Content-Type", "text/event-stream")
+		}
+		w.Header().Set("Cache-Control", "no-cache")
+	}
 	w.WriteHeader(status)
-	_, _ = w.Write(body)
+
+	var collected []byte
+	if head.Stream {
+		collected = copyFlush(w, rc)
+	} else {
+		body, _ := io.ReadAll(rc)
+		collected = body
+		_, _ = w.Write(body)
+	}
+
+	in, out, cached := parseUsage(collected)
+	if in == 0 && out == 0 && cached == 0 {
+		in, out, cached = parseUsageFromSSE(collected)
+	}
+	cost := costCNY(in, out, cached, price)
+	s.appendRequest(context.WithoutCancel(ctx), vk, head.Model, in, out, cached, cost, status, started)
 }
 
 func (s *Server) appendRequest(ctx context.Context, vk VirtualKeyRecord, model string, in, out, cached int, cost float64, status int, started time.Time) {
@@ -246,6 +265,46 @@ func bearer(h string) (string, bool) {
 	}
 	tok := strings.TrimSpace(h[len(p):])
 	return tok, tok != ""
+}
+
+func copyFlush(w http.ResponseWriter, src io.Reader) []byte {
+	flusher, _ := w.(http.Flusher)
+	buf := make([]byte, 4096)
+	var collected []byte
+	for {
+		n, err := src.Read(buf)
+		if n > 0 {
+			collected = append(collected, buf[:n]...)
+			_, werr := w.Write(buf[:n])
+			if flusher != nil {
+				flusher.Flush()
+			}
+			if werr != nil {
+				return collected
+			}
+		}
+		if err != nil {
+			return collected
+		}
+	}
+}
+
+func parseUsageFromSSE(raw []byte) (input, output, cached int) {
+	for _, line := range strings.Split(string(raw), "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "data:") {
+			continue
+		}
+		payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		if payload == "" || payload == "[DONE]" {
+			continue
+		}
+		in, out, c := parseUsage([]byte(payload))
+		if in != 0 || out != 0 || c != 0 {
+			input, output, cached = in, out, c
+		}
+	}
+	return input, output, cached
 }
 
 func parseUsage(body []byte) (input, output, cached int) {

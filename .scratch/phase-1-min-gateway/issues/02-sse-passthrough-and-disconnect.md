@@ -6,8 +6,8 @@
 
 **Status:** ready-for-agent
 
-- [ ] 流式 `POST /v1/chat/completions` 的 SSE 序列与 fixture 一致，不整段缓冲
-- [ ] 客户端断开后上游被取消，不再继续消耗 fixture/上游
-- [ ] 最后 chunk 带 Usage 则按有 Usage 入账；没有则 token 与成本为 0，状态仍记下
-- [ ] 计量写入不挡住已发出的 chunk
-- [ ] 网关自身开销（fixture 立即返回）P99 < 50ms
+- [x] 流式 `POST /v1/chat/completions` 的 SSE 序列与 fixture 一致，不整段缓冲
+- [x] 客户端断开后上游被取消，不再继续消耗 fixture/上游
+- [x] 最后 chunk 带 Usage 则按有 Usage 入账；没有则 token 与成本为 0，状态仍记下
+- [x] 计量写入不挡住已发出的 chunk
+- [x] 网关自身开销（fixture 立即返回）P99 < 50ms

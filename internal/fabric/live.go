@@ -3,7 +3,6 @@ package fabric
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -25,7 +24,7 @@ func NewLiveOpenAIProvider(baseURL, apiKey string) *LiveOpenAIProvider {
 	}
 }
 
-func (p *LiveOpenAIProvider) ChatCompletions(ctx context.Context, rawBody []byte) (int, map[string]string, []byte, error) {
+func (p *LiveOpenAIProvider) ChatCompletions(ctx context.Context, rawBody []byte) (int, map[string]string, io.ReadCloser, error) {
 	url := p.BaseURL + "/chat/completions"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(rawBody))
 	if err != nil {
@@ -38,14 +37,9 @@ func (p *LiveOpenAIProvider) ChatCompletions(ctx context.Context, rawBody []byte
 	if err != nil {
 		return 0, nil, nil, err
 	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return 0, nil, nil, fmt.Errorf("read provider: %w", err)
-	}
 	header := map[string]string{}
 	if ct := resp.Header.Get("Content-Type"); ct != "" {
 		header["Content-Type"] = ct
 	}
-	return resp.StatusCode, header, body, nil
+	return resp.StatusCode, header, resp.Body, nil
 }
