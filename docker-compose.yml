@@ -19,7 +19,7 @@ services:
       - .env
     environment:
       DATABASE_URL: postgres://fabric:fabric@db:5432/fabric?sslmode=disable
-      ADMIN_PASSWORD: fabric-admin
+      ADMIN_PASSWORD: Hz@123456
     depends_on:
       db:
         condition: service_healthy

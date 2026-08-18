@@ -10,6 +10,7 @@ const ModelsPage = lazy(() => import("@/features/admin/models/page"));
 const KeysPage = lazy(() => import("@/features/admin/keys/page"));
 const ProjectsPage = lazy(() => import("@/features/admin/projects/page"));
 const PricesPage = lazy(() => import("@/features/admin/prices/page"));
+const DocsPage = lazy(() => import("@/features/admin/docs/page"));
 
 function ChunkLoader() {
   return (
@@ -33,6 +34,7 @@ export function AppRouter() {
             <Route path="providers" element={<ProvidersPage />} />
             <Route path="models" element={<ModelsPage />} />
             <Route path="prices" element={<PricesPage />} />
+            <Route path="docs" element={<DocsPage />} />
           </Route>
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />

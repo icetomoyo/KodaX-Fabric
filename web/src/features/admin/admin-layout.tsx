@@ -1,5 +1,14 @@
 import { NavLink, Outlet } from "react-router-dom";
-import { Activity, Building2, KeyRound, LogOut, Server, Table2, Tags } from "lucide-react";
+import {
+  Activity,
+  BookOpen,
+  Building2,
+  KeyRound,
+  LogOut,
+  Server,
+  Table2,
+  Tags,
+} from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { useHealth } from "@/lib/query/hooks";
 import { cn } from "@/lib/utils";
@@ -11,6 +20,7 @@ const nav = [
   { to: "/admin/providers", label: "上游 Provider", icon: Server },
   { to: "/admin/models", label: "Model 映射", icon: Tags },
   { to: "/admin/prices", label: "价格表", icon: Table2 },
+  { to: "/admin/docs", label: "接口文档", icon: BookOpen },
 ];
 
 export default function AdminLayout() {
@@ -68,7 +78,9 @@ export default function AdminLayout() {
             {health.data?.ok ? "服务正常" : "状态未知"}
           </span>
           <div className="flex items-center gap-3">
-            <span className="text-sm text-muted-foreground">{operator?.name || operator?.username}</span>
+            <span className="text-sm text-muted-foreground">
+              {operator?.name || operator?.username}
+            </span>
             <button
               onClick={() => void logout()}
               className="flex items-center gap-1.5 rounded-md px-2 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"

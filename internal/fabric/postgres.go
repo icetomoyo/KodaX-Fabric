@@ -84,7 +84,7 @@ func (s *PostgresStore) Seed(ctx context.Context, adminHash, model string) error
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO admins (username, password_hash)
 		VALUES ($1, $2)
-		ON CONFLICT DO NOTHING`, SeedAdminUser, adminHash); err != nil {
+		ON CONFLICT (username) DO UPDATE SET password_hash = EXCLUDED.password_hash`, SeedAdminUser, adminHash); err != nil {
 		return err
 	}
 	return tx.Commit()
