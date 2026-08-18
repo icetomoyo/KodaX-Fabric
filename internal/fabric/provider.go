@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -23,6 +24,7 @@ type FixtureProvider struct {
 	MessagesBody       []byte
 	MessagesStreamBody []byte
 	ChunkDelay         time.Duration
+	Status             int
 
 	mu        sync.Mutex
 	calls     int
@@ -49,16 +51,20 @@ func (p *FixtureProvider) replay(ctx context.Context, rawBody, jsonBody, sseBody
 		return 0, nil, nil, ctx.Err()
 	default:
 	}
+	status := http.StatusOK
+	if p.Status != 0 {
+		status = p.Status
+	}
 	if wantsStream(rawBody) && len(sseBody) > 0 {
 		header := map[string]string{"Content-Type": "text/event-stream"}
 		body := append([]byte(nil), sseBody...)
 		if p.ChunkDelay <= 0 {
 			p.markChunk()
-			return 200, header, io.NopCloser(bytes.NewReader(body)), nil
+			return status, header, io.NopCloser(bytes.NewReader(body)), nil
 		}
-		return 200, header, newChunkReader(ctx, p, body, p.ChunkDelay), nil
+		return status, header, newChunkReader(ctx, p, body, p.ChunkDelay), nil
 	}
-	return 200, map[string]string{"Content-Type": "application/json"}, io.NopCloser(bytes.NewReader(append([]byte(nil), jsonBody...))), nil
+	return status, map[string]string{"Content-Type": "application/json"}, io.NopCloser(bytes.NewReader(append([]byte(nil), jsonBody...))), nil
 }
 
 func (p *FixtureProvider) Calls() int {

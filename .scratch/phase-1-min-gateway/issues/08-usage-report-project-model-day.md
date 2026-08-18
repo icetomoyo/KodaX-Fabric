@@ -6,8 +6,8 @@
 
 **Status:** ready-for-agent
 
-- [ ] 报表三维为 Project × Model × 日，日界为 Asia/Shanghai
-- [ ] 两个 Project 的调用不会记到同一格
-- [ ] 一格内 token 数 = 这些 Request 的 Usage 之和（误差为 0）
-- [ ] 一格内成本 = 各有 Usage 的 Request 按价格表复算之和
-- [ ] 失败或无 Usage 的 Request 仍计入调用次数/状态，不把成本算成「免费成功」
+- [x] 报表三维为 Project × Model × 日，日界为 Asia/Shanghai
+- [x] 两个 Project 的调用不会记到同一格
+- [x] 一格内 token 数 = 这些 Request 的 Usage 之和（误差为 0）
+- [x] 一格内成本 = 各有 Usage 的 Request 按价格表复算之和
+- [x] 失败或无 Usage 的 Request 仍计入调用次数/状态，不把成本算成「免费成功」

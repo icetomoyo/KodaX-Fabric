@@ -70,13 +70,16 @@ type RequestRow struct {
 }
 
 type UsageCell struct {
-	Project      string  `json:"project"`
-	Model        string  `json:"model"`
-	Day          string  `json:"day"`
-	InputTokens  int     `json:"input_tokens"`
-	OutputTokens int     `json:"output_tokens"`
-	CachedTokens int     `json:"cached_tokens"`
-	CostCNY      float64 `json:"cost_cny"`
+	Project        string  `json:"project"`
+	Model          string  `json:"model"`
+	Day            string  `json:"day"`
+	InputTokens    int     `json:"input_tokens"`
+	OutputTokens   int     `json:"output_tokens"`
+	CachedTokens   int     `json:"cached_tokens"`
+	CostCNY        float64 `json:"cost_cny"`
+	Calls          int     `json:"calls"`
+	FailedCalls    int     `json:"failed_calls"`
+	ZeroUsageCalls int     `json:"zero_usage_calls"`
 }
 
 type Store interface {
@@ -298,28 +301,39 @@ func (s *MemoryStore) UsageByProjectModelDay(_ context.Context, project, day str
 	loc := shanghai()
 	agg := map[string]*UsageCell{}
 	for _, r := range s.requests {
-		if r.Project != project {
+		if project != "" && r.Project != project {
 			continue
 		}
 		d := r.CreatedAt.In(loc).Format("2006-01-02")
 		if d != day {
 			continue
 		}
-		cell := agg[r.Model]
+		key := r.Project + "\x00" + r.Model
+		cell := agg[key]
 		if cell == nil {
-			cell = &UsageCell{Project: project, Model: r.Model, Day: day}
-			agg[r.Model] = cell
+			cell = &UsageCell{Project: r.Project, Model: r.Model, Day: day}
+			agg[key] = cell
 		}
-		cell.InputTokens += r.InputTokens
-		cell.OutputTokens += r.OutputTokens
-		cell.CachedTokens += r.CachedTokens
-		cell.CostCNY += r.CostCNY
+		addUsage(cell, r)
 	}
 	out := make([]UsageCell, 0, len(agg))
 	for _, c := range agg {
 		out = append(out, *c)
 	}
 	return out, nil
+}
+
+func addUsage(cell *UsageCell, r RequestRow) {
+	cell.Calls++
+	cell.InputTokens += r.InputTokens
+	cell.OutputTokens += r.OutputTokens
+	cell.CachedTokens += r.CachedTokens
+	cell.CostCNY += r.CostCNY
+	if r.Status >= 400 {
+		cell.FailedCalls++
+	} else if r.InputTokens == 0 && r.OutputTokens == 0 && r.CachedTokens == 0 {
+		cell.ZeroUsageCalls++
+	}
 }
 
 func (s *MemoryStore) CreateProject(_ context.Context, name string) error {

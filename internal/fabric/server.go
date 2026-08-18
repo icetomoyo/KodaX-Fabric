@@ -648,9 +648,6 @@ func (s *Server) handleUsage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	project := r.URL.Query().Get("project")
-	if project == "" {
-		project = SeedProject
-	}
 	day := r.URL.Query().Get("day")
 	if day == "" {
 		day = s.Now().In(shanghai()).Format("2006-01-02")
@@ -923,14 +920,39 @@ const adminHTML = `<!doctype html>
 </form>
 <ul id="prices"></ul>
 <h2>用量报表</h2>
+<form id="report">
+  <input name="day" placeholder="YYYY-MM-DD" />
+  <input name="project" placeholder="全部 Project" />
+  <button>查询</button>
+</form>
+<table id="usage">
+  <thead><tr><th>日</th><th>Project</th><th>Model</th><th>调用</th><th>失败</th><th>零Usage</th><th>in</th><th>out</th><th>成本CNY</th></tr></thead>
+  <tbody></tbody>
+</table>
 <pre id="out"></pre>
 <script>
 const out = document.getElementById('out');
 const created = document.getElementById('created');
 const keys = document.getElementById('keys');
+async function loadUsage() {
+  const day = document.querySelector('#report [name=day]').value;
+  const project = document.querySelector('#report [name=project]').value;
+  let u = '/admin/api/usage?';
+  if (day) u += 'day=' + encodeURIComponent(day) + '&';
+  if (project) u += 'project=' + encodeURIComponent(project);
+  const res = await fetch(u);
+  const data = await res.json();
+  out.textContent = JSON.stringify(data, null, 2);
+  const tb = document.querySelector('#usage tbody');
+  tb.innerHTML = '';
+  (data.rows || []).forEach(row => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = '<td>'+[row.day,row.project,row.model,row.calls,row.failed_calls,row.zero_usage_calls,row.input_tokens,row.output_tokens,row.cost_cny].join('</td><td>')+'</td>';
+    tb.appendChild(tr);
+  });
+}
 async function refresh() {
-  const u = await fetch('/admin/api/usage');
-  out.textContent = await u.text();
+  await loadUsage();
   const p = await fetch('/admin/api/projects');
   const pdata = await p.json();
   const plist = document.getElementById('projects');
@@ -1004,6 +1026,7 @@ async function refresh() {
     keys.appendChild(li);
   });
 }
+document.getElementById('report').onsubmit = async (e) => { e.preventDefault(); await loadUsage(); };
 document.getElementById('login').onsubmit = async (e) => {
   e.preventDefault();
   const fd = new FormData(e.target);

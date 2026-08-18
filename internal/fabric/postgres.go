@@ -314,24 +314,30 @@ func (s *PostgresStore) ListRequests(ctx context.Context, project string) ([]Req
 
 func (s *PostgresStore) UsageByProjectModelDay(ctx context.Context, project, day string) ([]UsageCell, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT model,
+		SELECT project_name, model,
+		       COUNT(*)::bigint,
+		       SUM(CASE WHEN status >= 400 THEN 1 ELSE 0 END)::bigint,
+		       SUM(CASE WHEN status < 400 AND input_tokens = 0 AND output_tokens = 0 AND cached_tokens = 0 THEN 1 ELSE 0 END)::bigint,
 		       SUM(input_tokens), SUM(output_tokens), SUM(cached_tokens), SUM(cost_cny)
 		FROM requests
-		WHERE project_name = $1
+		WHERE ($1 = '' OR project_name = $1)
 		  AND ((created_at AT TIME ZONE 'Asia/Shanghai')::date) = $2::date
-		GROUP BY model
-		ORDER BY model`, project, day)
+		GROUP BY project_name, model
+		ORDER BY project_name, model`, project, day)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	var out []UsageCell
 	for rows.Next() {
-		var in, outTok, cached int64
-		cell := UsageCell{Project: project, Day: day}
-		if err := rows.Scan(&cell.Model, &in, &outTok, &cached, &cell.CostCNY); err != nil {
+		var calls, failed, zero, in, outTok, cached int64
+		cell := UsageCell{Day: day}
+		if err := rows.Scan(&cell.Project, &cell.Model, &calls, &failed, &zero, &in, &outTok, &cached, &cell.CostCNY); err != nil {
 			return nil, err
 		}
+		cell.Calls = int(calls)
+		cell.FailedCalls = int(failed)
+		cell.ZeroUsageCalls = int(zero)
 		cell.InputTokens = int(in)
 		cell.OutputTokens = int(outTok)
 		cell.CachedTokens = int(cached)
