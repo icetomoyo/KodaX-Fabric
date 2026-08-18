@@ -6,8 +6,8 @@
 
 **Status:** ready-for-agent
 
-- [ ] 管理员可登记 OpenAI 系（含兼容 base URL）与 Anthropic 系 Provider，并写入 Provider Key
-- [ ] Provider Key 明文不出现在之后的管理台响应、网关响应和日志里
-- [ ] 每个 `model` 只能挂一对 Provider + Provider Key；不能做别名或同 model 双 Key
-- [ ] 用管理台登记的 Model 可以完成一次透传并落 Request
-- [ ] 停用 Model 或 Provider 后新调用拒绝，不打到 Provider
+- [x] 管理员可登记 OpenAI 系（含兼容 base URL）与 Anthropic 系 Provider，并写入 Provider Key
+- [x] Provider Key 明文不出现在之后的管理台响应、网关响应和日志里
+- [x] 每个 `model` 只能挂一对 Provider + Provider Key；不能做别名或同 model 双 Key
+- [x] 用管理台登记的 Model 可以完成一次透传并落 Request
+- [x] 停用 Model 或 Provider 后新调用拒绝，不打到 Provider

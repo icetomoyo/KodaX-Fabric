@@ -11,6 +11,7 @@ import (
 
 var errUnknownProject = errors.New("unknown project")
 var errUnknownModel = errors.New("unknown model")
+var errDuplicate = errors.New("duplicate")
 
 const (
 	SeedVirtualKey     = "sk-fabric-demo"
@@ -32,9 +33,19 @@ type VirtualKeyRecord struct {
 }
 
 type ModelRoute struct {
-	Name     string
-	Family   string
-	Disabled bool
+	Name             string
+	Family           string
+	Disabled         bool
+	Provider         string
+	ProviderDisabled bool
+}
+
+type Upstream struct {
+	Name          string
+	Family        string
+	BaseURL       string
+	Disabled      bool
+	KeyCiphertext string
 }
 
 type Price struct {
@@ -86,6 +97,13 @@ type Store interface {
 	UpsertPrice(ctx context.Context, price Price) error
 	DeletePrice(ctx context.Context, model string) (bool, error)
 	ListPrices(ctx context.Context) ([]Price, error)
+	CreateUpstream(ctx context.Context, u Upstream) error
+	GetUpstream(ctx context.Context, name string) (Upstream, bool, error)
+	ListUpstreams(ctx context.Context) ([]Upstream, error)
+	DisableUpstream(ctx context.Context, name string) (bool, error)
+	CreateModel(ctx context.Context, route ModelRoute) error
+	DisableModel(ctx context.Context, name string) (bool, error)
+	ListModels(ctx context.Context) ([]ModelRoute, error)
 }
 
 func HashVirtualKey(plaintext string) string {
@@ -100,6 +118,7 @@ type MemoryStore struct {
 	projects  map[string]struct{}
 	models    map[string]ModelRoute
 	prices    map[string]Price
+	upstreams map[string]Upstream
 	requests  []RequestRow
 	adminHash string
 }
@@ -118,6 +137,7 @@ func NewSeededMemoryStore(adminHash string) *MemoryStore {
 			SeedModel:          {Model: SeedModel, InputCNY: SeedInputPriceCNY, OutputCNY: SeedOutputPriceCNY, CachedCNY: SeedCachedPriceCNY},
 			SeedAnthropicModel: {Model: SeedAnthropicModel, InputCNY: SeedInputPriceCNY, OutputCNY: SeedOutputPriceCNY, CachedCNY: SeedCachedPriceCNY},
 		},
+		upstreams: map[string]Upstream{},
 		adminHash: adminHash,
 	}
 }
@@ -133,7 +153,86 @@ func (s *MemoryStore) LookupModel(_ context.Context, name string) (ModelRoute, b
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	rec, ok := s.models[name]
-	return rec, ok, nil
+	if !ok {
+		return ModelRoute{}, false, nil
+	}
+	if rec.Provider != "" {
+		if up, found := s.upstreams[rec.Provider]; found {
+			rec.ProviderDisabled = up.Disabled
+		}
+	}
+	return rec, true, nil
+}
+
+func (s *MemoryStore) CreateUpstream(_ context.Context, u Upstream) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.upstreams[u.Name]; ok {
+		return errDuplicate
+	}
+	s.upstreams[u.Name] = u
+	return nil
+}
+
+func (s *MemoryStore) GetUpstream(_ context.Context, name string) (Upstream, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	u, ok := s.upstreams[name]
+	return u, ok, nil
+}
+
+func (s *MemoryStore) ListUpstreams(_ context.Context) ([]Upstream, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]Upstream, 0, len(s.upstreams))
+	for _, u := range s.upstreams {
+		out = append(out, u)
+	}
+	return out, nil
+}
+
+func (s *MemoryStore) DisableUpstream(_ context.Context, name string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	u, ok := s.upstreams[name]
+	if !ok {
+		return false, nil
+	}
+	u.Disabled = true
+	s.upstreams[name] = u
+	return true, nil
+}
+
+func (s *MemoryStore) CreateModel(_ context.Context, route ModelRoute) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.models[route.Name]; ok {
+		return errDuplicate
+	}
+	s.models[route.Name] = route
+	return nil
+}
+
+func (s *MemoryStore) DisableModel(_ context.Context, name string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rec, ok := s.models[name]
+	if !ok {
+		return false, nil
+	}
+	rec.Disabled = true
+	s.models[name] = rec
+	return true, nil
+}
+
+func (s *MemoryStore) ListModels(_ context.Context) ([]ModelRoute, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]ModelRoute, 0, len(s.models))
+	for _, rec := range s.models {
+		out = append(out, rec)
+	}
+	return out, nil
 }
 
 func (s *MemoryStore) UpsertPrice(_ context.Context, price Price) error {

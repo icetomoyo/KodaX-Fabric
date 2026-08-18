@@ -8,11 +8,22 @@ CREATE TABLE IF NOT EXISTS virtual_keys (
     disabled BOOLEAN NOT NULL DEFAULT FALSE
 );
 
+CREATE TABLE IF NOT EXISTS providers (
+    name TEXT PRIMARY KEY,
+    family TEXT NOT NULL,
+    base_url TEXT NOT NULL,
+    key_ciphertext TEXT NOT NULL,
+    disabled BOOLEAN NOT NULL DEFAULT FALSE
+);
+
 CREATE TABLE IF NOT EXISTS models (
     name TEXT PRIMARY KEY,
     family TEXT NOT NULL,
-    disabled BOOLEAN NOT NULL DEFAULT FALSE
+    disabled BOOLEAN NOT NULL DEFAULT FALSE,
+    provider_name TEXT
 );
+
+ALTER TABLE models ADD COLUMN IF NOT EXISTS provider_name TEXT;
 
 CREATE TABLE IF NOT EXISTS prices (
     model_name TEXT PRIMARY KEY REFERENCES models (name),

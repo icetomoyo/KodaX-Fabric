@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	_ "embed"
 	"fmt"
+	"strings"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
@@ -105,15 +106,118 @@ func (s *PostgresStore) LookupVirtualKey(ctx context.Context, plaintext string) 
 
 func (s *PostgresStore) LookupModel(ctx context.Context, name string) (ModelRoute, bool, error) {
 	var rec ModelRoute
-	err := s.db.QueryRowContext(ctx, `SELECT name, family, disabled FROM models WHERE name = $1`, name).
-		Scan(&rec.Name, &rec.Family, &rec.Disabled)
+	var provider sql.NullString
+	var provDisabled sql.NullBool
+	err := s.db.QueryRowContext(ctx, `
+		SELECT m.name, m.family, m.disabled, m.provider_name, p.disabled
+		FROM models m
+		LEFT JOIN providers p ON p.name = m.provider_name
+		WHERE m.name = $1`, name).
+		Scan(&rec.Name, &rec.Family, &rec.Disabled, &provider, &provDisabled)
 	if err == sql.ErrNoRows {
 		return ModelRoute{}, false, nil
 	}
 	if err != nil {
 		return ModelRoute{}, false, err
 	}
+	if provider.Valid {
+		rec.Provider = provider.String
+	}
+	rec.ProviderDisabled = provDisabled.Valid && provDisabled.Bool
 	return rec, true, nil
+}
+
+func (s *PostgresStore) CreateUpstream(ctx context.Context, u Upstream) error {
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO providers (name, family, base_url, key_ciphertext, disabled)
+		VALUES ($1,$2,$3,$4,$5)`, u.Name, u.Family, u.BaseURL, u.KeyCiphertext, u.Disabled)
+	if err != nil && strings.Contains(err.Error(), "duplicate") {
+		return errDuplicate
+	}
+	return err
+}
+
+func (s *PostgresStore) GetUpstream(ctx context.Context, name string) (Upstream, bool, error) {
+	var u Upstream
+	err := s.db.QueryRowContext(ctx, `
+		SELECT name, family, base_url, key_ciphertext, disabled FROM providers WHERE name = $1`, name).
+		Scan(&u.Name, &u.Family, &u.BaseURL, &u.KeyCiphertext, &u.Disabled)
+	if err == sql.ErrNoRows {
+		return Upstream{}, false, nil
+	}
+	if err != nil {
+		return Upstream{}, false, err
+	}
+	return u, true, nil
+}
+
+func (s *PostgresStore) ListUpstreams(ctx context.Context) ([]Upstream, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT name, family, base_url, key_ciphertext, disabled FROM providers ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Upstream
+	for rows.Next() {
+		var u Upstream
+		if err := rows.Scan(&u.Name, &u.Family, &u.BaseURL, &u.KeyCiphertext, &u.Disabled); err != nil {
+			return nil, err
+		}
+		out = append(out, u)
+	}
+	return out, rows.Err()
+}
+
+func (s *PostgresStore) DisableUpstream(ctx context.Context, name string) (bool, error) {
+	res, err := s.db.ExecContext(ctx, `UPDATE providers SET disabled = TRUE WHERE name = $1`, name)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
+func (s *PostgresStore) CreateModel(ctx context.Context, route ModelRoute) error {
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO models (name, family, disabled, provider_name)
+		VALUES ($1,$2,$3,$4)`, route.Name, route.Family, route.Disabled, nullIfEmpty(route.Provider))
+	if err != nil && strings.Contains(strings.ToLower(err.Error()), "duplicate") {
+		return errDuplicate
+	}
+	return err
+}
+
+func (s *PostgresStore) DisableModel(ctx context.Context, name string) (bool, error) {
+	res, err := s.db.ExecContext(ctx, `UPDATE models SET disabled = TRUE WHERE name = $1`, name)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
+func (s *PostgresStore) ListModels(ctx context.Context) ([]ModelRoute, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT name, family, disabled, COALESCE(provider_name,'') FROM models ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ModelRoute
+	for rows.Next() {
+		var rec ModelRoute
+		if err := rows.Scan(&rec.Name, &rec.Family, &rec.Disabled, &rec.Provider); err != nil {
+			return nil, err
+		}
+		out = append(out, rec)
+	}
+	return out, rows.Err()
+}
+
+func nullIfEmpty(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
 }
 
 func (s *PostgresStore) UpsertPrice(ctx context.Context, price Price) error {

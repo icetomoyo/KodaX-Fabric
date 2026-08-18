@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"log"
 	"net/http"
@@ -36,6 +37,14 @@ func main() {
 		log.Fatalf("provider: %v", err)
 	}
 	srv := fabric.NewServer(store, provider)
+	if key, err := masterKey(); err != nil {
+		log.Fatalf("master key: %v", err)
+	} else if key != nil {
+		srv.MasterKey = key
+	}
+	if os.Getenv("PROVIDER_MODE") == "live" {
+		srv.UseRegistry = true
+	}
 
 	addr := os.Getenv("LISTEN_ADDR")
 	if addr == "" {
@@ -52,6 +61,23 @@ func main() {
 	shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = httpSrv.Shutdown(shutdown)
+}
+
+func masterKey() ([]byte, error) {
+	raw := os.Getenv("FABRIC_MASTER_KEY")
+	if raw == "" {
+		if os.Getenv("PROVIDER_MODE") == "live" {
+			return nil, errors.New("FABRIC_MASTER_KEY is required when PROVIDER_MODE=live")
+		}
+		return nil, nil
+	}
+	if b, err := hex.DecodeString(raw); err == nil && len(b) == 32 {
+		return b, nil
+	}
+	if len(raw) == 32 {
+		return []byte(raw), nil
+	}
+	return nil, errors.New("FABRIC_MASTER_KEY must be 32 bytes or 64 hex chars")
 }
 
 func adminPass() string {
