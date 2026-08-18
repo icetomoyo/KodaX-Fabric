@@ -45,12 +45,13 @@ describe("admin API docs", () => {
       (n, g) => n + g.items.filter((i) => i.kind === "api").length,
       0,
     );
-    expect(allEndpoints).toHaveLength(24);
-    expect(apiCount).toBe(24);
+    expect(allEndpoints).toHaveLength(27);
+    expect(apiCount).toBe(27);
     for (const title of [
       "模型 API",
       "系统",
       "账号",
+      "企业",
       "项目",
       "虚拟钥匙",
       "上游 Provider",
@@ -62,6 +63,7 @@ describe("admin API docs", () => {
     }
     expect(screen.getByRole("button", { name: /登录/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /健康检查/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /创建企业/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /用量聚合/ })).toBeInTheDocument();
     expect(screen.queryByText("/console/v1/login")).not.toBeInTheDocument();
     expect(screen.queryByText("渠道池")).not.toBeInTheDocument();
@@ -90,7 +92,9 @@ describe("admin API docs", () => {
     renderDocs("/admin/docs?api=errors");
     expect(screen.getByRole("heading", { name: "鉴权与错误" })).toBeInTheDocument();
     expect(screen.getByText("no_price")).toBeInTheDocument();
-    expect(screen.getByText("project_mismatch")).toBeInTheDocument();
+    expect(screen.getByText("project_id_not_supported")).toBeInTheDocument();
+    expect(screen.getByText("team_mismatch")).toBeInTheDocument();
+    expect(screen.getByText("enterprise_disabled")).toBeInTheDocument();
   });
 
   it("switches example language", async () => {

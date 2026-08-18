@@ -230,9 +230,10 @@ function ErrorsDoc({ origin }: { origin: string }) {
           <li>同一把 VK 可打两个端点；官方 Key 不会出现在调用方请求里。</li>
           <li>
             可选请求头 <code className="font-mono text-xs">x-fabric-context</code> 可带{" "}
-            <code className="font-mono text-xs">project_id</code> /{" "}
+            <code className="font-mono text-xs">team_id</code> /{" "}
             <code className="font-mono text-xs">task_type</code> /{" "}
-            <code className="font-mono text-xs">run_id</code>，写入请求流水，不送到上游。
+            <code className="font-mono text-xs">run_id</code>
+            。出现 <code className="font-mono text-xs">project_id</code> 会被拒绝。写入请求流水，不送到上游。
           </li>
         </ul>
       </section>

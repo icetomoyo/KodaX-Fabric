@@ -33,11 +33,6 @@ type Enterprise struct {
 	Disabled bool
 }
 
-type Team struct {
-	Name       string
-	Enterprise string
-}
-
 type VirtualKeyRecord struct {
 	Hash     string
 	Project  string

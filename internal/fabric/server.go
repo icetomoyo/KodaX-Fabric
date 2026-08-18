@@ -50,8 +50,6 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /admin/api/enterprises/{name}/disable", s.handleDisableEnterprise)
 	mux.HandleFunc("POST /admin/api/projects", s.handleCreateProject)
 	mux.HandleFunc("GET /admin/api/projects", s.handleListProjects)
-	mux.HandleFunc("POST /admin/api/teams", s.handleCreateProject)
-	mux.HandleFunc("GET /admin/api/teams", s.handleListProjects)
 	mux.HandleFunc("POST /admin/api/virtual-keys", s.handleCreateVirtualKey)
 	mux.HandleFunc("GET /admin/api/virtual-keys", s.handleListVirtualKeys)
 	mux.HandleFunc("GET /admin/api/virtual-keys/{hash}", s.handleGetVirtualKey)

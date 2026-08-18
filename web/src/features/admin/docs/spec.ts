@@ -120,7 +120,7 @@ export const chatEndpoint: EndpointDoc = {
       name: "x-fabric-context",
       type: "string",
       description:
-        "可选 JSON。网关只认 `project_id`、`task_type`、`run_id`。`project_id` 若填必须与 VK 所属 Project 一致，否则 400 `project_mismatch`。非法 JSON 返回 400 `bad_fabric_context`。`run_id` / `task_type` 写入请求流水，不送到上游。",
+        "可选 JSON。网关只认 `team_id`、`task_type`、`run_id`。出现 `project_id` 一律 400 `project_id_not_supported`。`team_id` 若填必须与 VK 所属 Team 一致，否则 400 `team_mismatch`。非法 JSON 返回 400 `bad_fabric_context`。`run_id` / `task_type` 写入请求流水，不送到上游。",
     },
   ],
   body: [
@@ -281,7 +281,7 @@ export const messagesEndpoint: EndpointDoc = {
     {
       name: "x-fabric-context",
       type: "string",
-      description: "与对话补全相同。`project_id` / `task_type` / `run_id`。",
+      description: "与对话补全相同。`team_id` / `task_type` / `run_id`。出现 `project_id` 会拒绝。",
     },
   ],
   body: [
@@ -398,9 +398,21 @@ export const fabricErrors: FabricError[] = [
   },
   {
     status: 400,
-    code: "project_mismatch",
-    when: "`x-fabric-context.project_id` 与该 VK 所属 Project 不一致。",
-    sample: `{"error":"project_mismatch"}`,
+    code: "project_id_not_supported",
+    when: "`x-fabric-context` 里出现 `project_id`。成本桶是 Team，P2 不消费 Space 项目。",
+    sample: `{"error":"project_id_not_supported"}`,
+  },
+  {
+    status: 400,
+    code: "team_mismatch",
+    when: "`x-fabric-context.team_id` 与该 VK 所属 Team 不一致。",
+    sample: `{"error":"team_mismatch"}`,
+  },
+  {
+    status: 403,
+    code: "enterprise_disabled",
+    when: "VK 所属企业已停用。新请求立刻拒绝，不打上游。",
+    sample: `{"error":"enterprise_disabled"}`,
   },
   {
     status: 400,
@@ -447,7 +459,7 @@ export const fabricErrors: FabricError[] = [
   {
     status: 409,
     code: "duplicate",
-    when: "创建 Provider 或 Model 时名称已存在。",
+    when: "创建企业、Provider 或 Model 时名称已存在。",
     sample: `{"error":"duplicate"}`,
   },
 ];

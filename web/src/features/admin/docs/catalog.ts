@@ -81,11 +81,18 @@ function rest(
   };
 }
 
-const projectFields: DocField[] = [f("name", "string", "Project 名称，唯一。")];
+const projectFields: DocField[] = [
+  f("name", "string", "Team 名称，唯一。P1 接口仍叫 Project。"),
+];
+
+const enterpriseFields: DocField[] = [
+  f("name", "string", "企业名称，创建后不可改、不可删。"),
+  f("disabled", "boolean", "停用后该企业下 VK 立刻 403 `enterprise_disabled`。"),
+];
 
 const vkPublicFields: DocField[] = [
   f("hash", "string", "虚拟钥匙的 SHA-256 hex，列表与查询只回这个。"),
-  f("project", "string", "所属 Project。"),
+  f("project", "string", "所属 Team。字段名 `project` 为过渡。"),
   f("disabled", "boolean", "停用后网关返回 `invalid_virtual_key`。"),
 ];
 
@@ -141,19 +148,63 @@ const me = rest("me", "当前用户", "GET", "/admin/api/me", "读取登录身�
   response: [
     f("username", "string", "登录用户名。"),
     f("name", "string", "当前等于 username。"),
-    f("role", "string", "固定 `admin`。"),
+    f("role", "string", "种子账号为 `super_admin`。"),
   ],
-  exampleResponse: { username: "admin", name: "admin", role: "admin" },
+  exampleResponse: { username: "admin", name: "admin", role: "super_admin" },
 });
+
+const listEnterprises = rest(
+  "list-enterprises",
+  "企业列表",
+  "GET",
+  "/admin/api/enterprises",
+  "列出全部企业。",
+  {
+    response: [f("enterprises", "object[]", "企业数组。", { children: enterpriseFields })],
+    exampleResponse: {
+      enterprises: [
+        { name: "seed", disabled: false },
+        { name: "acme", disabled: false },
+      ],
+    },
+  },
+);
+
+const createEnterprise = rest(
+  "create-enterprise",
+  "创建企业",
+  "POST",
+  "/admin/api/enterprises",
+  "新建企业。名字创建后不可改、不可删。",
+  {
+    body: [f("name", "string", "企业名，不能为空。", { required: true })],
+    response: [f("name", "string", "企业名。")],
+    exampleBody: { name: "acme" },
+    exampleResponse: { name: "acme" },
+  },
+);
+
+const disableEnterprise = rest(
+  "disable-enterprise",
+  "停用企业",
+  "POST",
+  "/admin/api/enterprises/{name}/disable",
+  "停用后该企业下 VK 立刻 403，不打上游。",
+  {
+    headers: [],
+    response: [f("status", "string", "固定 `ok`。")],
+    exampleResponse: { status: "ok" },
+  },
+);
 
 const listProjects = rest(
   "list-projects",
   "项目列表",
   "GET",
   "/admin/api/projects",
-  "列出全部 Project。",
+  "列出全部 Team。路径仍用 P1 的 `/admin/api/projects`。",
   {
-    response: [f("projects", "object[]", "项目数组。", { children: projectFields })],
+    response: [f("projects", "object[]", "Team 数组。字段名 `projects` 为过渡。", { children: projectFields })],
     exampleResponse: { projects: [{ name: "demo" }] },
   },
 );
@@ -163,10 +214,10 @@ const createProject = rest(
   "创建项目",
   "POST",
   "/admin/api/projects",
-  "新建 Project。",
+  "新建 Team。路径仍用 P1 的 `/admin/api/projects`。",
   {
-    body: [f("name", "string", "项目名，不能为空。", { required: true })],
-    response: projectFields,
+    body: [f("name", "string", "Team 名，不能为空。", { required: true })],
+    response: [f("name", "string", "Team 名。")],
     exampleBody: { name: "billing" },
     exampleResponse: { name: "billing" },
   },
@@ -197,9 +248,9 @@ const createVK = rest(
   "发放虚拟钥匙",
   "POST",
   "/admin/api/virtual-keys",
-  "为已有 Project 发一把 VK。明文只在这次响应里出现。",
+  "为已有 Team 发一把 VK。明文只在这次响应里出现。",
   {
-    body: [f("project", "string", "已存在的 Project 名。", { required: true })],
+    body: [f("project", "string", "已存在的 Team 名。字段名 `project` 为过渡。", { required: true })],
     response: [...vkPublicFields, f("plaintext", "string", "明文，前缀 `sk-fab-`，只此一次。")],
     exampleBody: { project: "demo" },
     exampleResponse: {
@@ -413,18 +464,18 @@ const usage = rest(
   "用量聚合",
   "GET",
   "/admin/api/usage",
-  "按 Project × Model × 日聚合。日界为 Asia/Shanghai。",
+  "按 Team × Model × 日聚合。日界为 Asia/Shanghai。查询参数仍叫 `project`。",
   {
     query: [
       f("day", "string", "YYYY-MM-DD。缺省为上海时区今天。"),
-      f("project", "string", "按 Project 过滤。空则全部。"),
+      f("project", "string", "按 Team 过滤。空则全部。字段名 `project` 为过渡。"),
     ],
     response: [
       f("day", "string", "查询的日。"),
-      f("project", "string", "查询的 Project 过滤，空为全部。"),
+      f("project", "string", "查询的 Team 过滤，空为全部。"),
       f("rows", "object[]", "聚合行。", {
         children: [
-          f("project", "string", "Project。"),
+          f("project", "string", "Team。字段名 `project` 为过渡。"),
           f("model", "string", "Model。"),
           f("day", "string", "上海时区日。"),
           f("calls", "integer", "总调用。"),
@@ -463,15 +514,15 @@ const requests = rest(
   "请求流水",
   "GET",
   "/admin/api/requests",
-  "列出某 Project 的请求流水（账本粒度）。",
+  "列出某 Team 的请求流水（账本粒度）。查询参数仍叫 `project`。",
   {
-    query: [f("project", "string", "Project 名。缺省为种子项目 `demo`。")],
+    query: [f("project", "string", "Team 名。缺省为种子 Team `demo`。")],
     response: [
-      f("project", "string", "查询的 Project。"),
+      f("project", "string", "查询的 Team。"),
       f("requests", "object[]", "流水。", {
         children: [
           f("virtual_key_hash", "string", "VK 哈希。"),
-          f("project", "string", "Project。"),
+          f("project", "string", "Team。字段名 `project` 为过渡。"),
           f("model", "string", "请求 model。"),
           f("input_tokens", "integer", "输入。"),
           f("output_tokens", "integer", "输出。"),
@@ -525,6 +576,14 @@ export const navGroups: NavGroup[] = [
       { kind: "api", doc: login },
       { kind: "api", doc: logout },
       { kind: "api", doc: me },
+    ],
+  },
+  {
+    title: "企业",
+    items: [
+      { kind: "api", doc: listEnterprises },
+      { kind: "api", doc: createEnterprise },
+      { kind: "api", doc: disableEnterprise },
     ],
   },
   {
@@ -590,6 +649,7 @@ export function restSamples(ep: EndpointDoc, origin: string): Record<LangId, Cod
   const base = origin.replace(/\/$/, "");
   const path = ep.path
     .replace("{hash}", "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08")
+    .replace("/enterprises/{name}", "/enterprises/acme")
     .replace("{name}", "deepseek")
     .replace("{model}", "gpt-4o-mini");
   const url = `${base}${path}`;
