@@ -43,6 +43,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /admin/api/virtual-keys", s.handleListVirtualKeys)
 	mux.HandleFunc("GET /admin/api/virtual-keys/{hash}", s.handleGetVirtualKey)
 	mux.HandleFunc("POST /admin/api/virtual-keys/{hash}/disable", s.handleDisableVirtualKey)
+	mux.HandleFunc("GET /admin/api/prices", s.handleListPrices)
+	mux.HandleFunc("PUT /admin/api/prices/{model}", s.handleUpsertPrice)
+	mux.HandleFunc("DELETE /admin/api/prices/{model}", s.handleDeletePrice)
 	mux.HandleFunc("GET /admin/api/usage", s.handleUsage)
 	mux.HandleFunc("GET /admin/api/requests", s.handleRequests)
 	mux.HandleFunc("GET /admin", s.handleAdminPage)
@@ -375,6 +378,67 @@ func newVirtualKeyPlaintext() string {
 	return "sk-fab-" + hex.EncodeToString(b[:])
 }
 
+func (s *Server) handleListPrices(w http.ResponseWriter, r *http.Request) {
+	if !s.authed(r) {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+	prices, err := s.Store.ListPrices(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "store"})
+		return
+	}
+	if prices == nil {
+		prices = []Price{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"prices": prices})
+}
+
+func (s *Server) handleUpsertPrice(w http.ResponseWriter, r *http.Request) {
+	if !s.authed(r) {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+	model := r.PathValue("model")
+	_, found, err := s.Store.LookupModel(r.Context(), model)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "store"})
+		return
+	}
+	if !found {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown_model"})
+		return
+	}
+	var body Price
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad_body"})
+		return
+	}
+	body.Model = model
+	if err := s.Store.UpsertPrice(r.Context(), body); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "store"})
+		return
+	}
+	writeJSON(w, http.StatusOK, body)
+}
+
+func (s *Server) handleDeletePrice(w http.ResponseWriter, r *http.Request) {
+	if !s.authed(r) {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+	ok, err := s.Store.DeletePrice(r.Context(), r.PathValue("model"))
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "store"})
+		return
+	}
+	if !ok {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not_found"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+}
+
 func (s *Server) handleUsage(w http.ResponseWriter, r *http.Request) {
 	if !s.authed(r) {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
@@ -629,6 +693,15 @@ const adminHTML = `<!doctype html>
 </form>
 <pre id="created"></pre>
 <ul id="keys"></ul>
+<h2>价格表</h2>
+<form id="price">
+  <input name="model" value="gpt-4o-mini" />
+  <input name="input_cny" value="1" />
+  <input name="output_cny" value="2" />
+  <input name="cached_cny" value="0.1" />
+  <button>保存</button>
+</form>
+<ul id="prices"></ul>
 <h2>用量报表</h2>
 <pre id="out"></pre>
 <script>
@@ -646,6 +719,22 @@ async function refresh() {
     const li = document.createElement('li');
     li.textContent = row.name;
     plist.appendChild(li);
+  });
+  const pr = await fetch('/admin/api/prices');
+  const pricedata = await pr.json();
+  const pricelist = document.getElementById('prices');
+  pricelist.innerHTML = '';
+  (pricedata.prices || []).forEach(row => {
+    const li = document.createElement('li');
+    li.textContent = row.model + ' in=' + row.input_cny + ' out=' + row.output_cny + ' cache=' + row.cached_cny;
+    const b = document.createElement('button');
+    b.textContent = '删除';
+    b.onclick = async () => {
+      await fetch('/admin/api/prices/' + row.model, {method:'DELETE'});
+      refresh();
+    };
+    li.appendChild(b);
+    pricelist.appendChild(li);
   });
   const k = await fetch('/admin/api/virtual-keys');
   const data = await k.json();
@@ -675,6 +764,12 @@ document.getElementById('proj').onsubmit = async (e) => {
   e.preventDefault();
   const fd = new FormData(e.target);
   await fetch('/admin/api/projects', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({name:fd.get('name')})});
+  refresh();
+};
+document.getElementById('price').onsubmit = async (e) => {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  await fetch('/admin/api/prices/' + fd.get('model'), {method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({input_cny:Number(fd.get('input_cny')), output_cny:Number(fd.get('output_cny')), cached_cny:Number(fd.get('cached_cny'))})});
   refresh();
 };
 document.getElementById('vk').onsubmit = async (e) => {

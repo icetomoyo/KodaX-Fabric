@@ -116,6 +116,45 @@ func (s *PostgresStore) LookupModel(ctx context.Context, name string) (ModelRout
 	return rec, true, nil
 }
 
+func (s *PostgresStore) UpsertPrice(ctx context.Context, price Price) error {
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO prices (model_name, input_cny, output_cny, cached_cny)
+		VALUES ($1, $2, $3, $4)
+		ON CONFLICT (model_name) DO UPDATE SET
+			input_cny = EXCLUDED.input_cny,
+			output_cny = EXCLUDED.output_cny,
+			cached_cny = EXCLUDED.cached_cny`,
+		price.Model, price.InputCNY, price.OutputCNY, price.CachedCNY)
+	return err
+}
+
+func (s *PostgresStore) DeletePrice(ctx context.Context, model string) (bool, error) {
+	res, err := s.db.ExecContext(ctx, `DELETE FROM prices WHERE model_name = $1`, model)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
+func (s *PostgresStore) ListPrices(ctx context.Context) ([]Price, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT model_name, input_cny, output_cny, cached_cny FROM prices ORDER BY model_name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Price
+	for rows.Next() {
+		var p Price
+		if err := rows.Scan(&p.Model, &p.InputCNY, &p.OutputCNY, &p.CachedCNY); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
 func (s *PostgresStore) LookupPrice(ctx context.Context, model string) (Price, bool, error) {
 	var p Price
 	err := s.db.QueryRowContext(ctx, `
@@ -127,6 +166,7 @@ func (s *PostgresStore) LookupPrice(ctx context.Context, model string) (Price, b
 	if err != nil {
 		return Price{}, false, err
 	}
+	p.Model = model
 	return p, true, nil
 }
 

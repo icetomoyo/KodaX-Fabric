@@ -10,6 +10,7 @@ import (
 )
 
 var errUnknownProject = errors.New("unknown project")
+var errUnknownModel = errors.New("unknown model")
 
 const (
 	SeedVirtualKey     = "sk-fabric-demo"
@@ -37,9 +38,10 @@ type ModelRoute struct {
 }
 
 type Price struct {
-	InputCNY  float64
-	OutputCNY float64
-	CachedCNY float64
+	Model     string  `json:"model"`
+	InputCNY  float64 `json:"input_cny"`
+	OutputCNY float64 `json:"output_cny"`
+	CachedCNY float64 `json:"cached_cny"`
 }
 
 type RequestRow struct {
@@ -81,6 +83,9 @@ type Store interface {
 	DisableVirtualKey(ctx context.Context, hash string) (bool, error)
 	CreateProject(ctx context.Context, name string) error
 	ListProjects(ctx context.Context) ([]string, error)
+	UpsertPrice(ctx context.Context, price Price) error
+	DeletePrice(ctx context.Context, model string) (bool, error)
+	ListPrices(ctx context.Context) ([]Price, error)
 }
 
 func HashVirtualKey(plaintext string) string {
@@ -110,8 +115,8 @@ func NewSeededMemoryStore(adminHash string) *MemoryStore {
 			SeedAnthropicModel: {Name: SeedAnthropicModel, Family: "anthropic", Disabled: false},
 		},
 		prices: map[string]Price{
-			SeedModel:          {InputCNY: SeedInputPriceCNY, OutputCNY: SeedOutputPriceCNY, CachedCNY: SeedCachedPriceCNY},
-			SeedAnthropicModel: {InputCNY: SeedInputPriceCNY, OutputCNY: SeedOutputPriceCNY, CachedCNY: SeedCachedPriceCNY},
+			SeedModel:          {Model: SeedModel, InputCNY: SeedInputPriceCNY, OutputCNY: SeedOutputPriceCNY, CachedCNY: SeedCachedPriceCNY},
+			SeedAnthropicModel: {Model: SeedAnthropicModel, InputCNY: SeedInputPriceCNY, OutputCNY: SeedOutputPriceCNY, CachedCNY: SeedCachedPriceCNY},
 		},
 		adminHash: adminHash,
 	}
@@ -129,6 +134,37 @@ func (s *MemoryStore) LookupModel(_ context.Context, name string) (ModelRoute, b
 	defer s.mu.Unlock()
 	rec, ok := s.models[name]
 	return rec, ok, nil
+}
+
+func (s *MemoryStore) UpsertPrice(_ context.Context, price Price) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.models[price.Model]; !ok {
+		return errUnknownModel
+	}
+	s.prices[price.Model] = price
+	return nil
+}
+
+func (s *MemoryStore) DeletePrice(_ context.Context, model string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.prices[model]; !ok {
+		return false, nil
+	}
+	delete(s.prices, model)
+	return true, nil
+}
+
+func (s *MemoryStore) ListPrices(_ context.Context) ([]Price, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]Price, 0, len(s.prices))
+	for model, p := range s.prices {
+		p.Model = model
+		out = append(out, p)
+	}
+	return out, nil
 }
 
 func (s *MemoryStore) LookupPrice(_ context.Context, model string) (Price, bool, error) {
