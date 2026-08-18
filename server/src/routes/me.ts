@@ -381,26 +381,33 @@ export async function meRoutes(app: FastifyInstance) {
       })
       .parse(req.query);
 
-    const rows = await db
-      .select({
-        id: requestAudits.id,
-        requestId: requestAudits.requestId,
-        protocol: requestAudits.protocol,
-        clientModel: requestAudits.clientModel,
-        providerCode: requestAudits.providerCode,
-        productType: requestAudits.productType,
-        status: requestAudits.status,
-        totalTokens: requestAudits.totalTokens,
-        latencyMs: requestAudits.latencyMs,
-        createdAt: requestAudits.createdAt,
-      })
-      .from(requestAudits)
-      .where(eq(requestAudits.employeeId, req.employeeId!))
-      .orderBy(desc(requestAudits.id))
-      .limit(query.limit)
-      .offset(query.offset);
+    const whereExpr = eq(requestAudits.employeeId, req.employeeId!);
+    const [[countRow], items] = await Promise.all([
+      db.select({ total: sql<number>`count(*)::int` }).from(requestAudits).where(whereExpr),
+      db
+        .select({
+          id: requestAudits.id,
+          requestId: requestAudits.requestId,
+          protocol: requestAudits.protocol,
+          clientModel: requestAudits.clientModel,
+          providerCode: requestAudits.providerCode,
+          productType: requestAudits.productType,
+          status: requestAudits.status,
+          totalTokens: requestAudits.totalTokens,
+          latencyMs: requestAudits.latencyMs,
+          createdAt: requestAudits.createdAt,
+        })
+        .from(requestAudits)
+        .where(whereExpr)
+        .orderBy(desc(requestAudits.id))
+        .limit(query.limit)
+        .offset(query.offset),
+    ]);
 
-    return { success: true, data: rows };
+    return {
+      success: true,
+      data: { total: countRow?.total ?? 0, items },
+    };
   });
 
   app.get("/api/me/logs/:requestId", async (req, reply) => {

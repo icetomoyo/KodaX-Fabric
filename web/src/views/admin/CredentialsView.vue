@@ -122,7 +122,7 @@
 
               <el-table
                 ref="keyTableRef"
-                :data="selectedChannel.keys"
+                :data="pagedKeys"
                 row-key="id"
                 size="small"
                 class="key-table"
@@ -204,6 +204,16 @@
                   </template>
                 </el-table-column>
               </el-table>
+              <div v-if="selectedChannel.totalCount > KEY_PAGE_SIZE" class="pager">
+                <el-pagination
+                  background
+                  size="small"
+                  layout="total, prev, pager, next"
+                  :total="selectedChannel.totalCount"
+                  :page-size="KEY_PAGE_SIZE"
+                  v-model:current-page="keyPage"
+                />
+              </div>
             </section>
           </template>
 
@@ -811,6 +821,7 @@ const router = useRouter();
 const auth = useAuthStore();
 const canWrite = computed(() => auth.isAdmin);
 
+const KEY_PAGE_SIZE = 5;
 const rows = ref<CredentialRow[]>([]);
 const templates = ref<ProviderTemplate[]>([]);
 const loading = ref(false);
@@ -818,6 +829,7 @@ const selectedProductLineId = ref<number | null>(null);
 const syncingQuery = ref(false);
 const keyTableRef = ref<KeyTableRef | null>(null);
 const selectedKeyRows = ref<CredentialRow[]>([]);
+const keyPage = ref(1);
 
 const showBulkForm = ref(false);
 const bulkSaving = ref(false);
@@ -905,6 +917,12 @@ const channels = computed<ChannelGroup[]>(() => {
 const selectedChannel = computed(
   () => channels.value.find((channel) => channel.id === selectedProductLineId.value) ?? null,
 );
+
+const pagedKeys = computed(() => {
+  const keys = selectedChannel.value?.keys ?? [];
+  const start = (keyPage.value - 1) * KEY_PAGE_SIZE;
+  return keys.slice(start, start + KEY_PAGE_SIZE);
+});
 
 const selectedChannelSummary = computed(
   () => selectedProductLineId.value == null
@@ -1011,6 +1029,7 @@ function syncSelectedToQuery(id: number | null) {
 watch(rows, reconcileSelection, { deep: false });
 
 watch(selectedProductLineId, (id) => {
+  keyPage.value = 1;
   syncSelectedToQuery(id);
   clearSelectedKeys();
   if (detailRow.value && detailRow.value.productLineId !== id) {
@@ -1018,6 +1037,14 @@ watch(selectedProductLineId, (id) => {
   }
   showChannelDetails.value = false;
 });
+
+watch(
+  () => selectedChannel.value?.keys.length ?? 0,
+  (total) => {
+    const maxPage = Math.max(1, Math.ceil(total / KEY_PAGE_SIZE));
+    if (keyPage.value > maxPage) keyPage.value = maxPage;
+  },
+);
 
 watch(() => route.query.channelId, () => {
   if (syncingQuery.value) return;
@@ -1043,13 +1070,19 @@ function handleSelectionChange(selection: CredentialRow[]) {
 
 async function selectKeysByIds(ids: number[]) {
   if (!ids.length) return;
+  const keys = selectedChannel.value?.keys ?? [];
   const idSet = new Set(ids);
-  const createdRows = selectedChannel.value?.keys.filter((row) => idSet.has(row.id)) ?? [];
+  const createdRows = keys.filter((row) => idSet.has(row.id));
   if (!createdRows.length) return;
+  const firstIndex = keys.findIndex((row) => row.id === createdRows[0].id);
+  if (firstIndex >= 0) {
+    keyPage.value = Math.floor(firstIndex / KEY_PAGE_SIZE) + 1;
+  }
   await nextTick();
   keyTableRef.value?.clearSelection();
+  const visibleIds = new Set(pagedKeys.value.map((row) => row.id));
   for (const row of createdRows) {
-    keyTableRef.value?.toggleRowSelection(row, true);
+    if (visibleIds.has(row.id)) keyTableRef.value?.toggleRowSelection(row, true);
   }
 }
 
@@ -2324,6 +2357,12 @@ onMounted(refreshAll);
 
 .key-table {
   width: 100%;
+}
+
+.pager {
+  display: flex;
+  justify-content: flex-end;
+  padding: 10px 14px 12px;
 }
 
 .key-name-button {
