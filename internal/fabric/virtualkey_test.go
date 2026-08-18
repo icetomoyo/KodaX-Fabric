@@ -105,6 +105,32 @@ func TestNoVirtualKeyRotate(t *testing.T) {
 	}
 }
 
+func TestAdminMeAndLogout(t *testing.T) {
+	srv := newTestServer(t)
+	admin := loginAdmin(t, srv)
+	resp, err := admin.Get(srv.URL + "/admin/api/me")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("me %d", resp.StatusCode)
+	}
+	logout, err := admin.Post(srv.URL+"/admin/api/logout", "application/json", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = logout.Body.Close()
+	again, err := admin.Get(srv.URL + "/admin/api/me")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer again.Body.Close()
+	if again.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("after logout %d", again.StatusCode)
+	}
+}
+
 func TestCreateVirtualKeyRequiresAdmin(t *testing.T) {
 	srv := newTestServer(t)
 	resp, err := srv.Client().Post(srv.URL+"/admin/api/virtual-keys", "application/json", bytes.NewReader([]byte(`{"project":"demo"}`)))

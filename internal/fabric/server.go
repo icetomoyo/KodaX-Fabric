@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/icetomoyo/kodax-fabric/internal/webui"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -22,7 +23,7 @@ type Server struct {
 	UseRegistry bool
 
 	mu       sync.Mutex
-	sessions map[string]struct{}
+	sessions map[string]string
 }
 
 func NewServer(store Store, provider Provider) *Server {
@@ -31,7 +32,7 @@ func NewServer(store Store, provider Provider) *Server {
 		Provider:  provider,
 		Now:       func() time.Time { return time.Now().UTC() },
 		MasterKey: TestMasterKey,
-		sessions:  map[string]struct{}{},
+		sessions:  map[string]string{},
 	}
 }
 
@@ -39,7 +40,10 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/chat/completions", s.handleChatCompletions)
 	mux.HandleFunc("POST /v1/messages", s.handleMessages)
+	mux.HandleFunc("GET /health", s.handleHealth)
 	mux.HandleFunc("POST /admin/api/login", s.handleLogin)
+	mux.HandleFunc("POST /admin/api/logout", s.handleLogout)
+	mux.HandleFunc("GET /admin/api/me", s.handleMe)
 	mux.HandleFunc("POST /admin/api/projects", s.handleCreateProject)
 	mux.HandleFunc("GET /admin/api/projects", s.handleListProjects)
 	mux.HandleFunc("POST /admin/api/virtual-keys", s.handleCreateVirtualKey)
@@ -58,9 +62,19 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /admin/api/prices/{model}", s.handleDeletePrice)
 	mux.HandleFunc("GET /admin/api/usage", s.handleUsage)
 	mux.HandleFunc("GET /admin/api/requests", s.handleRequests)
-	mux.HandleFunc("GET /admin", s.handleAdminPage)
-	mux.HandleFunc("/", s.handleUnknown)
+	mux.Handle("/", s.fallback())
 	return mux
+}
+
+func (s *Server) fallback() http.Handler {
+	spa := webui.Handler()
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet || r.Method == http.MethodHead {
+			spa.ServeHTTP(w, r)
+			return
+		}
+		s.handleUnknown(w, r)
+	})
 }
 
 func (s *Server) handleUnknown(w http.ResponseWriter, r *http.Request) {
@@ -254,10 +268,33 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	id := newSessionID()
 	s.mu.Lock()
-	s.sessions[id] = struct{}{}
+	s.sessions[id] = body.Username
 	s.mu.Unlock()
 	http.SetCookie(w, &http.Cookie{Name: "fabric_session", Value: id, Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode})
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "username": body.Username})
+}
+
+func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
+	if c, err := r.Cookie("fabric_session"); err == nil {
+		s.mu.Lock()
+		delete(s.sessions, c.Value)
+		s.mu.Unlock()
+	}
+	http.SetCookie(w, &http.Cookie{Name: "fabric_session", Value: "", Path: "/", MaxAge: -1, HttpOnly: true})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
+	user, ok := s.sessionUser(r)
+	if !ok {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"username": user, "name": user, "role": "admin"})
+}
+
+func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "service": "fabric"})
 }
 
 func (s *Server) handleCreateProject(w http.ResponseWriter, r *http.Request) {
@@ -710,20 +747,20 @@ func (s *Server) handleRequests(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"project": project, "requests": out})
 }
 
-func (s *Server) handleAdminPage(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = io.WriteString(w, adminHTML)
+func (s *Server) authed(r *http.Request) bool {
+	_, ok := s.sessionUser(r)
+	return ok
 }
 
-func (s *Server) authed(r *http.Request) bool {
+func (s *Server) sessionUser(r *http.Request) (string, bool) {
 	c, err := r.Cookie("fabric_session")
 	if err != nil {
-		return false
+		return "", false
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	_, ok := s.sessions[c.Value]
-	return ok
+	user, ok := s.sessions[c.Value]
+	return user, ok
 }
 
 func virtualKey(r *http.Request) (string, bool) {
@@ -868,203 +905,3 @@ func HashAdminPassword(password string) string {
 	}
 	return string(h)
 }
-
-const adminHTML = `<!doctype html>
-<html lang="zh-CN">
-<meta charset="utf-8">
-<title>Fabric 管理台</title>
-<body>
-<h1>Fabric 管理台</h1>
-<form id="login">
-  <input name="username" value="admin" />
-  <input name="password" type="password" value="fabric-admin" />
-  <button>登录</button>
-</form>
-<h2>Project</h2>
-<form id="proj">
-  <input name="name" value="billing" />
-  <button>创建</button>
-</form>
-<ul id="projects"></ul>
-<h2>Virtual Key</h2>
-<form id="vk">
-  <input name="project" value="demo" />
-  <button>创建</button>
-</form>
-<pre id="created"></pre>
-<ul id="keys"></ul>
-<h2>Provider</h2>
-<form id="prov">
-  <input name="name" value="ds" />
-  <input name="family" value="openai" />
-  <input name="base_url" value="https://api.deepseek.com" />
-  <input name="api_key" type="password" />
-  <button>登记</button>
-</form>
-<ul id="providers"></ul>
-<h2>Model</h2>
-<form id="mod">
-  <input name="name" value="my-flash" />
-  <input name="family" value="openai" />
-  <input name="provider" value="ds" />
-  <button>映射</button>
-</form>
-<ul id="models"></ul>
-<h2>价格表</h2>
-<form id="price">
-  <input name="model" value="gpt-4o-mini" />
-  <input name="input_cny" value="1" />
-  <input name="output_cny" value="2" />
-  <input name="cached_cny" value="0.1" />
-  <button>保存</button>
-</form>
-<ul id="prices"></ul>
-<h2>用量报表</h2>
-<form id="report">
-  <input name="day" placeholder="YYYY-MM-DD" />
-  <input name="project" placeholder="全部 Project" />
-  <button>查询</button>
-</form>
-<table id="usage">
-  <thead><tr><th>日</th><th>Project</th><th>Model</th><th>调用</th><th>失败</th><th>零Usage</th><th>in</th><th>out</th><th>成本CNY</th></tr></thead>
-  <tbody></tbody>
-</table>
-<pre id="out"></pre>
-<script>
-const out = document.getElementById('out');
-const created = document.getElementById('created');
-const keys = document.getElementById('keys');
-async function loadUsage() {
-  const day = document.querySelector('#report [name=day]').value;
-  const project = document.querySelector('#report [name=project]').value;
-  let u = '/admin/api/usage?';
-  if (day) u += 'day=' + encodeURIComponent(day) + '&';
-  if (project) u += 'project=' + encodeURIComponent(project);
-  const res = await fetch(u);
-  const data = await res.json();
-  out.textContent = JSON.stringify(data, null, 2);
-  const tb = document.querySelector('#usage tbody');
-  tb.innerHTML = '';
-  (data.rows || []).forEach(row => {
-    const tr = document.createElement('tr');
-    tr.innerHTML = '<td>'+[row.day,row.project,row.model,row.calls,row.failed_calls,row.zero_usage_calls,row.input_tokens,row.output_tokens,row.cost_cny].join('</td><td>')+'</td>';
-    tb.appendChild(tr);
-  });
-}
-async function refresh() {
-  await loadUsage();
-  const p = await fetch('/admin/api/projects');
-  const pdata = await p.json();
-  const plist = document.getElementById('projects');
-  plist.innerHTML = '';
-  (pdata.projects || []).forEach(row => {
-    const li = document.createElement('li');
-    li.textContent = row.name;
-    plist.appendChild(li);
-  });
-  const ups = await fetch('/admin/api/providers');
-  const updata = await ups.json();
-  const uplist = document.getElementById('providers');
-  uplist.innerHTML = '';
-  (updata.providers || []).forEach(row => {
-    const li = document.createElement('li');
-    li.textContent = row.name + ' ' + row.family + ' ' + row.base_url + (row.disabled ? ' 已停用' : '');
-    if (!row.disabled) {
-      const b = document.createElement('button');
-      b.textContent = '停用';
-      b.onclick = async () => { await fetch('/admin/api/providers/' + row.name + '/disable', {method:'POST'}); refresh(); };
-      li.appendChild(b);
-    }
-    uplist.appendChild(li);
-  });
-  const mods = await fetch('/admin/api/models');
-  const mdata = await mods.json();
-  const mlist = document.getElementById('models');
-  mlist.innerHTML = '';
-  (mdata.models || []).forEach(row => {
-    const li = document.createElement('li');
-    li.textContent = row.name + ' → ' + row.provider + (row.disabled ? ' 已停用' : '');
-    if (!row.disabled) {
-      const b = document.createElement('button');
-      b.textContent = '停用';
-      b.onclick = async () => { await fetch('/admin/api/models/' + row.name + '/disable', {method:'POST'}); refresh(); };
-      li.appendChild(b);
-    }
-    mlist.appendChild(li);
-  });
-  const pr = await fetch('/admin/api/prices');
-  const pricedata = await pr.json();
-  const pricelist = document.getElementById('prices');
-  pricelist.innerHTML = '';
-  (pricedata.prices || []).forEach(row => {
-    const li = document.createElement('li');
-    li.textContent = row.model + ' in=' + row.input_cny + ' out=' + row.output_cny + ' cache=' + row.cached_cny;
-    const b = document.createElement('button');
-    b.textContent = '删除';
-    b.onclick = async () => {
-      await fetch('/admin/api/prices/' + row.model, {method:'DELETE'});
-      refresh();
-    };
-    li.appendChild(b);
-    pricelist.appendChild(li);
-  });
-  const k = await fetch('/admin/api/virtual-keys');
-  const data = await k.json();
-  keys.innerHTML = '';
-  (data.keys || []).forEach(row => {
-    const li = document.createElement('li');
-    li.textContent = row.hash.slice(0,12) + '… ' + row.project + (row.disabled ? ' 已停用' : '');
-    if (!row.disabled) {
-      const b = document.createElement('button');
-      b.textContent = '停用';
-      b.onclick = async () => {
-        await fetch('/admin/api/virtual-keys/' + row.hash + '/disable', {method:'POST'});
-        refresh();
-      };
-      li.appendChild(b);
-    }
-    keys.appendChild(li);
-  });
-}
-document.getElementById('report').onsubmit = async (e) => { e.preventDefault(); await loadUsage(); };
-document.getElementById('login').onsubmit = async (e) => {
-  e.preventDefault();
-  const fd = new FormData(e.target);
-  await fetch('/admin/api/login', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({username:fd.get('username'), password:fd.get('password')})});
-  refresh();
-};
-document.getElementById('proj').onsubmit = async (e) => {
-  e.preventDefault();
-  const fd = new FormData(e.target);
-  await fetch('/admin/api/projects', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({name:fd.get('name')})});
-  refresh();
-};
-document.getElementById('prov').onsubmit = async (e) => {
-  e.preventDefault();
-  const fd = new FormData(e.target);
-  await fetch('/admin/api/providers', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({name:fd.get('name'), family:fd.get('family'), base_url:fd.get('base_url'), api_key:fd.get('api_key')})});
-  refresh();
-};
-document.getElementById('mod').onsubmit = async (e) => {
-  e.preventDefault();
-  const fd = new FormData(e.target);
-  await fetch('/admin/api/models', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({name:fd.get('name'), family:fd.get('family'), provider:fd.get('provider')})});
-  refresh();
-};
-document.getElementById('price').onsubmit = async (e) => {
-  e.preventDefault();
-  const fd = new FormData(e.target);
-  await fetch('/admin/api/prices/' + fd.get('model'), {method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({input_cny:Number(fd.get('input_cny')), output_cny:Number(fd.get('output_cny')), cached_cny:Number(fd.get('cached_cny'))})});
-  refresh();
-};
-document.getElementById('vk').onsubmit = async (e) => {
-  e.preventDefault();
-  const fd = new FormData(e.target);
-  const r = await fetch('/admin/api/virtual-keys', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({project:fd.get('project')})});
-  created.textContent = await r.text();
-  refresh();
-};
-</script>
-</body>
-</html>
-`

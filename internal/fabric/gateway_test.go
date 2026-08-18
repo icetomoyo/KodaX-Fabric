@@ -205,8 +205,8 @@ func TestAdminPageIsServed(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status %d", resp.StatusCode)
 	}
-	if !bytes.Contains(body, []byte("用量报表")) {
-		t.Fatalf("admin page missing report heading: %s", body)
+	if !bytes.Contains(body, []byte("KodaX")) && !bytes.Contains(body, []byte("管理")) && !bytes.Contains(body, []byte("root")) {
+		t.Fatalf("admin spa missing: %s", body)
 	}
 }
 

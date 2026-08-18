@@ -13,6 +13,8 @@ node_modules/
 
 # ---- Build outputs ----
 dist/
+!internal/webui/dist/
+!internal/webui/dist/**
 build/
 out/
 .next/
