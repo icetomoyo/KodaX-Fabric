@@ -1,0 +1,122 @@
+name: tokenhub
+
+services:
+  postgres:
+    image: tokenhub-postgres:16-alpine
+    pull_policy: never
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    logging:
+      driver: local
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  redis:
+    image: tokenhub-redis:7-alpine
+    pull_policy: never
+    restart: unless-stopped
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+    command:
+      [
+        "redis-server",
+        "--appendonly", "yes",
+        "--requirepass", "${REDIS_PASSWORD}",
+        "--maxmemory", "512mb",
+        "--maxmemory-policy", "noeviction"
+      ]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    logging:
+      driver: local
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  api:
+    image: tokenhub-api:0.0.5-relay-url-20260810
+    pull_policy: never
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      target: api
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+      PORT: "3100"
+      HOST: 0.0.0.0
+      CORS_ORIGIN: https://tokenhub.haizhi.com
+      JWT_SECRET: ${JWT_SECRET}
+      CREDENTIAL_ENCRYPT_KEY: ${CREDENTIAL_ENCRYPT_KEY}
+      RELAY_UPSTREAM_TIMEOUT_MS: "300000"
+      RELAY_MAX_ATTEMPTS: "3"
+      RELAY_COOLDOWN_SECONDS: "60"
+      RELAY_SAFEGUARD_RPM: "60"
+      RELAY_SAFEGUARD_MAX_CONCURRENCY: "2"
+      QUOTA_TIMEZONE: Asia/Shanghai
+      RELAY_RESPONSE_MAX_BYTES: "20971520"
+      AUDIT_BODY_MAX_BYTES: "1048576"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:3100/health').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))\""]
+      interval: 30s
+      timeout: 5s
+      start_period: 60s
+      retries: 3
+    logging:
+      driver: local
+      options:
+        max-size: 20m
+        max-file: "5"
+
+  web:
+    image: tokenhub-web:0.0.5-onboarding-20260810
+    pull_policy: never
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      target: web
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "10.10.0.144:80:80"
+      - "10.10.0.144:443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - /etc/tokenhub/tls:/etc/caddy/certs:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    logging:
+      driver: local
+      options:
+        max-size: 10m
+        max-file: "3"
+
+volumes:
+  postgres_data:
+  redis_data:
+  caddy_data:
+  caddy_config:

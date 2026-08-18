@@ -25,6 +25,10 @@ Workspaces：
 - `@kodax-fabric/server` — Fastify API / Relay
 - `@kodax-fabric/web` — Vue 管理端与员工端
 
+## 部署
+
+见 [deploy/README.md](deploy/README.md)。
+
 ## 文档
 
 `docs/` 仅保留 `main` 上的四篇原始设计：
