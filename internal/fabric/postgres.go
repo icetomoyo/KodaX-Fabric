@@ -740,3 +740,107 @@ func (s *PostgresStore) DisableChannel(ctx context.Context, id string) (bool, er
 	n, err := res.RowsAffected()
 	return n > 0, err
 }
+
+func (s *PostgresStore) SetVirtualKeyRPM(ctx context.Context, hash string, rpm int) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE virtual_keys SET rpm = $2 WHERE hash = $1`, hash, rpm)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return errUnknownKey
+	}
+	return nil
+}
+
+func (s *PostgresStore) VirtualKeyRPM(ctx context.Context, hash string) (int, error) {
+	var rpm int
+	err := s.db.QueryRowContext(ctx, `SELECT rpm FROM virtual_keys WHERE hash = $1`, hash).Scan(&rpm)
+	if err == sql.ErrNoRows {
+		return 0, nil
+	}
+	return rpm, err
+}
+
+func (s *PostgresStore) SetTeamRPM(ctx context.Context, team string, rpm int) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE projects SET rpm = $2 WHERE name = $1`, team, rpm)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return errUnknownProject
+	}
+	return nil
+}
+
+func (s *PostgresStore) TeamRPM(ctx context.Context, team string) (int, error) {
+	var rpm int
+	err := s.db.QueryRowContext(ctx, `SELECT rpm FROM projects WHERE name = $1`, team).Scan(&rpm)
+	if err == sql.ErrNoRows {
+		return 0, nil
+	}
+	return rpm, err
+}
+
+func (s *PostgresStore) SetTeamBudget(ctx context.Context, team string, cfg BudgetConfig) error {
+	res, err := s.db.ExecContext(ctx, `
+		UPDATE projects SET daily_budget_cny = $2, monthly_budget_cny = $3 WHERE name = $1`,
+		team, cfg.DailyCNY, cfg.MonthlyCNY)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return errUnknownProject
+	}
+	return nil
+}
+
+func (s *PostgresStore) TeamBudget(ctx context.Context, team string) (BudgetConfig, error) {
+	var cfg BudgetConfig
+	err := s.db.QueryRowContext(ctx, `
+		SELECT daily_budget_cny, monthly_budget_cny FROM projects WHERE name = $1`, team).
+		Scan(&cfg.DailyCNY, &cfg.MonthlyCNY)
+	if err == sql.ErrNoRows {
+		return BudgetConfig{}, nil
+	}
+	return cfg, err
+}
+
+func (s *PostgresStore) SetEnterpriseBudget(ctx context.Context, name string, cfg BudgetConfig) error {
+	res, err := s.db.ExecContext(ctx, `
+		UPDATE enterprises SET daily_budget_cny = $2, monthly_budget_cny = $3 WHERE name = $1`,
+		name, cfg.DailyCNY, cfg.MonthlyCNY)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return errUnknownEnterprise
+	}
+	return nil
+}
+
+func (s *PostgresStore) EnterpriseBudget(ctx context.Context, name string) (BudgetConfig, error) {
+	var cfg BudgetConfig
+	err := s.db.QueryRowContext(ctx, `
+		SELECT daily_budget_cny, monthly_budget_cny FROM enterprises WHERE name = $1`, name).
+		Scan(&cfg.DailyCNY, &cfg.MonthlyCNY)
+	if err == sql.ErrNoRows {
+		return BudgetConfig{}, nil
+	}
+	return cfg, err
+}

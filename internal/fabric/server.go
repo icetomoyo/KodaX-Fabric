@@ -24,9 +24,15 @@ type Server struct {
 	UseRegistry    bool
 	MaxAttempts    int
 	AttemptTimeout time.Duration
+	HealthWindow   int
+	HealthMinRate  float64
+	HealthOpenFor  time.Duration
 
 	mu       sync.Mutex
 	sessions map[string]string
+	health   *HealthBook
+	rates    *RateBook
+	spend    *SpendBook
 }
 
 func NewServer(store Store, provider Provider) *Server {
@@ -59,6 +65,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /admin/api/virtual-keys", s.handleListVirtualKeys)
 	mux.HandleFunc("GET /admin/api/virtual-keys/{hash}", s.handleGetVirtualKey)
 	mux.HandleFunc("POST /admin/api/virtual-keys/{hash}/disable", s.handleDisableVirtualKey)
+	mux.HandleFunc("PUT /admin/api/virtual-keys/{hash}/rpm", s.handleSetVirtualKeyRPM)
+	mux.HandleFunc("PUT /admin/api/projects/{name}/rpm", s.handleSetTeamRPM)
+	mux.HandleFunc("PUT /admin/api/projects/{name}/budget", s.handleSetTeamBudget)
+	mux.HandleFunc("PUT /admin/api/enterprises/{name}/budget", s.handleSetEnterpriseBudget)
 	mux.HandleFunc("POST /admin/api/providers", s.handleCreateProvider)
 	mux.HandleFunc("GET /admin/api/providers", s.handleListProviders)
 	mux.HandleFunc("GET /admin/api/providers/{name}", s.handleGetProvider)
@@ -172,6 +182,16 @@ func (s *Server) handlePassthrough(w http.ResponseWriter, r *http.Request, famil
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown_model"})
 		return
 	}
+	if !s.allowRPM(ctx, vk) {
+		s.enqueueRequest(context.WithoutCancel(ctx), vk, head.Model, 0, 0, 0, 0, http.StatusTooManyRequests, started, time.Since(startedWall), fabCtx, nil)
+		writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "rate_limited"})
+		return
+	}
+	if !s.allowBudget(ctx, vk, started) {
+		s.enqueueRequest(context.WithoutCancel(ctx), vk, head.Model, 0, 0, 0, 0, http.StatusPaymentRequired, started, time.Since(startedWall), fabCtx, nil)
+		writeJSON(w, http.StatusPaymentRequired, map[string]string{"error": "budget_exceeded"})
+		return
+	}
 	skip := map[string]struct{}{}
 	maxTry := s.maxAttempts()
 	timeout := s.attemptTimeout()
@@ -184,7 +204,7 @@ func (s *Server) handlePassthrough(w http.ResponseWriter, r *http.Request, famil
 	var finalIn, finalOut, finalCached int
 	var finalStatus int
 
-	for i := 0; i < maxTry && !wrote; i++ {
+	for i := 0; i < maxTry && !wrote; {
 		selected, price, okPool, err := s.selectChannel(ctx, route, family, skip)
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "store"})
@@ -197,16 +217,26 @@ func (s *Server) handlePassthrough(w http.ResponseWriter, r *http.Request, famil
 			}
 			break
 		}
+		okHealth, release := s.books().allow(selected.ID)
+		if !okHealth {
+			if selected.ID != "" {
+				skip[selected.ID] = struct{}{}
+				continue
+			}
+		}
 		if selected.ID == "" {
 			maxTry = 1
 		} else {
 			skip[selected.ID] = struct{}{}
 		}
+		i++
 
 		actx, cancel := context.WithTimeout(ctx, timeout)
 		status, header, rc, err := s.callUpstream(actx, family, route, selected, raw, invoke)
 		if err != nil {
 			cancel()
+			s.recordHealth(selected.ID, false)
+			release()
 			attempts = append(attempts, AttemptSnap{ChannelID: selected.ID, Status: http.StatusBadGateway})
 			lastErr = err
 			lastStatus = http.StatusBadGateway
@@ -249,6 +279,8 @@ func (s *Server) handlePassthrough(w http.ResponseWriter, r *http.Request, famil
 		lastBody = collected
 		lastErr = nil
 		finalIn, finalOut, finalCached, finalStatus = in, out, cached, status
+		s.recordHealth(selected.ID, !shouldFailover(status, nil))
+		release()
 
 		if streamOK || !shouldFailover(status, nil) {
 			att.SeenByCaller = true
@@ -285,7 +317,70 @@ func (s *Server) handlePassthrough(w http.ResponseWriter, r *http.Request, famil
 }
 
 func (s *Server) enqueueRequest(ctx context.Context, vk VirtualKeyRecord, model string, in, out, cached int, cost float64, status int, started time.Time, latency time.Duration, fabCtx fabricContext, attempts []AttemptSnap) {
+	if cost > 0 {
+		s.books()
+		ent, _, _ := s.Store.TeamEnterprise(ctx, vk.Project)
+		s.spend.add(vk.Project, ent.Name, "d:"+shanghaiDay(started), cost)
+		s.spend.add(vk.Project, ent.Name, "m:"+shanghaiMonth(started), cost)
+	}
 	go s.appendRequest(ctx, vk, model, in, out, cached, cost, status, started, latency, fabCtx, attempts)
+}
+
+func (s *Server) books() *HealthBook {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.health == nil {
+		s.health = newHealthBook(func() time.Time { return s.Now() }, s.HealthWindow, s.HealthMinRate, s.HealthOpenFor)
+		s.rates = newRateBook(func() time.Time { return s.Now() })
+		s.spend = newSpendBook()
+	}
+	return s.health
+}
+
+func (s *Server) recordHealth(id string, success bool) {
+	s.books().record(id, success)
+}
+
+func (s *Server) allowRPM(ctx context.Context, vk VirtualKeyRecord) bool {
+	s.books()
+	vkLimit, _ := s.Store.VirtualKeyRPM(ctx, vk.Hash)
+	teamLimit, _ := s.Store.TeamRPM(ctx, vk.Project)
+	if !s.rates.fits("vk:"+vk.Hash, vkLimit) || !s.rates.fits("team:"+vk.Project, teamLimit) {
+		return false
+	}
+	_ = s.rates.allow("vk:"+vk.Hash, vkLimit)
+	_ = s.rates.allow("team:"+vk.Project, teamLimit)
+	return true
+}
+
+func (s *Server) allowBudget(ctx context.Context, vk VirtualKeyRecord, now time.Time) bool {
+	s.books()
+	day := "d:" + shanghaiDay(now)
+	month := "m:" + shanghaiMonth(now)
+	teamCfg, err := s.Store.TeamBudget(ctx, vk.Project)
+	if err == nil {
+		if teamCfg.DailyCNY > 0 && s.spend.teamSpent(vk.Project, day) >= teamCfg.DailyCNY {
+			return false
+		}
+		if teamCfg.MonthlyCNY > 0 && s.spend.teamSpent(vk.Project, month) >= teamCfg.MonthlyCNY {
+			return false
+		}
+	}
+	ent, ok, err := s.Store.TeamEnterprise(ctx, vk.Project)
+	if err != nil || !ok {
+		return true
+	}
+	entCfg, err := s.Store.EnterpriseBudget(ctx, ent.Name)
+	if err != nil {
+		return true
+	}
+	if entCfg.DailyCNY > 0 && s.spend.entSpent(ent.Name, day) >= entCfg.DailyCNY {
+		return false
+	}
+	if entCfg.MonthlyCNY > 0 && s.spend.entSpent(ent.Name, month) >= entCfg.MonthlyCNY {
+		return false
+	}
+	return true
 }
 
 func (s *Server) appendRequest(ctx context.Context, vk VirtualKeyRecord, model string, in, out, cached int, cost float64, status int, started time.Time, latency time.Duration, fabCtx fabricContext, attempts []AttemptSnap) {
@@ -454,6 +549,9 @@ func pickPreferred(chs []Channel) (Channel, bool) {
 
 func (s *Server) channelCallable(ctx context.Context, route ModelRoute, ch Channel, family string) (bool, error) {
 	if ch.Disabled || !ch.HasPrice || route.Disabled || route.Family != family {
+		return false, nil
+	}
+	if s.books().blocked(ch.ID) {
 		return false, nil
 	}
 	key, ok, err := s.Store.GetProviderKey(ctx, ch.ProviderKey)
@@ -933,6 +1031,137 @@ func (s *Server) visibleTeams(ctx context.Context, actor UserRecord, names []str
 		}
 	}
 	return out, nil
+}
+
+func (s *Server) canSetGates(w http.ResponseWriter, r *http.Request, team string) bool {
+	actor, ok := s.requireUser(w, r)
+	if !ok {
+		return false
+	}
+	if actor.Role != RoleSuperAdmin && actor.Role != RoleEnterpriseAdmin {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
+		return false
+	}
+	if team != "" {
+		allowed, err := s.canSeeTeam(r.Context(), actor, team)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "store"})
+			return false
+		}
+		if !allowed {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
+			return false
+		}
+	}
+	return true
+}
+
+func (s *Server) handleSetVirtualKeyRPM(w http.ResponseWriter, r *http.Request) {
+	rec, found, err := s.Store.GetVirtualKey(r.Context(), r.PathValue("hash"))
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "store"})
+		return
+	}
+	if !found {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not_found"})
+		return
+	}
+	if !s.canSetGates(w, r, rec.Project) {
+		return
+	}
+	var body struct {
+		RPM int `json:"rpm"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.RPM < 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad_body"})
+		return
+	}
+	if err := s.Store.SetVirtualKeyRPM(r.Context(), rec.Hash, body.RPM); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "store"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]int{"rpm": body.RPM})
+}
+
+func (s *Server) handleSetTeamRPM(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if !s.canSetGates(w, r, name) {
+		return
+	}
+	var body struct {
+		RPM int `json:"rpm"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.RPM < 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad_body"})
+		return
+	}
+	if err := s.Store.SetTeamRPM(r.Context(), name, body.RPM); err != nil {
+		if errors.Is(err, errUnknownProject) {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "not_found"})
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "store"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]int{"rpm": body.RPM})
+}
+
+func (s *Server) handleSetTeamBudget(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if !s.canSetGates(w, r, name) {
+		return
+	}
+	var body struct {
+		DailyCNY   float64 `json:"daily_cny"`
+		MonthlyCNY float64 `json:"monthly_cny"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad_body"})
+		return
+	}
+	if err := s.Store.SetTeamBudget(r.Context(), name, BudgetConfig{DailyCNY: body.DailyCNY, MonthlyCNY: body.MonthlyCNY}); err != nil {
+		if errors.Is(err, errUnknownProject) {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "not_found"})
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "store"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]float64{"daily_cny": body.DailyCNY, "monthly_cny": body.MonthlyCNY})
+}
+
+func (s *Server) handleSetEnterpriseBudget(w http.ResponseWriter, r *http.Request) {
+	actor, ok := s.requireUser(w, r)
+	if !ok {
+		return
+	}
+	name := r.PathValue("name")
+	if actor.Role == RoleEnterpriseAdmin {
+		if actor.Enterprise != name {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
+			return
+		}
+	} else if actor.Role != RoleSuperAdmin {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
+		return
+	}
+	var body struct {
+		DailyCNY   float64 `json:"daily_cny"`
+		MonthlyCNY float64 `json:"monthly_cny"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad_body"})
+		return
+	}
+	if err := s.Store.SetEnterpriseBudget(r.Context(), name, BudgetConfig{DailyCNY: body.DailyCNY, MonthlyCNY: body.MonthlyCNY}); err != nil {
+		if errors.Is(err, errUnknownEnterprise) {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "not_found"})
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "store"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]float64{"daily_cny": body.DailyCNY, "monthly_cny": body.MonthlyCNY})
 }
 
 func (s *Server) handleCreateVirtualKey(w http.ResponseWriter, r *http.Request) {

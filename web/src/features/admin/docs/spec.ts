@@ -468,6 +468,18 @@ export const fabricErrors: FabricError[] = [
     when: "创建企业、User、Provider 或 Model 时名称已存在。",
     sample: `{"error":"duplicate"}`,
   },
+  {
+    status: 429,
+    code: "rate_limited",
+    when: "超过 VK 或 Team 的 RPM。不打上游，仍入账一条 token/cost 为 0 的 Request。",
+    sample: `{"error":"rate_limited"}`,
+  },
+  {
+    status: 402,
+    code: "budget_exceeded",
+    when: "Team 或企业硬预算已越过。不打上游，仍入账。无平台总闸。",
+    sample: `{"error":"budget_exceeded"}`,
+  },
 ];
 
 export function samplesFor(id: EndpointId, origin: string): Record<LangId, CodeSample> {

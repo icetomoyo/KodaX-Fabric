@@ -45,8 +45,8 @@ describe("admin API docs", () => {
       (n, g) => n + g.items.filter((i) => i.kind === "api").length,
       0,
     );
-    expect(allEndpoints).toHaveLength(36);
-    expect(apiCount).toBe(36);
+    expect(allEndpoints).toHaveLength(40);
+    expect(apiCount).toBe(40);
     for (const title of [
       "模型 API",
       "系统",
@@ -97,6 +97,8 @@ describe("admin API docs", () => {
     expect(screen.getByText("project_id_not_supported")).toBeInTheDocument();
     expect(screen.getByText("team_mismatch")).toBeInTheDocument();
     expect(screen.getByText("enterprise_disabled")).toBeInTheDocument();
+    expect(screen.getByText("rate_limited")).toBeInTheDocument();
+    expect(screen.getByText("budget_exceeded")).toBeInTheDocument();
   });
 
   it("switches example language", async () => {

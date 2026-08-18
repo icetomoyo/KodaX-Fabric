@@ -698,6 +698,68 @@ const usage = rest(
   },
 );
 
+const setVKRPM = rest(
+  "set-vk-rpm",
+  "设置 VK 限流",
+  "PUT",
+  "/admin/api/virtual-keys/{hash}/rpm",
+  "按入口 HTTP 计的 RPM。0 为不限。超限 429 且不打上游。",
+  {
+    body: [f("rpm", "integer", "每分钟入口次数。", { required: true })],
+    response: [f("rpm", "integer", "已写入的 RPM。")],
+    exampleBody: { rpm: 60 },
+    exampleResponse: { rpm: 60 },
+  },
+);
+
+const setTeamRPM = rest(
+  "set-team-rpm",
+  "设置 Team 限流",
+  "PUT",
+  "/admin/api/projects/{name}/rpm",
+  "Team 级 RPM。与 VK 限流同时生效，先到先 429。",
+  {
+    body: [f("rpm", "integer", "每分钟入口次数。", { required: true })],
+    response: [f("rpm", "integer", "已写入的 RPM。")],
+    exampleBody: { rpm: 120 },
+    exampleResponse: { rpm: 120 },
+  },
+);
+
+const setTeamBudget = rest(
+  "set-team-budget",
+  "设置 Team 预算",
+  "PUT",
+  "/admin/api/projects/{name}/budget",
+  "按成本的日/月硬闸。0 为不限。已越过则新请求 402。",
+  {
+    body: [
+      f("daily_cny", "number", "上海日硬限制，人民币成本。"),
+      f("monthly_cny", "number", "上海月硬限制。"),
+    ],
+    response: [f("daily_cny", "number", "日闸。"), f("monthly_cny", "number", "月闸。")],
+    exampleBody: { daily_cny: 100, monthly_cny: 2000 },
+    exampleResponse: { daily_cny: 100, monthly_cny: 2000 },
+  },
+);
+
+const setEnterpriseBudget = rest(
+  "set-enterprise-budget",
+  "设置企业预算",
+  "PUT",
+  "/admin/api/enterprises/{name}/budget",
+  "可选。与 Team 闸独立，不是瀑布。没有平台总闸。",
+  {
+    body: [
+      f("daily_cny", "number", "该企业下所有 Team 之和的日闸。"),
+      f("monthly_cny", "number", "月闸。"),
+    ],
+    response: [f("daily_cny", "number", "日闸。"), f("monthly_cny", "number", "月闸。")],
+    exampleBody: { daily_cny: 500, monthly_cny: 10000 },
+    exampleResponse: { daily_cny: 500, monthly_cny: 10000 },
+  },
+);
+
 const requests = rest(
   "requests",
   "请求流水",
@@ -777,6 +839,7 @@ export const navGroups: NavGroup[] = [
       { kind: "api", doc: listEnterprises },
       { kind: "api", doc: createEnterprise },
       { kind: "api", doc: disableEnterprise },
+      { kind: "api", doc: setEnterpriseBudget },
     ],
   },
   {
@@ -784,6 +847,8 @@ export const navGroups: NavGroup[] = [
     items: [
       { kind: "api", doc: listProjects },
       { kind: "api", doc: createProject },
+      { kind: "api", doc: setTeamRPM },
+      { kind: "api", doc: setTeamBudget },
     ],
   },
   {
@@ -793,6 +858,7 @@ export const navGroups: NavGroup[] = [
       { kind: "api", doc: createVK },
       { kind: "api", doc: getVK },
       { kind: "api", doc: disableVK },
+      { kind: "api", doc: setVKRPM },
     ],
   },
   {
@@ -849,6 +915,7 @@ export function restSamples(ep: EndpointDoc, origin: string): Record<LangId, Cod
   const path = ep.path
     .replace("{hash}", "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08")
     .replace("/enterprises/{name}", "/enterprises/acme")
+    .replace("/projects/{name}", "/projects/demo")
     .replace("/teams/{name}/members/{username}", "/teams/billing/members/acme-dev")
     .replace("/teams/{name}", "/teams/billing")
     .replace("/keys/{id}", "/keys/pk-demo")

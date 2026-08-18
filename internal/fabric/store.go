@@ -126,6 +126,11 @@ type RequestRow struct {
 	Attempts       []AttemptSnap
 }
 
+type BudgetConfig struct {
+	DailyCNY   float64
+	MonthlyCNY float64
+}
+
 type UsageCell struct {
 	Project        string  `json:"project"`
 	Model          string  `json:"model"`
@@ -181,6 +186,14 @@ type Store interface {
 	ListChannels(ctx context.Context, model string) ([]Channel, error)
 	GetChannel(ctx context.Context, id string) (Channel, bool, error)
 	DisableChannel(ctx context.Context, id string) (bool, error)
+	SetVirtualKeyRPM(ctx context.Context, hash string, rpm int) error
+	VirtualKeyRPM(ctx context.Context, hash string) (int, error)
+	SetTeamRPM(ctx context.Context, team string, rpm int) error
+	TeamRPM(ctx context.Context, team string) (int, error)
+	SetTeamBudget(ctx context.Context, team string, cfg BudgetConfig) error
+	TeamBudget(ctx context.Context, team string) (BudgetConfig, error)
+	SetEnterpriseBudget(ctx context.Context, name string, cfg BudgetConfig) error
+	EnterpriseBudget(ctx context.Context, name string) (BudgetConfig, error)
 }
 
 func HashVirtualKey(plaintext string) string {
@@ -202,6 +215,10 @@ type MemoryStore struct {
 	requests     []RequestRow
 	users        map[string]UserRecord
 	memberships  map[string]map[string]struct{}
+	vkRPM        map[string]int
+	teamRPM      map[string]int
+	teamBudget   map[string]BudgetConfig
+	entBudget    map[string]BudgetConfig
 	AppendDelay  time.Duration
 }
 
@@ -227,6 +244,10 @@ func NewSeededMemoryStore(adminHash string) *MemoryStore {
 			SeedAdminUser: {Username: SeedAdminUser, Role: RoleSuperAdmin, PasswordHash: adminHash},
 		},
 		memberships: map[string]map[string]struct{}{},
+		vkRPM:       map[string]int{},
+		teamRPM:     map[string]int{},
+		teamBudget:  map[string]BudgetConfig{},
+		entBudget:   map[string]BudgetConfig{},
 	}
 }
 
@@ -712,6 +733,70 @@ func (s *MemoryStore) DisableChannel(_ context.Context, id string) (bool, error)
 	ch.Disabled = true
 	s.channels[id] = ch
 	return true, nil
+}
+
+func (s *MemoryStore) SetVirtualKeyRPM(_ context.Context, hash string, rpm int) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.keys[hash]; !ok {
+		return errUnknownKey
+	}
+	s.vkRPM[hash] = rpm
+	return nil
+}
+
+func (s *MemoryStore) VirtualKeyRPM(_ context.Context, hash string) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.vkRPM[hash], nil
+}
+
+func (s *MemoryStore) SetTeamRPM(_ context.Context, team string, rpm int) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.projects[team]; !ok {
+		return errUnknownProject
+	}
+	s.teamRPM[team] = rpm
+	return nil
+}
+
+func (s *MemoryStore) TeamRPM(_ context.Context, team string) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.teamRPM[team], nil
+}
+
+func (s *MemoryStore) SetTeamBudget(_ context.Context, team string, cfg BudgetConfig) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.projects[team]; !ok {
+		return errUnknownProject
+	}
+	s.teamBudget[team] = cfg
+	return nil
+}
+
+func (s *MemoryStore) TeamBudget(_ context.Context, team string) (BudgetConfig, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.teamBudget[team], nil
+}
+
+func (s *MemoryStore) SetEnterpriseBudget(_ context.Context, name string, cfg BudgetConfig) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.enterprises[name]; !ok {
+		return errUnknownEnterprise
+	}
+	s.entBudget[name] = cfg
+	return nil
+}
+
+func (s *MemoryStore) EnterpriseBudget(_ context.Context, name string) (BudgetConfig, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.entBudget[name], nil
 }
 
 func shanghai() *time.Location {
