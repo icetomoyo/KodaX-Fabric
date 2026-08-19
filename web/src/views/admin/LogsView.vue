@@ -10,7 +10,7 @@
           filterable
           :loading="employeesLoading"
           placeholder="全部员工"
-          style="width: 220px"
+          style="width: 180px"
         >
           <el-option
             v-for="employee in employees"
@@ -19,6 +19,51 @@
             :value="employee.id"
           />
         </el-select>
+      </el-form-item>
+      <el-form-item>
+        <div class="metric-filter">
+          <span class="metric-filter-label">耗时</span>
+          <el-select v-model="filters.latencyOp" style="width: 76px">
+            <el-option label="大于" value="gt" />
+            <el-option label="小于" value="lt" />
+          </el-select>
+          <el-input
+            v-model="filters.latencyMs"
+            clearable
+            placeholder="ms"
+            style="width: 92px"
+          />
+        </div>
+      </el-form-item>
+      <el-form-item>
+        <div class="metric-filter">
+          <span class="metric-filter-label">Tokens</span>
+          <el-select v-model="filters.tokensOp" style="width: 76px">
+            <el-option label="大于" value="gt" />
+            <el-option label="小于" value="lt" />
+          </el-select>
+          <el-input
+            v-model="filters.tokens"
+            clearable
+            placeholder="数值"
+            style="width: 92px"
+          />
+        </div>
+      </el-form-item>
+      <el-form-item>
+        <div class="metric-filter">
+          <span class="metric-filter-label">TTFT</span>
+          <el-select v-model="filters.ttftOp" style="width: 76px">
+            <el-option label="大于" value="gt" />
+            <el-option label="小于" value="lt" />
+          </el-select>
+          <el-input
+            v-model="filters.ttftMs"
+            clearable
+            placeholder="ms"
+            style="width: 92px"
+          />
+        </div>
       </el-form-item>
       <el-form-item>
         <el-button type="primary" @click="search">查询</el-button>
@@ -32,18 +77,15 @@
       :data="items"
       stripe
       size="small"
-      :fit="false"
       class="logs-table"
       empty-text="暂无日志"
       v-loading="loading"
     >
-      <el-table-column label="Request ID" width="148">
+      <el-table-column label="Request ID" min-width="300">
         <template #default="{ row }">
-          <el-tooltip :content="row.requestId" placement="top" :show-after="300">
-            <el-button class="request-id-button" link @click="copyRequestId(row.requestId)">
-              {{ shortRequestId(row.requestId) }}
-            </el-button>
-          </el-tooltip>
+          <el-button class="request-id-button" link @click="copyRequestId(row.requestId)">
+            {{ row.requestId }}
+          </el-button>
         </template>
       </el-table-column>
       <el-table-column label="耗时" width="68" align="right" header-align="right">
@@ -345,9 +387,16 @@ const providerNames: Record<string, string> = {
 };
 
 const numberFormatter = new Intl.NumberFormat("zh-CN");
+type CompareOp = "gt" | "lt";
 
 const filters = reactive({
   employeeId: undefined as number | undefined,
+  tokensOp: "gt" as CompareOp,
+  tokens: "",
+  latencyOp: "gt" as CompareOp,
+  latencyMs: "",
+  ttftOp: "gt" as CompareOp,
+  ttftMs: "",
 });
 const employees = ref<EmployeeOption[]>([]);
 const employeesLoading = ref(false);
@@ -365,7 +414,19 @@ const activeDetailTab = ref("metadata");
 const rawPanels = ref<string[]>([]);
 let detailSequence = 0;
 
-const hasFilters = computed(() => Object.values(filters).some(Boolean));
+const hasFilters = computed(() => Boolean(
+  filters.employeeId
+  || filters.tokens.trim()
+  || filters.latencyMs.trim()
+  || filters.ttftMs.trim(),
+));
+
+function parseFilterNumber(raw: string): number | undefined {
+  const value = raw.trim();
+  if (!value) return undefined;
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : undefined;
+}
 
 function statusText(status: LogStatus): string {
   return (
@@ -424,10 +485,6 @@ function errorTooltip(row: LogRow): string {
   return [row.errorCode, row.errorMessage].filter(Boolean).join(" · ");
 }
 
-function shortRequestId(requestId: string): string {
-  return requestId.length <= 18 ? requestId : `${requestId.slice(0, 6)}…${requestId.slice(-8)}`;
-}
-
 async function copyRequestId(requestId: string) {
   const copied = await copyText(requestId);
   if (copied) ElMessage.success("Request ID 已复制");
@@ -472,6 +529,18 @@ const hasSkillContext = computed(() => Boolean(
 ));
 
 async function load() {
+  const tokens = parseFilterNumber(filters.tokens);
+  const latencyMs = parseFilterNumber(filters.latencyMs);
+  const ttftMs = parseFilterNumber(filters.ttftMs);
+  if (
+    (filters.tokens.trim() && tokens == null)
+    || (filters.latencyMs.trim() && latencyMs == null)
+    || (filters.ttftMs.trim() && ttftMs == null)
+  ) {
+    ElMessage.warning("Tokens / 耗时 / TTFT 请输入非负整数");
+    return;
+  }
+
   loading.value = true;
   try {
     const { data } = await http.get("/api/admin/logs", {
@@ -479,6 +548,9 @@ async function load() {
         limit,
         offset: (page.value - 1) * limit,
         employeeId: filters.employeeId,
+        ...(tokens != null ? { tokensOp: filters.tokensOp, tokens } : {}),
+        ...(latencyMs != null ? { latencyOp: filters.latencyOp, latencyMs } : {}),
+        ...(ttftMs != null ? { ttftOp: filters.ttftOp, ttftMs } : {}),
       },
     });
     if (data.success) {
@@ -511,6 +583,12 @@ function search() {
 
 function resetFilters() {
   filters.employeeId = undefined;
+  filters.tokensOp = "gt";
+  filters.tokens = "";
+  filters.latencyOp = "gt";
+  filters.latencyMs = "";
+  filters.ttftOp = "gt";
+  filters.ttftMs = "";
   page.value = 1;
   load();
 }
@@ -568,10 +646,21 @@ onMounted(() => {
 }
 .filters {
   display: flex;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   margin-bottom: 10px;
+}
+.metric-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.metric-filter-label {
+  color: #667085;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
 }
 .filters :deep(.el-form-item) {
   flex: none;
@@ -586,8 +675,7 @@ onMounted(() => {
   --el-table-border-color: #edf0f5;
   --el-table-header-bg-color: #f8fafc;
   --el-table-row-hover-bg-color: #f3f7fc;
-  width: auto;
-  max-width: 100%;
+  width: 100%;
   color: #344054;
 }
 .logs-table :deep(.cell) {
@@ -704,7 +792,6 @@ onMounted(() => {
   color: #344054;
 }
 .request-id-button {
-  max-width: 100%;
   height: auto;
   padding: 0;
   color: #667085;
@@ -713,11 +800,6 @@ onMounted(() => {
 }
 .request-id-button:hover {
   color: var(--el-color-primary);
-}
-.request-id-button :deep(span) {
-  display: block;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 .pager {
   margin-top: 10px;

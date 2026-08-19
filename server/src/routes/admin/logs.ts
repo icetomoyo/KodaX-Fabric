@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import { and, desc, eq, gte, lte, sql } from "drizzle-orm";
+import { and, desc, eq, gt, gte, lt, lte, sql, type SQL } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../../db/client.js";
 import {
@@ -16,7 +16,19 @@ import {
 } from "../../middleware/auth.js";
 
 const CONTEXT_AUDIT_DEDUP_MS = 5 * 60_000;
+const compareOp = z.enum(["gt", "lt"]);
+const optionalNonNegInt = z.coerce.number().int().min(0).optional();
 export const requireAdminLogContext = requireRoles("admin");
+
+function appendCompare(
+  conditions: SQL[],
+  column: typeof requestAudits.totalTokens | typeof requestAudits.latencyMs | typeof requestAudits.ttftMs,
+  op: z.infer<typeof compareOp> | undefined,
+  value: number | undefined,
+) {
+  if (!op || value == null) return;
+  conditions.push(op === "gt" ? gt(column, value) : lt(column, value));
+}
 
 export function contextAuditDedupSince(now: Date = new Date()): Date {
   return new Date(now.getTime() - CONTEXT_AUDIT_DEDUP_MS);
@@ -39,10 +51,16 @@ export async function adminLogRoutes(app: FastifyInstance) {
         requestId: z.string().optional(),
         from: z.string().optional(),
         to: z.string().optional(),
+        tokensOp: compareOp.optional(),
+        tokens: optionalNonNegInt,
+        latencyOp: compareOp.optional(),
+        latencyMs: optionalNonNegInt,
+        ttftOp: compareOp.optional(),
+        ttftMs: optionalNonNegInt,
       })
       .parse(req.query);
 
-    const conditions = [];
+    const conditions: SQL[] = [];
 
     if (query.employeeId) {
       conditions.push(eq(requestAudits.employeeId, query.employeeId));
@@ -55,6 +73,9 @@ export async function adminLogRoutes(app: FastifyInstance) {
     if (query.requestId) conditions.push(eq(requestAudits.requestId, query.requestId));
     if (query.from) conditions.push(gte(requestAudits.createdAt, new Date(query.from)));
     if (query.to) conditions.push(lte(requestAudits.createdAt, new Date(query.to)));
+    appendCompare(conditions, requestAudits.totalTokens, query.tokensOp, query.tokens);
+    appendCompare(conditions, requestAudits.latencyMs, query.latencyOp, query.latencyMs);
+    appendCompare(conditions, requestAudits.ttftMs, query.ttftOp, query.ttftMs);
 
     const whereExpr = conditions.length ? and(...conditions) : undefined;
 
