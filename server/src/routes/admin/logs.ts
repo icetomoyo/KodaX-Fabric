@@ -105,6 +105,14 @@ export async function adminLogRoutes(app: FastifyInstance) {
         totalTokens: requestAudits.totalTokens,
         latencyMs: requestAudits.latencyMs,
         ttftMs: requestAudits.ttftMs,
+        generationMs: requestAudits.generationMs,
+        // Anthropic-style usage exposes cache_read_input_tokens; OpenAI-style
+        // exposes prompt_tokens_details.cached_tokens. Normalize both here so
+        // the list view can render cache hits without shipping raw usage.
+        cacheReadTokens: sql<number | null>`COALESCE(
+          (${requestAudits.usageRaw}->>'cache_read_input_tokens')::int,
+          (${requestAudits.usageRaw}->'prompt_tokens_details'->>'cached_tokens')::int
+        )`,
         retryCount: requestAudits.retryCount,
         errorCode: requestAudits.errorCode,
         errorMessage: requestAudits.errorMessage,

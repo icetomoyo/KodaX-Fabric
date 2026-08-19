@@ -395,6 +395,8 @@ export async function chatCompletionRoutes(app: FastifyInstance) {
           clientModel,
           isStream,
           latencyMs: Date.now() - startedAt,
+          ttftMs: timing?.ttftMs,
+          generationMs: timing?.generationMs,
           retryTrace,
           requestHeaders,
           requestBody,

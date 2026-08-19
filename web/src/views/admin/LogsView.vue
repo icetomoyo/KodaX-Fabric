@@ -103,6 +103,18 @@
           <span class="metric-text">{{ formatLatency(row.ttftMs) }}</span>
         </template>
       </el-table-column>
+      <el-table-column label="缓存命中" width="86" align="right" header-align="right">
+        <template #default="{ row }">
+          <el-tooltip
+            :disabled="row.cacheReadTokens == null"
+            :content="cacheHitText(row.cacheReadTokens, row.promptTokens)"
+            placement="top"
+            :show-after="300"
+          >
+            <span class="metric-text">{{ formatNumber(row.cacheReadTokens) }}</span>
+          </el-tooltip>
+        </template>
+      </el-table-column>
       <el-table-column label="渠道" width="148">
         <template #default="{ row }">
           <el-tooltip :content="channelTooltip(row)" placement="top" :show-after="400">
@@ -293,12 +305,29 @@
                   <el-descriptions-item label="Tokens">
                     {{ formatNumber(detail.meta.promptTokens) }} + {{ formatNumber(detail.meta.completionTokens) }} = {{ formatNumber(detail.meta.totalTokens) }}
                   </el-descriptions-item>
+                  <el-descriptions-item label="缓存命中">
+                    {{ cacheHitText(cacheReadTokensOf(detail.meta.usageRaw), detail.meta.promptTokens) }}
+                  </el-descriptions-item>
                   <el-descriptions-item label="耗时">
                     {{ formatLatency(detail.meta.latencyMs) }} · {{ detail.meta.isStream ? "流式" : "非流式" }} · 重试 {{ detail.meta.retryCount ?? 0 }} 次
                   </el-descriptions-item>
                   <el-descriptions-item label="TTFT">{{ formatLatency(detail.meta.ttftMs) }}</el-descriptions-item>
+                  <el-descriptions-item label="生成耗时">{{ formatLatency(detail.meta.generationMs) }}</el-descriptions-item>
+                  <el-descriptions-item label="客户端">
+                    {{ detail.meta.clientIp || "—" }}
+                    <span v-if="detail.meta.userAgent" class="client-ua">{{ detail.meta.userAgent }}</span>
+                  </el-descriptions-item>
                   <el-descriptions-item v-if="detail.meta.errorCode || detail.meta.errorMessage" label="错误">
                     {{ detail.meta.errorCode }} {{ detail.meta.errorMessage }}
+                  </el-descriptions-item>
+                  <el-descriptions-item v-if="detail.meta.retryTrace?.length" label="重试轨迹">
+                    <div class="retry-trace">
+                      <div v-for="item in detail.meta.retryTrace" :key="item.attempt" class="retry-trace-item">
+                        #{{ item.attempt }} {{ providerText(item.providerCode ?? null) }}
+                        <span v-if="item.credentialSuffix" class="key-suffix">{{ item.credentialSuffix }}</span>
+                        · HTTP {{ item.status ?? "—" }} · {{ item.outcome }} · {{ formatLatency(item.latencyMs) }}
+                      </div>
+                    </div>
                   </el-descriptions-item>
                   <template v-if="context">
                     <el-descriptions-item label="请求正文大小">{{ formatBytes(context.tabs.metadata.requestBodySize) }}</el-descriptions-item>
@@ -346,14 +375,34 @@ interface LogRow {
   totalTokens: number | null;
   latencyMs: number | null;
   ttftMs: number | null;
+  generationMs: number | null;
+  cacheReadTokens: number | null;
   retryCount: number;
   errorCode: string | null;
   errorMessage: string | null;
   createdAt: string;
 }
 
+interface RetryTraceItem {
+  attempt: number;
+  outcome: string;
+  status?: number;
+  latencyMs?: number;
+  providerCode?: string;
+  credentialSuffix?: string;
+}
+
+interface LogDetailMeta extends Omit<LogRow, "cacheReadTokens"> {
+  upstreamStatus: number | null;
+  usageRaw: Record<string, unknown> | null;
+  retryTrace: RetryTraceItem[] | null;
+  clientIp: string | null;
+  userAgent: string | null;
+  requestPath: string | null;
+}
+
 interface LogDetail {
-  meta: LogRow;
+  meta: LogDetailMeta;
 }
 
 interface EmployeeOption {
@@ -460,11 +509,34 @@ function formatLatency(value: number | null | undefined): string {
   return `${Number(seconds.toFixed(seconds < 10 ? 2 : 1))} s`;
 }
 
+function asTokenCount(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function cacheReadTokensOf(usageRaw: Record<string, unknown> | null): number | null {
+  if (!usageRaw) return null;
+  const anthropic = asTokenCount(usageRaw.cache_read_input_tokens);
+  if (anthropic != null) return anthropic;
+  const details = usageRaw.prompt_tokens_details;
+  if (details && typeof details === "object" && !Array.isArray(details)) {
+    return asTokenCount((details as Record<string, unknown>).cached_tokens);
+  }
+  return null;
+}
+
+function cacheHitText(cacheRead: number | null, promptTokens: number | null): string {
+  if (cacheRead == null) return "—";
+  // promptTokens already includes cached input, so the ratio stays within 0-100%.
+  if (!promptTokens || cacheRead <= 0) return formatNumber(cacheRead);
+  const percent = Math.min(100, (cacheRead / promptTokens) * 100);
+  return `${formatNumber(cacheRead)} (${percent.toFixed(1)}%)`;
+}
+
 function employeeOptionText(employee: EmployeeOption): string {
   return employee.phone ? `${employee.name} · ${employee.phone}` : employee.name;
 }
 
-function modelTooltip(row: LogRow): string {
+function modelTooltip(row: Pick<LogRow, "clientModel" | "upstreamModel">): string {
   if (row.upstreamModel && row.upstreamModel !== row.clientModel) {
     return `${row.clientModel} → ${row.upstreamModel}`;
   }
@@ -869,5 +941,21 @@ onMounted(() => {
 }
 .metadata-notice {
   margin-bottom: 12px;
+}
+.client-ua {
+  display: block;
+  overflow-wrap: anywhere;
+  color: #98a2b3;
+  font-size: 11px;
+  white-space: normal;
+}
+.retry-trace {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.retry-trace-item {
+  font-variant-numeric: tabular-nums;
+  white-space: normal;
 }
 </style>
