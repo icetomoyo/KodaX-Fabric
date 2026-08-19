@@ -83,6 +83,7 @@ export async function adminLogRoutes(app: FastifyInstance) {
         completionTokens: requestAudits.completionTokens,
         totalTokens: requestAudits.totalTokens,
         latencyMs: requestAudits.latencyMs,
+        ttftMs: requestAudits.ttftMs,
         retryCount: requestAudits.retryCount,
         errorCode: requestAudits.errorCode,
         errorMessage: requestAudits.errorMessage,
