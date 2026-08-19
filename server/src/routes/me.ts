@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import { and, desc, eq, gte, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, gt, gte, inArray, lt, sql, type SQL } from "drizzle-orm";
 import { z } from "zod";
 import { db, sql as querySql } from "../db/client.js";
 import {
@@ -374,14 +374,44 @@ export async function meRoutes(app: FastifyInstance) {
   });
 
   app.get("/api/me/logs", async (req) => {
+    const compareOp = z.enum(["gt", "lt"]);
+    const optionalNonNegInt = z.coerce.number().int().min(0).optional();
     const query = z
       .object({
         limit: z.coerce.number().min(1).max(100).default(20),
         offset: z.coerce.number().min(0).default(0),
+        tokensOp: compareOp.optional(),
+        tokens: optionalNonNegInt,
+        latencyOp: compareOp.optional(),
+        latencyMs: optionalNonNegInt,
+        ttftOp: compareOp.optional(),
+        ttftMs: optionalNonNegInt,
       })
       .parse(req.query);
 
-    const whereExpr = eq(requestAudits.employeeId, req.employeeId!);
+    const conditions: SQL[] = [eq(requestAudits.employeeId, req.employeeId!)];
+    if (query.tokensOp && query.tokens != null) {
+      conditions.push(
+        query.tokensOp === "gt"
+          ? gt(requestAudits.totalTokens, query.tokens)
+          : lt(requestAudits.totalTokens, query.tokens),
+      );
+    }
+    if (query.latencyOp && query.latencyMs != null) {
+      conditions.push(
+        query.latencyOp === "gt"
+          ? gt(requestAudits.latencyMs, query.latencyMs)
+          : lt(requestAudits.latencyMs, query.latencyMs),
+      );
+    }
+    if (query.ttftOp && query.ttftMs != null) {
+      conditions.push(
+        query.ttftOp === "gt"
+          ? gt(requestAudits.ttftMs, query.ttftMs)
+          : lt(requestAudits.ttftMs, query.ttftMs),
+      );
+    }
+    const whereExpr = and(...conditions);
     const [[countRow], items] = await Promise.all([
       db.select({ total: sql<number>`count(*)::int` }).from(requestAudits).where(whereExpr),
       db
@@ -390,16 +420,30 @@ export async function meRoutes(app: FastifyInstance) {
           requestId: requestAudits.requestId,
           protocol: requestAudits.protocol,
           clientModel: requestAudits.clientModel,
+          upstreamModel: requestAudits.upstreamModel,
           providerCode: requestAudits.providerCode,
           productType: requestAudits.productType,
+          credentialSuffix: requestAudits.credentialSuffix,
+          isStream: requestAudits.isStream,
           status: requestAudits.status,
+          httpStatus: requestAudits.httpStatus,
+          promptTokens: requestAudits.promptTokens,
+          completionTokens: requestAudits.completionTokens,
           totalTokens: requestAudits.totalTokens,
           latencyMs: requestAudits.latencyMs,
+          ttftMs: requestAudits.ttftMs,
+          cacheReadTokens: sql<number | null>`COALESCE(
+            (${requestAudits.usageRaw}->>'cache_read_input_tokens')::int,
+            (${requestAudits.usageRaw}->'prompt_tokens_details'->>'cached_tokens')::int
+          )`,
+          retryCount: requestAudits.retryCount,
+          errorCode: requestAudits.errorCode,
+          errorMessage: requestAudits.errorMessage,
           createdAt: requestAudits.createdAt,
         })
         .from(requestAudits)
         .where(whereExpr)
-        .orderBy(desc(requestAudits.id))
+        .orderBy(desc(requestAudits.createdAt), desc(requestAudits.id))
         .limit(query.limit)
         .offset(query.offset),
     ]);
