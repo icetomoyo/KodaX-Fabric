@@ -9,7 +9,7 @@ export default defineConfig(({ mode }) => {
     process.env.DEV_API_TARGET
     || loadEnv(mode, webDir, "").DEV_API_TARGET
     || loadEnv(mode, repoRoot, "").DEV_API_TARGET
-    || "http://127.0.0.1:3100";
+    || "http://127.0.0.1:3000";
   const proxy = {
     target: apiTarget,
     changeOrigin: true,
