@@ -79,140 +79,105 @@
             <section class="key-pool-section">
               <div class="key-pool-head">
                 <div>
-                  <h4>Key 列表（{{ selectedChannel.totalCount }}）</h4>
+                  <h4>Key 看板（{{ selectedChannel.totalCount }}）</h4>
+                  <p v-if="canWrite" class="board-hint">
+                    拖拽卡片到「可用」或「已停用」即可切换状态；冷却中与自动停用由系统判定，只能拖出、不能拖入
+                  </p>
                 </div>
                 <div v-if="canWrite" class="batch-actions">
-                  <span class="selection-hint">已选 {{ selectedKeyRows.length }} 项</span>
-                  <el-button
-                    size="small"
-                    :disabled="!selectedKeyRows.length || batchMutating"
-                    @click="batchSetStatus('active')"
-                  >
-                    批量启用
-                  </el-button>
-                  <el-button
-                    size="small"
-                    :disabled="!selectedKeyRows.length || batchMutating"
-                    @click="batchSetStatus('disabled')"
-                  >
-                    批量停用
-                  </el-button>
                   <el-button
                     size="small"
                     type="primary"
                     plain
                     :loading="batchTesting"
-                    :disabled="!selectedKeyRows.length || batchMutating"
+                    :disabled="!selectedChannel.keys.length"
                     @click="batchTestCredentials"
                   >
-                    {{ batchTesting ? `测试中 ${batchTestProgress.done}/${batchTestProgress.total}` : "批量测试" }}
-                  </el-button>
-                  <el-button
-                    size="small"
-                    type="danger"
-                    plain
-                    :loading="batchDeleting"
-                    :disabled="!selectedKeyRows.length || batchMutating"
-                    @click="batchDeleteCredentials"
-                  >
-                    批量删除
+                    {{ batchTesting ? `测试中 ${batchTestProgress.done}/${batchTestProgress.total}` : "测试全部" }}
                   </el-button>
                 </div>
               </div>
 
-              <el-table
-                ref="keyTableRef"
-                :data="pagedKeys"
-                row-key="id"
-                size="small"
-                class="key-table"
-                empty-text="该渠道还没有 Key"
-                @selection-change="handleSelectionChange"
-              >
-                <el-table-column v-if="canWrite" type="selection" width="42" />
-                <el-table-column label="Key" min-width="190" fixed="left">
-                  <template #default="{ row }">
-                    <button type="button" class="key-name-button" @click="openKeyDetails(row)">
-                      <strong>{{ row.label }}</strong>
-                      <span class="secret-mask">•••• {{ row.secretSuffix }}</span>
-                    </button>
-                  </template>
-                </el-table-column>
-                <el-table-column label="状态" width="96">
-                  <template #default="{ row }">
-                    <el-tag :type="statusTagType(visibleStatus(row))" size="small" effect="light">
-                      {{ statusText(visibleStatus(row)) }}
-                    </el-tag>
-                  </template>
-                </el-table-column>
-                <el-table-column label="近 24h" width="108">
-                  <template #default="{ row }">
-                    <div class="request-counts">
-                      <span class="ok">{{ row.recentSuccessCount ?? 0 }}</span>
-                      <span class="slash">/</span>
-                      <span class="bad">{{ row.recentErrorCount ?? 0 }}</span>
-                    </div>
-                  </template>
-                </el-table-column>
-                <el-table-column label="健康" min-width="112">
-                  <template #default="{ row }">
-                    <span
-                      class="health-chip"
-                      :class="healthChipClass(row)"
-                      :title="healthDetail(row)"
+              <div class="kanban-board">
+                <div
+                  v-for="column in boardColumns"
+                  :key="column.status"
+                  class="kanban-column"
+                  :class="{
+                    droppable: canWrite && column.droppable && draggingId != null,
+                    'drag-over': dragOverStatus === column.status,
+                  }"
+                  @dragover="onColumnDragOver(column, $event)"
+                  @dragleave="onColumnDragLeave(column)"
+                  @drop.prevent="onColumnDrop(column)"
+                >
+                  <header class="kanban-column-head" :class="`is-${column.status}`">
+                    <span class="kanban-column-title">{{ column.title }}</span>
+                    <span class="kanban-count">{{ column.keys.length }}</span>
+                  </header>
+                  <div class="kanban-cards">
+                    <article
+                      v-for="row in column.keys"
+                      :key="row.id"
+                      class="key-card"
+                      :class="{ dragging: draggingId === row.id }"
+                      :draggable="canWrite"
+                      @dragstart="onCardDragStart(row, $event)"
+                      @dragend="onCardDragEnd"
+                      @click="openKeyDetails(row)"
                     >
-                      {{ healthSummary(row) }}
-                    </span>
-                  </template>
-                </el-table-column>
-                <el-table-column label="最近使用" min-width="154">
-                  <template #default="{ row }">
-                    <span class="time-text">{{ formatDateTime(row.lastUsedAt) }}</span>
-                  </template>
-                </el-table-column>
-                <el-table-column v-if="canWrite" label="操作" width="190" fixed="right">
-                  <template #default="{ row }">
-                    <div class="row-actions">
-                      <el-button
-                        link
-                        type="primary"
-                        :loading="isTesting(row.id)"
-                        @click="testCredential(row)"
+                      <div class="key-card-top">
+                        <strong class="key-card-label">{{ row.label }}</strong>
+                        <span class="secret-mask">•••• {{ row.secretSuffix }}</span>
+                      </div>
+                      <div class="key-card-meta">
+                        <span class="request-counts">
+                          <span class="ok">{{ row.recentSuccessCount ?? 0 }}</span>
+                          <span class="slash">/</span>
+                          <span class="bad">{{ row.recentErrorCount ?? 0 }}</span>
+                          <span class="meta-label">近 24h</span>
+                        </span>
+                        <span
+                          class="health-chip"
+                          :class="healthChipClass(row)"
+                          :title="healthDetail(row)"
+                        >
+                          {{ healthSummary(row) }}
+                        </span>
+                      </div>
+                      <div
+                        v-if="visibleStatus(row) === 'cooling' && row.coolUntil"
+                        class="key-card-cooling"
                       >
-                        测试
-                      </el-button>
-                      <el-button
-                        v-if="row.status === 'active'"
-                        link
-                        type="warning"
-                        @click="setStatus(row, 'disabled')"
-                      >
-                        停用
-                      </el-button>
-                      <el-button v-else link type="success" @click="setStatus(row, 'active')">
-                        启用
-                      </el-button>
-                      <el-button
-                        link
-                        type="danger"
-                        :loading="isDeleting(row.id)"
-                        @click="removeCredential(row)"
-                      >
-                        删除
-                      </el-button>
-                    </div>
-                  </template>
-                </el-table-column>
-              </el-table>
-              <div v-if="selectedChannel.totalCount > KEY_PAGE_SIZE" class="pager">
-                <el-pagination
-                  background
-                  size="small"
-                  layout="total, prev, pager, next"
-                  :total="selectedChannel.totalCount"
-                  :page-size="KEY_PAGE_SIZE"
-                  v-model:current-page="keyPage"
-                />
+                        冷却至 {{ formatDateTime(row.coolUntil) }}
+                      </div>
+                      <div class="key-card-foot">
+                        <span class="time-text">{{ formatDateTime(row.lastUsedAt) }}</span>
+                        <span v-if="canWrite" class="key-card-actions" @click.stop>
+                          <el-button
+                            link
+                            type="primary"
+                            size="small"
+                            :loading="isTesting(row.id)"
+                            @click="testCredential(row)"
+                          >
+                            测试
+                          </el-button>
+                          <el-button
+                            link
+                            type="danger"
+                            size="small"
+                            :loading="isDeleting(row.id)"
+                            @click="removeCredential(row)"
+                          >
+                            删除
+                          </el-button>
+                        </span>
+                      </div>
+                    </article>
+                    <div v-if="!column.keys.length" class="kanban-empty">暂无 Key</div>
+                  </div>
+                </div>
               </div>
             </section>
           </template>
@@ -244,7 +209,7 @@
         </span>
         <div>
           <strong>{{ channelDisplayName(channelEditTarget) }}</strong>
-          <div class="cell-secondary">供应商与渠道变体不可在编辑时更换</div>
+          <div class="cell-secondary">供应商与渠道不可在编辑时更换</div>
         </div>
       </div>
 
@@ -289,46 +254,27 @@
         <div class="section-label">选择渠道（公司名称/模型名称）</div>
         <div class="provider-grid">
           <button
-            v-for="template in templates"
-            :key="template.code"
+            v-for="item in bulkChannelOptions"
+            :key="`${item.template.code}:${item.option.productLineCode}`"
             type="button"
             class="provider-card"
-            :class="{ selected: bulkForm.providerCode === template.code }"
-            @click="selectBulkTemplate(template)"
+            :class="{ selected: isBulkChannelOptionSelected(item) }"
+            @click="selectBulkChannelOption(item)"
           >
-            <span class="provider-logo" :style="{ background: template.color }">
-              {{ template.shortName }}
+            <span class="provider-logo" :style="{ background: item.template.color }">
+              {{ item.template.shortName }}
             </span>
             <span class="provider-card-copy">
-              <strong>{{ templateDisplayName(template) }}</strong>
-              <small>{{ template.name }} · {{ template.modelName }}</small>
+              <strong>{{ channelOptionDisplayName(item) }}</strong>
+              <small>{{ item.template.name }} · {{ item.option.label }}</small>
             </span>
           </button>
         </div>
 
         <el-form label-position="top" class="credential-form" @submit.prevent>
-          <el-form-item label="渠道变体" required>
-            <el-select
-              v-model="bulkForm.baseUrl"
-              style="width: 100%"
-              placeholder="选择渠道变体"
-              @change="selectBulkVariant"
-            >
-              <el-option
-                v-for="option in bulkBaseUrlOptions"
-                :key="option.url"
-                :label="baseUrlOptionLabel(option)"
-                :value="option.url"
-              />
-            </el-select>
-            <div class="form-help">
-              选择渠道身份后，再由协议自动确定只读的上游 URL 与鉴权方式。
-            </div>
-          </el-form-item>
-
           <div v-if="selectedConfiguredProductLine" class="configured-variant-notice">
             <el-alert
-              title="该渠道变体已经存在，不能重复新建；可改为向现有渠道添加 Key。"
+              title="该渠道已经存在，不能重复新建；可改为向现有渠道添加 Key。"
               type="info"
               :closable="false"
               show-icon
@@ -651,7 +597,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, reactive, ref, watch } from "vue";
+import { computed, onMounted, reactive, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { http } from "@/api/http";
@@ -727,7 +673,7 @@ type ProviderBaseUrl = {
   protocolConfigs?: RelayProtocolConfigs;
 };
 
-type ProviderTemplateCode = "glm" | "kimi" | "deepseek" | "minimax";
+type ProviderTemplateCode = "glm";
 
 type ConfiguredProductLine = {
   id: number;
@@ -811,9 +757,12 @@ type ParsedKey = {
   hasCustomLabel: boolean;
 };
 
-type KeyTableRef = {
-  clearSelection: () => void;
-  toggleRowSelection: (row: CredentialRow, selected?: boolean) => void;
+type BoardColumn = {
+  status: CredentialStatus;
+  title: string;
+  /** Only manual states accept drops; cooling/auto_disabled are system-set. */
+  droppable: boolean;
+  keys: CredentialRow[];
 };
 
 const route = useRoute();
@@ -821,15 +770,13 @@ const router = useRouter();
 const auth = useAuthStore();
 const canWrite = computed(() => auth.isAdmin);
 
-const KEY_PAGE_SIZE = 5;
 const rows = ref<CredentialRow[]>([]);
 const templates = ref<ProviderTemplate[]>([]);
 const loading = ref(false);
 const selectedProductLineId = ref<number | null>(null);
 const syncingQuery = ref(false);
-const keyTableRef = ref<KeyTableRef | null>(null);
-const selectedKeyRows = ref<CredentialRow[]>([]);
-const keyPage = ref(1);
+const draggingId = ref<number | null>(null);
+const dragOverStatus = ref<CredentialStatus | null>(null);
 
 const showBulkForm = ref(false);
 const bulkSaving = ref(false);
@@ -851,10 +798,7 @@ const channelSummaries = ref(new Map<number, ChannelSummary>());
 const testingIds = ref<Set<number>>(new Set());
 const deletingIds = ref<Set<number>>(new Set());
 const batchTesting = ref(false);
-const batchDeleting = ref(false);
-const batchUpdating = ref(false);
 const batchTestProgress = reactive({ done: 0, total: 0 });
-const batchMutating = computed(() => batchTesting.value || batchDeleting.value || batchUpdating.value);
 
 const bulkForm = reactive({
   productLineId: null as number | null,
@@ -918,10 +862,19 @@ const selectedChannel = computed(
   () => channels.value.find((channel) => channel.id === selectedProductLineId.value) ?? null,
 );
 
-const pagedKeys = computed(() => {
+const BOARD_COLUMN_DEFS: ReadonlyArray<Pick<BoardColumn, "status" | "title" | "droppable">> = [
+  { status: "active", title: "可用", droppable: true },
+  { status: "cooling", title: "冷却中", droppable: false },
+  { status: "auto_disabled", title: "自动停用", droppable: false },
+  { status: "disabled", title: "已停用", droppable: true },
+];
+
+const boardColumns = computed<BoardColumn[]>(() => {
   const keys = selectedChannel.value?.keys ?? [];
-  const start = (keyPage.value - 1) * KEY_PAGE_SIZE;
-  return keys.slice(start, start + KEY_PAGE_SIZE);
+  return BOARD_COLUMN_DEFS.map((column) => ({
+    ...column,
+    keys: keys.filter((row) => visibleStatus(row) === column.status),
+  }));
 });
 
 const selectedChannelSummary = computed(
@@ -940,6 +893,26 @@ const detailRow = computed(
 
 const selectedBulkTemplate = computed(
   () => templates.value.find((template) => template.code === bulkForm.providerCode),
+);
+
+type BulkChannelOption = {
+  template: ProviderTemplate;
+  option: ProviderBaseUrl;
+};
+
+function isTemplateOptionConfigured(
+  template: ProviderTemplate,
+  option: ProviderBaseUrl,
+): boolean {
+  return Boolean(template.productLines?.some((line) => line.code === option.productLineCode));
+}
+
+const bulkChannelOptions = computed<BulkChannelOption[]>(() =>
+  templates.value.flatMap((template) =>
+    template.baseUrls
+      .filter((option) => !isTemplateOptionConfigured(template, option))
+      .map((option) => ({ template, option })),
+  ),
 );
 
 const bulkBaseUrlOptions = computed(() => selectedBulkTemplate.value?.baseUrls ?? []);
@@ -1029,22 +1002,12 @@ function syncSelectedToQuery(id: number | null) {
 watch(rows, reconcileSelection, { deep: false });
 
 watch(selectedProductLineId, (id) => {
-  keyPage.value = 1;
   syncSelectedToQuery(id);
-  clearSelectedKeys();
   if (detailRow.value && detailRow.value.productLineId !== id) {
     showKeyDetails.value = false;
   }
   showChannelDetails.value = false;
 });
-
-watch(
-  () => selectedChannel.value?.keys.length ?? 0,
-  (total) => {
-    const maxPage = Math.max(1, Math.ceil(total / KEY_PAGE_SIZE));
-    if (keyPage.value > maxPage) keyPage.value = maxPage;
-  },
-);
 
 watch(() => route.query.channelId, () => {
   if (syncingQuery.value) return;
@@ -1059,31 +1022,40 @@ function selectChannel(id: number) {
   selectedProductLineId.value = id;
 }
 
-function clearSelectedKeys() {
-  selectedKeyRows.value = [];
-  keyTableRef.value?.clearSelection();
+function onCardDragStart(row: CredentialRow, event: DragEvent) {
+  if (!canWrite.value) return;
+  draggingId.value = row.id;
+  if (event.dataTransfer) {
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", String(row.id));
+  }
 }
 
-function handleSelectionChange(selection: CredentialRow[]) {
-  selectedKeyRows.value = selection;
+function onCardDragEnd() {
+  draggingId.value = null;
+  dragOverStatus.value = null;
 }
 
-async function selectKeysByIds(ids: number[]) {
-  if (!ids.length) return;
-  const keys = selectedChannel.value?.keys ?? [];
-  const idSet = new Set(ids);
-  const createdRows = keys.filter((row) => idSet.has(row.id));
-  if (!createdRows.length) return;
-  const firstIndex = keys.findIndex((row) => row.id === createdRows[0].id);
-  if (firstIndex >= 0) {
-    keyPage.value = Math.floor(firstIndex / KEY_PAGE_SIZE) + 1;
-  }
-  await nextTick();
-  keyTableRef.value?.clearSelection();
-  const visibleIds = new Set(pagedKeys.value.map((row) => row.id));
-  for (const row of createdRows) {
-    if (visibleIds.has(row.id)) keyTableRef.value?.toggleRowSelection(row, true);
-  }
+function onColumnDragOver(column: BoardColumn, event: DragEvent) {
+  if (!canWrite.value || draggingId.value == null || !column.droppable) return;
+  event.preventDefault();
+  if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+  dragOverStatus.value = column.status;
+}
+
+function onColumnDragLeave(column: BoardColumn) {
+  if (dragOverStatus.value === column.status) dragOverStatus.value = null;
+}
+
+async function onColumnDrop(column: BoardColumn) {
+  const id = draggingId.value;
+  draggingId.value = null;
+  dragOverStatus.value = null;
+  if (id == null || !canWrite.value || !column.droppable) return;
+  if (column.status !== "active" && column.status !== "disabled") return;
+  const row = rows.value.find((item) => item.id === id);
+  if (!row || visibleStatus(row) === column.status) return;
+  await setStatus(row, column.status);
 }
 
 function getErrorMessage(error: unknown, fallback: string): string {
@@ -1166,10 +1138,7 @@ function resolveTemplateOptionForChannel(
   template: ProviderTemplate,
   productLineCode: string,
 ): ProviderBaseUrl | undefined {
-  return template.baseUrls.find((option) => option.productLineCode === productLineCode)
-    // Mirrors the backend compatibility rule for GLM product lines created
-    // before protocol-specific routing metadata existed.
-    ?? (template.code === "glm" ? template.baseUrls[0] : undefined);
+  return template.baseUrls.find((option) => option.productLineCode === productLineCode);
 }
 
 function protocolsHaveConfigs(
@@ -1238,6 +1207,9 @@ function isCoolingActive(row: CredentialRow): boolean {
 
 function visibleStatus(row: CredentialRow): CredentialStatus {
   if (row.status === "active" && isCoolingActive(row)) return "cooling";
+  // Mirror server-side effectiveCredentialStatus: an expired cooling window
+  // means the credential is schedulable again.
+  if (row.status === "cooling" && !isCoolingActive(row)) return "active";
   return row.status;
 }
 
@@ -1268,21 +1240,19 @@ function templateDisplayName(template: ProviderTemplate): string {
   return formatChannelName(template.name, template.modelName || template.shortName);
 }
 
+function channelOptionDisplayName(item: BulkChannelOption): string {
+  return formatChannelName(item.template.name, item.option.productLineName);
+}
+
+function isBulkChannelOptionSelected(item: BulkChannelOption): boolean {
+  return bulkForm.providerCode === item.template.code
+    && bulkForm.baseUrl === item.option.url;
+}
+
 function channelDisplayName(
   channel: Pick<ChannelGroup, "providerName" | "productLineName"> | Pick<CredentialRow, "providerName" | "productLineName">,
 ): string {
   return formatChannelName(channel.providerName, channel.productLineName);
-}
-
-function baseUrlOptionLabel(option: ProviderBaseUrl): string {
-  const template = selectedBulkTemplate.value;
-  const channelName = template
-    ? formatChannelName(template.name, option.productLineName)
-    : option.productLineName;
-  const configured = template?.productLines?.some(
-    (line) => line.code === option.productLineCode,
-  );
-  return `${channelName} · ${option.label}${configured ? "（已配置）" : ""}`;
 }
 
 function statusText(status: CredentialStatus): string {
@@ -1370,7 +1340,6 @@ async function loadCredentials() {
   if (data.success) {
     rows.value = data.data;
     channelSummaries.value = new Map();
-    clearSelectedKeys();
   }
 }
 
@@ -1395,7 +1364,12 @@ async function openChannelDetails(channel: ChannelGroup) {
 
 async function loadMeta() {
   const templateResponse = await http.get("/api/admin/credential-templates");
-  if (templateResponse.data.success) templates.value = templateResponse.data.data;
+  if (templateResponse.data.success) {
+    // Only Zhipu/GLM is available for new channels; guard against stale backends.
+    templates.value = (templateResponse.data.data as ProviderTemplate[]).filter(
+      (template) => template.code === "glm",
+    );
+  }
 }
 
 async function refreshAll() {
@@ -1410,8 +1384,9 @@ async function refreshAll() {
 }
 
 function resetBulkForm() {
-  const first = templates.value[0];
-  const firstOption = first?.baseUrls[0];
+  const firstAvailable = bulkChannelOptions.value[0];
+  const first = firstAvailable?.template ?? templates.value[0];
+  const firstOption = firstAvailable?.option ?? first?.baseUrls[0];
   bulkForm.productLineId = null;
   bulkForm.providerCode = first?.code ?? "glm";
   bulkForm.baseUrl = firstOption?.url ?? "";
@@ -1423,7 +1398,20 @@ function resetBulkForm() {
     : ["openai_chat"];
 }
 
-function openCreateChannel() {
+async function openCreateChannel() {
+  if (!canWrite.value) return;
+  try {
+    await loadMeta();
+  } catch (error) {
+    if (!templates.value.length) {
+      ElMessage.error(getErrorMessage(error, "加载可新增渠道失败"));
+      return;
+    }
+  }
+  if (!bulkChannelOptions.value.length) {
+    ElMessage.warning("没有可新增的渠道");
+    return;
+  }
   resetBulkForm();
   showBulkForm.value = true;
 }
@@ -1561,20 +1549,11 @@ function openAddKeys(channel: ChannelGroup) {
   showBulkForm.value = true;
 }
 
-function selectBulkTemplate(template: ProviderTemplate) {
-  const option = template.baseUrls[0];
-  bulkForm.providerCode = template.code;
-  bulkForm.baseUrl = option?.url ?? "";
-  bulkForm.name = option?.productLineName ?? template.modelName;
-  bulkForm.supportedProtocols = option ? initialOptionProtocols(option, template) : [];
-}
-
-function selectBulkVariant() {
-  const option = selectedBulkBaseUrlOption.value;
-  const template = selectedBulkTemplate.value;
-  if (!option || !template) return;
-  bulkForm.name = option.productLineName;
-  bulkForm.supportedProtocols = initialOptionProtocols(option, template);
+function selectBulkChannelOption(item: BulkChannelOption) {
+  bulkForm.providerCode = item.template.code;
+  bulkForm.baseUrl = item.option.url;
+  bulkForm.name = item.option.productLineName;
+  bulkForm.supportedProtocols = initialOptionProtocols(item.option, item.template);
 }
 
 function useConfiguredVariant() {
@@ -1671,7 +1650,7 @@ async function saveBulkKeys() {
   if (creatingChannel) {
     const name = bulkForm.name.trim();
     if (selectedConfiguredProductLine.value) {
-      ElMessage.warning("该渠道变体已经存在，请改为向现有渠道添加 Key");
+      ElMessage.warning("该渠道已经存在，请改为向现有渠道添加 Key");
       return;
     }
     if (!name) {
@@ -1683,7 +1662,7 @@ async function saveBulkKeys() {
       return;
     }
     if (!selectedOption) {
-      ElMessage.warning("请选择渠道变体");
+      ElMessage.warning("请选择渠道");
       return;
     }
     if (!protocolsHaveConfigs(bulkForm.supportedProtocols, bulkProtocolConfigs.value)) {
@@ -1712,11 +1691,6 @@ async function saveBulkKeys() {
         : {}),
     };
     const { data } = await http.post("/api/admin/credentials/bulk-create", payload);
-    const createdIds = Array.isArray(data.data?.credentials)
-      ? data.data.credentials
-        .map((credential: { id?: unknown }) => Number(credential.id))
-        .filter((id: number) => Number.isInteger(id) && id > 0)
-      : [];
     const targetId = Number(
       data.data?.productLineId
       ?? data.data?.productLine?.id
@@ -1739,10 +1713,8 @@ async function saveBulkKeys() {
       );
       if (createdChannel) selectedProductLineId.value = createdChannel.id;
     }
-    await nextTick();
-    await selectKeysByIds(createdIds);
     ElMessage.success({
-      message: `已导入 ${createdCount} 个 Key，并自动选中。请点击“批量测试”确认上游连接可用。`,
+      message: `已导入 ${createdCount} 个 Key。请点击“测试全部”确认上游连接可用。`,
       duration: 7000,
       showClose: true,
     });
@@ -1799,8 +1771,8 @@ async function runWithConcurrency<T>(
 }
 
 async function batchTestCredentials() {
-  if (!canWrite.value || !selectedKeyRows.value.length || batchMutating.value) return;
-  const targets = [...selectedKeyRows.value];
+  const targets = [...(selectedChannel.value?.keys ?? [])];
+  if (!canWrite.value || !targets.length || batchTesting.value) return;
   batchTesting.value = true;
   batchTestProgress.done = 0;
   batchTestProgress.total = targets.length;
@@ -1845,25 +1817,6 @@ async function setStatus(row: CredentialRow, status: "active" | "disabled") {
   }
 }
 
-async function batchSetStatus(status: "active" | "disabled") {
-  if (!canWrite.value || !selectedKeyRows.value.length || batchMutating.value) return;
-  const ids = selectedKeyRows.value.map((row) => row.id);
-  if (ids.length > 200) {
-    ElMessage.warning("单次最多批量更新 200 个 Key");
-    return;
-  }
-  batchUpdating.value = true;
-  try {
-    await http.patch("/api/admin/credentials/bulk-status", { ids, status });
-    ElMessage.success(`已${status === "active" ? "启用" : "停用"} ${ids.length} 个 Key`);
-    await loadCredentials();
-  } catch (error) {
-    ElMessage.error(getErrorMessage(error, "批量更新状态失败"));
-  } finally {
-    batchUpdating.value = false;
-  }
-}
-
 async function removeCredential(row: CredentialRow) {
   try {
     await ElMessageBox.confirm(
@@ -1890,59 +1843,6 @@ async function removeCredential(row: CredentialRow) {
     ElMessage.error(getErrorMessage(error, "删除失败"));
   } finally {
     setDeleting(row.id, false);
-  }
-}
-
-async function batchDeleteCredentials() {
-  if (!canWrite.value || !selectedKeyRows.value.length || batchMutating.value) return;
-  const targets = [...selectedKeyRows.value];
-  const channel = selectedChannel.value;
-  if (!channel) return;
-  if (targets.length > 200) {
-    ElMessage.warning("单次最多批量删除 200 个 Key");
-    return;
-  }
-  const channelConfirmName = channelDisplayName(channel);
-  try {
-    await ElMessageBox.confirm(
-      `确认删除选中的 ${targets.length} 个 Key？删除后不可恢复，历史调用日志仍会保留。`,
-      "批量删除 API Key",
-      {
-        type: "warning",
-        confirmButtonText: "批量删除",
-        cancelButtonText: "取消",
-        confirmButtonClass: "el-button--danger",
-      },
-    );
-    await ElMessageBox.prompt(
-      `请输入渠道名称「${channelConfirmName}」完成二次确认。`,
-      "确认批量删除",
-      {
-        type: "warning",
-        inputPlaceholder: channelConfirmName,
-        confirmButtonText: "确认删除",
-        cancelButtonText: "取消",
-        confirmButtonClass: "el-button--danger",
-        inputValidator: (value) => value.trim() === channelConfirmName || "渠道名称不匹配",
-      },
-    );
-  } catch {
-    return;
-  }
-
-  batchDeleting.value = true;
-  try {
-    const ids = targets.map((row) => row.id);
-    await http.post("/api/admin/credentials/bulk-delete", { ids });
-    ElMessage.success(`已删除 ${ids.length} 个 Key`);
-    if (detailCredentialId.value && ids.includes(detailCredentialId.value)) {
-      showKeyDetails.value = false;
-    }
-    await loadCredentials();
-  } catch (error) {
-    ElMessage.error(getErrorMessage(error, "批量删除失败"));
-  } finally {
-    batchDeleting.value = false;
   }
 }
 
@@ -2000,8 +1900,7 @@ onMounted(refreshAll);
 
 .head-actions,
 .detail-actions,
-.drawer-actions,
-.row-actions {
+.drawer-actions {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
@@ -2349,44 +2248,154 @@ onMounted(refreshAll);
   gap: 6px;
 }
 
-.selection-hint {
-  margin-right: 2px;
-  color: #64748b;
+.board-hint {
+  margin: 4px 0 0;
+  color: #94a3b8;
   font-size: 12px;
 }
 
-.key-table {
-  width: 100%;
+.kanban-board {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  padding: 12px;
+  background: #fff;
 }
 
-.pager {
-  display: flex;
-  justify-content: flex-end;
-  padding: 10px 14px 12px;
-}
-
-.key-name-button {
+.kanban-column {
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
-  gap: 3px;
-  max-width: 100%;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
+  min-width: 0;
+  min-height: 220px;
+  border: 1px dashed transparent;
+  border-radius: 10px;
+  background: #f8fafc;
+  transition: border-color 0.15s ease, background 0.15s ease;
 }
 
-.key-name-button strong {
-  max-width: 100%;
+.kanban-column.droppable {
+  border-color: #cbd5e1;
+}
+
+.kanban-column.drag-over {
+  border-color: #3b82f6;
+  background: #eff6ff;
+}
+
+.kanban-column-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid #eef2f7;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.kanban-column-head.is-active { color: #15803d; }
+.kanban-column-head.is-cooling { color: #d97706; }
+.kanban-column-head.is-auto_disabled { color: #b91c1c; }
+.kanban-column-head.is-disabled { color: #64748b; }
+
+.kanban-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: #e2e8f0;
+  color: #475467;
+  font-size: 11px;
+}
+
+.kanban-cards {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  max-height: 520px;
+  padding: 10px;
+  overflow-y: auto;
+}
+
+.kanban-empty {
+  margin: auto;
+  color: #cbd5e1;
+  font-size: 12px;
+}
+
+.key-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 9px;
+  background: #fff;
+  cursor: grab;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease;
+}
+
+.key-card:hover {
+  border-color: #93c5fd;
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.06);
+}
+
+.key-card.dragging {
+  border-color: #3b82f6;
+  opacity: 0.5;
+}
+
+.key-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.key-card-label {
   overflow: hidden;
-  color: #2563eb;
+  color: #0f172a;
   font-size: 13px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.key-card-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.key-card-meta .meta-label {
+  margin-left: 4px;
+  color: #94a3b8;
+  font-size: 11px;
+}
+
+.key-card-cooling {
+  color: #d97706;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.key-card-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.key-card-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
 }
 
 .secret-mask {
@@ -2431,15 +2440,6 @@ onMounted(refreshAll);
 .time-text {
   color: #64748b;
   font-size: 12px;
-}
-
-.row-actions {
-  flex-wrap: nowrap;
-  gap: 0;
-}
-
-.row-actions :deep(.el-button + .el-button) {
-  margin-left: 9px;
 }
 
 .detail-empty {
@@ -2781,6 +2781,10 @@ onMounted(refreshAll);
   .batch-actions {
     justify-content: flex-start;
   }
+
+  .kanban-board {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 900px) {
@@ -2811,7 +2815,8 @@ onMounted(refreshAll);
   }
 
   .provider-grid,
-  .info-grid {
+  .info-grid,
+  .kanban-board {
     grid-template-columns: 1fr;
   }
 

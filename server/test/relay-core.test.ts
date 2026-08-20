@@ -95,22 +95,17 @@ test("relay base URL uses the proxy-facing host instead of the API listener port
 test("upstream channel templates use 公司/模型 naming", async () => {
   const { formatChannelName } = await import("../src/lib/provider-templates.js");
   const glm = getProviderTemplate("glm");
-  const deepseek = getProviderTemplate("deepseek");
   assert.ok(glm);
-  assert.ok(deepseek);
   assert.equal(glm.name, "智谱");
   assert.equal(glm.modelName, "GLM");
   assert.equal(formatChannelName(glm.name, glm.modelName), "智谱/GLM");
-  assert.equal(deepseek.name, "深度求索");
-  assert.equal(deepseek.modelName, "DeepSeek");
-  assert.equal(formatChannelName(deepseek.name, deepseek.modelName), "深度求索/DeepSeek");
   assert.equal(
     formatChannelName(glm.name, glm.baseUrls[0].productLineName),
-    "智谱/GLM",
+    "智谱/GLM（国内版）",
   );
   assert.equal(
-    formatChannelName(deepseek.name, deepseek.baseUrls[0].productLineName),
-    "深度求索/DeepSeek",
+    formatChannelName(glm.name, glm.baseUrls[1].productLineName),
+    "智谱/GLM（国际版）",
   );
 });
 

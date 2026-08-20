@@ -628,7 +628,7 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
     async (req, reply) => {
       const body = z
         .object({
-          providerCode: z.enum(["glm", "kimi", "deepseek", "minimax"]),
+          providerCode: z.enum(["glm"]),
           baseUrl: z.string().url().optional(),
           label: z.string().trim().min(1).max(200),
           secret: upstreamSecretSchema,

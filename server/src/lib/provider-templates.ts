@@ -4,11 +4,7 @@ import type {
   ProtocolUpstreamConfig,
 } from "./upstream-protocol-config.js";
 
-export type ProviderTemplateCode =
-  | "glm"
-  | "kimi"
-  | "deepseek"
-  | "minimax";
+export type ProviderTemplateCode = "glm";
 
 export type ProviderBaseUrlOption = {
   label: string;
@@ -56,16 +52,16 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
     name: "智谱",
     modelName: "GLM",
     shortName: "GLM",
-    description: "GLM Coding Plan，支持 OpenAI Chat 与 Anthropic Messages。",
+    description: "GLM Coding Plan 国内版与国际版，支持 OpenAI Chat 与 Anthropic Messages。",
     authStyle: "bearer",
     defaultProtocols: ["openai_chat", "anthropic_messages"],
     baseUrls: [
       {
-        label: "Coding Plan",
+        label: "国内版",
         url: "https://open.bigmodel.cn/api/coding/paas/v4",
         host: "open.bigmodel.cn",
         productLineCode: "api",
-        productLineName: "GLM",
+        productLineName: "GLM（国内版）",
         productType: "coding_plan",
         protocolConfigs: {
           openai_chat: {
@@ -78,114 +74,27 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
           },
         },
       },
+      {
+        label: "国际版",
+        url: "https://api.z.ai/api/coding/paas/v4",
+        host: "api.z.ai",
+        productLineCode: "api_intl",
+        productLineName: "GLM（国际版）",
+        productType: "coding_plan",
+        protocolConfigs: {
+          openai_chat: {
+            baseUrl: "https://api.z.ai/api/coding/paas/v4",
+            authStyle: "bearer",
+          },
+          anthropic_messages: {
+            baseUrl: "https://api.z.ai/api/anthropic",
+            authStyle: "x-api-key",
+          },
+        },
+      },
     ],
     defaultLabel: "智谱/GLM",
     color: "#2563eb",
-  },
-  {
-    code: "kimi",
-    name: "月之暗面",
-    modelName: "Kimi",
-    shortName: "Kimi",
-    description: "Kimi Code 编程 API 与 Moonshot 开放平台 API，兼容 OpenAI Chat Completions。",
-    authStyle: "bearer",
-    defaultProtocols: ["openai_chat"],
-    baseUrls: [
-      {
-        label: "Kimi Code",
-        url: "https://api.kimi.com/coding/v1",
-        host: "api.kimi.com",
-        productLineCode: "kimi_code",
-        productLineName: "Kimi Code",
-        productType: "coding_plan",
-        protocolConfigs: {
-          openai_chat: { baseUrl: "https://api.kimi.com/coding/v1", authStyle: "bearer" },
-        },
-      },
-      {
-        label: "中国区",
-        url: "https://api.moonshot.cn/v1",
-        host: "api.moonshot.cn",
-        productLineCode: "api",
-        productLineName: "Kimi（中国区）",
-        productType: "api",
-        protocolConfigs: {
-          openai_chat: { baseUrl: "https://api.moonshot.cn/v1", authStyle: "bearer" },
-        },
-      },
-      {
-        label: "国际区",
-        url: "https://api.moonshot.ai/v1",
-        host: "api.moonshot.ai",
-        productLineCode: "api_intl",
-        productLineName: "Kimi（国际区）",
-        productType: "api",
-        protocolConfigs: {
-          openai_chat: { baseUrl: "https://api.moonshot.ai/v1", authStyle: "bearer" },
-        },
-      },
-    ],
-    defaultLabel: "月之暗面/Kimi",
-    color: "#7c3aed",
-  },
-  {
-    code: "deepseek",
-    name: "深度求索",
-    modelName: "DeepSeek",
-    shortName: "DS",
-    description: "DeepSeek 官方 API，兼容 OpenAI SDK 与 Chat Completions。",
-    authStyle: "bearer",
-    defaultProtocols: ["openai_chat"],
-    baseUrls: [
-      {
-        label: "官方",
-        url: "https://api.deepseek.com",
-        host: "api.deepseek.com",
-        productLineCode: "api",
-        productLineName: "DeepSeek",
-        productType: "api",
-        protocolConfigs: {
-          openai_chat: { baseUrl: "https://api.deepseek.com", authStyle: "bearer" },
-        },
-      },
-    ],
-    defaultLabel: "深度求索/DeepSeek",
-    color: "#0891b2",
-  },
-  {
-    code: "minimax",
-    name: "MiniMax",
-    modelName: "MiniMax",
-    shortName: "MM",
-    description: "MiniMax OpenAI-compatible API，支持国内与国际端点。",
-    authStyle: "bearer",
-    defaultProtocols: ["openai_chat"],
-    baseUrls: [
-      {
-        label: "中国区",
-        url: "https://api.minimaxi.com/v1",
-        host: "api.minimaxi.com",
-        productLineCode: "api",
-        productLineName: "MiniMax（中国区）",
-        productType: "api",
-        protocolConfigs: {
-          openai_chat: { baseUrl: "https://api.minimaxi.com/v1", authStyle: "bearer" },
-        },
-      },
-      {
-        label: "国际区",
-        url: "https://api.minimax.io/v1",
-        host: "api.minimax.io",
-        productLineCode: "api_intl",
-        productLineName: "MiniMax（国际区）",
-        productType: "api",
-        protocolConfigs: {
-          openai_chat: { baseUrl: "https://api.minimax.io/v1", authStyle: "bearer" },
-        },
-      },
-    ],
-    defaultLabel: "MiniMax",
-    color: "#ea580c",
   },
 ];
 
@@ -197,8 +106,7 @@ export function resolveTemplateProductLineOption(
   template: ProviderTemplate,
   productLineCode: string,
 ): ProviderBaseUrlOption | undefined {
-  return template.baseUrls.find((item) => item.productLineCode === productLineCode)
-    ?? (template.code === "glm" ? template.baseUrls[0] : undefined);
+  return template.baseUrls.find((item) => item.productLineCode === productLineCode);
 }
 
 export type TemplateProtocolConfigResolution =

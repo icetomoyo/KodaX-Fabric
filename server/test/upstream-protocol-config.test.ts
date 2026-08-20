@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   getProviderTemplate,
   PROVIDER_TEMPLATES,
+  resolveTemplateProductLineOption,
   resolveTemplateProtocolConfigs,
 } from "../src/lib/provider-templates.js";
 import {
@@ -34,33 +35,50 @@ test("GLM template derives protocol-specific endpoint and authentication", () =>
   });
 });
 
+test("GLM international template uses Z.ai coding and anthropic endpoints", () => {
+  const glm = getProviderTemplate("glm")!;
+  assert.equal(glm.baseUrls[1]?.productLineCode, "api_intl");
+  assert.equal(
+    resolveTemplateProductLineOption(glm, "api_intl")?.host,
+    "api.z.ai",
+  );
+  // CN and INTL are distinct channels; unknown codes must not fall back.
+  assert.equal(resolveTemplateProductLineOption(glm, "legacy_unknown"), undefined);
+  const resolution = resolveTemplateProtocolConfigs(
+    glm,
+    "api_intl",
+    ["openai_chat", "anthropic_messages"],
+  );
+  assert.deepEqual(resolution, {
+    ok: true,
+    configs: {
+      openai_chat: {
+        baseUrl: "https://api.z.ai/api/coding/paas/v4",
+        authStyle: "bearer",
+      },
+      anthropic_messages: {
+        baseUrl: "https://api.z.ai/api/anthropic",
+        authStyle: "x-api-key",
+      },
+    },
+  });
+});
+
 test("every provider option exposes its supported protocol configuration", () => {
   for (const template of PROVIDER_TEMPLATES) {
     for (const option of template.baseUrls) {
       for (const protocol of template.defaultProtocols) {
-        if (template.code !== "glm" && protocol === "anthropic_messages") continue;
         assert.ok(option.protocolConfigs[protocol]);
       }
     }
   }
-  const deepseek = getProviderTemplate("deepseek")!;
-  assert.deepEqual(
-    resolveTemplateProtocolConfigs(deepseek, "api", ["anthropic_messages"]),
-    {
-      ok: false,
-      reason: "protocol_unsupported",
-      unsupportedProtocols: ["anthropic_messages"],
-    },
-  );
 });
 
 test("template product lines preserve API versus Coding Plan identity", () => {
   const glm = getProviderTemplate("glm")!;
-  const kimi = getProviderTemplate("kimi")!;
 
   assert.equal(glm.baseUrls[0].productType, "coding_plan");
-  assert.equal(kimi.baseUrls.find((option) => option.productLineCode === "kimi_code")?.productType, "coding_plan");
-  assert.equal(kimi.baseUrls.find((option) => option.productLineCode === "api")?.productType, "api");
+  assert.equal(glm.baseUrls.find((option) => option.productLineCode === "api_intl")?.productType, "coding_plan");
 });
 
 test("protocol config resolution uses explicit config and legacy fallback only for null", () => {
