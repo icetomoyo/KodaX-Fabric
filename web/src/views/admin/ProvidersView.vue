@@ -2,7 +2,7 @@
   <div class="page-card">
     <div class="head">
       <h2 class="page-title" style="margin: 0">供应商 / 产品线</h2>
-      <el-button v-if="auth.isAdmin" type="primary" @click="openCreateProvider">新增供应商</el-button>
+      <el-button v-if="auth.isSuperAdmin" type="primary" @click="openCreateProvider">新增供应商</el-button>
     </div>
     <p class="muted">
       不预置演示供应商。请按实际采购录入；产品线区分 API / Coding Plan。
@@ -33,7 +33,7 @@
       <el-table-column prop="name" label="名称" width="160" />
       <el-table-column prop="defaultBaseUrl" label="默认 Base URL" show-overflow-tooltip />
       <el-table-column prop="status" label="状态" width="100" />
-      <el-table-column v-if="auth.isAdmin" label="操作" width="120">
+      <el-table-column v-if="auth.isSuperAdmin" label="操作" width="120">
         <template #default="{ row }">
           <el-button link type="primary" @click="editProvider(row)">编辑</el-button>
         </template>

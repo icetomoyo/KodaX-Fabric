@@ -1,7 +1,7 @@
 import type { FastifyReply, FastifyRequest } from "fastify";
 import { eq } from "drizzle-orm";
 import { db } from "../db/client.js";
-import { employees } from "../db/schema/index.js";
+import { employees, enterprises } from "../db/schema/index.js";
 import { isSessionRole, verifySession, type SessionClaims } from "../lib/jwt.js";
 
 function extractBearer(req: FastifyRequest): string | null {
@@ -12,6 +12,10 @@ function extractBearer(req: FastifyRequest): string | null {
 }
 
 export async function requireSession(req: FastifyRequest, reply: FastifyReply) {
+  if (req.session && Number.isSafeInteger(req.employeeId) && req.employeeId! > 0) {
+    return;
+  }
+
   const token = extractBearer(req);
   if (!token) {
     return reply.code(401).send({ success: false, message: "未登录" });
@@ -36,8 +40,11 @@ export async function requireSession(req: FastifyRequest, reply: FastifyReply) {
       role: employees.role,
       status: employees.status,
       mustChangePassword: employees.mustChangePassword,
+      enterpriseId: employees.enterpriseId,
+      enterpriseStatus: enterprises.status,
     })
     .from(employees)
+    .leftJoin(enterprises, eq(employees.enterpriseId, enterprises.id))
     .where(eq(employees.id, employeeId))
     .limit(1);
 
@@ -49,12 +56,24 @@ export async function requireSession(req: FastifyRequest, reply: FastifyReply) {
     return reply.code(401).send({ success: false, message: "登录已失效" });
   }
 
+  if (
+    (user.role === "org_admin" || user.role === "team_admin") &&
+    (user.enterpriseId == null || user.enterpriseStatus !== "active")
+  ) {
+    return reply.code(401).send({ success: false, message: "用户不可用" });
+  }
+
+  if (user.role === "employee" && user.enterpriseId != null && user.enterpriseStatus !== "active") {
+    return reply.code(401).send({ success: false, message: "用户不可用" });
+  }
+
   req.session = {
     sub: String(user.id),
     name: user.name,
     phone: user.phone,
     role: user.role,
     mustChangePassword: user.mustChangePassword,
+    enterpriseId: user.enterpriseId,
   };
   req.employeeId = user.id;
 }

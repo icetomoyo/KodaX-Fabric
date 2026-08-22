@@ -11,18 +11,24 @@ import Fastify, { type LightMyRequestResponse } from "fastify";
 
 const [
   { db, sql },
-  { employees, opsAuditLogs },
+  { employees, enterprises, opsAuditLogs },
   { authRoutes },
   { adminUserRoutes },
-  { hashPassword, REGISTRATION_INITIAL_PASSWORD, verifyPassword },
+  { adminEnterpriseRoutes },
+  { meRoutes },
+  { hashPassword, REGISTRATION_INITIAL_PASSWORD },
   { signSession },
+  { getDefaultEnterpriseId },
 ] = await Promise.all([
   import("../src/db/client.js"),
   import("../src/db/schema/index.js"),
   import("../src/routes/auth.js"),
   import("../src/routes/admin/users.js"),
+  import("../src/routes/admin/enterprises.js"),
+  import("../src/routes/me.js"),
   import("../src/lib/password.js"),
   import("../src/lib/jwt.js"),
+  import("../src/lib/enterprise.js"),
 ]);
 
 const marker = randomUUID().replaceAll("-", "").slice(0, 10);
@@ -30,6 +36,7 @@ const applicantPhone = `rg${marker}`;
 const adminPhone = `ra${marker}`;
 const employeePhone = `re${marker}`;
 const employeeIds: number[] = [];
+const enterpriseIds: number[] = [];
 const app = Fastify({ logger: false });
 
 function json<T>(response: LightMyRequestResponse): T {
@@ -39,6 +46,7 @@ function json<T>(response: LightMyRequestResponse): T {
 
 async function createActiveUser(role: "employee" | "admin", phone: string) {
   const name = `${role}-${marker}`;
+  const enterpriseId = await getDefaultEnterpriseId();
   const [row] = await db
     .insert(employees)
     .values({
@@ -48,6 +56,7 @@ async function createActiveUser(role: "employee" | "admin", phone: string) {
       dept: `dept-${marker}`,
       role,
       status: "active",
+      enterpriseId,
       mustChangePassword: false,
     })
     .returning({ id: employees.id });
@@ -62,18 +71,23 @@ async function createActiveUser(role: "employee" | "admin", phone: string) {
         phone,
         name,
         mustChangePassword: false,
+        enterpriseId,
       })}`,
     },
   };
 }
 
 async function cleanup() {
-  if (!employeeIds.length) return;
-  const ids = employeeIds.map(String);
-  await db
-    .delete(opsAuditLogs)
-    .where(or(inArray(opsAuditLogs.actorEmployeeId, employeeIds), inArray(opsAuditLogs.targetId, ids)));
-  await db.delete(employees).where(inArray(employees.id, employeeIds));
+  if (employeeIds.length) {
+    const ids = employeeIds.map(String);
+    await db
+      .delete(opsAuditLogs)
+      .where(or(inArray(opsAuditLogs.actorEmployeeId, employeeIds), inArray(opsAuditLogs.targetId, ids)));
+    await db.delete(employees).where(inArray(employees.id, employeeIds));
+  }
+  if (enterpriseIds.length) {
+    await db.delete(enterprises).where(inArray(enterprises.id, enterpriseIds));
+  }
 }
 
 async function main() {
@@ -81,147 +95,143 @@ async function main() {
     await cleanup();
     await app.register(authRoutes);
     await app.register(adminUserRoutes);
+    await app.register(adminEnterpriseRoutes);
+    await app.register(meRoutes);
     await app.ready();
 
     const registration = await app.inject({
       method: "POST",
       url: "/api/auth/register",
       payload: {
+        kind: "personal",
         name: `申请人-${marker}`,
         dept: `研发-${marker}`,
         phone: applicantPhone,
       },
     });
     assert.equal(registration.statusCode, 200);
-    const application = json<{
+    const personal = json<{
       success: true;
-      data: { id: number; name: string; dept: string; phone: string; status: string };
+      data: { id: number; phone: string; status: string; enterpriseId: number | null };
     }>(registration).data;
-    employeeIds.push(application.id);
-    assert.equal(application.phone, applicantPhone);
-    assert.equal(application.status, "pending");
+    employeeIds.push(personal.id);
+    assert.equal(personal.phone, applicantPhone);
+    assert.equal(personal.status, "active");
+    assert.equal(personal.enterpriseId, null);
 
     const duplicate = await app.inject({
       method: "POST",
       url: "/api/auth/register",
-      payload: { name: "重复申请", dept: "研发", phone: applicantPhone },
+      payload: { kind: "personal", name: "重复申请", dept: "研发", phone: applicantPhone },
     });
     assert.equal(duplicate.statusCode, 409);
 
-    const pendingLogin = await app.inject({
+    const personalLogin = await app.inject({
       method: "POST",
       url: "/api/auth/login",
       payload: { phone: applicantPhone, password: REGISTRATION_INITIAL_PASSWORD },
     });
-    assert.equal(pendingLogin.statusCode, 403);
-    assert.equal(json<{ code: string }>(pendingLogin).code, "REGISTRATION_PENDING");
+    assert.equal(personalLogin.statusCode, 200);
+    const personalSession = json<{
+      data: { token: string; user: { mustChangePassword: boolean; enterpriseId: number | null } };
+    }>(personalLogin).data;
+    assert.equal(personalSession.user.mustChangePassword, true);
+    assert.equal(personalSession.user.enterpriseId, null);
 
     const admin = await createActiveUser("admin", adminPhone);
-    const employee = await createActiveUser("employee", employeePhone);
-
-    const visibleApplications = await app.inject({
-      method: "GET",
-      url: `/api/admin/users?status=pending&q=${encodeURIComponent(applicantPhone)}`,
-      headers: admin.headers,
-    });
-    assert.equal(visibleApplications.statusCode, 200);
-    const applications = json<{
-      success: true;
-      data: Array<{ id: number; name: string; dept: string; phone: string; status: string; createdAt: string }>;
-    }>(visibleApplications).data;
-    assert.equal(applications.length, 1);
-    assert.deepEqual(
-      {
-        id: applications[0]?.id,
-        name: applications[0]?.name,
-        dept: applications[0]?.dept,
-        phone: applications[0]?.phone,
-        status: applications[0]?.status,
-      },
-      {
-        id: application.id,
-        name: `申请人-${marker}`,
-        dept: `研发-${marker}`,
-        phone: applicantPhone,
-        status: "pending",
-      },
-    );
-    assert.ok(applications[0]?.createdAt);
-
-    const employeeDenied = await app.inject({
+    const createdEnterprise = await app.inject({
       method: "POST",
-      url: `/api/admin/users/${application.id}/approve`,
-      headers: employee.headers,
+      url: "/api/admin/enterprises",
+      headers: admin.headers,
+      payload: { name: `加入企业-${marker}` },
     });
-    assert.equal(employeeDenied.statusCode, 403);
+    assert.equal(createdEnterprise.statusCode, 200);
+    const host = json<{ data: { id: number; code: string; name: string; status: string } }>(
+      createdEnterprise,
+    ).data;
+    enterpriseIds.push(host.id);
+    assert.equal(host.status, "active");
+    assert.match(host.code, /^E/);
 
-    const bypassAttempt = await app.inject({
+    const joinDenied = await app.inject({
+      method: "POST",
+      url: "/api/me/join-enterprise",
+      headers: { authorization: `Bearer ${personalSession.token}` },
+      payload: { code: host.code },
+    });
+    assert.equal(joinDenied.statusCode, 403);
+
+    const joined = await app.inject({
+      method: "POST",
+      url: "/api/auth/change-password",
+      headers: { authorization: `Bearer ${personalSession.token}` },
+      payload: { oldPassword: REGISTRATION_INITIAL_PASSWORD, newPassword: `JoinTest@${marker}1` },
+    });
+    assert.equal(joined.statusCode, 200);
+    const afterPassword = json<{ data: { token: string } }>(joined).data;
+    const joinOk = await app.inject({
+      method: "POST",
+      url: "/api/me/join-enterprise",
+      headers: { authorization: `Bearer ${afterPassword.token}` },
+      payload: { code: host.code },
+    });
+    assert.equal(joinOk.statusCode, 200);
+    assert.equal(json<{ data: { enterprise: { id: number } } }>(joinOk).data.enterprise.id, host.id);
+
+    const [member] = await db
+      .select({ enterpriseId: employees.enterpriseId })
+      .from(employees)
+      .where(eq(employees.id, personal.id));
+    assert.equal(member?.enterpriseId, host.id);
+
+    const enterprisePhone = `en${marker}`;
+    const enterpriseReg = await app.inject({
+      method: "POST",
+      url: "/api/auth/register",
+      payload: {
+        kind: "enterprise",
+        name: `企业联系人-${marker}`,
+        phone: enterprisePhone,
+        enterpriseName: `待审企业-${marker}`,
+      },
+    });
+    assert.equal(enterpriseReg.statusCode, 200);
+    const enterpriseApp = json<{
+      data: { id: number; status: string; enterprise: { id: number; status: string; code: string } };
+    }>(enterpriseReg).data;
+    employeeIds.push(enterpriseApp.id);
+    enterpriseIds.push(enterpriseApp.enterprise.id);
+    assert.equal(enterpriseApp.status, "pending");
+    assert.equal(enterpriseApp.enterprise.status, "pending");
+
+    const pendingEnterpriseLogin = await app.inject({
+      method: "POST",
+      url: "/api/auth/login",
+      payload: { phone: enterprisePhone, password: REGISTRATION_INITIAL_PASSWORD },
+    });
+    assert.equal(pendingEnterpriseLogin.statusCode, 403);
+    assert.equal(json<{ code: string }>(pendingEnterpriseLogin).code, "REGISTRATION_PENDING");
+
+    const enable = await app.inject({
       method: "PATCH",
-      url: `/api/admin/users/${application.id}`,
+      url: `/api/admin/enterprises/${enterpriseApp.enterprise.id}/status`,
       headers: admin.headers,
       payload: { status: "active" },
     });
-    assert.equal(bypassAttempt.statusCode, 400);
+    assert.equal(enable.statusCode, 200);
 
-    const approval = await app.inject({
-      method: "POST",
-      url: `/api/admin/users/${application.id}/approve`,
-      headers: admin.headers,
-    });
-    assert.equal(approval.statusCode, 200);
-    assert.equal(json<{ data: { status: string; mustChangePassword: boolean } }>(approval).data.status, "active");
-    assert.equal(json<{ data: { status: string; mustChangePassword: boolean } }>(approval).data.mustChangePassword, true);
-
-    const secondApproval = await app.inject({
-      method: "POST",
-      url: `/api/admin/users/${application.id}/approve`,
-      headers: admin.headers,
-    });
-    assert.equal(secondApproval.statusCode, 409);
-
-    const [approvedEmployee] = await db
-      .select({
-        role: employees.role,
-        status: employees.status,
-        passwordHash: employees.passwordHash,
-        mustChangePassword: employees.mustChangePassword,
-      })
-      .from(employees)
-      .where(eq(employees.id, application.id));
-    assert.equal(approvedEmployee?.role, "employee");
-    assert.equal(approvedEmployee?.status, "active");
-    assert.equal(approvedEmployee?.mustChangePassword, true);
-    assert.equal(
-      await verifyPassword(REGISTRATION_INITIAL_PASSWORD, approvedEmployee?.passwordHash ?? ""),
-      true,
-    );
-
-    const approvedLogin = await app.inject({
+    const orgAdminLogin = await app.inject({
       method: "POST",
       url: "/api/auth/login",
-      payload: { phone: applicantPhone, password: REGISTRATION_INITIAL_PASSWORD },
+      payload: { phone: enterprisePhone, password: REGISTRATION_INITIAL_PASSWORD },
     });
-    assert.equal(approvedLogin.statusCode, 200);
-    assert.equal(json<{ data: { user: { mustChangePassword: boolean } } }>(approvedLogin).data.user.mustChangePassword, true);
-
-    const audits = await db
-      .select({ action: opsAuditLogs.action })
-      .from(opsAuditLogs)
-      .where(
-        and(
-          eq(opsAuditLogs.targetId, String(application.id)),
-          inArray(opsAuditLogs.action, ["auth.register_application", "user.registration_approve"]),
-        ),
-      );
-    assert.deepEqual(
-      new Set(audits.map((row) => row.action)),
-      new Set(["auth.register_application", "user.registration_approve"]),
-    );
+    assert.equal(orgAdminLogin.statusCode, 200);
+    assert.equal(json<{ data: { user: { role: string } } }>(orgAdminLogin).data.user.role, "org_admin");
 
     console.log("registration approval integration passed", {
-      pendingLoginBlocked: true,
-      adminApprovalRequired: true,
-      initialPasswordForcedChange: true,
+      personalActiveWithoutEnterprise: true,
+      joinByEnterpriseCode: true,
+      enterprisePendingUntilSuperAdmin: true,
     });
   } finally {
     await app.close().catch(() => undefined);

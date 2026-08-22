@@ -3,13 +3,16 @@
     <el-aside width="220px" class="aside">
       <div class="brand">TokenHub Admin</div>
       <el-menu :default-active="route.path" router>
-        <el-menu-item index="/admin">概览</el-menu-item>
-        <el-menu-item index="/admin/users">员工管理</el-menu-item>
-        <el-menu-item index="/admin/credentials">上游渠道</el-menu-item>
-        <el-menu-item index="/admin/logs">调用日志</el-menu-item>
-        <el-menu-item index="/admin/quota">配额策略</el-menu-item>
-        <el-menu-item index="/admin/tickets">工单管理</el-menu-item>
-        <el-menu-item index="/admin/ops-audit">操作审计</el-menu-item>
+        <el-menu-item v-if="auth.isSuperAdmin" index="/admin">概览</el-menu-item>
+        <el-menu-item v-if="auth.isSuperAdmin" index="/admin/enterprises">企业管理</el-menu-item>
+        <el-menu-item v-if="!auth.isTeamAdmin" index="/admin/users">员工管理</el-menu-item>
+        <el-menu-item index="/admin/teams">团队管理</el-menu-item>
+        <el-menu-item v-if="auth.isTeamAdmin" index="/me/keys">API Key</el-menu-item>
+        <el-menu-item v-if="auth.isSuperAdmin" index="/admin/credentials">上游渠道</el-menu-item>
+        <el-menu-item v-if="auth.isSuperAdmin" index="/admin/logs">调用日志</el-menu-item>
+        <el-menu-item v-if="auth.isSuperAdmin" index="/admin/quota">配额策略</el-menu-item>
+        <el-menu-item v-if="auth.isSuperAdmin" index="/admin/tickets">工单管理</el-menu-item>
+        <el-menu-item v-if="auth.isSuperAdmin" index="/admin/ops-audit">操作审计</el-menu-item>
         <el-menu-item index="/admin/profile">个人中心</el-menu-item>
       </el-menu>
     </el-aside>
@@ -18,9 +21,14 @@
         <div class="header-left">
           <router-link to="/admin/profile" class="account-link">
             <strong>{{ auth.user?.name }}</strong>
-            <span class="muted"> · 管理后台</span>
+            <span class="muted">
+              · {{ auth.isTeamAdmin ? "团队管理" : auth.isOrgAdmin ? "本企业管理" : "管理后台" }}
+              <template v-if="auth.user?.enterprise?.code">
+                · 编号 {{ auth.user.enterprise.code }}
+              </template>
+            </span>
           </router-link>
-          <el-tag size="small" effect="plain" type="warning">管理员</el-tag>
+          <el-tag size="small" effect="plain" type="warning">{{ roleTag }}</el-tag>
         </div>
         <div class="header-right">
           <el-button link type="primary" @click="onLogout">退出</el-button>
@@ -34,12 +42,15 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from "vue";
 import { useRoute, useRouter } from "vue-router";
+import { roleLabel } from "@/lib/roles";
 import { useAuthStore } from "@/stores/auth";
 
 const route = useRoute();
 const router = useRouter();
 const auth = useAuthStore();
+const roleTag = computed(() => roleLabel(auth.user?.role));
 
 function onLogout() {
   auth.logout();

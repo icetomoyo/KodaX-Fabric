@@ -6,10 +6,31 @@
           <h2 class="page-title">API Key</h2>
           <p class="page-subtitle">每把 Key 固定使用一个上游渠道，明文仅在创建完成时展示一次</p>
         </div>
-        <el-button type="primary" @click="openCreate">创建 Key</el-button>
+        <el-button type="primary" :disabled="!canIssueKey" @click="openCreate">创建 Key</el-button>
       </div>
+      <el-alert
+        v-if="!hasEnterprise"
+        class="join-alert"
+        title="未加入企业，无法创建 API Key。请先在工作台填写企业编号加入企业。"
+        type="warning"
+        show-icon
+        :closable="false"
+      />
+      <el-alert
+        v-else-if="!hasTeam"
+        class="join-alert"
+        title="未加入团队，无法创建 API Key。请让企业管理员或团队管理员把你加入团队。"
+        type="warning"
+        show-icon
+        :closable="false"
+      />
 
       <el-table v-loading="loading" :data="keys" stripe empty-text="暂无 API Key">
+        <el-table-column label="团队" min-width="140">
+          <template #default="{ row }">
+            {{ row.teamName || "未绑定团队" }}
+          </template>
+        </el-table-column>
         <el-table-column label="名称" min-width="140">
           <template #default="{ row }">
             <span class="key-name">{{ row.name }}</span>
@@ -142,7 +163,22 @@
         />
 
         <el-form v-else label-position="top" @submit.prevent>
-          <el-form-item label="1. 上游渠道" required>
+          <el-form-item label="1. 所属团队" required>
+            <el-select
+              v-model="createForm.teamId"
+              placeholder="请选择团队"
+              style="width: 100%"
+              :disabled="creating"
+            >
+              <el-option
+                v-for="team in teams"
+                :key="team.id"
+                :label="team.name"
+                :value="team.id"
+              />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="2. 上游渠道" required>
             <el-select
               v-model="createForm.productLineId"
               placeholder="请选择上游渠道"
@@ -163,7 +199,7 @@
             </div>
           </el-form-item>
 
-          <el-form-item label="2. 兼容协议" required class="protocol-form-item">
+          <el-form-item label="3. 兼容协议" required class="protocol-form-item">
             <el-radio-group
               v-model="createForm.protocol"
               class="protocol-radio-group"
@@ -232,7 +268,7 @@
             </div>
           </el-form-item>
 
-          <el-form-item label="3. 名称" required>
+          <el-form-item label="4. 名称" required>
             <el-input
               v-model="createForm.name"
               maxlength="100"
@@ -278,6 +314,7 @@
 import { computed, onMounted, reactive, ref } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { http } from "@/api/http";
+import { useAuthStore } from "@/stores/auth";
 import { copyText } from "@/lib/clipboard";
 import {
   relayProtocolLabel,
@@ -286,12 +323,20 @@ import {
   type RelayProtocol,
 } from "@/views/relay-protocol";
 
+const auth = useAuthStore();
+const hasEnterprise = computed(() => Boolean(auth.user?.enterpriseId));
+const teams = ref<Array<{ id: number; name: string }>>([]);
+const hasTeam = computed(() => teams.value.length > 0);
+const canIssueKey = computed(() => hasEnterprise.value && hasTeam.value);
+
 type KeyRow = {
   id: number;
   name: string;
   keyPrefix: string;
   protocol: RelayProtocol;
   productLineId: number;
+  teamId?: number | null;
+  teamName?: string | null;
   productLineName: string;
   providerCode: string;
   providerName: string;
@@ -341,6 +386,7 @@ const createdResult = ref<CreatedKeyResult | null>(null);
 const copyingCreatedKey = ref(false);
 const createForm = reactive({
   name: "",
+  teamId: null as number | null,
   productLineId: null as number | null,
   protocol: null as RelayProtocol | null,
 });
@@ -389,6 +435,7 @@ const selectedProtocolGuide = computed(() => {
 const canCreate = computed(() =>
   !channelsLoading.value
   && !channelsError.value
+  && Boolean(createForm.teamId)
   && Boolean(createForm.name.trim())
   && Boolean(selectedChannel.value)
   && Boolean(createForm.protocol)
@@ -409,9 +456,23 @@ function keyStatusLabel(status: string) {
   return status === "active" ? "正常" : status === "revoked" ? "已吊销" : status;
 }
 
+async function loadTeams() {
+  if (!hasEnterprise.value) {
+    teams.value = [];
+    return;
+  }
+  try {
+    const { data } = await http.get("/api/me/org");
+    if (data.success) teams.value = Array.isArray(data.data?.teams) ? data.data.teams : [];
+  } catch {
+    teams.value = [];
+  }
+}
+
 async function load() {
   loading.value = true;
   try {
+    await loadTeams();
     const { data } = await http.get("/api/me/api-keys");
     if (data.success) keys.value = Array.isArray(data.data) ? data.data : [];
   } catch (error) {
@@ -434,6 +495,7 @@ function onCreateClosed() {
 function resetCreateState() {
   channelRequestSequence += 1;
   createForm.name = "";
+  createForm.teamId = teams.value.length === 1 ? teams.value[0].id : null;
   createForm.productLineId = null;
   createForm.protocol = null;
   upstreamChannels.value = [];
@@ -521,6 +583,10 @@ async function createKey() {
     ElMessage.warning("请填写名称");
     return;
   }
+  if (!createForm.teamId) {
+    ElMessage.warning("请选择团队");
+    return;
+  }
 
   const channel = selectedChannel.value;
   const protocol = createForm.protocol;
@@ -530,6 +596,7 @@ async function createKey() {
   try {
     const { data } = await http.post("/api/me/api-keys", {
       name,
+      teamId: createForm.teamId,
       productLineId: channel.productLineId,
       protocol,
     });
@@ -654,6 +721,10 @@ onMounted(load);
   align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
+  margin-bottom: 16px;
+}
+
+.join-alert {
   margin-bottom: 16px;
 }
 

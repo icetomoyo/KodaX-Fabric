@@ -9,7 +9,7 @@
       </div>
 
       <el-form
-        v-if="auth.isAdmin"
+        v-if="auth.isSuperAdmin || auth.isOrgAdmin"
         label-position="top"
         class="profile-form"
         @submit.prevent="submitProfile"
@@ -106,6 +106,7 @@
 import { computed, reactive, ref, watch } from "vue";
 import { ElMessage } from "element-plus";
 import { http } from "@/api/http";
+import { roleLabel as formatRoleLabel } from "@/lib/roles";
 import { useAuthStore } from "@/stores/auth";
 
 const auth = useAuthStore();
@@ -122,10 +123,7 @@ const passwordForm = reactive({
   confirmPassword: "",
 });
 
-const roleLabel = computed(() => ({
-  admin: "管理员",
-  employee: "员工",
-}[auth.user?.role || "employee"]));
+const roleLabel = computed(() => formatRoleLabel(auth.user?.role));
 
 const profileDirty = computed(() => {
   const user = auth.user;
@@ -159,7 +157,7 @@ function requestErrorMessage(error: unknown, fallback: string) {
 
 async function submitProfile() {
   const user = auth.user;
-  if (!user || !auth.isAdmin) return;
+  if (!user || !(auth.isSuperAdmin || auth.isOrgAdmin)) return;
 
   const name = profileForm.name.trim();
   const phone = profileForm.phone.trim();

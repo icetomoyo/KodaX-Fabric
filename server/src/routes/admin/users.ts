@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import { and, asc, desc, eq, gte, lt, lte, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, lt, lte, notInArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import { env } from "../../config.js";
 import { db } from "../../db/client.js";
@@ -10,6 +10,13 @@ import {
   requestAudits,
   usageCountersDaily,
 } from "../../db/schema/index.js";
+import {
+  canAccessEmployee,
+  resolveCreatedUserFields,
+  resolveUpdatedUserFields,
+  resolveUserListScope,
+} from "../../lib/enterprise.js";
+import type { SessionRole } from "../../lib/jwt.js";
 import {
   hashPassword,
   REGISTRATION_INITIAL_PASSWORD,
@@ -35,12 +42,16 @@ import {
   requireSession,
 } from "../../middleware/auth.js";
 
+const createRoleSchema = z.enum(["employee", "admin", "org_admin"]);
+const updateRoleSchema = z.enum(["employee", "admin", "org_admin", "team_admin"]);
+
 const createUserSchema = z.object({
   name: z.string().min(1).max(100),
   phone: z.string().min(5).max(20),
   password: z.string().min(8).max(128),
   dept: z.string().max(100).optional().nullable(),
-  role: z.enum(["employee", "admin"]).default("employee"),
+  role: createRoleSchema.default("employee"),
+  enterpriseId: z.number().int().positive().optional().nullable(),
 });
 
 const updateUserSchema = z
@@ -48,8 +59,9 @@ const updateUserSchema = z
     name: z.string().trim().min(1).max(100).optional(),
     phone: z.string().trim().min(5).max(20).optional(),
     dept: z.string().trim().max(100).nullable().optional(),
-    role: z.enum(["employee", "admin"]).optional(),
+    role: updateRoleSchema.optional(),
     status: z.enum(["active", "disabled"]).optional(),
+    enterpriseId: z.number().int().positive().optional().nullable(),
   })
   .refine((data) => Object.keys(data).length > 0);
 
@@ -58,6 +70,8 @@ type AdminUserListQuery = {
   offset: number;
   q?: string;
   status?: "pending" | "active" | "disabled";
+  enterpriseId?: number;
+  excludeRoles?: SessionRole[];
 };
 
 export function buildAdminUserListQuery(query: AdminUserListQuery) {
@@ -69,6 +83,7 @@ export function buildAdminUserListQuery(query: AdminUserListQuery) {
       dept: employees.dept,
       role: employees.role,
       status: employees.status,
+      enterpriseId: employees.enterpriseId,
       lastLoginAt: employees.lastLoginAt,
       createdAt: employees.createdAt,
     })
@@ -79,6 +94,8 @@ export function buildAdminUserListQuery(query: AdminUserListQuery) {
           ? sql`(${employees.name} ilike ${"%" + query.q + "%"} or ${employees.phone} ilike ${"%" + query.q + "%"})`
           : sql`true`,
         query.status ? eq(employees.status, query.status) : sql`true`,
+        query.enterpriseId != null ? eq(employees.enterpriseId, query.enterpriseId) : sql`true`,
+        query.excludeRoles?.length ? notInArray(employees.role, query.excludeRoles) : sql`true`,
       ),
     )
     .orderBy(desc(employees.id))
@@ -86,22 +103,42 @@ export function buildAdminUserListQuery(query: AdminUserListQuery) {
     .offset(query.offset);
 }
 
+function actorFrom(req: { session?: { role: SessionRole; enterpriseId: number | null } }) {
+  return { role: req.session!.role, enterpriseId: req.session!.enterpriseId ?? null };
+}
+
 export async function adminUserRoutes(app: FastifyInstance) {
   app.addHook("preHandler", requireSession);
   app.addHook("preHandler", requirePasswordChanged);
-  app.addHook("preHandler", requireRoles("admin"));
+  app.addHook("preHandler", requireRoles("admin", "org_admin"));
 
-  app.get("/api/admin/users", async (req) => {
+  app.get("/api/admin/users", async (req, reply) => {
     const query = z
       .object({
         limit: z.coerce.number().min(1).max(200).default(50),
         offset: z.coerce.number().min(0).default(0),
         q: z.string().optional(),
         status: z.enum(["pending", "active", "disabled"]).optional(),
+        enterpriseId: z.coerce.number().int().positive().optional(),
       })
       .parse(req.query);
 
-    const rows = await buildAdminUserListQuery(query);
+    const scope = resolveUserListScope(
+      { role: req.session!.role, enterpriseId: req.session!.enterpriseId },
+      query.enterpriseId,
+    );
+    if ("forbidden" in scope) {
+      return reply.code(403).send({ success: false, message: "权限不足" });
+    }
+
+    const rows = await buildAdminUserListQuery({
+      limit: query.limit,
+      offset: query.offset,
+      q: query.q,
+      status: query.status,
+      enterpriseId: scope.enterpriseId,
+      excludeRoles: scope.excludeRoles,
+    });
 
     return { success: true, data: rows };
   });
@@ -132,6 +169,7 @@ export async function adminUserRoutes(app: FastifyInstance) {
         dept: employees.dept,
         role: employees.role,
         status: employees.status,
+        enterpriseId: employees.enterpriseId,
         lastLoginAt: employees.lastLoginAt,
       })
       .from(employees)
@@ -139,6 +177,9 @@ export async function adminUserRoutes(app: FastifyInstance) {
       .limit(1);
     if (!employee) {
       return reply.code(404).send({ success: false, message: "用户不存在" });
+    }
+    if (!canAccessEmployee(actorFrom(req), employee)) {
+      return reply.code(403).send({ success: false, message: "权限不足" });
     }
 
     const { start, endExclusive } = zonedDateRange(
@@ -285,6 +326,8 @@ export async function adminUserRoutes(app: FastifyInstance) {
           phone: employees.phone,
           dept: employees.dept,
           status: employees.status,
+          role: employees.role,
+          enterpriseId: employees.enterpriseId,
         })
         .from(employees)
         .where(eq(employees.id, params.data.id))
@@ -292,6 +335,7 @@ export async function adminUserRoutes(app: FastifyInstance) {
         .for("update");
 
       if (!application) return { outcome: "not_found" } as const;
+      if (!canAccessEmployee(actorFrom(req), application)) return { outcome: "forbidden" } as const;
       if (application.status !== "pending") return { outcome: "already_processed" } as const;
 
       const passwordHash = await hashPassword(REGISTRATION_INITIAL_PASSWORD);
@@ -320,6 +364,9 @@ export async function adminUserRoutes(app: FastifyInstance) {
 
     if (result.outcome === "not_found") {
       return reply.code(404).send({ success: false, message: "注册申请不存在" });
+    }
+    if (result.outcome === "forbidden") {
+      return reply.code(403).send({ success: false, message: "权限不足" });
     }
     if (result.outcome === "already_processed") {
       return reply.code(409).send({ success: false, message: "该注册申请已审核" });
@@ -351,6 +398,14 @@ export async function adminUserRoutes(app: FastifyInstance) {
       return reply.code(400).send({ success: false, message: policy });
     }
 
+    const membership = resolveCreatedUserFields(actorFrom(req), {
+      role: body.data.role,
+      enterpriseId: body.data.enterpriseId,
+    });
+    if ("error" in membership) {
+      return reply.code(membership.status).send({ success: false, message: membership.error });
+    }
+
     try {
       const passwordHash = await hashPassword(body.data.password);
       const [row] = await db
@@ -360,7 +415,8 @@ export async function adminUserRoutes(app: FastifyInstance) {
           phone: body.data.phone,
           passwordHash,
           dept: body.data.dept ?? null,
-          role: body.data.role,
+          role: membership.role,
+          enterpriseId: membership.enterpriseId,
           mustChangePassword: true,
           createdBy: req.employeeId,
         })
@@ -370,6 +426,7 @@ export async function adminUserRoutes(app: FastifyInstance) {
           phone: employees.phone,
           role: employees.role,
           status: employees.status,
+          enterpriseId: employees.enterpriseId,
         });
 
       await writeOpsAudit({
@@ -377,7 +434,7 @@ export async function adminUserRoutes(app: FastifyInstance) {
         action: "user.create",
         targetType: "employee",
         targetId: String(row.id),
-        detail: { phone: row.phone, role: row.role },
+        detail: { phone: row.phone, role: row.role, enterpriseId: row.enterpriseId },
         ip: req.ip,
       });
 
@@ -410,6 +467,14 @@ export async function adminUserRoutes(app: FastifyInstance) {
         results.push({ phone: u.phone, ok: false, error: policy });
         continue;
       }
+      const membership = resolveCreatedUserFields(actorFrom(req), {
+        role: u.role,
+        enterpriseId: u.enterpriseId,
+      });
+      if ("error" in membership) {
+        results.push({ phone: u.phone, ok: false, error: membership.error });
+        continue;
+      }
       try {
         const passwordHash = await hashPassword(u.password);
         const [row] = await db
@@ -419,7 +484,8 @@ export async function adminUserRoutes(app: FastifyInstance) {
             phone: u.phone,
             passwordHash,
             dept: u.dept ?? null,
-            role: u.role,
+            role: membership.role,
+            enterpriseId: membership.enterpriseId,
             mustChangePassword: true,
             createdBy: req.employeeId,
           })
@@ -462,12 +528,6 @@ export async function adminUserRoutes(app: FastifyInstance) {
       return reply.code(400).send({ success: false, message: "参数无效" });
     }
 
-    const values = {
-      ...body.data,
-      ...(body.data.dept !== undefined ? { dept: body.data.dept || null } : {}),
-      updatedAt: new Date(),
-    };
-
     try {
       const result = await db.transaction(async (tx) => {
         const [targetUser] = await tx
@@ -475,6 +535,7 @@ export async function adminUserRoutes(app: FastifyInstance) {
             id: employees.id,
             role: employees.role,
             status: employees.status,
+            enterpriseId: employees.enterpriseId,
           })
           .from(employees)
           .where(eq(employees.id, params.data.id))
@@ -483,6 +544,14 @@ export async function adminUserRoutes(app: FastifyInstance) {
 
         if (!targetUser) {
           return { outcome: "not_found" } as const;
+        }
+
+        const membership = resolveUpdatedUserFields(actorFrom(req), targetUser, {
+          role: body.data.role,
+          enterpriseId: body.data.enterpriseId,
+        });
+        if ("error" in membership) {
+          return { outcome: "forbidden" } as const;
         }
 
         if (
@@ -500,6 +569,14 @@ export async function adminUserRoutes(app: FastifyInstance) {
           return { outcome: "self_role_or_status" } as const;
         }
 
+        const values = {
+          ...body.data,
+          ...(body.data.dept !== undefined ? { dept: body.data.dept || null } : {}),
+          role: membership.role,
+          enterpriseId: membership.enterpriseId,
+          updatedAt: new Date(),
+        };
+
         const [row] = await tx
           .update(employees)
           .set(values)
@@ -511,6 +588,7 @@ export async function adminUserRoutes(app: FastifyInstance) {
             dept: employees.dept,
             role: employees.role,
             status: employees.status,
+            enterpriseId: employees.enterpriseId,
             mustChangePassword: employees.mustChangePassword,
             lastLoginAt: employees.lastLoginAt,
           });
@@ -544,6 +622,9 @@ export async function adminUserRoutes(app: FastifyInstance) {
 
       if (result.outcome === "not_found") {
         return reply.code(404).send({ success: false, message: "用户不存在" });
+      }
+      if (result.outcome === "forbidden") {
+        return reply.code(403).send({ success: false, message: "权限不足" });
       }
       if (result.outcome === "pending_review") {
         return reply.code(400).send({
@@ -591,13 +672,21 @@ export async function adminUserRoutes(app: FastifyInstance) {
     }
 
     const [targetUser] = await db
-      .select({ id: employees.id, status: employees.status })
+      .select({
+        id: employees.id,
+        status: employees.status,
+        role: employees.role,
+        enterpriseId: employees.enterpriseId,
+      })
       .from(employees)
       .where(eq(employees.id, params.data.id))
       .limit(1);
 
     if (!targetUser) {
       return reply.code(404).send({ success: false, message: "用户不存在" });
+    }
+    if (!canAccessEmployee(actorFrom(req), targetUser)) {
+      return reply.code(403).send({ success: false, message: "权限不足" });
     }
     if (targetUser.status === "pending") {
       return reply.code(400).send({
@@ -644,13 +733,21 @@ export async function adminUserRoutes(app: FastifyInstance) {
     }
 
     const [targetUser] = await db
-      .select({ id: employees.id, passwordHash: employees.passwordHash })
+      .select({
+        id: employees.id,
+        passwordHash: employees.passwordHash,
+        role: employees.role,
+        enterpriseId: employees.enterpriseId,
+      })
       .from(employees)
       .where(eq(employees.id, params.data.id))
       .limit(1);
 
     if (!targetUser) {
       return reply.code(404).send({ success: false, message: "用户不存在" });
+    }
+    if (!canAccessEmployee(actorFrom(req), targetUser)) {
+      return reply.code(403).send({ success: false, message: "权限不足" });
     }
 
     if (await verifyPassword(body.data.password, targetUser.passwordHash)) {

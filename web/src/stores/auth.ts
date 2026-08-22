@@ -2,13 +2,22 @@ import { defineStore } from "pinia";
 import { computed, ref } from "vue";
 import { http } from "@/api/http";
 
+export type UserEnterprise = {
+  id: number;
+  name: string;
+  code: string;
+  status: string;
+};
+
 export type User = {
   id: number;
   name: string;
   phone: string;
   dept?: string | null;
-  role: "employee" | "admin";
+  role: "employee" | "admin" | "org_admin" | "team_admin";
   status: string;
+  enterpriseId?: number | null;
+  enterprise?: UserEnterprise | null;
   mustChangePassword: boolean;
   lastLoginAt?: string | null;
 };
@@ -23,7 +32,10 @@ export const useAuthStore = defineStore("auth", () => {
   );
 
   const isLoggedIn = computed(() => Boolean(token.value));
-  const isAdmin = computed(() => user.value?.role === "admin");
+  const isSuperAdmin = computed(() => user.value?.role === "admin");
+  const isOrgAdmin = computed(() => user.value?.role === "org_admin");
+  const isTeamAdmin = computed(() => user.value?.role === "team_admin");
+  const isAdmin = computed(() => isSuperAdmin.value || isOrgAdmin.value || isTeamAdmin.value);
 
   function setSession(nextToken: string, nextUser: User) {
     token.value = nextToken;
@@ -46,10 +58,30 @@ export const useAuthStore = defineStore("auth", () => {
     return data.data.user as User;
   }
 
-  async function register(name: string, dept: string, phone: string) {
-    const { data } = await http.post("/api/auth/register", { name, dept, phone });
+  async function register(payload: {
+    kind: "personal" | "enterprise";
+    name: string;
+    phone: string;
+    dept?: string;
+    enterpriseName?: string;
+  }) {
+    const { data } = await http.post("/api/auth/register", payload);
     if (!data.success) throw new Error(data.message || "提交申请失败");
     return data.data;
+  }
+
+  async function joinEnterprise(code: string) {
+    const { data } = await http.post("/api/me/join-enterprise", { code });
+    if (!data.success) throw new Error(data.message || "加入企业失败");
+    if (user.value) {
+      user.value = {
+        ...user.value,
+        enterpriseId: data.data.enterprise.id,
+        enterprise: data.data.enterprise,
+      };
+      localStorage.setItem(USER_KEY, JSON.stringify(user.value));
+    }
+    return data.data.enterprise as UserEnterprise;
   }
 
   async function changePassword(oldPassword: string, newPassword: string) {
@@ -75,10 +107,14 @@ export const useAuthStore = defineStore("auth", () => {
     user,
     isLoggedIn,
     isAdmin,
+    isSuperAdmin,
+    isOrgAdmin,
+    isTeamAdmin,
     setSession,
     logout,
     login,
     register,
+    joinEnterprise,
     changePassword,
     fetchMe,
   };

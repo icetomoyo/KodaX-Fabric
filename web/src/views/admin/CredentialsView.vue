@@ -768,7 +768,7 @@ type BoardColumn = {
 const route = useRoute();
 const router = useRouter();
 const auth = useAuthStore();
-const canWrite = computed(() => auth.isAdmin);
+const canWrite = computed(() => auth.isSuperAdmin);
 
 const rows = ref<CredentialRow[]>([]);
 const templates = ref<ProviderTemplate[]>([]);

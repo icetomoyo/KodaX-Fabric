@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { FastifyReply, FastifyRequest } from "fastify";
 import { and, eq, gt, isNull, or } from "drizzle-orm";
 import { db } from "../db/client.js";
-import { employeeApiKeys, employees } from "../db/schema/index.js";
+import { employeeApiKeys, employees, teamMembers, teams } from "../db/schema/index.js";
 import { hashApiKey } from "../lib/api-key.js";
 import {
   DEFAULT_RELAY_PROTOCOL,
@@ -119,6 +119,7 @@ async function authenticateRelayApiKey(
     .select({
       employeeId: employees.id,
       employeeApiKeyId: employeeApiKeys.id,
+      teamId: employeeApiKeys.teamId,
       protocol: employeeApiKeys.protocol,
       productLineId: employeeApiKeys.productLineId,
       employeeName: employees.name,
@@ -140,10 +141,11 @@ async function authenticateRelayApiKey(
     )
     .limit(1);
 
+  const relayRoles = principal?.employeeRole === "employee" || principal?.employeeRole === "team_admin";
   if (
     !principal ||
     principal.employeeStatus !== "active" ||
-    principal.employeeRole !== "employee" ||
+    !relayRoles ||
     principal.mustChangePassword ||
     !isRelayProtocol(principal.protocol) ||
     !isValidRelayProductLineId(principal.productLineId)
@@ -158,9 +160,32 @@ async function authenticateRelayApiKey(
     );
   }
 
+  if (principal.teamId != null) {
+    const [membership] = await db
+      .select({ teamStatus: teams.status, memberId: teamMembers.id })
+      .from(teams)
+      .leftJoin(
+        teamMembers,
+        and(eq(teamMembers.teamId, teams.id), eq(teamMembers.employeeId, principal.employeeId)),
+      )
+      .where(eq(teams.id, principal.teamId))
+      .limit(1);
+    if (!membership || membership.teamStatus !== "active" || membership.memberId == null) {
+      return relayError(
+        reply,
+        principal.protocol,
+        403,
+        "未加入该团队，无法使用此 API Key",
+        "permission_error",
+        "team_required",
+      );
+    }
+  }
+
   req.relayPrincipal = {
     employeeId: principal.employeeId,
     employeeApiKeyId: principal.employeeApiKeyId,
+    teamId: principal.teamId,
     protocol: principal.protocol,
     productLineId: principal.productLineId,
     employeeName: principal.employeeName,

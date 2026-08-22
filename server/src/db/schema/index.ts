@@ -13,8 +13,11 @@ import {
   varchar,
 } from "drizzle-orm/pg-core";
 
-export const employeeRoleEnum = pgEnum("employee_role", ["employee", "admin"]);
+export const employeeRoleEnum = pgEnum("employee_role", ["employee", "admin", "org_admin", "team_admin"]);
 export const employeeStatusEnum = pgEnum("employee_status", ["pending", "active", "disabled"]);
+export const enterpriseStatusEnum = pgEnum("enterprise_status", ["pending", "active", "disabled"]);
+export const orgUnitStatusEnum = pgEnum("org_unit_status", ["active", "disabled"]);
+export const teamMemberRoleEnum = pgEnum("team_member_role", ["member", "team_admin"]);
 export const apiKeyStatusEnum = pgEnum("api_key_status", ["active", "revoked"]);
 export const relayProtocolEnum = pgEnum("relay_protocol", [
   "openai_chat",
@@ -37,6 +40,22 @@ export const auditStatusEnum = pgEnum("audit_status", [
 export const usageSourceEnum = pgEnum("usage_source", ["upstream", "estimated", "none"]);
 export const bodyStorageEnum = pgEnum("body_storage", ["db", "object"]);
 
+export const enterprises = pgTable(
+  "enterprises",
+  {
+    id: bigint("id", { mode: "number" }).generatedAlwaysAsIdentity().primaryKey(),
+    name: varchar("name", { length: 100 }).notNull(),
+    code: varchar("code", { length: 16 }).notNull(),
+    status: enterpriseStatusEnum("status").notNull().default("active"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("enterprises_name_uidx").on(t.name),
+    uniqueIndex("enterprises_code_uidx").on(t.code),
+  ],
+);
+
 export const employees = pgTable(
   "employees",
   {
@@ -47,6 +66,10 @@ export const employees = pgTable(
     dept: varchar("dept", { length: 100 }),
     role: employeeRoleEnum("role").notNull().default("employee"),
     status: employeeStatusEnum("status").notNull().default("active"),
+    enterpriseId: bigint("enterprise_id", { mode: "number" }).references(() => enterprises.id, {
+      onDelete: "restrict",
+      onUpdate: "no action",
+    }),
     mustChangePassword: boolean("must_change_password").notNull().default(true),
     passwordChangedAt: timestamp("password_changed_at", { withTimezone: true }),
     lastLoginAt: timestamp("last_login_at", { withTimezone: true }),
@@ -54,7 +77,83 @@ export const employees = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [uniqueIndex("employees_phone_uidx").on(t.phone)],
+  (t) => [
+    uniqueIndex("employees_phone_uidx").on(t.phone),
+    index("employees_enterprise_idx").on(t.enterpriseId),
+  ],
+);
+
+export const teams = pgTable(
+  "teams",
+  {
+    id: bigint("id", { mode: "number" }).generatedAlwaysAsIdentity().primaryKey(),
+    enterpriseId: bigint("enterprise_id", { mode: "number" })
+      .notNull()
+      .references(() => enterprises.id, { onDelete: "restrict", onUpdate: "no action" }),
+    name: varchar("name", { length: 100 }).notNull(),
+    status: orgUnitStatusEnum("status").notNull().default("active"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("teams_enterprise_name_uidx").on(t.enterpriseId, t.name),
+    index("teams_enterprise_idx").on(t.enterpriseId),
+  ],
+);
+
+export const teamMembers = pgTable(
+  "team_members",
+  {
+    id: bigint("id", { mode: "number" }).generatedAlwaysAsIdentity().primaryKey(),
+    teamId: bigint("team_id", { mode: "number" })
+      .notNull()
+      .references(() => teams.id, { onDelete: "cascade", onUpdate: "no action" }),
+    employeeId: bigint("employee_id", { mode: "number" })
+      .notNull()
+      .references(() => employees.id, { onDelete: "cascade", onUpdate: "no action" }),
+    role: teamMemberRoleEnum("role").notNull().default("member"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("team_members_team_employee_uidx").on(t.teamId, t.employeeId),
+    index("team_members_employee_idx").on(t.employeeId),
+  ],
+);
+
+export const projects = pgTable(
+  "projects",
+  {
+    id: bigint("id", { mode: "number" }).generatedAlwaysAsIdentity().primaryKey(),
+    teamId: bigint("team_id", { mode: "number" })
+      .notNull()
+      .references(() => teams.id, { onDelete: "restrict", onUpdate: "no action" }),
+    name: varchar("name", { length: 100 }).notNull(),
+    status: orgUnitStatusEnum("status").notNull().default("active"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("projects_team_name_uidx").on(t.teamId, t.name),
+    index("projects_team_idx").on(t.teamId),
+  ],
+);
+
+export const projectMembers = pgTable(
+  "project_members",
+  {
+    id: bigint("id", { mode: "number" }).generatedAlwaysAsIdentity().primaryKey(),
+    projectId: bigint("project_id", { mode: "number" })
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade", onUpdate: "no action" }),
+    employeeId: bigint("employee_id", { mode: "number" })
+      .notNull()
+      .references(() => employees.id, { onDelete: "cascade", onUpdate: "no action" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("project_members_project_employee_uidx").on(t.projectId, t.employeeId),
+    index("project_members_employee_idx").on(t.employeeId),
+  ],
 );
 
 export const tickets = pgTable(
@@ -94,6 +193,10 @@ export const employeeApiKeys = pgTable(
         onDelete: "restrict",
         onUpdate: "no action",
       }),
+    teamId: bigint("team_id", { mode: "number" }).references(() => teams.id, {
+      onDelete: "restrict",
+      onUpdate: "no action",
+    }),
     status: apiKeyStatusEnum("status").notNull().default("active"),
     lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
     expiresAt: timestamp("expires_at", { withTimezone: true }),
@@ -104,6 +207,7 @@ export const employeeApiKeys = pgTable(
     index("employee_api_keys_employee_idx").on(t.employeeId),
     index("employee_api_keys_product_line_idx").on(t.productLineId),
     index("employee_api_keys_employee_product_line_idx").on(t.employeeId, t.productLineId),
+    index("employee_api_keys_team_idx").on(t.teamId),
   ],
 );
 
@@ -250,6 +354,10 @@ export const requestAudits = pgTable(
       .notNull()
       .references(() => employees.id),
     employeeApiKeyId: bigint("employee_api_key_id", { mode: "number" }),
+    teamId: bigint("team_id", { mode: "number" }).references(() => teams.id, {
+      onDelete: "restrict",
+      onUpdate: "no action",
+    }),
     protocol: relayProtocolEnum("protocol").notNull().default("openai_chat"),
     clientModel: varchar("client_model", { length: 128 }).notNull(),
     upstreamModel: varchar("upstream_model", { length: 128 }),
@@ -283,6 +391,7 @@ export const requestAudits = pgTable(
     uniqueIndex("request_audits_request_id_uidx").on(t.requestId),
     index("request_audits_employee_created_idx").on(t.employeeId, t.createdAt),
     index("request_audits_created_idx").on(t.createdAt),
+    index("request_audits_team_created_idx").on(t.teamId, t.createdAt),
   ],
 );
 

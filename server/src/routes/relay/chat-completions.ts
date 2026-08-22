@@ -432,21 +432,26 @@ export async function chatCompletionRoutes(app: FastifyInstance) {
           lease = await acquireRelayQuota(principal.employeeId);
         } catch (error) {
           if (!(error instanceof RelayLimitError)) throw error;
-          const payload = openAiError(error.message, "rate_limit_error", error.code);
+          const httpStatus = error.code === "enterprise_required" ? 403 : 429;
+          const payload = openAiError(
+            error.message,
+            error.code === "enterprise_required" ? "permission_error" : "rate_limit_error",
+            error.code,
+          );
           if (error.retryAfterSeconds) {
             reply.header("retry-after", String(error.retryAfterSeconds));
           }
           await finalizeAudit({
             candidate: null,
             status: "client_error",
-            httpStatus: 429,
+            httpStatus,
             upstreamStatus: null,
             errorCode: error.code,
             errorMessage: error.message,
             usage: emptyRelayUsage(),
             responseBody: payload,
           });
-          return reply.code(429).send(payload);
+          return reply.code(httpStatus).send(payload);
         }
 
         const resolution = await resolveRelayCandidates(

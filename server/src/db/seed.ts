@@ -2,6 +2,7 @@ import { eq } from "drizzle-orm";
 import { env } from "../config.js";
 import { db, sql } from "./client.js";
 import { employees, quotaPolicy, systemSettings } from "./schema/index.js";
+import { getDefaultEnterpriseId } from "../lib/enterprise.js";
 import { hashPassword } from "../lib/password.js";
 
 /** 仅种子管理员账号；供应商/凭证/路由等由管理员在后台录入，不做演示数据。 */
@@ -18,6 +19,7 @@ async function seedAdmin() {
   }
 
   const passwordHash = await hashPassword(env.SEED_ADMIN_PASSWORD);
+  const enterpriseId = await getDefaultEnterpriseId();
   const [admin] = await db
     .insert(employees)
     .values({
@@ -25,6 +27,7 @@ async function seedAdmin() {
       phone: env.SEED_ADMIN_PHONE,
       passwordHash,
       role: "admin",
+      enterpriseId,
       mustChangePassword: true,
       status: "active",
     })
@@ -56,6 +59,7 @@ async function seedMinimalSystemConfig() {
 
 async function main() {
   await sql`select 1`;
+  await getDefaultEnterpriseId();
   await seedAdmin();
   await seedMinimalSystemConfig();
   await sql.end({ timeout: 5 });

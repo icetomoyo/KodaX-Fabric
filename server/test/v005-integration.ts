@@ -13,12 +13,14 @@ const [
   { db, sql },
   { employees, tickets },
   { signSession },
+  { getDefaultEnterpriseId },
   { meTicketRoutes },
   { adminTicketRoutes },
 ] = await Promise.all([
   import("../src/db/client.js"),
   import("../src/db/schema/index.js"),
   import("../src/lib/jwt.js"),
+  import("../src/lib/enterprise.js"),
   import("../src/routes/me-tickets.js"),
   import("../src/routes/admin/tickets.js"),
 ]);
@@ -56,6 +58,7 @@ async function createUser(key: FixtureKey, role: "employee" | "admin") {
     admin: "ad",
   };
   const phone = `${phonePrefix[key]}${marker}`;
+  const enterpriseId = await getDefaultEnterpriseId();
   const [row] = await db
     .insert(employees)
     .values({
@@ -65,6 +68,7 @@ async function createUser(key: FixtureKey, role: "employee" | "admin") {
       dept: `dept-${marker}`,
       role,
       status: "active",
+      enterpriseId,
       mustChangePassword: false,
     })
     .returning({ id: employees.id });
@@ -80,6 +84,7 @@ async function createUser(key: FixtureKey, role: "employee" | "admin") {
       phone,
       name,
       mustChangePassword: false,
+      enterpriseId,
     }),
   });
 }

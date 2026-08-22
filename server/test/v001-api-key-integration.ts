@@ -24,6 +24,7 @@ const [
   { hashPassword },
   { signSession },
   { redis },
+  { getDefaultEnterpriseId },
 ] = await Promise.all([
   import("../src/app.js"),
   import("../src/db/client.js"),
@@ -33,12 +34,15 @@ const [
   import("../src/lib/password.js"),
   import("../src/lib/jwt.js"),
   import("../src/redis.js"),
+  import("../src/lib/enterprise.js"),
 ]);
 
 const {
   credentialEmployeeGrants,
   employeeApiKeys,
   employees,
+  teamMembers,
+  teams,
   opsAuditLogs,
   productLines,
   providers,
@@ -94,7 +98,9 @@ const created = {
   credentialIds: [] as number[],
   grantIds: [] as number[],
   apiKeyIds: [] as number[],
+  teamIds: [] as number[],
 };
+let employeeTeamId: number | null = null;
 
 const users = new Map<Role, UserFixture>();
 const productLineIds = new Map<string, number>();
@@ -250,6 +256,7 @@ async function createUsers(): Promise<void> {
   ] as const) {
     const phone = `${suffix}${runId.slice(0, 16)}`;
     const name = `${role} ${marker}`;
+    const enterpriseId = await getDefaultEnterpriseId();
     const [row] = await db
       .insert(employees)
       .values({
@@ -259,6 +266,7 @@ async function createUsers(): Promise<void> {
         dept: `integration-${marker}`,
         role,
         status: "active",
+        enterpriseId,
         mustChangePassword: false,
         passwordChangedAt: new Date(),
       })
@@ -271,8 +279,22 @@ async function createUsers(): Promise<void> {
       phone,
       name,
       mustChangePassword: false,
+      enterpriseId,
     });
     users.set(role, { id: row.id, name, phone, role, token });
+    if (role === "employee") {
+      const [team] = await db
+        .insert(teams)
+        .values({ enterpriseId, name: `team-${marker}`, status: "active" })
+        .returning({ id: teams.id });
+      created.teamIds.push(team.id);
+      employeeTeamId = team.id;
+      await db.insert(teamMembers).values({
+        teamId: team.id,
+        employeeId: row.id,
+        role: "member",
+      });
+    }
   }
 }
 
@@ -576,6 +598,7 @@ async function assertCreateValidationAndBinding(): Promise<void> {
     headers,
     payload: {
       name: `invisible ${marker}`,
+      teamId: employeeTeamId,
       productLineId: requiredProductLine("grant-invisible"),
       protocol: "openai_chat",
     },
@@ -599,6 +622,7 @@ async function assertCreateValidationAndBinding(): Promise<void> {
     headers,
     payload: {
       name: `mismatch ${marker}`,
+      teamId: employeeTeamId,
       productLineId: requiredProductLine("grant-invisible"),
       protocol: "anthropic_messages",
     },
@@ -615,6 +639,7 @@ async function assertCreateValidationAndBinding(): Promise<void> {
     headers,
     payload: {
       name: `bound ${marker}`,
+      teamId: employeeTeamId,
       productLineId: requiredProductLine("grant"),
       protocol: "openai_chat",
     },
@@ -945,6 +970,10 @@ async function cleanupFixtures(): Promise<void> {
   await deleteTrackedIds(created.apiKeyIds, (ids) =>
     db.delete(employeeApiKeys).where(inArray(employeeApiKeys.id, ids)),
   );
+  if (created.teamIds.length) {
+    await db.delete(teamMembers).where(inArray(teamMembers.teamId, created.teamIds));
+    await db.delete(teams).where(inArray(teams.id, created.teamIds));
+  }
   await deleteTrackedIds(created.credentialIds, (ids) =>
     db.delete(upstreamCredentials).where(inArray(upstreamCredentials.id, ids)),
   );

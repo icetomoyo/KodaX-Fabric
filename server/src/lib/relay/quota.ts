@@ -3,9 +3,11 @@ import { and, eq } from "drizzle-orm";
 import { env } from "../../config.js";
 import { db } from "../../db/client.js";
 import {
+  employees,
   quotaPolicy,
   usageCountersDaily,
 } from "../../db/schema/index.js";
+import { membershipDailyTokenLimit } from "../enterprise.js";
 import { quotaDayAt } from "../quota-time.js";
 import { redis } from "../../redis.js";
 
@@ -13,6 +15,7 @@ export type EffectiveRelayQuota = {
   dailyTokenLimit: number;
   rpm: number;
   maxConcurrency: number;
+  enterpriseId: number | null;
 };
 
 export type RelayQuotaLease = {
@@ -37,7 +40,7 @@ export function assertDailyTokenLimit(totalTokens: number, dailyTokenLimit: numb
   }
 }
 
-export async function getEffectiveRelayQuota(_employeeId: number): Promise<EffectiveRelayQuota> {
+export async function getEffectiveRelayQuota(employeeId: number): Promise<EffectiveRelayQuota> {
   const [policy] = await db
     .select({ dailyTokenLimit: quotaPolicy.dailyTokenLimit })
     .from(quotaPolicy)
@@ -47,10 +50,17 @@ export async function getEffectiveRelayQuota(_employeeId: number): Promise<Effec
     throw new Error("默认日 Token 配额未初始化，请先执行 v0.0.3 数据库迁移");
   }
 
+  const [employee] = await db
+    .select({ enterpriseId: employees.enterpriseId })
+    .from(employees)
+    .where(eq(employees.id, employeeId))
+    .limit(1);
+
   return {
-    dailyTokenLimit: policy.dailyTokenLimit,
+    dailyTokenLimit: membershipDailyTokenLimit(employee?.enterpriseId, policy.dailyTokenLimit),
     rpm: env.RELAY_SAFEGUARD_RPM,
     maxConcurrency: env.RELAY_SAFEGUARD_MAX_CONCURRENCY,
+    enterpriseId: employee?.enterpriseId ?? null,
   };
 }
 
@@ -149,6 +159,10 @@ export async function acquireRelayQuota(employeeId: number): Promise<RelayQuotaL
     .limit(1);
 
   const totalTokens = daily?.totalTokens ?? 0;
+
+  if (effective.enterpriseId == null) {
+    throw new RelayLimitError("未加入企业，暂无 Token 额度", "enterprise_required");
+  }
 
   assertDailyTokenLimit(totalTokens, effective.dailyTokenLimit);
 

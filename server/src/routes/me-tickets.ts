@@ -46,7 +46,7 @@ export function buildEmployeeTicketListQuery(input: {
 export async function meTicketRoutes(app: FastifyInstance) {
   app.addHook("preHandler", requireSession);
   app.addHook("preHandler", requirePasswordChanged);
-  app.addHook("preHandler", requireRoles("employee"));
+  app.addHook("preHandler", requireRoles("employee", "team_admin"));
 
   app.post("/api/me/tickets", async (req, reply) => {
     const parsed = createTicketSchema.safeParse(req.body ?? {});

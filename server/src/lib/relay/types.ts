@@ -7,6 +7,7 @@ export function isValidRelayProductLineId(value: unknown): value is number {
 export type RelayPrincipal = {
   employeeId: number;
   employeeApiKeyId: number;
+  teamId: number | null;
   protocol: RelayProtocol;
   productLineId: number;
   employeeName: string;

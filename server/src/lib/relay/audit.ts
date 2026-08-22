@@ -221,6 +221,7 @@ export async function writeRelayAudit(input: RelayAuditInput): Promise<void> {
         requestId: input.requestId,
         employeeId: input.principal.employeeId,
         employeeApiKeyId: input.principal.employeeApiKeyId,
+        teamId: input.principal.teamId,
         protocol: input.protocol ?? input.principal.protocol,
         clientModel: input.clientModel.slice(0, 128),
         upstreamModel: input.candidate?.upstreamModel,

@@ -26,7 +26,7 @@ export const router = createRouter({
     {
       path: "/me",
       component: () => import("@/layouts/MeLayout.vue"),
-      meta: { roles: ["employee"] },
+      meta: { roles: ["employee", "team_admin"] },
       children: [
         {
           path: "",
@@ -58,60 +58,89 @@ export const router = createRouter({
     {
       path: "/admin",
       component: () => import("@/layouts/AdminLayout.vue"),
-      meta: { roles: ["admin"] },
+      meta: { roles: ["admin", "org_admin", "team_admin"] },
       children: [
         {
           path: "",
           name: "admin-home",
           component: () => import("@/views/admin/DashboardView.vue"),
+          meta: { roles: ["admin"] },
+        },
+        {
+          path: "enterprises",
+          name: "admin-enterprises",
+          component: () => import("@/views/admin/EnterprisesView.vue"),
+          meta: { roles: ["admin"] },
+        },
+        {
+          path: "teams",
+          name: "admin-teams",
+          component: () => import("@/views/admin/TeamsView.vue"),
+          meta: { roles: ["admin", "org_admin", "team_admin"] },
+        },
+        {
+          path: "teams/:id",
+          name: "admin-team-detail",
+          component: () => import("@/views/admin/TeamDetailView.vue"),
+          meta: { roles: ["admin", "org_admin", "team_admin"] },
         },
         {
           path: "users",
           name: "admin-users",
           component: () => import("@/views/admin/UsersView.vue"),
+          meta: { roles: ["admin", "org_admin"] },
         },
         {
           path: "users/:id",
           name: "admin-user-detail",
           component: () => import("@/views/admin/UserDetailView.vue"),
+          meta: { roles: ["admin", "org_admin"] },
         },
         {
           path: "providers",
           redirect: "/admin/credentials",
+          meta: { roles: ["admin"] },
         },
         {
           path: "credentials",
           name: "admin-credentials",
           component: () => import("@/views/admin/CredentialsView.vue"),
+          meta: { roles: ["admin"] },
         },
         {
           path: "model-routes",
           redirect: "/admin/credentials",
+          meta: { roles: ["admin"] },
         },
         {
           path: "logs",
           name: "admin-logs",
           component: () => import("@/views/admin/LogsView.vue"),
+          meta: { roles: ["admin"] },
         },
         {
           path: "quota",
           name: "admin-quota",
           component: () => import("@/views/admin/QuotaView.vue"),
+          meta: { roles: ["admin"] },
         },
         {
           path: "ops-audit",
           name: "admin-ops-audit",
           component: () => import("@/views/admin/OpsAuditView.vue"),
+          meta: { roles: ["admin"] },
         },
         {
           path: "tickets",
           name: "admin-tickets",
           component: () => import("@/views/admin/TicketsView.vue"),
+          meta: { roles: ["admin"] },
         },
         {
           path: "profile",
           name: "admin-profile",
           component: () => import("@/views/admin/ProfileView.vue"),
+          meta: { roles: ["admin", "org_admin", "team_admin"] },
         },
       ],
     },

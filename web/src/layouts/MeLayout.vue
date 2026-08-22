@@ -14,7 +14,10 @@
       <el-header class="header">
         <div class="account">
           <strong>{{ auth.user?.name }}</strong>
-          <span class="muted"> · {{ auth.user?.phone }} · 员工工作台</span>
+          <span class="muted">
+            · {{ auth.user?.phone }}
+            · {{ auth.user?.enterprise?.name ? `${auth.user.enterprise.name} · ${auth.user.enterprise.code}` : "未加入企业" }}
+          </span>
         </div>
         <div class="header-right">
           <el-button link type="primary" @click="onLogout">退出</el-button>

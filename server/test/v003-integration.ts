@@ -15,6 +15,7 @@ const [
   schema,
   { hashPassword },
   { signSession },
+  { getDefaultEnterpriseId },
   { quotaDayAt },
   { adminUserRoutes },
   { adminLogRoutes },
@@ -25,6 +26,7 @@ const [
   import("../src/db/schema/index.js"),
   import("../src/lib/password.js"),
   import("../src/lib/jwt.js"),
+  import("../src/lib/enterprise.js"),
   import("../src/lib/quota-time.js"),
   import("../src/routes/admin/users.js"),
   import("../src/routes/admin/logs.js"),
@@ -82,6 +84,7 @@ function assertNoSensitiveEmployeeUsage(value: unknown) {
 
 async function createFixtures() {
   const passwordHash = await hashPassword("V003Integration@123");
+  const enterpriseId = await getDefaultEnterpriseId();
   for (const role of ["employee", "admin"] as const) {
     const [row] = await db
       .insert(employees)
@@ -92,6 +95,7 @@ async function createFixtures() {
         dept: `dept-${marker}`,
         role,
         status: "active",
+        enterpriseId,
         mustChangePassword: false,
       })
       .returning({ id: employees.id });
@@ -105,6 +109,7 @@ async function createFixtures() {
         phone: `${role.slice(0, 3)}_${marker}`,
         name: `${role}-${marker}`,
         mustChangePassword: false,
+        enterpriseId,
       }),
     });
   }

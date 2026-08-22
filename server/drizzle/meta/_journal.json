@@ -22,6 +22,34 @@
       "when": 1786444033272,
       "tag": "0002_add_ttft_generation_metrics",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1787222051442,
+      "tag": "0003_oval_prodigy",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1787276844568,
+      "tag": "0004_outgoing_cloak",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1787280951377,
+      "tag": "0005_daily_madelyne_pryor",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1787283266469,
+      "tag": "0006_noisy_genesis",
+      "breakpoints": true
     }
   ]
 }

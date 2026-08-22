@@ -36,6 +36,7 @@ const [
   { encryptEmployeeApiKey, generateApiKey },
   { encryptSecret, secretSuffix },
   { redis },
+  { getDefaultEnterpriseId },
 ] = await Promise.all([
   import("../src/app.js"),
   import("../src/db/client.js"),
@@ -43,6 +44,7 @@ const [
   import("../src/lib/api-key.js"),
   import("../src/lib/crypto-secret.js"),
   import("../src/redis.js"),
+  import("../src/lib/enterprise.js"),
 ]);
 
 const {
@@ -351,6 +353,7 @@ async function insertCredential(
 }
 
 async function insertFixtures(upstreamBaseUrl: string): Promise<void> {
+  const enterpriseId = await getDefaultEnterpriseId();
   const [employee] = await db
     .insert(employees)
     .values({
@@ -360,6 +363,7 @@ async function insertFixtures(upstreamBaseUrl: string): Promise<void> {
       dept: marker,
       role: "employee",
       status: "active",
+      enterpriseId,
       mustChangePassword: false,
     })
     .returning({ id: employees.id });

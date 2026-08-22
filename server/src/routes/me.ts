@@ -5,13 +5,20 @@ import { db, sql as querySql } from "../db/client.js";
 import {
   employeeApiKeys,
   employees,
+  enterprises,
   opsAuditLogs,
   productLines,
+  projectMembers,
+  projects,
+  quotaPolicy,
   providers,
+  teamMembers,
+  teams,
   requestAuditBodies,
   requestAudits,
   usageCountersDaily,
 } from "../db/schema/index.js";
+import { membershipDailyTokenLimit, normalizeEnterpriseCode } from "../lib/enterprise.js";
 import { encryptEmployeeApiKey, generateApiKey } from "../lib/api-key.js";
 import {
   RELAY_BASE_PATH,
@@ -29,6 +36,7 @@ import {
 
 const createApiKeySchema = z.object({
   name: z.string().trim().min(1).max(100),
+  teamId: z.number().int().positive(),
   productLineId: z.number().int().positive(),
   protocol: z.enum(RELAY_PROTOCOLS),
 });
@@ -46,7 +54,115 @@ export function buildRelayBaseUrl(
 export async function meRoutes(app: FastifyInstance) {
   app.addHook("preHandler", requireSession);
   app.addHook("preHandler", requirePasswordChanged);
-  app.addHook("preHandler", requireRoles("employee"));
+  app.addHook("preHandler", requireRoles("employee", "team_admin"));
+
+  app.post("/api/me/join-enterprise", async (req, reply) => {
+    const body = z
+      .object({ code: z.string().trim().min(1).max(16) })
+      .safeParse(req.body);
+    if (!body.success) {
+      return reply.code(400).send({ success: false, message: "请填写企业编号" });
+    }
+    const code = normalizeEnterpriseCode(body.data.code);
+
+    const [current] = await db
+      .select({
+        id: employees.id,
+        enterpriseId: employees.enterpriseId,
+        role: employees.role,
+      })
+      .from(employees)
+      .where(eq(employees.id, req.employeeId!))
+      .limit(1);
+    if (!current || current.role !== "employee") {
+      return reply.code(403).send({ success: false, message: "权限不足" });
+    }
+    if (current.enterpriseId != null) {
+      return reply.code(409).send({ success: false, message: "已加入企业" });
+    }
+
+    const [enterprise] = await db
+      .select({
+        id: enterprises.id,
+        name: enterprises.name,
+        code: enterprises.code,
+        status: enterprises.status,
+      })
+      .from(enterprises)
+      .where(eq(enterprises.code, code))
+      .limit(1);
+    if (!enterprise || enterprise.status !== "active") {
+      return reply.code(404).send({ success: false, message: "企业编号不存在或企业未启用" });
+    }
+
+    const [updated] = await db
+      .update(employees)
+      .set({ enterpriseId: enterprise.id, updatedAt: new Date() })
+      .where(eq(employees.id, current.id))
+      .returning({
+        id: employees.id,
+        enterpriseId: employees.enterpriseId,
+      });
+
+    await db.insert(opsAuditLogs).values({
+      actorEmployeeId: req.employeeId,
+      action: "enterprise.join",
+      targetType: "enterprise",
+      targetId: String(enterprise.id),
+      detail: { code: enterprise.code, name: enterprise.name },
+      ip: req.ip,
+    });
+
+    req.session = {
+      ...req.session!,
+      enterpriseId: updated.enterpriseId,
+    };
+
+    return {
+      success: true,
+      data: {
+        enterprise: {
+          id: enterprise.id,
+          name: enterprise.name,
+          code: enterprise.code,
+          status: enterprise.status,
+        },
+      },
+    };
+  });
+
+  app.get("/api/me/org", async (req) => {
+    const teamRows = await db
+      .select({
+        id: teams.id,
+        name: teams.name,
+        status: teams.status,
+        role: teamMembers.role,
+      })
+      .from(teamMembers)
+      .innerJoin(teams, eq(teamMembers.teamId, teams.id))
+      .where(eq(teamMembers.employeeId, req.employeeId!))
+      .orderBy(desc(teams.id));
+
+    const projectRows = await db
+      .select({
+        id: projects.id,
+        name: projects.name,
+        status: projects.status,
+        teamId: projects.teamId,
+      })
+      .from(projectMembers)
+      .innerJoin(projects, eq(projectMembers.projectId, projects.id))
+      .where(eq(projectMembers.employeeId, req.employeeId!))
+      .orderBy(desc(projects.id));
+
+    const teamsPayload = teamRows.map((team) => ({
+      ...team,
+      projects: projectRows.filter((project) => project.teamId === team.id),
+    }));
+
+    return { success: true, data: { teams: teamsPayload } };
+  });
 
   app.get("/api/me/upstream-channels", async (req) => {
     const channels = await getEmployeeUpstreamChannels(req.employeeId!);
@@ -61,6 +177,8 @@ export async function meRoutes(app: FastifyInstance) {
         keyPrefix: employeeApiKeys.keyPrefix,
         protocol: employeeApiKeys.protocol,
         productLineId: employeeApiKeys.productLineId,
+        teamId: employeeApiKeys.teamId,
+        teamName: teams.name,
         productLineName: productLines.name,
         providerCode: providers.code,
         providerName: providers.name,
@@ -71,6 +189,7 @@ export async function meRoutes(app: FastifyInstance) {
       .from(employeeApiKeys)
       .innerJoin(productLines, eq(employeeApiKeys.productLineId, productLines.id))
       .innerJoin(providers, eq(productLines.providerId, providers.id))
+      .leftJoin(teams, eq(employeeApiKeys.teamId, teams.id))
       .where(eq(employeeApiKeys.employeeId, req.employeeId!))
       .orderBy(desc(employeeApiKeys.id));
 
@@ -149,6 +268,7 @@ export async function meRoutes(app: FastifyInstance) {
           role: employees.role,
           status: employees.status,
           mustChangePassword: employees.mustChangePassword,
+          enterpriseId: employees.enterpriseId,
         })
         .from(employees)
         .where(eq(employees.id, req.employeeId!))
@@ -157,11 +277,33 @@ export async function meRoutes(app: FastifyInstance) {
 
       if (
         !owner ||
-        owner.role !== "employee" ||
+        (owner.role !== "employee" && owner.role !== "team_admin") ||
         owner.status !== "active" ||
         owner.mustChangePassword
       ) {
         return { outcome: "forbidden" } as const;
+      }
+      if (owner.enterpriseId == null) {
+        return { outcome: "no_enterprise" } as const;
+      }
+
+      const [membership] = await tx
+        .select({
+          teamId: teams.id,
+          teamName: teams.name,
+          teamStatus: teams.status,
+        })
+        .from(teamMembers)
+        .innerJoin(teams, eq(teamMembers.teamId, teams.id))
+        .where(
+          and(
+            eq(teamMembers.employeeId, req.employeeId!),
+            eq(teamMembers.teamId, body.data.teamId),
+          ),
+        )
+        .limit(1);
+      if (!membership || membership.teamStatus !== "active") {
+        return { outcome: "no_team" } as const;
       }
 
       // Serialize employee Key creation with channel protocol/config edits.
@@ -192,6 +334,7 @@ export async function meRoutes(app: FastifyInstance) {
           keyEncrypted,
           protocol: body.data.protocol,
           productLineId: body.data.productLineId,
+          teamId: membership.teamId,
         })
         .returning({
           id: employeeApiKeys.id,
@@ -199,6 +342,7 @@ export async function meRoutes(app: FastifyInstance) {
           keyPrefix: employeeApiKeys.keyPrefix,
           protocol: employeeApiKeys.protocol,
           productLineId: employeeApiKeys.productLineId,
+          teamId: employeeApiKeys.teamId,
           status: employeeApiKeys.status,
           createdAt: employeeApiKeys.createdAt,
         });
@@ -214,11 +358,13 @@ export async function meRoutes(app: FastifyInstance) {
           providerCode: channel.providerCode,
           providerName: channel.providerName,
           protocol: created.protocol,
+          teamId: created.teamId,
+          teamName: membership.teamName,
         },
         ip: req.ip,
       });
 
-      return { outcome: "created", row: created, channel } as const;
+      return { outcome: "created", row: created, channel, teamName: membership.teamName } as const;
     });
 
     if (result.outcome === "forbidden") {
@@ -226,6 +372,20 @@ export async function meRoutes(app: FastifyInstance) {
         success: false,
         code: "forbidden",
         message: "权限不足",
+      });
+    }
+    if (result.outcome === "no_enterprise") {
+      return reply.code(403).send({
+        success: false,
+        code: "enterprise_required",
+        message: "未加入企业，暂无 Token 额度",
+      });
+    }
+    if (result.outcome === "no_team") {
+      return reply.code(403).send({
+        success: false,
+        code: "team_required",
+        message: "请先加入团队后再创建 API Key",
       });
     }
     if (result.outcome === "channel_unavailable") {
@@ -247,6 +407,7 @@ export async function meRoutes(app: FastifyInstance) {
       success: true,
       data: {
         ...result.row,
+        teamName: result.teamName,
         productLineName: result.channel.productLineName,
         providerCode: result.channel.providerCode,
         providerName: result.channel.providerName,
@@ -350,6 +511,27 @@ export async function meRoutes(app: FastifyInstance) {
         ),
       );
 
+    const [employee] = await db
+      .select({
+        enterpriseId: employees.enterpriseId,
+        enterpriseName: enterprises.name,
+        enterpriseCode: enterprises.code,
+        enterpriseStatus: enterprises.status,
+      })
+      .from(employees)
+      .leftJoin(enterprises, eq(employees.enterpriseId, enterprises.id))
+      .where(eq(employees.id, req.employeeId!))
+      .limit(1);
+    const [policy] = await db
+      .select({ dailyTokenLimit: quotaPolicy.dailyTokenLimit })
+      .from(quotaPolicy)
+      .where(eq(quotaPolicy.key, "default"))
+      .limit(1);
+    const dailyTokenLimit = membershipDailyTokenLimit(
+      employee?.enterpriseId,
+      policy?.dailyTokenLimit ?? 0,
+    );
+
     return {
       success: true,
       data: {
@@ -364,6 +546,15 @@ export async function meRoutes(app: FastifyInstance) {
         month: {
           totalTokens: Number(month?.totalTokens ?? 0),
           requestCount: Number(month?.requestCount ?? 0),
+        },
+        membership: {
+          enterpriseId: employee?.enterpriseId ?? null,
+          enterpriseName: employee?.enterpriseName ?? null,
+          enterpriseCode: employee?.enterpriseCode ?? null,
+          hasQuota: dailyTokenLimit > 0 && employee?.enterpriseStatus === "active",
+        },
+        quota: {
+          dailyTokenLimit,
         },
         relay: {
           baseUrl: buildRelayBaseUrl(req),
