@@ -1,22 +1,10 @@
 import { randomUUID } from "node:crypto";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { env } from "../../config.js";
 import { db } from "../../db/client.js";
-import {
-  employees,
-  quotaPolicy,
-  usageCountersDaily,
-} from "../../db/schema/index.js";
-import { membershipDailyTokenLimit } from "../enterprise.js";
+import { teamMembers, teams, usageCountersTeamDaily } from "../../db/schema/index.js";
 import { quotaDayAt } from "../quota-time.js";
 import { redis } from "../../redis.js";
-
-export type EffectiveRelayQuota = {
-  dailyTokenLimit: number;
-  rpm: number;
-  maxConcurrency: number;
-  enterpriseId: number | null;
-};
 
 export type RelayQuotaLease = {
   release: () => Promise<void>;
@@ -34,34 +22,48 @@ export class RelayLimitError extends Error {
   }
 }
 
-export function assertDailyTokenLimit(totalTokens: number, dailyTokenLimit: number): void {
-  if (totalTokens >= dailyTokenLimit) {
-    throw new RelayLimitError("今日 Token 配额已用尽", "daily_token_limit_exceeded");
+const PERMISSION_LIMIT_CODES = new Set([
+  "enterprise_required",
+  "team_required",
+  "team_quota_not_assigned",
+]);
+
+export function relayLimitResponse(error: RelayLimitError): {
+  status: 403 | 429;
+  type: "permission_error" | "rate_limit_error";
+} {
+  if (PERMISSION_LIMIT_CODES.has(error.code)) {
+    return { status: 403, type: "permission_error" };
+  }
+  return { status: 429, type: "rate_limit_error" };
+}
+
+export function assertTeamBound(teamId: number | null | undefined): asserts teamId is number {
+  if (teamId == null) {
+    throw new RelayLimitError("API Key 未绑定团队，无法转发", "team_required");
   }
 }
 
-export async function getEffectiveRelayQuota(employeeId: number): Promise<EffectiveRelayQuota> {
-  const [policy] = await db
-    .select({ dailyTokenLimit: quotaPolicy.dailyTokenLimit })
-    .from(quotaPolicy)
-    .where(eq(quotaPolicy.key, "default"))
-    .limit(1);
-  if (policy?.dailyTokenLimit === null || policy?.dailyTokenLimit === undefined) {
-    throw new Error("默认日 Token 配额未初始化，请先执行 v0.0.3 数据库迁移");
+export function assertTeamQuotaAssigned(dailyTokenQuota: number): void {
+  if (dailyTokenQuota <= 0) {
+    throw new RelayLimitError("团队尚未分配每日 Token 额度", "team_quota_not_assigned");
   }
+}
 
-  const [employee] = await db
-    .select({ enterpriseId: employees.enterpriseId })
-    .from(employees)
-    .where(eq(employees.id, employeeId))
-    .limit(1);
+export function assertTeamQuotaNotExceeded(usedTokens: number, dailyTokenQuota: number): void {
+  if (usedTokens >= dailyTokenQuota) {
+    throw new RelayLimitError("团队今日 Token 配额已用尽", "team_quota_exceeded");
+  }
+}
 
-  return {
-    dailyTokenLimit: membershipDailyTokenLimit(employee?.enterpriseId, policy.dailyTokenLimit),
-    rpm: env.RELAY_SAFEGUARD_RPM,
-    maxConcurrency: env.RELAY_SAFEGUARD_MAX_CONCURRENCY,
-    enterpriseId: employee?.enterpriseId ?? null,
-  };
+export function assertMemberLimitNotExceeded(
+  usedTokens: number,
+  dailyTokenLimit: number | null | undefined,
+): void {
+  if (dailyTokenLimit == null) return;
+  if (usedTokens >= dailyTokenLimit) {
+    throw new RelayLimitError("今日个人 Token 上限已用尽", "member_limit_exceeded");
+  }
 }
 
 async function ensureRedisReady() {
@@ -142,33 +144,63 @@ async function acquireConcurrency(employeeId: number, limit: number): Promise<()
   };
 }
 
-export async function acquireRelayQuota(employeeId: number): Promise<RelayQuotaLease> {
-  const effective = await getEffectiveRelayQuota(employeeId);
+export async function acquireRelayQuota(
+  employeeId: number,
+  teamId: number | null,
+): Promise<RelayQuotaLease> {
+  assertTeamBound(teamId);
+
   const quotaDay = quotaDayAt(new Date(), env.QUOTA_TIMEZONE);
-  const [daily] = await db
+  const [team] = await db
     .select({
-      totalTokens: usageCountersDaily.totalTokens,
+      id: teams.id,
+      dailyTokenQuota: teams.dailyTokenQuota,
     })
-    .from(usageCountersDaily)
-    .where(
-      and(
-        eq(usageCountersDaily.employeeId, employeeId),
-        eq(usageCountersDaily.day, quotaDay),
-      ),
-    )
+    .from(teams)
+    .where(eq(teams.id, teamId))
     .limit(1);
-
-  const totalTokens = daily?.totalTokens ?? 0;
-
-  if (effective.enterpriseId == null) {
-    throw new RelayLimitError("未加入企业，暂无 Token 额度", "enterprise_required");
+  if (!team) {
+    throw new RelayLimitError("API Key 未绑定团队，无法转发", "team_required");
   }
 
-  assertDailyTokenLimit(totalTokens, effective.dailyTokenLimit);
+  assertTeamQuotaAssigned(team.dailyTokenQuota);
+
+  const [[teamUsed], [member], [memberUsed]] = await Promise.all([
+    db
+      .select({
+        totalTokens: sql<number>`coalesce(sum(${usageCountersTeamDaily.totalTokens}), 0)`,
+      })
+      .from(usageCountersTeamDaily)
+      .where(
+        and(
+          eq(usageCountersTeamDaily.teamId, teamId),
+          eq(usageCountersTeamDaily.day, quotaDay),
+        ),
+      ),
+    db
+      .select({ dailyTokenLimit: teamMembers.dailyTokenLimit })
+      .from(teamMembers)
+      .where(and(eq(teamMembers.teamId, teamId), eq(teamMembers.employeeId, employeeId)))
+      .limit(1),
+    db
+      .select({ totalTokens: usageCountersTeamDaily.totalTokens })
+      .from(usageCountersTeamDaily)
+      .where(
+        and(
+          eq(usageCountersTeamDaily.teamId, teamId),
+          eq(usageCountersTeamDaily.employeeId, employeeId),
+          eq(usageCountersTeamDaily.day, quotaDay),
+        ),
+      )
+      .limit(1),
+  ]);
+
+  assertTeamQuotaNotExceeded(Number(teamUsed?.totalTokens ?? 0), team.dailyTokenQuota);
+  assertMemberLimitNotExceeded(memberUsed?.totalTokens ?? 0, member?.dailyTokenLimit);
 
   await ensureRedisReady();
-  await acquireRpm(employeeId, effective.rpm);
-  const release = await acquireConcurrency(employeeId, effective.maxConcurrency);
+  await acquireRpm(employeeId, env.RELAY_SAFEGUARD_RPM);
+  const release = await acquireConcurrency(employeeId, env.RELAY_SAFEGUARD_MAX_CONCURRENCY);
 
   return { release };
 }

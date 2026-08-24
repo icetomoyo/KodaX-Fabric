@@ -190,9 +190,6 @@ export async function adminOpsAuditRoutes(app: FastifyInstance) {
     for (const row of modelRouteTargets) {
       setTargetName("model_route", row.id, `${row.clientModel} → ${row.upstreamModel}`);
     }
-    for (const targetId of targetIds("quota_policy")) {
-      setTargetName("quota_policy", targetId, "每日 Token 配额");
-    }
     for (const row of requestTargets) {
       setTargetName("request_audit", row.requestId, `${row.employeeName} / ${row.clientModel}`);
     }

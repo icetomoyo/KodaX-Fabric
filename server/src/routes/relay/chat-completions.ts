@@ -13,6 +13,7 @@ import {
 } from "../../lib/relay/audit.js";
 import {
   acquireRelayQuota,
+  relayLimitResponse,
   RelayLimitError,
   type RelayQuotaLease,
 } from "../../lib/relay/quota.js";
@@ -429,13 +430,13 @@ export async function chatCompletionRoutes(app: FastifyInstance) {
         const body: ChatCompletionBody = parsed.data;
 
         try {
-          lease = await acquireRelayQuota(principal.employeeId);
+          lease = await acquireRelayQuota(principal.employeeId, principal.teamId);
         } catch (error) {
           if (!(error instanceof RelayLimitError)) throw error;
-          const httpStatus = error.code === "enterprise_required" ? 403 : 429;
+          const { status: httpStatus, type } = relayLimitResponse(error);
           const payload = openAiError(
             error.message,
-            error.code === "enterprise_required" ? "permission_error" : "rate_limit_error",
+            type,
             error.code,
           );
           if (error.retryAfterSeconds) {

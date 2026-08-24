@@ -32,18 +32,44 @@
             <p class="profile-meta">最近登录：{{ formatDateTime(usage.employee.lastLoginAt) }}</p>
           </div>
           <div class="quota-summary">
-            <span>个人单日 Token 配额</span>
-            <strong>{{ formatNumber(usage.quota.dailyTokenLimit) }}</strong>
-            <small>
-              今日 {{ formatNumber(usage.quota.usedToday) }} / 剩余
-              {{ formatNumber(usage.quota.remainingToday) }}
-            </small>
+            <span>今日已用 Tokens</span>
+            <strong>{{ formatNumber(usage.quota.usedToday) }}</strong>
             <small>
               {{ usage.range.timezone }} ·
               {{ formatDateTimeInTimeZone(usage.quota.resetAt, usage.range.timezone) }} 重置
             </small>
           </div>
         </div>
+      </section>
+
+      <section class="page-card team-quota-card">
+        <h3>团队配额</h3>
+        <el-empty
+          v-if="!usage.quota.teams?.length"
+          description="未加入团队，无团队配额"
+          :image-size="72"
+        />
+        <el-table v-else :data="usage.quota.teams" stripe>
+          <el-table-column prop="teamName" label="团队" min-width="140" />
+          <el-table-column label="团队每日额度" min-width="140">
+            <template #default="{ row }">
+              <el-tag v-if="row.teamQuota === 0" type="danger" size="small">未分配</el-tag>
+              <span v-else>{{ formatNumber(row.teamQuota) }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="团队今日已用" min-width="130">
+            <template #default="{ row }">{{ formatNumber(row.teamUsedToday) }}</template>
+          </el-table-column>
+          <el-table-column label="个人每日上限" min-width="180">
+            <template #default="{ row }">
+              <span v-if="row.myLimit == null">不限（受团队池约束）</span>
+              <span v-else>{{ formatNumber(row.myLimit) }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="个人今日已用" min-width="130">
+            <template #default="{ row }">{{ formatNumber(row.myUsedToday) }}</template>
+          </el-table-column>
+        </el-table>
       </section>
 
       <section class="page-card range-card">
@@ -153,10 +179,16 @@ type UsageResponse = {
   byModel: Array<{ key: string; totalTokens: number; requestCount: number }>;
   unknownUsageCount: number;
   quota: {
-    dailyTokenLimit: number;
     usedToday: number;
-    remainingToday: number;
     resetAt: string;
+    teams: Array<{
+      teamId: number;
+      teamName: string;
+      teamQuota: number;
+      teamUsedToday: number;
+      myLimit: number | null;
+      myUsedToday: number;
+    }>;
   };
 };
 
@@ -394,6 +426,8 @@ onBeforeUnmount(() => { requestSequence += 1; });
 .quota-summary span { color: #64748b; font-size: 12px; }
 .quota-summary strong { margin: 4px 0; color: #1d4ed8; font-size: 24px; }
 .quota-summary small { color: #64748b; line-height: 1.6; }
+.team-quota-card { padding: 20px 22px; }
+.team-quota-card h3 { margin: 0 0 12px; font-size: 16px; }
 .range-card { padding: 20px 22px; }
 .range-head h3 { margin: 0; font-size: 18px; }
 .range-head p { margin: 5px 0 0; color: #94a3b8; font-size: 12px; }

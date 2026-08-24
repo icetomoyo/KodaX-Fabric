@@ -16,7 +16,6 @@ const [
   { adminUserRoutes },
   { adminEnterpriseRoutes },
   { adminCredentialRoutes },
-  { adminQuotaRoutes },
   { hashPassword },
   { signSession },
   { insertEnterprise },
@@ -27,7 +26,6 @@ const [
   import("../src/routes/admin/users.js"),
   import("../src/routes/admin/enterprises.js"),
   import("../src/routes/admin/credentials.js"),
-  import("../src/routes/admin/quota.js"),
   import("../src/lib/password.js"),
   import("../src/lib/jwt.js"),
   import("../src/lib/enterprise.js"),
@@ -119,7 +117,6 @@ async function main() {
     await app.register(adminUserRoutes);
     await app.register(adminEnterpriseRoutes);
     await app.register(adminCredentialRoutes);
-    await app.register(adminQuotaRoutes);
     await app.ready();
 
     const enterpriseX = await createEnterprise(enterpriseXName);
@@ -227,7 +224,7 @@ async function main() {
       url: "/api/admin/quota-policy",
       headers: orgAdminX.headers,
     });
-    assert.equal(quotaDenied.statusCode, 403);
+    assert.equal(quotaDenied.statusCode, 404);
 
     const createdByOrgAdmin = await app.inject({
       method: "POST",

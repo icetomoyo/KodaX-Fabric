@@ -49,14 +49,6 @@ export function normalizeEnterpriseCode(value: string): string {
   return value.trim().toUpperCase();
 }
 
-export function membershipDailyTokenLimit(
-  enterpriseId: number | null | undefined,
-  policyLimit: number,
-): number {
-  if (enterpriseId == null) return 0;
-  return policyLimit;
-}
-
 export function resolveUserListScope(
   actor: EnterpriseActor,
   requestedEnterpriseId?: number,

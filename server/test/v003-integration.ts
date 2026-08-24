@@ -19,7 +19,6 @@ const [
   { quotaDayAt },
   { adminUserRoutes },
   { adminLogRoutes },
-  { adminQuotaRoutes },
 ] = await Promise.all([
   import("../src/config.js"),
   import("../src/db/client.js"),
@@ -30,7 +29,6 @@ const [
   import("../src/lib/quota-time.js"),
   import("../src/routes/admin/users.js"),
   import("../src/routes/admin/logs.js"),
-  import("../src/routes/admin/quota.js"),
 ]);
 
 const {
@@ -187,7 +185,6 @@ async function main() {
     day = await createFixtures();
     await app.register(adminUserRoutes);
     await app.register(adminLogRoutes);
-    await app.register(adminQuotaRoutes);
     await app.ready();
 
     const employee = users.get("employee")!;
@@ -251,23 +248,6 @@ async function main() {
     const metadataPayload = json<{ data: { meta: unknown } }>(metadataResponse);
     assert(metadataPayload.data.meta);
     assert.equal("body" in metadataPayload.data, false);
-
-    const quotaPolicy = await app.inject({
-      method: "GET",
-      url: "/api/admin/quota-policy",
-      headers: auth("admin"),
-    });
-    assert.equal(quotaPolicy.statusCode, 200);
-    assert.equal(typeof json<{ data: { dailyTokenLimit: number } }>(quotaPolicy).data.dailyTokenLimit, "number");
-
-    const invalidQuota = await app.inject({
-      method: "PUT",
-      url: "/api/admin/quota-policy",
-      headers: auth("admin"),
-      payload: { dailyTokenLimit: -1 },
-    });
-    assert.equal(invalidQuota.statusCode, 400);
-    assert.equal(json<{ code: string }>(invalidQuota).code, "quota_policy_invalid");
 
     console.log("v0.0.3 integration checks passed");
   } finally {

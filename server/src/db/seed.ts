@@ -1,7 +1,7 @@
 import { eq } from "drizzle-orm";
 import { env } from "../config.js";
 import { db, sql } from "./client.js";
-import { employees, quotaPolicy, systemSettings } from "./schema/index.js";
+import { employees, systemSettings } from "./schema/index.js";
 import { getDefaultEnterpriseId } from "../lib/enterprise.js";
 import { hashPassword } from "../lib/password.js";
 
@@ -38,16 +38,6 @@ async function seedAdmin() {
 
 /** 系统运行所需的最小配置（非业务演示数据） */
 async function seedMinimalSystemConfig() {
-  const inserted = await db
-    .insert(quotaPolicy)
-    .values({ key: "default", dailyTokenLimit: 500_000_000 })
-    .onConflictDoNothing()
-    .returning({ key: quotaPolicy.key });
-
-  if (inserted.length) {
-    console.log("Seeded default quota policy");
-  }
-
   await db
     .insert(systemSettings)
     .values({

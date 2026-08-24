@@ -1,0 +1,1 @@
+DROP TABLE "quota_policy" CASCADE;

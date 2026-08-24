@@ -6,10 +6,10 @@ import { db } from "../../db/client.js";
 import {
   employeeApiKeys,
   employees,
-  quotaPolicy,
   requestAudits,
   usageCountersDaily,
 } from "../../db/schema/index.js";
+import { listEmployeeTeamQuotaViews } from "../../lib/team-quota.js";
 import {
   canAccessEmployee,
   resolveCreatedUserFields,
@@ -195,7 +195,7 @@ export async function adminUserRoutes(app: FastifyInstance) {
     const providerKey = sql<string>`coalesce(${requestAudits.providerCode}, 'unknown')`;
     const modelKey = sql<string>`coalesce(${requestAudits.clientModel}, 'unknown')`;
 
-    const [counterRows, providerRows, modelRows, auditTotals, policy] = await Promise.all([
+    const [counterRows, providerRows, modelRows, auditTotals] = await Promise.all([
       db
         .select({
           day: usageCountersDaily.day,
@@ -242,11 +242,6 @@ export async function adminUserRoutes(app: FastifyInstance) {
         })
         .from(requestAudits)
         .where(auditWhere),
-      db
-        .select({ dailyTokenLimit: quotaPolicy.dailyTokenLimit })
-        .from(quotaPolicy)
-        .where(eq(quotaPolicy.key, "default"))
-        .limit(1),
     ]);
 
     const daily = fillDailyUsage(query.data.from, query.data.to, counterRows);
@@ -278,15 +273,8 @@ export async function adminUserRoutes(app: FastifyInstance) {
           eq(usageCountersDaily.day, today),
         ))
         .limit(1);
-    const dailyTokenLimit = policy[0]?.dailyTokenLimit;
-    if (dailyTokenLimit === null || dailyTokenLimit === undefined) {
-      return reply.code(503).send({
-        success: false,
-        code: "quota_policy_not_initialized",
-        message: "默认日 Token 配额未初始化，请先执行数据库迁移",
-      });
-    }
     const usedToday = Number(todayRow?.totalTokens) || 0;
+    const teamQuotas = await listEmployeeTeamQuotaViews(employee.id, today);
 
     return {
       success: true,
@@ -303,10 +291,9 @@ export async function adminUserRoutes(app: FastifyInstance) {
         byModel,
         unknownUsageCount: Number(auditTotals[0]?.unknownUsageCount) || 0,
         quota: {
-          dailyTokenLimit,
           usedToday,
-          remainingToday: Math.max(0, dailyTokenLimit - usedToday),
           resetAt: nextQuotaResetAt(now, env.QUOTA_TIMEZONE),
+          teams: teamQuotas,
         },
       },
     };

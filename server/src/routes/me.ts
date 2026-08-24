@@ -1,16 +1,14 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { and, desc, eq, gt, gte, inArray, lt, sql, type SQL } from "drizzle-orm";
 import { z } from "zod";
-import { db, sql as querySql } from "../db/client.js";
+import { env } from "../config.js";
+import { db } from "../db/client.js";
 import {
   employeeApiKeys,
   employees,
   enterprises,
   opsAuditLogs,
   productLines,
-  projectMembers,
-  projects,
-  quotaPolicy,
   providers,
   teamMembers,
   teams,
@@ -18,7 +16,9 @@ import {
   requestAudits,
   usageCountersDaily,
 } from "../db/schema/index.js";
-import { membershipDailyTokenLimit, normalizeEnterpriseCode } from "../lib/enterprise.js";
+import { normalizeEnterpriseCode } from "../lib/enterprise.js";
+import { quotaDayAt } from "../lib/quota-time.js";
+import { listEmployeeTeamQuotaViews } from "../lib/team-quota.js";
 import { encryptEmployeeApiKey, generateApiKey } from "../lib/api-key.js";
 import {
   RELAY_BASE_PATH,
@@ -144,24 +144,7 @@ export async function meRoutes(app: FastifyInstance) {
       .where(eq(teamMembers.employeeId, req.employeeId!))
       .orderBy(desc(teams.id));
 
-    const projectRows = await db
-      .select({
-        id: projects.id,
-        name: projects.name,
-        status: projects.status,
-        teamId: projects.teamId,
-      })
-      .from(projectMembers)
-      .innerJoin(projects, eq(projectMembers.projectId, projects.id))
-      .where(eq(projectMembers.employeeId, req.employeeId!))
-      .orderBy(desc(projects.id));
-
-    const teamsPayload = teamRows.map((team) => ({
-      ...team,
-      projects: projectRows.filter((project) => project.teamId === team.id),
-    }));
-
-    return { success: true, data: { teams: teamsPayload } };
+    return { success: true, data: { teams: teamRows } };
   });
 
   app.get("/api/me/upstream-channels", async (req) => {
@@ -484,9 +467,8 @@ export async function meRoutes(app: FastifyInstance) {
   });
 
   app.get("/api/me/usage", async (req) => {
-    const [{ today }] = await querySql<{ today: string }[]>`
-      select current_date::text as today
-    `;
+    const today = quotaDayAt(new Date(), env.QUOTA_TIMEZONE);
+    const monthStart = `${today.slice(0, 8)}01`;
     const [day] = await db
       .select()
       .from(usageCountersDaily)
@@ -507,7 +489,7 @@ export async function meRoutes(app: FastifyInstance) {
       .where(
         and(
           eq(usageCountersDaily.employeeId, req.employeeId!),
-          sql`${usageCountersDaily.day} >= date_trunc('month', current_date)::date`,
+          sql`${usageCountersDaily.day} >= ${monthStart}`,
         ),
       );
 
@@ -522,15 +504,7 @@ export async function meRoutes(app: FastifyInstance) {
       .leftJoin(enterprises, eq(employees.enterpriseId, enterprises.id))
       .where(eq(employees.id, req.employeeId!))
       .limit(1);
-    const [policy] = await db
-      .select({ dailyTokenLimit: quotaPolicy.dailyTokenLimit })
-      .from(quotaPolicy)
-      .where(eq(quotaPolicy.key, "default"))
-      .limit(1);
-    const dailyTokenLimit = membershipDailyTokenLimit(
-      employee?.enterpriseId,
-      policy?.dailyTokenLimit ?? 0,
-    );
+    const teamQuotas = await listEmployeeTeamQuotaViews(req.employeeId!, today);
 
     return {
       success: true,
@@ -551,11 +525,9 @@ export async function meRoutes(app: FastifyInstance) {
           enterpriseId: employee?.enterpriseId ?? null,
           enterpriseName: employee?.enterpriseName ?? null,
           enterpriseCode: employee?.enterpriseCode ?? null,
-          hasQuota: dailyTokenLimit > 0 && employee?.enterpriseStatus === "active",
+          hasQuota: employee?.enterpriseStatus === "active" && teamQuotas.some((row) => row.teamQuota > 0),
         },
-        quota: {
-          dailyTokenLimit,
-        },
+        teams: teamQuotas,
         relay: {
           baseUrl: buildRelayBaseUrl(req),
           note: "Authorization: Bearer <your employee API key>",

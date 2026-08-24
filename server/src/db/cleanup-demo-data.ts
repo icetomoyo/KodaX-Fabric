@@ -1,6 +1,6 @@
 /**
  * 清理业务演示/联调数据。
- * 保留：employees、quota_policy、system_settings
+ * 保留：employees、system_settings
  * 删除：员工 API Key、渠道配置、凭证授权、调用审计、用量计数、操作审计、工单
  *
  * 员工 Key 强制引用 ProductLine，因此 Key 与渠道必须在同一事务中清理。
@@ -13,6 +13,7 @@ async function main() {
   const [remaining] = await sql.begin(async (tx) => {
     await tx`delete from request_audit_bodies`;
     await tx`delete from request_audits`;
+    await tx`delete from usage_counters_team_daily`;
     await tx`delete from usage_counters_daily`;
     await tx`delete from credential_employee_grants`;
     await tx`delete from employee_api_keys`;
@@ -30,8 +31,7 @@ async function main() {
         (select count(*)::int from providers) as providers,
         (select count(*)::int from upstream_credentials) as credentials,
         (select count(*)::int from model_routes) as model_routes,
-        (select count(*)::int from tickets) as tickets,
-        (select count(*)::int from quota_policy) as quota_policy
+        (select count(*)::int from tickets) as tickets
     `;
   });
 

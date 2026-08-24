@@ -9,8 +9,8 @@
         <el-menu-item index="/admin/teams">团队管理</el-menu-item>
         <el-menu-item v-if="auth.isTeamAdmin" index="/me/keys">API Key</el-menu-item>
         <el-menu-item v-if="auth.isSuperAdmin" index="/admin/credentials">上游渠道</el-menu-item>
+        <el-menu-item v-if="auth.isSuperAdmin" index="/admin/model-prices">模型单价</el-menu-item>
         <el-menu-item v-if="auth.isSuperAdmin" index="/admin/logs">调用日志</el-menu-item>
-        <el-menu-item v-if="auth.isSuperAdmin" index="/admin/quota">配额策略</el-menu-item>
         <el-menu-item v-if="auth.isSuperAdmin" index="/admin/tickets">工单管理</el-menu-item>
         <el-menu-item v-if="auth.isSuperAdmin" index="/admin/ops-audit">操作审计</el-menu-item>
         <el-menu-item index="/admin/profile">个人中心</el-menu-item>

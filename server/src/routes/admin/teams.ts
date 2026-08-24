@@ -1,16 +1,27 @@
 import type { FastifyInstance } from "fastify";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
+import { env } from "../../config.js";
 import { db } from "../../db/client.js";
 import {
   employees,
   enterprises,
-  projectMembers,
-  projects,
   teamMembers,
   teams,
+  usageCountersTeamDaily,
 } from "../../db/schema/index.js";
+import {
+  buildTeamUsageByModelQuery,
+  buildTeamUsageDailyQuery,
+  defaultUsageRange,
+  fillDailyTeamUsage,
+  formatYuan,
+  mapModelUsageRows,
+  memberTodayCostYuanSql,
+  teamTodayCostYuanSql,
+} from "../../lib/model-cost.js";
 import { writeOpsAudit } from "../../lib/ops-audit.js";
+import { inclusiveDayCount, quotaDayAt, zonedDateRange } from "../../lib/quota-time.js";
 import {
   canAdminTeam,
   canCreateTeam,
@@ -33,12 +44,18 @@ type TeamListQuery = {
 };
 
 export function buildTeamListQuery(query: TeamListQuery) {
+  const today = quotaDayAt(new Date(), env.QUOTA_TIMEZONE);
+  const { start, endExclusive } = zonedDateRange(today, today, env.QUOTA_TIMEZONE);
   const memberCount = sql<number>`(
     select count(*)::int from ${teamMembers} where ${teamMembers.teamId} = ${teams.id}
   )`;
-  const projectCount = sql<number>`(
-    select count(*)::int from ${projects} where ${projects.teamId} = ${teams.id}
+  const todayTotalTokens = sql<number>`(
+    select coalesce(sum(${usageCountersTeamDaily.totalTokens}), 0)
+    from ${usageCountersTeamDaily}
+    where ${usageCountersTeamDaily.teamId} = ${teams.id}
+      and ${usageCountersTeamDaily.day} = ${today}
   )`;
+  const todayCostYuan = teamTodayCostYuanSql(start, endExclusive);
   return db
     .select({
       id: teams.id,
@@ -47,7 +64,9 @@ export function buildTeamListQuery(query: TeamListQuery) {
       enterpriseId: teams.enterpriseId,
       enterpriseName: enterprises.name,
       memberCount,
-      projectCount,
+      dailyTokenQuota: teams.dailyTokenQuota,
+      todayTotalTokens,
+      todayCostYuan,
       createdAt: teams.createdAt,
       updatedAt: teams.updatedAt,
     })
@@ -108,7 +127,15 @@ export async function adminTeamRoutes(app: FastifyInstance) {
       return reply.code(403).send({ success: false, message: "权限不足" });
     }
     const rows = await buildTeamListQuery(scope);
-    return { success: true, data: rows };
+    return {
+      success: true,
+      data: rows.map((row) => ({
+        ...row,
+        dailyTokenQuota: Number(row.dailyTokenQuota),
+        todayTotalTokens: Number(row.todayTotalTokens),
+        todayCostYuan: formatYuan(row.todayCostYuan),
+      })),
+    };
   });
 
   app.post("/api/admin/teams", async (req, reply) => {
@@ -169,6 +196,7 @@ export async function adminTeamRoutes(app: FastifyInstance) {
       .object({
         name: z.string().trim().min(1).max(100).optional(),
         status: z.enum(["active", "disabled"]).optional(),
+        dailyTokenQuota: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
       })
       .refine((data) => Object.keys(data).length > 0)
       .safeParse(req.body);
@@ -191,13 +219,18 @@ export async function adminTeamRoutes(app: FastifyInstance) {
           name: teams.name,
           status: teams.status,
           enterpriseId: teams.enterpriseId,
+          dailyTokenQuota: teams.dailyTokenQuota,
         });
       await writeOpsAudit({
         actorEmployeeId: actor.employeeId,
         action: "team.update",
         targetType: "team",
         targetId: String(row.id),
-        detail: { fields: Object.keys(body.data), name: row.name },
+        detail: {
+          fields: Object.keys(body.data),
+          name: row.name,
+          dailyTokenQuota: row.dailyTokenQuota,
+        },
         ip: req.ip,
       });
       return { success: true, data: row };
@@ -219,6 +252,8 @@ export async function adminTeamRoutes(app: FastifyInstance) {
     if (!canReadTeam(actor, access)) {
       return reply.code(403).send({ success: false, message: "权限不足" });
     }
+    const today = quotaDayAt(new Date(), env.QUOTA_TIMEZONE);
+    const { start, endExclusive } = zonedDateRange(today, today, env.QUOTA_TIMEZONE);
     const rows = await db
       .select({
         id: teamMembers.id,
@@ -228,13 +263,83 @@ export async function adminTeamRoutes(app: FastifyInstance) {
         dept: employees.dept,
         role: teamMembers.role,
         status: employees.status,
+        dailyTokenLimit: teamMembers.dailyTokenLimit,
+        todayTotalTokens: sql<number>`coalesce(${usageCountersTeamDaily.totalTokens}, 0)`,
+        todayCostYuan: memberTodayCostYuanSql(access.teamId, start, endExclusive),
         createdAt: teamMembers.createdAt,
       })
       .from(teamMembers)
       .innerJoin(employees, eq(teamMembers.employeeId, employees.id))
+      .leftJoin(
+        usageCountersTeamDaily,
+        and(
+          eq(usageCountersTeamDaily.teamId, teamMembers.teamId),
+          eq(usageCountersTeamDaily.employeeId, teamMembers.employeeId),
+          eq(usageCountersTeamDaily.day, today),
+        ),
+      )
       .where(eq(teamMembers.teamId, access.teamId))
       .orderBy(desc(teamMembers.id));
-    return { success: true, data: rows };
+    return {
+      success: true,
+      data: rows.map((row) => ({
+        ...row,
+        todayTotalTokens: Number(row.todayTotalTokens),
+        todayCostYuan: formatYuan(row.todayCostYuan),
+      })),
+    };
+  });
+
+  app.get("/api/admin/teams/:id/usage", async (req, reply) => {
+    const params = z.object({ id: z.coerce.number().int().positive() }).safeParse(req.params);
+    const defaults = defaultUsageRange(new Date(), env.QUOTA_TIMEZONE);
+    const query = z
+      .object({
+        from: z.string().optional(),
+        to: z.string().optional(),
+      })
+      .safeParse(req.query);
+    if (!params.success || !query.success) {
+      return reply.code(400).send({ success: false, message: "参数无效" });
+    }
+    const from = query.data.from ?? defaults.from;
+    const to = query.data.to ?? defaults.to;
+    const dayCount = inclusiveDayCount(from, to);
+    if (dayCount === null || dayCount < 1 || dayCount > 366) {
+      return reply.code(400).send({
+        success: false,
+        message: dayCount !== null && dayCount > 366 ? "日期范围最多 366 天" : "日期范围无效",
+      });
+    }
+    const actor = actorFrom(req);
+    const access = await loadTeamAccessForActor(actor, params.data.id);
+    if (!access) return reply.code(404).send({ success: false, message: "团队不存在" });
+    if (!canAdminTeam(actor, access)) {
+      return reply.code(403).send({ success: false, message: "权限不足" });
+    }
+    const { start, endExclusive } = zonedDateRange(from, to, env.QUOTA_TIMEZONE);
+    const [dailyRows, modelRows] = await Promise.all([
+      buildTeamUsageDailyQuery({
+        teamId: access.teamId,
+        start,
+        endExclusive,
+        timeZone: env.QUOTA_TIMEZONE,
+      }),
+      buildTeamUsageByModelQuery({
+        teamId: access.teamId,
+        start,
+        endExclusive,
+      }),
+    ]);
+    return {
+      success: true,
+      data: {
+        from,
+        to,
+        daily: fillDailyTeamUsage(from, to, dailyRows),
+        byModel: mapModelUsageRows(modelRows),
+      },
+    };
   });
 
   app.post("/api/admin/teams/:id/members", async (req, reply) => {
@@ -312,36 +417,67 @@ export async function adminTeamRoutes(app: FastifyInstance) {
         employeeId: z.coerce.number().int().positive(),
       })
       .safeParse(req.params);
-    const body = z.object({ role: z.enum(["member", "team_admin"]) }).safeParse(req.body);
+    const body = z
+      .object({
+        role: z.enum(["member", "team_admin"]).optional(),
+        dailyTokenLimit: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).nullable().optional(),
+      })
+      .refine((data) => data.role !== undefined || data.dailyTokenLimit !== undefined)
+      .safeParse(req.body);
     if (!params.success || !body.success) {
       return reply.code(400).send({ success: false, message: "参数无效" });
     }
     const actor = actorFrom(req);
     const access = await loadTeamAccessForActor(actor, params.data.id);
     if (!access) return reply.code(404).send({ success: false, message: "团队不存在" });
-    if (!canCreateTeam(actor, access.enterpriseId)) {
+    if (body.data.role !== undefined && !canCreateTeam(actor, access.enterpriseId)) {
       return reply.code(403).send({ success: false, message: "权限不足" });
     }
+    if (!canAdminTeam(actor, access)) {
+      return reply.code(403).send({ success: false, message: "权限不足" });
+    }
+    const patch: {
+      role?: "member" | "team_admin";
+      dailyTokenLimit?: number | null;
+    } = {};
+    if (body.data.role !== undefined) patch.role = body.data.role;
+    if (body.data.dailyTokenLimit !== undefined) patch.dailyTokenLimit = body.data.dailyTokenLimit;
     const [row] = await db
       .update(teamMembers)
-      .set({ role: body.data.role })
+      .set(patch)
       .where(
         and(
           eq(teamMembers.teamId, access.teamId),
           eq(teamMembers.employeeId, params.data.employeeId),
         ),
       )
-      .returning({ employeeId: teamMembers.employeeId, role: teamMembers.role });
+      .returning({
+        employeeId: teamMembers.employeeId,
+        role: teamMembers.role,
+        dailyTokenLimit: teamMembers.dailyTokenLimit,
+      });
     if (!row) return reply.code(404).send({ success: false, message: "成员不存在" });
-    await refreshConsoleRole(row.employeeId);
-    await writeOpsAudit({
-      actorEmployeeId: actor.employeeId,
-      action: "team.member_role",
-      targetType: "team",
-      targetId: String(access.teamId),
-      detail: { employeeId: row.employeeId, role: row.role },
-      ip: req.ip,
-    });
+    if (body.data.role !== undefined) {
+      await refreshConsoleRole(row.employeeId);
+      await writeOpsAudit({
+        actorEmployeeId: actor.employeeId,
+        action: "team.member_role",
+        targetType: "team",
+        targetId: String(access.teamId),
+        detail: { employeeId: row.employeeId, role: row.role },
+        ip: req.ip,
+      });
+    }
+    if (body.data.dailyTokenLimit !== undefined) {
+      await writeOpsAudit({
+        actorEmployeeId: actor.employeeId,
+        action: "team.member_limit",
+        targetType: "team",
+        targetId: String(access.teamId),
+        detail: { employeeId: row.employeeId, dailyTokenLimit: row.dailyTokenLimit },
+        ip: req.ip,
+      });
+    }
     return { success: true, data: row };
   });
 
@@ -359,19 +495,6 @@ export async function adminTeamRoutes(app: FastifyInstance) {
     if (!canAdminTeam(actor, access)) {
       return reply.code(403).send({ success: false, message: "权限不足" });
     }
-    const projectIds = (
-      await db.select({ id: projects.id }).from(projects).where(eq(projects.teamId, access.teamId))
-    ).map((row) => row.id);
-    if (projectIds.length) {
-      await db
-        .delete(projectMembers)
-        .where(
-          and(
-            inArray(projectMembers.projectId, projectIds),
-            eq(projectMembers.employeeId, params.data.employeeId),
-          ),
-        );
-    }
     const deleted = await db
       .delete(teamMembers)
       .where(
@@ -388,248 +511,6 @@ export async function adminTeamRoutes(app: FastifyInstance) {
       action: "team.member_remove",
       targetType: "team",
       targetId: String(access.teamId),
-      detail: { employeeId: params.data.employeeId },
-      ip: req.ip,
-    });
-    return { success: true };
-  });
-
-  app.get("/api/admin/teams/:id/projects", async (req, reply) => {
-    const params = z.object({ id: z.coerce.number().int().positive() }).safeParse(req.params);
-    if (!params.success) return reply.code(400).send({ success: false, message: "参数无效" });
-    const actor = actorFrom(req);
-    const access = await loadTeamAccessForActor(actor, params.data.id);
-    if (!access) return reply.code(404).send({ success: false, message: "团队不存在" });
-    if (!canReadTeam(actor, access)) {
-      return reply.code(403).send({ success: false, message: "权限不足" });
-    }
-    const memberCount = sql<number>`(
-      select count(*)::int from ${projectMembers} where ${projectMembers.projectId} = ${projects.id}
-    )`;
-    const rows = await db
-      .select({
-        id: projects.id,
-        name: projects.name,
-        status: projects.status,
-        teamId: projects.teamId,
-        memberCount,
-        createdAt: projects.createdAt,
-        updatedAt: projects.updatedAt,
-      })
-      .from(projects)
-      .where(eq(projects.teamId, access.teamId))
-      .orderBy(desc(projects.id));
-    return { success: true, data: rows };
-  });
-
-  app.post("/api/admin/teams/:id/projects", async (req, reply) => {
-    const params = z.object({ id: z.coerce.number().int().positive() }).safeParse(req.params);
-    const body = z.object({ name: z.string().trim().min(1).max(100) }).safeParse(req.body);
-    if (!params.success || !body.success) {
-      return reply.code(400).send({ success: false, message: "参数无效" });
-    }
-    const actor = actorFrom(req);
-    const access = await loadTeamAccessForActor(actor, params.data.id);
-    if (!access) return reply.code(404).send({ success: false, message: "团队不存在" });
-    if (!canAdminTeam(actor, access)) {
-      return reply.code(403).send({ success: false, message: "权限不足" });
-    }
-    try {
-      const [row] = await db
-        .insert(projects)
-        .values({ teamId: access.teamId, name: body.data.name, status: "active" })
-        .returning({
-          id: projects.id,
-          name: projects.name,
-          status: projects.status,
-          teamId: projects.teamId,
-          createdAt: projects.createdAt,
-        });
-      await writeOpsAudit({
-        actorEmployeeId: actor.employeeId,
-        action: "project.create",
-        targetType: "project",
-        targetId: String(row.id),
-        detail: { name: row.name, teamId: access.teamId },
-        ip: req.ip,
-      });
-      return { success: true, data: row };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      if (message.includes("projects_team_name_uidx") || message.includes("unique")) {
-        return reply.code(409).send({ success: false, message: "项目名称已存在" });
-      }
-      throw error;
-    }
-  });
-
-  app.patch("/api/admin/projects/:id", async (req, reply) => {
-    const params = z.object({ id: z.coerce.number().int().positive() }).safeParse(req.params);
-    const body = z
-      .object({
-        name: z.string().trim().min(1).max(100).optional(),
-        status: z.enum(["active", "disabled"]).optional(),
-      })
-      .refine((data) => Object.keys(data).length > 0)
-      .safeParse(req.body);
-    if (!params.success || !body.success) {
-      return reply.code(400).send({ success: false, message: "参数无效" });
-    }
-    const [project] = await db
-      .select({ id: projects.id, teamId: projects.teamId })
-      .from(projects)
-      .where(eq(projects.id, params.data.id))
-      .limit(1);
-    if (!project) return reply.code(404).send({ success: false, message: "项目不存在" });
-    const actor = actorFrom(req);
-    const access = await loadTeamAccessForActor(actor, project.teamId);
-    if (!access || !canAdminTeam(actor, access)) {
-      return reply.code(403).send({ success: false, message: "权限不足" });
-    }
-    try {
-      const [row] = await db
-        .update(projects)
-        .set({ ...body.data, updatedAt: new Date() })
-        .where(eq(projects.id, project.id))
-        .returning({
-          id: projects.id,
-          name: projects.name,
-          status: projects.status,
-          teamId: projects.teamId,
-        });
-      await writeOpsAudit({
-        actorEmployeeId: actor.employeeId,
-        action: "project.update",
-        targetType: "project",
-        targetId: String(row.id),
-        detail: { fields: Object.keys(body.data), name: row.name },
-        ip: req.ip,
-      });
-      return { success: true, data: row };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      if (message.includes("projects_team_name_uidx") || message.includes("unique")) {
-        return reply.code(409).send({ success: false, message: "项目名称已存在" });
-      }
-      throw error;
-    }
-  });
-
-  app.get("/api/admin/projects/:id/members", async (req, reply) => {
-    const params = z.object({ id: z.coerce.number().int().positive() }).safeParse(req.params);
-    if (!params.success) return reply.code(400).send({ success: false, message: "参数无效" });
-    const [project] = await db
-      .select({ id: projects.id, teamId: projects.teamId, name: projects.name })
-      .from(projects)
-      .where(eq(projects.id, params.data.id))
-      .limit(1);
-    if (!project) return reply.code(404).send({ success: false, message: "项目不存在" });
-    const actor = actorFrom(req);
-    const access = await loadTeamAccessForActor(actor, project.teamId);
-    if (!access || !canReadTeam(actor, access)) {
-      return reply.code(403).send({ success: false, message: "权限不足" });
-    }
-    const rows = await db
-      .select({
-        id: projectMembers.id,
-        employeeId: employees.id,
-        name: employees.name,
-        phone: employees.phone,
-        dept: employees.dept,
-        status: employees.status,
-        createdAt: projectMembers.createdAt,
-      })
-      .from(projectMembers)
-      .innerJoin(employees, eq(projectMembers.employeeId, employees.id))
-      .where(eq(projectMembers.projectId, project.id))
-      .orderBy(desc(projectMembers.id));
-    return { success: true, data: rows, meta: { project } };
-  });
-
-  app.post("/api/admin/projects/:id/members", async (req, reply) => {
-    const params = z.object({ id: z.coerce.number().int().positive() }).safeParse(req.params);
-    const body = z.object({ employeeId: z.number().int().positive() }).safeParse(req.body);
-    if (!params.success || !body.success) {
-      return reply.code(400).send({ success: false, message: "参数无效" });
-    }
-    const [project] = await db
-      .select({ id: projects.id, teamId: projects.teamId })
-      .from(projects)
-      .where(eq(projects.id, params.data.id))
-      .limit(1);
-    if (!project) return reply.code(404).send({ success: false, message: "项目不存在" });
-    const actor = actorFrom(req);
-    const access = await loadTeamAccessForActor(actor, project.teamId);
-    if (!access || !canAdminTeam(actor, access)) {
-      return reply.code(403).send({ success: false, message: "权限不足" });
-    }
-    const [membership] = await db
-      .select({ employeeId: teamMembers.employeeId })
-      .from(teamMembers)
-      .where(
-        and(eq(teamMembers.teamId, project.teamId), eq(teamMembers.employeeId, body.data.employeeId)),
-      )
-      .limit(1);
-    if (!membership) {
-      return reply.code(400).send({ success: false, message: "请先将员工加入该团队" });
-    }
-    try {
-      const [row] = await db
-        .insert(projectMembers)
-        .values({ projectId: project.id, employeeId: body.data.employeeId })
-        .returning({ id: projectMembers.id, employeeId: projectMembers.employeeId });
-      await writeOpsAudit({
-        actorEmployeeId: actor.employeeId,
-        action: "project.member_add",
-        targetType: "project",
-        targetId: String(project.id),
-        detail: { employeeId: row.employeeId },
-        ip: req.ip,
-      });
-      return { success: true, data: row };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      if (message.includes("project_members_project_employee_uidx") || message.includes("unique")) {
-        return reply.code(409).send({ success: false, message: "该员工已在项目中" });
-      }
-      throw error;
-    }
-  });
-
-  app.delete("/api/admin/projects/:id/members/:employeeId", async (req, reply) => {
-    const params = z
-      .object({
-        id: z.coerce.number().int().positive(),
-        employeeId: z.coerce.number().int().positive(),
-      })
-      .safeParse(req.params);
-    if (!params.success) return reply.code(400).send({ success: false, message: "参数无效" });
-    const [project] = await db
-      .select({ id: projects.id, teamId: projects.teamId })
-      .from(projects)
-      .where(eq(projects.id, params.data.id))
-      .limit(1);
-    if (!project) return reply.code(404).send({ success: false, message: "项目不存在" });
-    const actor = actorFrom(req);
-    const access = await loadTeamAccessForActor(actor, project.teamId);
-    if (!access || !canAdminTeam(actor, access)) {
-      return reply.code(403).send({ success: false, message: "权限不足" });
-    }
-    const deleted = await db
-      .delete(projectMembers)
-      .where(
-        and(
-          eq(projectMembers.projectId, project.id),
-          eq(projectMembers.employeeId, params.data.employeeId),
-        ),
-      )
-      .returning({ employeeId: projectMembers.employeeId });
-    if (!deleted.length) return reply.code(404).send({ success: false, message: "成员不存在" });
-    await writeOpsAudit({
-      actorEmployeeId: actor.employeeId,
-      action: "project.member_remove",
-      targetType: "project",
-      targetId: String(project.id),
       detail: { employeeId: params.data.employeeId },
       ip: req.ip,
     });

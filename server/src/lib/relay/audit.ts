@@ -7,6 +7,7 @@ import {
   requestAuditBodies,
   requestAudits,
   usageCountersDaily,
+  usageCountersTeamDaily,
 } from "../../db/schema/index.js";
 import { quotaDayAt } from "../quota-time.js";
 import type { RelayProtocol } from "./protocol.js";
@@ -171,6 +172,19 @@ export function emptyRelayUsage(): RelayUsage {
   };
 }
 
+export type UsageIncrementTargets = {
+  employeeDaily: true;
+  teamDaily: boolean;
+};
+
+/** Dual-write plan: personal daily counters always; team daily when the Key is bound. */
+export function usageIncrementTargets(teamId: number | null | undefined): UsageIncrementTargets {
+  return {
+    employeeDaily: true,
+    teamDaily: teamId != null,
+  };
+}
+
 export function parseRelayUsage(value: unknown): RelayUsage {
   if (!value || typeof value !== "object" || Array.isArray(value)) return emptyRelayUsage();
   const raw = value as Record<string, unknown>;
@@ -288,6 +302,36 @@ export async function writeRelayAudit(input: RelayAuditInput): Promise<void> {
           errorCount: sql`${usageCountersDaily.errorCount} + ${errorCount}`,
         },
       });
+
+    const incrementTargets = usageIncrementTargets(input.principal.teamId);
+    if (incrementTargets.teamDaily && input.principal.teamId != null) {
+      await tx
+        .insert(usageCountersTeamDaily)
+        .values({
+          day: quotaDay,
+          teamId: input.principal.teamId,
+          employeeId: input.principal.employeeId,
+          promptTokens,
+          completionTokens,
+          totalTokens,
+          requestCount: 1,
+          errorCount,
+        })
+        .onConflictDoUpdate({
+          target: [
+            usageCountersTeamDaily.day,
+            usageCountersTeamDaily.teamId,
+            usageCountersTeamDaily.employeeId,
+          ],
+          set: {
+            promptTokens: sql`${usageCountersTeamDaily.promptTokens} + ${promptTokens}`,
+            completionTokens: sql`${usageCountersTeamDaily.completionTokens} + ${completionTokens}`,
+            totalTokens: sql`${usageCountersTeamDaily.totalTokens} + ${totalTokens}`,
+            requestCount: sql`${usageCountersTeamDaily.requestCount} + 1`,
+            errorCount: sql`${usageCountersTeamDaily.errorCount} + ${errorCount}`,
+          },
+        });
+    }
 
     await tx
       .update(employeeApiKeys)

@@ -19,14 +19,7 @@ const {
   summarizeDailyUsage,
 } = await import("../src/lib/user-usage.js");
 const { normalizeAuditContext } = await import("../src/lib/audit-context.js");
-const { assertDailyTokenLimit, RelayLimitError } = await import(
-  "../src/lib/relay/quota.js"
-);
-const {
-  generateEnterpriseCode,
-  membershipDailyTokenLimit,
-  ENTERPRISE_CODE_PATTERN,
-} = await import("../src/lib/enterprise.js");
+const { generateEnterpriseCode, ENTERPRISE_CODE_PATTERN } = await import("../src/lib/enterprise.js");
 const { contextAuditDedupSince, requireAdminLogContext } = await import(
   "../src/routes/admin/logs.js"
 );
@@ -52,25 +45,11 @@ test("timezone date ranges use local closed days and survive DST", () => {
   );
 });
 
-test("personal accounts without an enterprise have zero Token quota", () => {
-  assert.equal(membershipDailyTokenLimit(null, 500_000_000), 0);
-  assert.equal(membershipDailyTokenLimit(undefined, 500_000_000), 0);
-  assert.equal(membershipDailyTokenLimit(12, 500_000_000), 500_000_000);
-});
-
 test("enterprise codes are E plus eight unambiguous characters", () => {
   const code = generateEnterpriseCode(() => 0);
   assert.equal(code.length, 9);
   assert.match(code, ENTERPRISE_CODE_PATTERN);
   assert.equal(generateEnterpriseCode(() => 1) !== code, true);
-});
-
-test("daily hard Token limit treats zero as a valid deny-all limit", () => {
-  assert.throws(() => assertDailyTokenLimit(0, 0), (error) => (
-    error instanceof RelayLimitError && error.code === "daily_token_limit_exceeded"
-  ));
-  assert.doesNotThrow(() => assertDailyTokenLimit(99, 100));
-  assert.throws(() => assertDailyTokenLimit(100, 100));
 });
 
 test("daily usage is zero-filled and summary remains strongly consistent", () => {

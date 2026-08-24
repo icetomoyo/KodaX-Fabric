@@ -5,6 +5,7 @@ import {
   index,
   integer,
   jsonb,
+  numeric,
   pgEnum,
   pgTable,
   text,
@@ -92,6 +93,8 @@ export const teams = pgTable(
       .references(() => enterprises.id, { onDelete: "restrict", onUpdate: "no action" }),
     name: varchar("name", { length: 100 }).notNull(),
     status: orgUnitStatusEnum("status").notNull().default("active"),
+    // 0 means unassigned: every Key on this team is denied at relay time.
+    dailyTokenQuota: bigint("daily_token_quota", { mode: "number" }).notNull().default(0),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -112,47 +115,13 @@ export const teamMembers = pgTable(
       .notNull()
       .references(() => employees.id, { onDelete: "cascade", onUpdate: "no action" }),
     role: teamMemberRoleEnum("role").notNull().default("member"),
+    // Null means no per-member cap; only the team pool applies.
+    dailyTokenLimit: bigint("daily_token_limit", { mode: "number" }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
     uniqueIndex("team_members_team_employee_uidx").on(t.teamId, t.employeeId),
     index("team_members_employee_idx").on(t.employeeId),
-  ],
-);
-
-export const projects = pgTable(
-  "projects",
-  {
-    id: bigint("id", { mode: "number" }).generatedAlwaysAsIdentity().primaryKey(),
-    teamId: bigint("team_id", { mode: "number" })
-      .notNull()
-      .references(() => teams.id, { onDelete: "restrict", onUpdate: "no action" }),
-    name: varchar("name", { length: 100 }).notNull(),
-    status: orgUnitStatusEnum("status").notNull().default("active"),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-  },
-  (t) => [
-    uniqueIndex("projects_team_name_uidx").on(t.teamId, t.name),
-    index("projects_team_idx").on(t.teamId),
-  ],
-);
-
-export const projectMembers = pgTable(
-  "project_members",
-  {
-    id: bigint("id", { mode: "number" }).generatedAlwaysAsIdentity().primaryKey(),
-    projectId: bigint("project_id", { mode: "number" })
-      .notNull()
-      .references(() => projects.id, { onDelete: "cascade", onUpdate: "no action" }),
-    employeeId: bigint("employee_id", { mode: "number" })
-      .notNull()
-      .references(() => employees.id, { onDelete: "cascade", onUpdate: "no action" }),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  },
-  (t) => [
-    uniqueIndex("project_members_project_employee_uidx").on(t.projectId, t.employeeId),
-    index("project_members_employee_idx").on(t.employeeId),
   ],
 );
 
@@ -317,14 +286,6 @@ export const modelRoutes = pgTable(
   (t) => [index("model_routes_client_idx").on(t.clientModel, t.enabled)],
 );
 
-export const quotaPolicy = pgTable("quota_policy", {
-  key: varchar("key", { length: 32 }).primaryKey().default("default"),
-  dailyTokenLimit: bigint("daily_token_limit", { mode: "number" })
-    .notNull()
-    .default(500_000_000),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-});
-
 export const usageCountersDaily = pgTable(
   "usage_counters_daily",
   {
@@ -342,6 +303,30 @@ export const usageCountersDaily = pgTable(
   (t) => [
     uniqueIndex("usage_counters_daily_uidx").on(t.day, t.employeeId),
     index("usage_counters_daily_employee_day_idx").on(t.employeeId, t.day),
+  ],
+);
+
+export const usageCountersTeamDaily = pgTable(
+  "usage_counters_team_daily",
+  {
+    id: bigint("id", { mode: "number" }).generatedAlwaysAsIdentity().primaryKey(),
+    day: date("day").notNull(),
+    teamId: bigint("team_id", { mode: "number" })
+      .notNull()
+      .references(() => teams.id),
+    employeeId: bigint("employee_id", { mode: "number" })
+      .notNull()
+      .references(() => employees.id),
+    promptTokens: bigint("prompt_tokens", { mode: "number" }).notNull().default(0),
+    completionTokens: bigint("completion_tokens", { mode: "number" }).notNull().default(0),
+    totalTokens: bigint("total_tokens", { mode: "number" }).notNull().default(0),
+    requestCount: bigint("request_count", { mode: "number" }).notNull().default(0),
+    errorCount: bigint("error_count", { mode: "number" }).notNull().default(0),
+  },
+  (t) => [
+    uniqueIndex("usage_counters_team_daily_uidx").on(t.day, t.teamId, t.employeeId),
+    index("usage_counters_team_daily_team_day_idx").on(t.teamId, t.day),
+    index("usage_counters_team_daily_employee_day_idx").on(t.employeeId, t.day),
   ],
 );
 
@@ -428,3 +413,17 @@ export const systemSettings = pgTable("system_settings", {
   value: jsonb("value").notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+/** Unit prices in CNY per million tokens, keyed by the public client model name. */
+export const modelPrices = pgTable(
+  "model_prices",
+  {
+    id: bigint("id", { mode: "number" }).generatedAlwaysAsIdentity().primaryKey(),
+    model: varchar("model", { length: 128 }).notNull(),
+    promptPricePerMillion: numeric("prompt_price_per_million", { precision: 12, scale: 4 }).notNull(),
+    completionPricePerMillion: numeric("completion_price_per_million", { precision: 12, scale: 4 }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("model_prices_model_uidx").on(t.model)],
+);

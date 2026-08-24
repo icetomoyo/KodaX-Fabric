@@ -74,11 +74,11 @@
             <small>全文审计 · 用量追踪</small>
           </span>
         </button>
-        <button type="button" class="quick-link" @click="router.push('/admin/quota')">
+        <button type="button" class="quick-link" @click="router.push('/admin/teams')">
           <span class="quick-dot amber" />
           <span>
-            <strong>配额策略</strong>
-            <small>单日 Token 硬上限</small>
+            <strong>团队管理</strong>
+            <small>每日额度 · 成员上限</small>
           </span>
         </button>
       </div>

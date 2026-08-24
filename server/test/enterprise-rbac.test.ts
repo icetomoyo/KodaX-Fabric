@@ -18,7 +18,6 @@ const { adminUserRoutes, buildAdminUserListQuery } = await import(
   "../src/routes/admin/users.js"
 );
 const { adminCredentialRoutes } = await import("../src/routes/admin/credentials.js");
-const { adminQuotaRoutes } = await import("../src/routes/admin/quota.js");
 const { resolveUserListScope } = await import("../src/lib/enterprise.js");
 
 const orgAdminSession = {
@@ -79,7 +78,6 @@ test("org_admin cannot create or list-all enterprises and cannot call super-admi
   await app.register(adminEnterpriseRoutes);
   await app.register(adminUserRoutes);
   await app.register(adminCredentialRoutes);
-  await app.register(adminQuotaRoutes);
   await app.ready();
 
   try {
@@ -105,7 +103,7 @@ test("org_admin cannot create or list-all enterprises and cannot call super-admi
     assert.equal(createEnterprise.statusCode, 403);
     assert.equal(disableEnterprise.statusCode, 403);
     assert.equal(credentials.statusCode, 403);
-    assert.equal(quota.statusCode, 403);
+    assert.equal(quota.statusCode, 404);
     assert.equal(unscopedUsers.statusCode, 403);
   } finally {
     await app.close();
@@ -155,7 +153,6 @@ test("admin shell source includes 企业管理 and org_admin lands on admin user
   assert.match(layout, /\/admin\/enterprises/);
   assert.match(layout, /员工管理/);
   assert.match(layout, /上游渠道/);
-  assert.match(layout, /配额/);
   assert.match(home, /org_admin/);
   assert.match(home, /\/admin\/users/);
   assert.doesNotMatch(home, /org_admin.*\/me/);

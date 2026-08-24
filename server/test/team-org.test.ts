@@ -31,7 +31,7 @@ function attachSession(session: typeof teamAdminSession) {
   };
 }
 
-test("unauthenticated team and project calls return 401", async () => {
+test("unauthenticated team calls return 401", async () => {
   const app = Fastify();
   await app.register(adminTeamRoutes);
   await app.ready();
@@ -42,10 +42,10 @@ test("unauthenticated team and project calls return 401", async () => {
       url: "/api/admin/teams",
       payload: { name: "研发" },
     });
-    const projects = await app.inject({ method: "GET", url: "/api/admin/teams/1/projects" });
+    const members = await app.inject({ method: "GET", url: "/api/admin/teams/1/members" });
     assert.equal(list.statusCode, 401);
     assert.equal(create.statusCode, 401);
-    assert.equal(projects.statusCode, 401);
+    assert.equal(members.statusCode, 401);
   } finally {
     await app.close();
   }
@@ -103,6 +103,8 @@ test("team_admin list SQL is constrained to administered teams", () => {
   const compiled = buildTeamListQuery(scope).toSQL();
   const compiledSql = compiled.sql.replace(/\s+/g, " ");
   assert.match(compiledSql, /from "teams"/);
+  assert.match(compiledSql, /daily_token_quota/);
+  assert.match(compiledSql, /usage_counters_team_daily/);
   assert.match(compiledSql, /"teams"\."id" in/i);
   assert.equal(compiled.params.includes(8), true);
   assert.equal(compiled.params.includes(9), true);
