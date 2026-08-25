@@ -926,7 +926,7 @@ async function handleNativeRequest(
       ? sendError(499, "请求已取消", "api_error", "request_cancelled")
       : sendError(
           500,
-          "TokenHub 处理请求时发生内部错误",
+          "KodaX Fabric 处理请求时发生内部错误",
           "api_error",
           "relay_internal_error",
         );
@@ -996,7 +996,7 @@ async function handleNativeParsingError(
       ? "请求必须使用 application/json"
       : clientError
         ? "请求正文不是有效的 JSON"
-        : "TokenHub 处理请求时发生内部错误";
+        : "KodaX Fabric 处理请求时发生内部错误";
   const payload = nativeError(requestId, message, type, code);
 
   reply.header("x-tokenhub-request-id", requestId);

@@ -86,7 +86,7 @@ function sendExtractionError(
 ) {
   const message = extracted.reason === "conflict"
     ? "Authorization 与 x-api-key 不一致"
-    : "无效的 TokenHub API Key";
+    : "无效的 KodaX Fabric API Key";
   return relayError(
     reply,
     protocol,
@@ -109,7 +109,7 @@ async function authenticateRelayApiKey(
       reply,
       errorProtocol,
       401,
-      "无效的 TokenHub API Key",
+      "无效的 KodaX Fabric API Key",
       "authentication_error",
       "invalid_api_key",
     );
@@ -154,7 +154,7 @@ async function authenticateRelayApiKey(
       reply,
       principal && isRelayProtocol(principal.protocol) ? principal.protocol : errorProtocol,
       401,
-      "无效的 TokenHub API Key",
+      "无效的 KodaX Fabric API Key",
       "authentication_error",
       "invalid_api_key",
     );

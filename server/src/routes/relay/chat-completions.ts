@@ -919,7 +919,7 @@ export async function chatCompletionRoutes(app: FastifyInstance) {
         const payload = cancelled
           ? openAiError("请求已取消", "request_cancelled", "request_cancelled")
           : openAiError(
-              "TokenHub 处理请求时发生内部错误",
+              "KodaX Fabric 处理请求时发生内部错误",
               "internal_error",
               "relay_internal_error",
             );

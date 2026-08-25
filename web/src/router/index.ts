@@ -12,6 +12,12 @@ export const router = createRouter({
       meta: { public: true },
     },
     {
+      path: "/register",
+      name: "register",
+      component: () => import("@/views/RegisterView.vue"),
+      meta: { public: true },
+    },
+    {
       path: "/change-password",
       name: "change-password",
       component: () => import("@/views/ChangePasswordView.vue"),
@@ -162,7 +168,7 @@ router.beforeEach((to) => {
   const home = homePathForUser(auth.user);
 
   if (to.meta.public) {
-    if (auth.isLoggedIn && to.name === "login") {
+    if (auth.isLoggedIn && (to.name === "login" || to.name === "register")) {
       return auth.user?.mustChangePassword ? "/change-password" : home;
     }
     return true;

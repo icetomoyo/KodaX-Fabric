@@ -1,7 +1,10 @@
 <template>
   <el-container class="shell">
     <el-aside width="220px" class="aside">
-      <div class="brand">TokenHub</div>
+      <div class="brand">
+        <strong>KodaX Fabric</strong>
+        <span>Token Hub</span>
+      </div>
       <el-menu :default-active="route.path" router>
         <el-menu-item index="/me">工作台</el-menu-item>
         <el-menu-item index="/me/keys">API Key</el-menu-item>
@@ -56,9 +59,23 @@ function onLogout() {
   color: #fff;
 }
 .brand {
-  padding: 20px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 18px 16px 16px;
+}
+
+.brand strong {
+  font-size: 14px;
   font-weight: 700;
-  letter-spacing: 0.02em;
+  letter-spacing: 0.01em;
+}
+
+.brand span {
+  color: #94a3b8;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
 }
 .aside :deep(.el-menu) {
   border-right: none;

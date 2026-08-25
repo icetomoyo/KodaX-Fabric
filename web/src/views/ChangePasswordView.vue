@@ -1,23 +1,23 @@
 <template>
-  <div class="wrap">
-    <div class="card">
-      <h1>修改密码</h1>
-      <el-form label-position="top" @submit.prevent="onSubmit">
-        <el-form-item label="原密码">
-          <el-input v-model="oldPassword" type="password" show-password autocomplete="current-password" />
-        </el-form-item>
-        <el-form-item label="新密码">
-          <el-input v-model="newPassword" type="password" show-password autocomplete="new-password" :maxlength="128" />
-        </el-form-item>
-        <el-form-item label="确认新密码">
-          <el-input v-model="confirm" type="password" show-password autocomplete="new-password" :maxlength="128" />
-        </el-form-item>
-        <el-button type="primary" native-type="submit" :loading="loading" style="width: 100%">
-          确认修改
-        </el-button>
-      </el-form>
-    </div>
-  </div>
+  <AuthShell>
+    <p class="kicker">账号安全</p>
+    <h2>修改密码</h2>
+    <p class="lead">首次登录或重置后，需要设置新密码才能继续。</p>
+    <el-form class="auth-form" label-position="top" @submit.prevent="onSubmit">
+      <el-form-item label="原密码">
+        <el-input v-model="oldPassword" type="password" show-password autocomplete="current-password" />
+      </el-form-item>
+      <el-form-item label="新密码">
+        <el-input v-model="newPassword" type="password" show-password autocomplete="new-password" :maxlength="128" />
+      </el-form-item>
+      <el-form-item label="确认新密码">
+        <el-input v-model="confirm" type="password" show-password autocomplete="new-password" :maxlength="128" />
+      </el-form-item>
+      <el-button type="primary" native-type="submit" :loading="loading">
+        确认修改
+      </el-button>
+    </el-form>
+  </AuthShell>
 </template>
 
 <script setup lang="ts">
@@ -26,6 +26,7 @@ import { useRouter } from "vue-router";
 import { ElMessage } from "element-plus";
 import { homePathForUser } from "@/lib/home";
 import { useAuthStore } from "@/stores/auth";
+import AuthShell from "@/views/AuthShell.vue";
 
 const oldPassword = ref("");
 const newPassword = ref("");
@@ -57,21 +58,31 @@ async function onSubmit() {
 </script>
 
 <style scoped>
-.wrap {
-  min-height: 100vh;
-  display: grid;
-  place-items: center;
-  background: #f8fafc;
+.kicker {
+  margin: 0 0 8px;
+  color: #2563eb;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
 }
-.card {
-  width: 400px;
-  background: #fff;
-  border-radius: 16px;
-  padding: 32px 28px;
-  box-shadow: 0 10px 40px rgba(15, 23, 42, 0.08);
+
+h2 {
+  margin: 0 0 8px;
+  color: #0f172a;
+  font-size: 28px;
+  font-weight: 600;
+  letter-spacing: -0.03em;
 }
-h1 {
-  margin: 0 0 20px;
-  font-size: 22px;
+
+.lead {
+  margin: 0 0 28px;
+  color: #64748b;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.auth-form :deep(.el-button) {
+  width: 100%;
+  margin-top: 8px;
 }
 </style>
