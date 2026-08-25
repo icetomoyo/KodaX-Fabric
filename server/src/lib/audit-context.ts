@@ -170,6 +170,157 @@ function arrayField(record: JsonRecord | null, ...keys: string[]): unknown[] {
   return [];
 }
 
+const DROPPED_MESSAGE_ROLES = new Set(["system", "developer"]);
+const DROPPED_BLOCK_TYPES = new Set([
+  "thinking",
+  "redacted_thinking",
+  "reasoning",
+]);
+const MEDIA_BLOCK_TYPES = new Set([
+  "image",
+  "image_url",
+  "input_image",
+  "file",
+  "input_file",
+  "audio",
+  "input_audio",
+  "video",
+]);
+
+function isDroppedRole(role: unknown): boolean {
+  return typeof role === "string" && DROPPED_MESSAGE_ROLES.has(role.toLowerCase());
+}
+
+function slimToolCall(value: unknown): unknown {
+  if (!isRecord(value)) return value;
+  const fn = isRecord(value.function) ? value.function : null;
+  const slim: JsonRecord = {};
+  if (value.id != null) slim.id = value.id;
+  if (value.type != null) slim.type = value.type;
+  const name = fn?.name ?? value.name;
+  if (name != null) slim.name = name;
+  const args = fn?.arguments ?? value.arguments ?? value.input;
+  if (args !== undefined) slim.arguments = args;
+  return slim;
+}
+
+function slimContentBlock(block: unknown): unknown {
+  if (block == null || typeof block === "string" || typeof block === "number") return block;
+  if (!isRecord(block)) return block;
+  const type = typeof block.type === "string" ? block.type.toLowerCase() : "";
+  if (DROPPED_BLOCK_TYPES.has(type)) return null;
+  if (MEDIA_BLOCK_TYPES.has(type)) {
+    return { type: block.type, omitted: true };
+  }
+  if (type === "tool_use" || type === "server_tool_use") {
+    return {
+      type: block.type,
+      ...(block.id != null ? { id: block.id } : {}),
+      ...(block.name != null ? { name: block.name } : {}),
+      ...(block.input !== undefined ? { input: block.input } : {}),
+    };
+  }
+  if (type === "tool_result") {
+    return {
+      type: block.type,
+      ...(block.tool_use_id != null ? { tool_use_id: block.tool_use_id } : {}),
+      ...(block.is_error !== undefined ? { is_error: block.is_error } : {}),
+      ...(block.content !== undefined ? { content: slimContent(block.content) } : {}),
+    };
+  }
+  if (typeof block.text === "string") {
+    return block.type ? { type: block.type, text: block.text } : block.text;
+  }
+  if (block.content !== undefined) {
+    const slim: JsonRecord = {};
+    if (block.type != null) slim.type = block.type;
+    slim.content = slimContent(block.content);
+    return slim;
+  }
+  if (block.type != null) return { type: block.type };
+  return block;
+}
+
+function slimContent(content: unknown): unknown {
+  if (Array.isArray(content)) {
+    return content.map(slimContentBlock).filter((item) => item != null);
+  }
+  return slimContentBlock(content);
+}
+
+function slimMessage(message: unknown): unknown {
+  if (!isRecord(message)) return message;
+  const slim: JsonRecord = {};
+  if (typeof message.role === "string") slim.role = message.role;
+  if (typeof message.name === "string") slim.name = message.name;
+  if (typeof message.tool_call_id === "string") slim.tool_call_id = message.tool_call_id;
+  if (message.content !== undefined) slim.content = slimContent(message.content);
+  if (Array.isArray(message.tool_calls)) {
+    slim.tool_calls = message.tool_calls.map(slimToolCall);
+  }
+  return slim;
+}
+
+function slimResponse(response: unknown): unknown {
+  if (response == null) return null;
+  const sanitized = sanitizeContextValue(parseJsonLike(response));
+  if (!isRecord(sanitized)) return sanitized;
+  if (Array.isArray(sanitized.choices)) {
+    return {
+      choices: sanitized.choices.map((choice) => {
+        if (!isRecord(choice)) return choice;
+        const message = isRecord(choice.message) ? slimMessage(choice.message) : undefined;
+        const slim: JsonRecord = {};
+        if (choice.index !== undefined) slim.index = choice.index;
+        if (choice.finish_reason !== undefined) slim.finish_reason = choice.finish_reason;
+        if (message !== undefined) slim.message = message;
+        else if (choice.delta !== undefined) slim.delta = slimMessage(choice.delta);
+        else if (choice.text !== undefined) slim.text = slimContent(choice.text);
+        return slim;
+      }),
+    };
+  }
+  if (Array.isArray(sanitized.content)) {
+    const slim: JsonRecord = { content: slimContent(sanitized.content) };
+    if (sanitized.stop_reason !== undefined) slim.stop_reason = sanitized.stop_reason;
+    return slim;
+  }
+  if (sanitized.error != null) {
+    const error = isRecord(sanitized.error)
+      ? {
+        ...(typeof sanitized.error.type === "string" ? { type: sanitized.error.type } : {}),
+        ...(typeof sanitized.error.code === "string" || typeof sanitized.error.code === "number"
+          ? { code: sanitized.error.code }
+          : {}),
+        ...(typeof sanitized.error.message === "string" ? { message: sanitized.error.message } : {}),
+      }
+      : sanitized.error;
+    return { error };
+  }
+  if (typeof sanitized.output_text === "string") return { output_text: sanitized.output_text };
+  if (Array.isArray(sanitized.output)) return { output: slimContent(sanitized.output) };
+  return sanitized;
+}
+
+/**
+ * Persist only business-facing conversation data: user/assistant/tool turns,
+ * visible model output, and tool invocations. System prompts, tool schemas,
+ * skills packs, thinking traces, and binary attachments are dropped.
+ */
+export function extractBusinessAuditBodies(input: {
+  requestBody: unknown;
+  responseBody: unknown;
+}): { requestBody: unknown; responseBody: unknown } {
+  const request = sanitizeContextValue(parseJsonLike(input.requestBody));
+  const messages = messageList(request)
+    .filter((message) => !isRecord(message) || !isDroppedRole(message.role))
+    .map(slimMessage);
+  return {
+    requestBody: { messages },
+    responseBody: slimResponse(input.responseBody),
+  };
+}
+
 export function normalizeAuditContext(input: {
   requestId: string;
   protocol: RelayProtocol;

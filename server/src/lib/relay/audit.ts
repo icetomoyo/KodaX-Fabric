@@ -9,6 +9,7 @@ import {
   usageCountersDaily,
   usageCountersTeamDaily,
 } from "../../db/schema/index.js";
+import { extractBusinessAuditBodies } from "../audit-context.js";
 import { quotaDayAt } from "../quota-time.js";
 import { recordCredentialTokens } from "./credential-load.js";
 import type { RelayProtocol } from "./protocol.js";
@@ -216,12 +217,15 @@ export function parseRelayUsage(value: unknown): RelayUsage {
 }
 
 export async function writeRelayAudit(input: RelayAuditInput): Promise<void> {
-  const request = prepareAuditValue(sanitizeRelayAuditBody(input.requestBody));
-  const response = prepareAuditValue(sanitizeRelayAuditBody(input.responseBody));
-  // Defend at the persistence boundary as well as at request extraction. This
-  // prevents a future caller from accidentally storing either employee or
-  // upstream Authorization credentials.
-  const requestHeaders = sanitizeRelayHeaderRecord(input.requestHeaders);
+  const originalRequestSize = safeJsonSize(input.requestBody);
+  const originalResponseSize = safeJsonSize(input.responseBody);
+  const business = extractBusinessAuditBodies({
+    requestBody: input.requestBody,
+    responseBody: input.responseBody,
+  });
+  const request = prepareAuditValue(sanitizeRelayAuditBody(business.requestBody));
+  const response = prepareAuditValue(sanitizeRelayAuditBody(business.responseBody));
+  // Headers are not business context; User-Agent / IP live on request_audits.
   const usage = input.usage ?? emptyRelayUsage();
   const promptTokens = safeInteger(usage.promptTokens) ?? 0;
   const completionTokens = safeInteger(usage.completionTokens) ?? 0;
@@ -274,11 +278,11 @@ export async function writeRelayAudit(input: RelayAuditInput): Promise<void> {
 
     await tx.insert(requestAuditBodies).values({
       requestId: input.requestId,
-      requestHeaders,
+      requestHeaders: {},
       requestBody: request.value,
       responseBody: response.value,
-      requestBodySize: request.size || safeJsonSize(input.requestBody),
-      responseBodySize: response.size || safeJsonSize(input.responseBody),
+      requestBodySize: originalRequestSize,
+      responseBodySize: originalResponseSize,
       truncated: request.truncated || response.truncated,
     });
 

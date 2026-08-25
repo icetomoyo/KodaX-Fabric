@@ -48,6 +48,14 @@ export async function pruneStaleAuditBodies(keepLast: number): Promise<number> {
     )
     RETURNING body.request_id
   `;
+  if (deleted.count > 0) {
+    try {
+      // Reclaim dead tuples for reuse. Does not take an exclusive lock.
+      await sql.unsafe("VACUUM request_audit_bodies");
+    } catch {
+      // Autovacuum still reclaims later; do not fail the prune after DELETE.
+    }
+  }
   return deleted.count;
 }
 

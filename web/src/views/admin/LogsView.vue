@@ -285,7 +285,7 @@
             <el-tab-pane label="Skill / 工具" name="skills">
               <div v-loading="contextLoading" class="tab-content">
                 <div class="tab-toolbar">
-                  <span>工具定义、调用与 Skill 上下文</span>
+                  <span>本次调用实际发起的工具请求</span>
                   <el-button link type="primary" @click="copyStructured(context?.tabs.skills)">复制本页</el-button>
                 </div>
                 <el-empty v-if="!hasSkillContext" description="该记录没有 Skill 或工具信息" :image-size="70" />

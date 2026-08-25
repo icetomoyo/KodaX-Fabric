@@ -20,7 +20,7 @@ const {
   fillDailyUsage,
   summarizeDailyUsage,
 } = await import("../src/lib/user-usage.js");
-const { normalizeAuditContext } = await import("../src/lib/audit-context.js");
+const { extractBusinessAuditBodies, normalizeAuditContext } = await import("../src/lib/audit-context.js");
 const { generateEnterpriseCode, ENTERPRISE_CODE_PATTERN } = await import("../src/lib/enterprise.js");
 const { contextAuditDedupSince, requireAdminLogContext } = await import(
   "../src/routes/admin/logs.js"
@@ -93,6 +93,68 @@ test("usage breakdown keeps Top N shape and folds the remainder into other", () 
       { key: "other", totalTokens: 20, requestCount: 2 },
     ],
   );
+});
+
+test("business audit bodies keep conversation turns and drop system prompts, tools, and media", () => {
+  const extracted = extractBusinessAuditBodies({
+    requestBody: {
+      model: "glm-4",
+      stream: true,
+      system: "you are a long product prompt",
+      tools: [{ type: "function", function: { name: "lookup", parameters: { type: "object" } } }],
+      mcp_servers: [{ url: "https://mcp.example.test", authorization_token: "mcp-secret" }],
+      messages: [
+        { role: "system", content: "hidden system prompt" },
+        { role: "developer", content: "hidden developer prompt" },
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "看这张图" },
+            { type: "image_url", image_url: { url: "data:image/png;base64,AAAA" } },
+          ],
+        },
+        {
+          role: "assistant",
+          content: "调用工具",
+          tool_calls: [{ id: "call-1", type: "function", function: { name: "lookup", arguments: "{\"q\":\"hi\"}" } }],
+        },
+      ],
+    },
+    responseBody: {
+      choices: [{
+        index: 0,
+        finish_reason: "stop",
+        message: { role: "assistant", content: "done", reasoning_content: "long hidden chain" },
+      }],
+      usage: { prompt_tokens: 9, completion_tokens: 1 },
+    },
+  });
+
+  const serialized = JSON.stringify(extracted);
+  assert.equal(serialized.includes("hidden system prompt"), false);
+  assert.equal(serialized.includes("hidden developer prompt"), false);
+  assert.equal(serialized.includes("long product prompt"), false);
+  assert.equal(serialized.includes("mcp-secret"), false);
+  assert.equal(serialized.includes("AAAA"), false);
+  assert.equal(serialized.includes("lookup"), true);
+  assert.equal(serialized.includes("看这张图"), true);
+  assert.equal(serialized.includes("done"), true);
+  assert.deepEqual(extracted.requestBody, {
+    messages: [
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "看这张图" },
+          { type: "image_url", omitted: true },
+        ],
+      },
+      {
+        role: "assistant",
+        content: "调用工具",
+        tool_calls: [{ id: "call-1", type: "function", name: "lookup", arguments: "{\"q\":\"hi\"}" }],
+      },
+    ],
+  });
 });
 
 test("context normalization handles Chat and Anthropic without headers or secrets", () => {

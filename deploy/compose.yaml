@@ -73,7 +73,7 @@ services:
       QUOTA_TIMEZONE: Asia/Shanghai
       RELAY_RESPONSE_MAX_BYTES: "20971520"
       AUDIT_BODY_MAX_BYTES: "1048576"
-      AUDIT_BODY_KEEP_LAST: "2000"
+      AUDIT_BODY_KEEP_LAST: "200"
       AUDIT_BODY_PRUNE_INTERVAL_MS: "600000"
     depends_on:
       postgres:
