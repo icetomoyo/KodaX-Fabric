@@ -53,21 +53,17 @@ export function resolveUserListScope(
   actor: EnterpriseActor,
   requestedEnterpriseId?: number,
 ): UserListScope {
-  if (actor.role === ORG_ADMIN_ROLE) {
-    if (actor.enterpriseId == null) return { forbidden: true };
-    if (requestedEnterpriseId != null && requestedEnterpriseId !== actor.enterpriseId) {
-      return { forbidden: true };
-    }
-    return { enterpriseId: actor.enterpriseId, excludeRoles: [SUPER_ADMIN_ROLE] };
-  }
-  if (actor.role !== SUPER_ADMIN_ROLE) {
+  if (actor.role !== ORG_ADMIN_ROLE) {
     return { forbidden: true };
   }
-  return { enterpriseId: requestedEnterpriseId };
+  if (actor.enterpriseId == null) return { forbidden: true };
+  if (requestedEnterpriseId != null && requestedEnterpriseId !== actor.enterpriseId) {
+    return { forbidden: true };
+  }
+  return { enterpriseId: actor.enterpriseId, excludeRoles: [SUPER_ADMIN_ROLE] };
 }
 
 export function canAccessEmployee(actor: EnterpriseActor, target: EmployeeMembership): boolean {
-  if (actor.role === SUPER_ADMIN_ROLE) return true;
   if (actor.role !== ORG_ADMIN_ROLE) return false;
   if (target.role === SUPER_ADMIN_ROLE) return false;
   return target.enterpriseId === actor.enterpriseId;
@@ -89,16 +85,7 @@ export function resolveCreatedUserFields(
     }
     return { role: "employee", enterpriseId: actor.enterpriseId };
   }
-  if (actor.role !== SUPER_ADMIN_ROLE) {
-    return { error: "权限不足", status: 403 };
-  }
-  if (input.enterpriseId == null && actor.enterpriseId == null) {
-    return { error: "请选择企业", status: 403 };
-  }
-  return {
-    role: input.role ?? "employee",
-    enterpriseId: input.enterpriseId ?? actor.enterpriseId!,
-  };
+  return { error: "权限不足", status: 403 };
 }
 
 export function resolveUpdatedUserFields(
@@ -109,22 +96,16 @@ export function resolveUpdatedUserFields(
   if (!canAccessEmployee(actor, target)) {
     return { error: "权限不足", status: 403 };
   }
-  if (actor.role === ORG_ADMIN_ROLE) {
-    if (actor.enterpriseId == null) {
-      return { error: "权限不足", status: 403 };
-    }
-    if (input.role != null && input.role !== target.role) {
-      return { error: "权限不足", status: 403 };
-    }
-    if (input.enterpriseId != null && input.enterpriseId !== actor.enterpriseId) {
-      return { error: "权限不足", status: 403 };
-    }
-    return { role: target.role, enterpriseId: actor.enterpriseId };
+  if (actor.role !== ORG_ADMIN_ROLE || actor.enterpriseId == null) {
+    return { error: "权限不足", status: 403 };
   }
-  return {
-    role: input.role ?? target.role,
-    enterpriseId: input.enterpriseId === undefined ? target.enterpriseId : input.enterpriseId,
-  };
+  if (input.role != null && input.role !== target.role) {
+    return { error: "权限不足", status: 403 };
+  }
+  if (input.enterpriseId != null && input.enterpriseId !== actor.enterpriseId) {
+    return { error: "权限不足", status: 403 };
+  }
+  return { role: target.role, enterpriseId: actor.enterpriseId };
 }
 
 export async function insertEnterprise(input: {

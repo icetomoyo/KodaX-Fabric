@@ -63,7 +63,11 @@ export async function requireSession(req: FastifyRequest, reply: FastifyReply) {
     return reply.code(401).send({ success: false, message: "用户不可用" });
   }
 
-  if (user.role === "employee" && user.enterpriseId != null && user.enterpriseStatus !== "active") {
+  if (
+    user.role === "employee" &&
+    user.enterpriseId != null &&
+    user.enterpriseStatus === "disabled"
+  ) {
     return reply.code(401).send({ success: false, message: "用户不可用" });
   }
 

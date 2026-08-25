@@ -87,6 +87,34 @@ export function quotaDayAt(date: Date, timeZone: string): string {
   return `${parts.year}-${pad(parts.month)}-${pad(parts.day)}`;
 }
 
+export function quotaMonthStartDay(date: Date, timeZone: string): string {
+  const parts = zonedParts(date, timeZone);
+  return `${parts.year}-${pad(parts.month)}-01`;
+}
+
+export function addCalendarMonths(value: string, months: number): string {
+  const parsed = parseDateOnly(value);
+  if (!parsed) throw new Error(`Invalid date: ${value}`);
+  const total = parsed.getUTCFullYear() * 12 + parsed.getUTCMonth() + months;
+  const year = Math.floor(total / 12);
+  const month = (total % 12) + 1;
+  return `${year}-${pad(month)}-01`;
+}
+
+export function zonedMonthRange(
+  date: Date,
+  timeZone: string,
+): { start: Date; endExclusive: Date; from: string; to: string } {
+  const from = quotaMonthStartDay(date, timeZone);
+  const next = addCalendarMonths(from, 1);
+  return {
+    start: zonedDayStart(from, timeZone),
+    endExclusive: zonedDayStart(next, timeZone),
+    from,
+    to: addCalendarDays(next, -1),
+  };
+}
+
 function timeZoneOffsetMs(date: Date, timeZone: string): number {
   const parts = zonedParts(date, timeZone);
   const representedAsUtc = Date.UTC(

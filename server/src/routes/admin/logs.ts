@@ -4,9 +4,11 @@ import { z } from "zod";
 import { db } from "../../db/client.js";
 import {
   employees,
+  enterprises,
   opsAuditLogs,
   requestAuditBodies,
   requestAudits,
+  teams,
 } from "../../db/schema/index.js";
 import { normalizeAuditContext } from "../../lib/audit-context.js";
 import {
@@ -44,7 +46,8 @@ export async function adminLogRoutes(app: FastifyInstance) {
       .object({
         limit: z.coerce.number().min(1).max(200).default(50),
         offset: z.coerce.number().min(0).default(0),
-        employeeId: z.coerce.number().optional(),
+        enterpriseId: z.coerce.number().int().positive().optional(),
+        teamId: z.coerce.number().int().positive().optional(),
         model: z.string().optional(),
         providerCode: z.string().optional(),
         status: z.string().optional(),
@@ -62,8 +65,11 @@ export async function adminLogRoutes(app: FastifyInstance) {
 
     const conditions: SQL[] = [];
 
-    if (query.employeeId) {
-      conditions.push(eq(requestAudits.employeeId, query.employeeId));
+    if (query.enterpriseId) {
+      conditions.push(eq(employees.enterpriseId, query.enterpriseId));
+    }
+    if (query.teamId) {
+      conditions.push(eq(requestAudits.teamId, query.teamId));
     }
     if (query.model) conditions.push(eq(requestAudits.clientModel, query.model));
     if (query.providerCode) conditions.push(eq(requestAudits.providerCode, query.providerCode));
@@ -82,15 +88,15 @@ export async function adminLogRoutes(app: FastifyInstance) {
     const [countRow] = await db
       .select({ n: sql<number>`count(*)::int` })
       .from(requestAudits)
+      .innerJoin(employees, eq(requestAudits.employeeId, employees.id))
       .where(whereExpr);
 
     const items = await db
       .select({
         id: requestAudits.id,
         requestId: requestAudits.requestId,
-        employeeId: requestAudits.employeeId,
-        employeeName: employees.name,
-        employeePhone: employees.phone,
+        enterpriseName: enterprises.name,
+        teamName: teams.name,
         protocol: requestAudits.protocol,
         clientModel: requestAudits.clientModel,
         upstreamModel: requestAudits.upstreamModel,
@@ -120,6 +126,8 @@ export async function adminLogRoutes(app: FastifyInstance) {
       })
       .from(requestAudits)
       .innerJoin(employees, eq(requestAudits.employeeId, employees.id))
+      .leftJoin(enterprises, eq(employees.enterpriseId, enterprises.id))
+      .leftJoin(teams, eq(requestAudits.teamId, teams.id))
       .where(whereExpr)
       .orderBy(desc(requestAudits.createdAt), desc(requestAudits.id))
       .limit(query.limit)
@@ -145,12 +153,13 @@ export async function adminLogRoutes(app: FastifyInstance) {
     const [meta] = await db
       .select({
         audit: requestAudits,
-        employeeName: employees.name,
-        employeePhone: employees.phone,
-        employeeDept: employees.dept,
+        enterpriseName: enterprises.name,
+        teamName: teams.name,
       })
       .from(requestAudits)
       .innerJoin(employees, eq(requestAudits.employeeId, employees.id))
+      .leftJoin(enterprises, eq(employees.enterpriseId, enterprises.id))
+      .leftJoin(teams, eq(requestAudits.teamId, teams.id))
       .where(eq(requestAudits.requestId, params.data.requestId))
       .limit(1);
 
@@ -158,14 +167,14 @@ export async function adminLogRoutes(app: FastifyInstance) {
       return reply.code(404).send({ success: false, message: "记录不存在" });
     }
 
+    const { employeeId: _employeeId, employeeApiKeyId: _employeeApiKeyId, ...audit } = meta.audit;
     return {
       success: true,
       data: {
         meta: {
-          ...meta.audit,
-          employeeName: meta.employeeName,
-          employeePhone: meta.employeePhone,
-          employeeDept: meta.employeeDept,
+          ...audit,
+          enterpriseName: meta.enterpriseName,
+          teamName: meta.teamName,
         },
       },
     };
@@ -183,8 +192,8 @@ export async function adminLogRoutes(app: FastifyInstance) {
       const [row] = await db
         .select({
           requestId: requestAudits.requestId,
-          employeeId: requestAudits.employeeId,
-          employeePhone: employees.phone,
+          enterpriseId: employees.enterpriseId,
+          teamId: requestAudits.teamId,
           protocol: requestAudits.protocol,
           clientModel: requestAudits.clientModel,
           upstreamModel: requestAudits.upstreamModel,
@@ -225,8 +234,8 @@ export async function adminLogRoutes(app: FastifyInstance) {
             targetType: "request_audit",
             targetId: row.requestId,
             detail: {
-              ownerEmployeeId: row.employeeId,
-              ownerPhone: row.employeePhone,
+              enterpriseId: row.enterpriseId,
+              teamId: row.teamId,
             },
             ip: req.ip,
           });

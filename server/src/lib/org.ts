@@ -72,19 +72,16 @@ export async function loadTeamAccessForActor(
 }
 
 export function canReadTeam(actor: OrgActor, access: TeamAccess): boolean {
-  if (actor.role === "admin") return true;
   if (actor.role === "org_admin" && actor.enterpriseId === access.enterpriseId) return true;
   return access.memberRole != null;
 }
 
 export function canAdminTeam(actor: OrgActor, access: TeamAccess): boolean {
-  if (actor.role === "admin") return true;
   if (actor.role === "org_admin" && actor.enterpriseId === access.enterpriseId) return true;
   return access.memberRole === "team_admin";
 }
 
 export function canCreateTeam(actor: OrgActor, enterpriseId: number): boolean {
-  if (actor.role === "admin") return true;
   return actor.role === "org_admin" && actor.enterpriseId === enterpriseId;
 }
 
@@ -102,9 +99,6 @@ export function resolveTeamListScope(
   requestedEnterpriseId: number | undefined,
   adminTeamIds: number[],
 ): { enterpriseId?: number; teamIds?: number[] } | { forbidden: true } {
-  if (actor.role === "admin") {
-    return { enterpriseId: requestedEnterpriseId };
-  }
   if (actor.role === "org_admin") {
     if (actor.enterpriseId == null) return { forbidden: true };
     if (requestedEnterpriseId != null && requestedEnterpriseId !== actor.enterpriseId) {

@@ -3,11 +3,9 @@ import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../db/client.js";
 import { employees, enterprises } from "../db/schema/index.js";
-import { insertEnterprise } from "../lib/enterprise.js";
 import { isSessionRole, signSession } from "../lib/jwt.js";
 import {
   hashPassword,
-  REGISTRATION_INITIAL_PASSWORD,
   validateNewPassword,
   verifyPassword,
 } from "../lib/password.js";
@@ -58,88 +56,34 @@ export async function authRoutes(app: FastifyInstance) {
   app.post("/api/auth/register", async (req, reply) => {
     const body = z
       .object({
-        kind: z.enum(["personal", "enterprise"]).default("personal"),
         name: z.string().trim().min(1).max(100),
         phone: z.string().trim().min(5).max(20),
-        dept: z.string().trim().max(100).optional(),
-        enterpriseName: z.string().trim().min(1).max(100).optional(),
+        password: z.string().min(1).max(128),
       })
       .safeParse(req.body);
 
     if (!body.success) {
       return reply.code(400).send({ success: false, message: "请完整填写注册信息" });
     }
-    if (body.data.kind === "enterprise" && !body.data.enterpriseName) {
-      return reply.code(400).send({ success: false, message: "请填写企业名称" });
-    }
-    if (body.data.kind === "personal" && !body.data.dept) {
-      return reply.code(400).send({ success: false, message: "请填写部门" });
+    const passwordError = validateNewPassword(body.data.password);
+    if (passwordError) {
+      return reply.code(400).send({ success: false, message: passwordError });
     }
 
     try {
-      const passwordHash = await hashPassword(REGISTRATION_INITIAL_PASSWORD);
-
-      if (body.data.kind === "enterprise") {
-        const enterprise = await insertEnterprise({
-          name: body.data.enterpriseName!,
-          status: "pending",
-        });
-        const [employee] = await db
-          .insert(employees)
-          .values({
-            name: body.data.name,
-            dept: body.data.dept ?? null,
-            phone: body.data.phone,
-            passwordHash,
-            role: "org_admin",
-            status: "pending",
-            enterpriseId: enterprise.id,
-            mustChangePassword: true,
-          })
-          .returning({
-            id: employees.id,
-            name: employees.name,
-            dept: employees.dept,
-            phone: employees.phone,
-            status: employees.status,
-            role: employees.role,
-            enterpriseId: employees.enterpriseId,
-          });
-
-        await writeOpsAudit({
-          action: "auth.register_enterprise",
-          targetType: "enterprise",
-          targetId: String(enterprise.id),
-          detail: {
-            name: enterprise.name,
-            code: enterprise.code,
-            applicantId: employee.id,
-            phone: employee.phone,
-          },
-          ip: req.ip,
-        });
-
-        return {
-          success: true,
-          data: {
-            kind: "enterprise",
-            ...employee,
-            enterprise: { id: enterprise.id, name: enterprise.name, code: enterprise.code, status: enterprise.status },
-          },
-        };
-      }
+      const passwordHash = await hashPassword(body.data.password);
 
       const [employee] = await db
         .insert(employees)
         .values({
           name: body.data.name,
-          dept: body.data.dept ?? null,
           phone: body.data.phone,
           passwordHash,
           role: "employee",
           status: "active",
           enterpriseId: null,
-          mustChangePassword: true,
+          mustChangePassword: false,
+          passwordChangedAt: new Date(),
         })
         .returning({
           id: employees.id,
@@ -155,18 +99,15 @@ export async function authRoutes(app: FastifyInstance) {
         action: "auth.register_personal",
         targetType: "employee",
         targetId: String(employee.id),
-        detail: { name: employee.name, dept: employee.dept, phone: employee.phone },
+        detail: { name: employee.name, phone: employee.phone },
         ip: req.ip,
       });
 
-      return { success: true, data: { kind: "personal", ...employee } };
+      return { success: true, data: employee };
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       if (message.includes("employees_phone_uidx") || message.includes("unique")) {
         return reply.code(409).send({ success: false, message: "该手机号已提交申请或已注册" });
-      }
-      if (message.includes("enterprises_name_uidx")) {
-        return reply.code(409).send({ success: false, message: "企业名称已存在" });
       }
       throw e;
     }
@@ -218,7 +159,7 @@ export async function authRoutes(app: FastifyInstance) {
       }
     } else if (user.role === "employee" && user.enterpriseId != null) {
       const enterprise = await loadEnterprise(user.enterpriseId);
-      if (!enterprise || enterprise.status !== "active") {
+      if (!enterprise || enterprise.status === "disabled") {
         return reply.code(401).send({ success: false, message: "用户不可用" });
       }
     }

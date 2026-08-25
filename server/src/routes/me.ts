@@ -16,8 +16,8 @@ import {
   requestAudits,
   usageCountersDaily,
 } from "../db/schema/index.js";
-import { normalizeEnterpriseCode } from "../lib/enterprise.js";
-import { quotaDayAt } from "../lib/quota-time.js";
+import { insertEnterprise } from "../lib/enterprise.js";
+import { quotaDayAt, zonedMonthRange } from "../lib/quota-time.js";
 import { listEmployeeTeamQuotaViews } from "../lib/team-quota.js";
 import { encryptEmployeeApiKey, generateApiKey } from "../lib/api-key.js";
 import {
@@ -56,20 +56,19 @@ export async function meRoutes(app: FastifyInstance) {
   app.addHook("preHandler", requirePasswordChanged);
   app.addHook("preHandler", requireRoles("employee", "team_admin"));
 
-  app.post("/api/me/join-enterprise", async (req, reply) => {
+  app.post("/api/me/enterprise-applications", async (req, reply) => {
     const body = z
-      .object({ code: z.string().trim().min(1).max(16) })
+      .object({ name: z.string().trim().min(1).max(100) })
       .safeParse(req.body);
     if (!body.success) {
-      return reply.code(400).send({ success: false, message: "请填写企业编号" });
+      return reply.code(400).send({ success: false, message: "请填写企业名称" });
     }
-    const code = normalizeEnterpriseCode(body.data.code);
 
     const [current] = await db
       .select({
         id: employees.id,
-        enterpriseId: employees.enterpriseId,
         role: employees.role,
+        enterpriseId: employees.enterpriseId,
       })
       .from(employees)
       .where(eq(employees.id, req.employeeId!))
@@ -78,60 +77,89 @@ export async function meRoutes(app: FastifyInstance) {
       return reply.code(403).send({ success: false, message: "权限不足" });
     }
     if (current.enterpriseId != null) {
-      return reply.code(409).send({ success: false, message: "已加入企业" });
+      return reply.code(409).send({ success: false, message: "已提交合作申请或已加入企业" });
     }
 
-    const [enterprise] = await db
-      .select({
-        id: enterprises.id,
-        name: enterprises.name,
-        code: enterprises.code,
-        status: enterprises.status,
-      })
-      .from(enterprises)
-      .where(eq(enterprises.code, code))
-      .limit(1);
-    if (!enterprise || enterprise.status !== "active") {
-      return reply.code(404).send({ success: false, message: "企业编号不存在或企业未启用" });
-    }
+    try {
+      const enterprise = await insertEnterprise({
+        name: body.data.name,
+        status: "pending",
+      });
+      await db
+        .update(employees)
+        .set({ enterpriseId: enterprise.id, updatedAt: new Date() })
+        .where(eq(employees.id, current.id));
 
-    const [updated] = await db
-      .update(employees)
-      .set({ enterpriseId: enterprise.id, updatedAt: new Date() })
-      .where(eq(employees.id, current.id))
-      .returning({
-        id: employees.id,
-        enterpriseId: employees.enterpriseId,
+      await db.insert(opsAuditLogs).values({
+        actorEmployeeId: req.employeeId,
+        action: "enterprise.apply",
+        targetType: "enterprise",
+        targetId: String(enterprise.id),
+        detail: { name: enterprise.name, code: enterprise.code },
+        ip: req.ip,
       });
 
-    await db.insert(opsAuditLogs).values({
-      actorEmployeeId: req.employeeId,
-      action: "enterprise.join",
-      targetType: "enterprise",
-      targetId: String(enterprise.id),
-      detail: { code: enterprise.code, name: enterprise.name },
-      ip: req.ip,
-    });
+      req.session = {
+        ...req.session!,
+        enterpriseId: enterprise.id,
+      };
 
-    req.session = {
-      ...req.session!,
-      enterpriseId: updated.enterpriseId,
-    };
-
-    return {
-      success: true,
-      data: {
-        enterprise: {
-          id: enterprise.id,
-          name: enterprise.name,
-          code: enterprise.code,
-          status: enterprise.status,
+      return {
+        success: true,
+        data: {
+          enterprise: {
+            id: enterprise.id,
+            name: enterprise.name,
+            code: enterprise.code,
+            status: enterprise.status,
+          },
         },
-      },
-    };
+      };
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      if (message.includes("enterprises_name_uidx") || message.includes("unique")) {
+        return reply.code(409).send({ success: false, message: "企业名称已存在" });
+      }
+      throw e;
+    }
+  });
+
+  app.post("/api/me/join-enterprise", async (_req, reply) => {
+    return reply.code(403).send({
+      success: false,
+      message: "不能自行加入企业，请等待团队管理员邀请",
+    });
   });
 
   app.get("/api/me/org", async (req) => {
+    const [me] = await db
+      .select({
+        enterpriseId: employees.enterpriseId,
+      })
+      .from(employees)
+      .where(eq(employees.id, req.employeeId!))
+      .limit(1);
+
+    let enterprise: {
+      id: number;
+      name: string;
+      code: string;
+      status: string;
+    } | null = null;
+    if (me?.enterpriseId != null) {
+      const [row] = await db
+        .select({
+          id: enterprises.id,
+          name: enterprises.name,
+          code: enterprises.code,
+          status: enterprises.status,
+        })
+        .from(enterprises)
+        .where(eq(enterprises.id, me.enterpriseId))
+        .limit(1);
+      enterprise = row ?? null;
+    }
+
     const teamRows = await db
       .select({
         id: teams.id,
@@ -144,7 +172,7 @@ export async function meRoutes(app: FastifyInstance) {
       .where(eq(teamMembers.employeeId, req.employeeId!))
       .orderBy(desc(teams.id));
 
-    return { success: true, data: { teams: teamRows } };
+    return { success: true, data: { enterprise, teams: teamRows } };
   });
 
   app.get("/api/me/upstream-channels", async (req) => {
@@ -504,7 +532,11 @@ export async function meRoutes(app: FastifyInstance) {
       .leftJoin(enterprises, eq(employees.enterpriseId, enterprises.id))
       .where(eq(employees.id, req.employeeId!))
       .limit(1);
-    const teamQuotas = await listEmployeeTeamQuotaViews(req.employeeId!, today);
+    const teamQuotas = await listEmployeeTeamQuotaViews(
+      req.employeeId!,
+      today,
+      zonedMonthRange(new Date(), env.QUOTA_TIMEZONE),
+    );
 
     return {
       success: true,

@@ -5,11 +5,13 @@ import { db } from "../../db/client.js";
 import {
   employeeApiKeys,
   employees,
+  enterprises,
   modelRoutes,
   opsAuditLogs,
   productLines,
   providers,
   requestAudits,
+  teams,
   upstreamCredentials,
 } from "../../db/schema/index.js";
 import {
@@ -101,7 +103,7 @@ export async function adminOpsAuditRoutes(app: FastifyInstance) {
     ] = await Promise.all([
       employeeIds.length
         ? db
-            .select({ id: employees.id, name: employees.name, phone: employees.phone })
+            .select({ id: employees.id })
             .from(employees)
             .where(inArray(employees.id, employeeIds))
         : [],
@@ -110,10 +112,8 @@ export async function adminOpsAuditRoutes(app: FastifyInstance) {
             .select({
               id: employeeApiKeys.id,
               name: employeeApiKeys.name,
-              employeeName: employees.name,
             })
             .from(employeeApiKeys)
-            .innerJoin(employees, eq(employeeApiKeys.employeeId, employees.id))
             .where(inArray(employeeApiKeys.id, employeeApiKeyIds))
         : [],
       providerIds.length
@@ -157,10 +157,13 @@ export async function adminOpsAuditRoutes(app: FastifyInstance) {
             .select({
               requestId: requestAudits.requestId,
               clientModel: requestAudits.clientModel,
-              employeeName: employees.name,
+              enterpriseName: enterprises.name,
+              teamName: teams.name,
             })
             .from(requestAudits)
             .innerJoin(employees, eq(requestAudits.employeeId, employees.id))
+            .leftJoin(enterprises, eq(employees.enterpriseId, enterprises.id))
+            .leftJoin(teams, eq(requestAudits.teamId, teams.id))
             .where(inArray(requestAudits.requestId, requestIds))
         : [],
     ]);
@@ -171,10 +174,10 @@ export async function adminOpsAuditRoutes(app: FastifyInstance) {
     };
 
     for (const row of employeeTargets) {
-      setTargetName("employee", row.id, `${row.name}（${row.phone}）`);
+      setTargetName("employee", row.id, `员工 #${row.id}`);
     }
     for (const row of employeeApiKeyTargets) {
-      setTargetName("employee_api_key", row.id, `${row.employeeName} / ${row.name}`);
+      setTargetName("employee_api_key", row.id, row.name);
     }
     for (const row of providerTargets) setTargetName("provider", row.id, row.name);
     for (const row of productLineTargets) {
@@ -191,7 +194,11 @@ export async function adminOpsAuditRoutes(app: FastifyInstance) {
       setTargetName("model_route", row.id, `${row.clientModel} → ${row.upstreamModel}`);
     }
     for (const row of requestTargets) {
-      setTargetName("request_audit", row.requestId, `${row.employeeName} / ${row.clientModel}`);
+      setTargetName(
+        "request_audit",
+        row.requestId,
+        [row.enterpriseName, row.teamName, row.clientModel].filter(Boolean).join(" / "),
+      );
     }
 
     const enrichedItems = items.map((item) => ({

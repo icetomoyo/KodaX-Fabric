@@ -8,6 +8,7 @@ import { meTicketRoutes } from "./routes/me-tickets.js";
 import { adminUserRoutes } from "./routes/admin/users.js";
 import { adminEnterpriseRoutes } from "./routes/admin/enterprises.js";
 import { adminTeamRoutes } from "./routes/admin/teams.js";
+import { adminProjectRoutes } from "./routes/admin/projects.js";
 import { adminOverviewRoutes } from "./routes/admin/overview.js";
 import { adminProviderRoutes } from "./routes/admin/providers.js";
 import { adminCredentialRoutes } from "./routes/admin/credentials.js";
@@ -38,6 +39,7 @@ export async function buildApp() {
   await app.register(adminUserRoutes);
   await app.register(adminEnterpriseRoutes);
   await app.register(adminTeamRoutes);
+  await app.register(adminProjectRoutes);
   await app.register(adminOverviewRoutes);
   await app.register(adminProviderRoutes);
   await app.register(adminCredentialRoutes);

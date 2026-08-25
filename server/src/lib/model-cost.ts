@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gte, lt, sql } from "drizzle-orm";
+import { and, asc, desc, eq, sql } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { employees, modelPrices, requestAudits, teams } from "../db/schema/index.js";
 import { addCalendarDays, enumerateDays, formatUtcDate, quotaDayAt } from "./quota-time.js";
@@ -14,26 +14,46 @@ export const requestCostYuanExpr = sql`(
 export const sumRequestCostYuanSql = sql<string>`coalesce(sum(${requestCostYuanExpr}), 0)`;
 
 export function teamTodayCostYuanSql(start: Date, endExclusive: Date) {
+  const startAt = start.toISOString();
+  const endAt = endExclusive.toISOString();
   return sql<string>`(
     select ${sumRequestCostYuanSql}
     from ${requestAudits}
     left join ${modelPrices} on ${modelPrices.model} = ${requestAudits.clientModel}
     where ${requestAudits.teamId} = ${teams.id}
-      and ${requestAudits.createdAt} >= ${start}
-      and ${requestAudits.createdAt} < ${endExclusive}
+      and ${requestAudits.createdAt} >= ${startAt}::timestamptz
+      and ${requestAudits.createdAt} < ${endAt}::timestamptz
   )`;
 }
 
 export function memberTodayCostYuanSql(teamId: number, start: Date, endExclusive: Date) {
+  const startAt = start.toISOString();
+  const endAt = endExclusive.toISOString();
   return sql<string>`(
     select ${sumRequestCostYuanSql}
     from ${requestAudits}
     left join ${modelPrices} on ${modelPrices.model} = ${requestAudits.clientModel}
     where ${requestAudits.teamId} = ${teamId}
       and ${requestAudits.employeeId} = ${employees.id}
-      and ${requestAudits.createdAt} >= ${start}
-      and ${requestAudits.createdAt} < ${endExclusive}
+      and ${requestAudits.createdAt} >= ${startAt}::timestamptz
+      and ${requestAudits.createdAt} < ${endAt}::timestamptz
   )`;
+}
+
+function sqlTimeZone(timeZone: string) {
+  if (!/^[A-Za-z0-9_+\-/]+$/.test(timeZone)) {
+    throw new Error("invalid time zone");
+  }
+  return sql.raw(`'${timeZone}'`);
+}
+
+function createdAtWindow(start: Date, endExclusive: Date) {
+  const startAt = start.toISOString();
+  const endAt = endExclusive.toISOString();
+  return and(
+    sql`${requestAudits.createdAt} >= ${startAt}::timestamptz`,
+    sql`${requestAudits.createdAt} < ${endAt}::timestamptz`,
+  );
 }
 
 export function buildTeamUsageDailyQuery(input: {
@@ -42,7 +62,7 @@ export function buildTeamUsageDailyQuery(input: {
   endExclusive: Date;
   timeZone: string;
 }) {
-  const dayKey = sql<string>`((${requestAudits.createdAt} at time zone ${input.timeZone})::date)`;
+  const dayKey = sql<string>`((${requestAudits.createdAt} at time zone ${sqlTimeZone(input.timeZone)})::date)`;
   return db
     .select({
       day: dayKey,
@@ -52,15 +72,9 @@ export function buildTeamUsageDailyQuery(input: {
     })
     .from(requestAudits)
     .leftJoin(modelPrices, eq(modelPrices.model, requestAudits.clientModel))
-    .where(
-      and(
-        eq(requestAudits.teamId, input.teamId),
-        gte(requestAudits.createdAt, input.start),
-        lt(requestAudits.createdAt, input.endExclusive),
-      ),
-    )
-    .groupBy(dayKey)
-    .orderBy(asc(dayKey));
+    .where(and(eq(requestAudits.teamId, input.teamId), createdAtWindow(input.start, input.endExclusive)))
+    .groupBy(sql`1`)
+    .orderBy(sql`1`);
 }
 
 export function buildTeamUsageByModelQuery(input: {
@@ -77,13 +91,7 @@ export function buildTeamUsageByModelQuery(input: {
     })
     .from(requestAudits)
     .leftJoin(modelPrices, eq(modelPrices.model, requestAudits.clientModel))
-    .where(
-      and(
-        eq(requestAudits.teamId, input.teamId),
-        gte(requestAudits.createdAt, input.start),
-        lt(requestAudits.createdAt, input.endExclusive),
-      ),
-    )
+    .where(and(eq(requestAudits.teamId, input.teamId), createdAtWindow(input.start, input.endExclusive)))
     .groupBy(requestAudits.clientModel, modelPrices.id)
     .orderBy(desc(sql`coalesce(sum(${requestAudits.totalTokens}), 0)`), asc(requestAudits.clientModel));
 }

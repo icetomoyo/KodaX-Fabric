@@ -3,7 +3,7 @@
     <div class="page-head">
       <div>
         <h2 class="page-title">工单管理</h2>
-        <p class="page-subtitle">查看员工提交的问题工单</p>
+        <p class="page-subtitle">{{ auth.isOrgAdmin ? "查看本企业员工提交的工单" : "按企业 / 团队查看工单，不展示提交人" }}</p>
       </div>
     </div>
 
@@ -13,7 +13,7 @@
           v-model="q"
           clearable
           maxlength="100"
-          placeholder="工单编号 / 标题 / 员工姓名"
+          :placeholder="searchPlaceholder"
           style="width: 300px"
           @clear="search"
           @keyup.enter="search"
@@ -31,8 +31,14 @@
         </template>
       </el-table-column>
       <el-table-column prop="subject" label="标题" min-width="240" show-overflow-tooltip />
-      <el-table-column prop="employeeName" label="提交员工" width="130" />
-      <el-table-column label="部门" width="160">
+      <el-table-column label="企业" min-width="140">
+        <template #default="{ row }">{{ row.enterpriseName || "—" }}</template>
+      </el-table-column>
+      <el-table-column label="团队" min-width="140">
+        <template #default="{ row }">{{ row.teamName || "—" }}</template>
+      </el-table-column>
+      <el-table-column v-if="auth.isOrgAdmin" prop="employeeName" label="提交员工" width="130" />
+      <el-table-column v-if="auth.isOrgAdmin" label="部门" width="160">
         <template #default="{ row }">{{ row.employeeDept || "—" }}</template>
       </el-table-column>
       <el-table-column label="提交时间" width="190">
@@ -67,13 +73,19 @@
             <el-descriptions-item label="提交时间">
               {{ formatDateTime(selectedTicket.createdAt) }}
             </el-descriptions-item>
-            <el-descriptions-item label="提交员工">
+            <el-descriptions-item label="企业">
+              {{ selectedTicket.enterpriseName || "—" }}
+            </el-descriptions-item>
+            <el-descriptions-item label="团队">
+              {{ selectedTicket.teamName || "—" }}
+            </el-descriptions-item>
+            <el-descriptions-item v-if="auth.isOrgAdmin" label="提交员工">
               {{ selectedTicket.employeeName }}
             </el-descriptions-item>
-            <el-descriptions-item label="手机号">
+            <el-descriptions-item v-if="auth.isOrgAdmin" label="手机号">
               {{ selectedTicket.employeePhone }}
             </el-descriptions-item>
-            <el-descriptions-item label="部门">
+            <el-descriptions-item v-if="auth.isOrgAdmin" label="部门">
               {{ selectedTicket.employeeDept || "—" }}
             </el-descriptions-item>
             <el-descriptions-item label="标题">
@@ -91,25 +103,33 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { ElMessage } from "element-plus";
 import { http } from "@/api/http";
 import { formatDateTime } from "@/lib/date-time";
+import { useAuthStore } from "@/stores/auth";
 
 type AdminTicketListItem = {
   id: number;
   ticketNo: string;
   subject: string;
-  employeeId: number;
-  employeeName: string;
-  employeeDept: string | null;
+  enterpriseName: string | null;
+  teamName: string | null;
+  employeeId?: number;
+  employeeName?: string;
+  employeeDept?: string | null;
   createdAt: string;
 };
 
 type AdminTicketDetail = AdminTicketListItem & {
   content: string;
-  employeePhone: string;
+  employeePhone?: string;
 };
+
+const auth = useAuthStore();
+const searchPlaceholder = computed(() =>
+  auth.isOrgAdmin ? "工单编号 / 标题 / 员工姓名" : "工单编号 / 标题 / 企业名称",
+);
 
 const items = ref<AdminTicketListItem[]>([]);
 const total = ref(0);

@@ -18,7 +18,8 @@ const { adminUserRoutes, buildAdminUserListQuery } = await import(
   "../src/routes/admin/users.js"
 );
 const { adminCredentialRoutes } = await import("../src/routes/admin/credentials.js");
-const { resolveUserListScope } = await import("../src/lib/enterprise.js");
+const { canAccessEmployee, resolveUserListScope } = await import("../src/lib/enterprise.js");
+const { authRoutes } = await import("../src/routes/auth.js");
 
 const orgAdminSession = {
   sub: "9",
@@ -49,7 +50,13 @@ test("unauthenticated enterprise and scoped-user calls return 401", async () => 
       url: "/api/me/join-enterprise",
       payload: { code: "EAAAAAAAA" },
     });
+    const applyEnterprise = await app.inject({
+      method: "POST",
+      url: "/api/me/enterprise-applications",
+      payload: { name: "申请企业" },
+    });
     assert.equal(joinEnterprise.statusCode, 401);
+    assert.equal(applyEnterprise.statusCode, 401);
     const listEnterprises = await app.inject({ method: "GET", url: "/api/admin/enterprises" });
     const createEnterprise = await app.inject({
       method: "POST",
@@ -92,6 +99,20 @@ test("org_admin cannot create or list-all enterprises and cannot call super-admi
       url: "/api/admin/enterprises/1/status",
       payload: { status: "disabled" },
     });
+    const approveEnterprise = await app.inject({
+      method: "POST",
+      url: "/api/admin/enterprises/1/approve",
+    });
+    const createUser = await app.inject({
+      method: "POST",
+      url: "/api/admin/users",
+      payload: { name: "A", phone: "13800001111", password: "ChangeMe@123" },
+    });
+    const importUsers = await app.inject({
+      method: "POST",
+      url: "/api/admin/users/import",
+      payload: { users: [{ name: "A", phone: "13800001111", password: "ChangeMe@123" }] },
+    });
     const credentials = await app.inject({ method: "GET", url: "/api/admin/credentials" });
     const quota = await app.inject({ method: "GET", url: "/api/admin/quota-policy" });
     const unscopedUsers = await app.inject({
@@ -102,6 +123,9 @@ test("org_admin cannot create or list-all enterprises and cannot call super-admi
     assert.equal(listEnterprises.statusCode, 403);
     assert.equal(createEnterprise.statusCode, 403);
     assert.equal(disableEnterprise.statusCode, 403);
+    assert.equal(approveEnterprise.statusCode, 403);
+    assert.equal(createUser.statusCode, 403);
+    assert.equal(importUsers.statusCode, 403);
     assert.equal(credentials.statusCode, 403);
     assert.equal(quota.statusCode, 404);
     assert.equal(unscopedUsers.statusCode, 403);
@@ -140,6 +164,85 @@ test("super-admin enterprise list builder selects name and status", () => {
   assert.match(compiledSql, /"name"/);
   assert.match(compiledSql, /"code"/);
   assert.match(compiledSql, /"status"/);
+  assert.match(compiledSql, /package_plan/);
+});
+
+test("self-register rejects missing or weak passwords without writing an account", async () => {
+  const app = Fastify();
+  await app.register(authRoutes);
+  await app.ready();
+  try {
+    const missing = await app.inject({
+      method: "POST",
+      url: "/api/auth/register",
+      payload: { name: "测试", phone: "13900001111" },
+    });
+    const weak = await app.inject({
+      method: "POST",
+      url: "/api/auth/register",
+      payload: { name: "测试", phone: "13900001111", password: "123" },
+    });
+    assert.equal(missing.statusCode, 400);
+    assert.equal(weak.statusCode, 400);
+    assert.match(String(weak.json().message), /密码/);
+  } finally {
+    await app.close();
+  }
+});
+
+test("super-admin approves cooperation applications instead of assigning admins", async () => {
+  const app = Fastify();
+  await app.register(adminEnterpriseRoutes);
+  await app.register(meRoutes);
+  await app.ready();
+  try {
+    assert.equal(app.hasRoute({ method: "POST", url: "/api/admin/enterprises/:id/approve" }), true);
+    assert.equal(app.hasRoute({ method: "POST", url: "/api/admin/enterprises/:id/admins" }), false);
+    assert.equal(app.hasRoute({ method: "POST", url: "/api/me/enterprise-applications" }), true);
+  } finally {
+    await app.close();
+  }
+});
+
+test("super-admin cannot list or mutate employees", async () => {
+  const app = Fastify();
+  app.addHook("onRequest", async (req: { session?: Record<string, unknown>; employeeId?: number }) => {
+    req.session = {
+      sub: "1",
+      role: "admin",
+      phone: "13800000000",
+      name: "Super",
+      mustChangePassword: false,
+      enterpriseId: 1,
+    };
+    req.employeeId = 1;
+  });
+  await app.register(adminUserRoutes);
+  await app.ready();
+  try {
+    const list = await app.inject({ method: "GET", url: "/api/admin/users" });
+    const create = await app.inject({
+      method: "POST",
+      url: "/api/admin/users",
+      payload: { name: "A", phone: "13800001111", password: "ChangeMe@123" },
+    });
+    assert.equal(list.statusCode, 403);
+    assert.equal(create.statusCode, 403);
+  } finally {
+    await app.close();
+  }
+});
+
+test("super-admin user list scope is forbidden and cannot access employees", () => {
+  const scope = resolveUserListScope({ role: "admin", enterpriseId: 1 });
+  assert.equal("forbidden" in scope, true);
+  assert.equal(
+    canAccessEmployee(
+      { role: "admin", enterpriseId: 1 },
+      { role: "employee", enterpriseId: 3 },
+    ),
+    false,
+  );
 });
 
 test("admin shell source includes 企业管理 and org_admin lands on admin users", () => {
@@ -152,16 +255,33 @@ test("admin shell source includes 企业管理 and org_admin lands on admin user
   assert.match(layout, /isSuperAdmin/);
   assert.match(layout, /\/admin\/enterprises/);
   assert.match(layout, /员工管理/);
+  assert.match(layout, /isOrgAdmin/);
   assert.match(layout, /上游渠道/);
+  assert.doesNotMatch(layout, /v-if="!auth.isTeamAdmin" index="\/admin\/users"/);
+  assert.match(layout, /v-if="!auth.isSuperAdmin" index="\/admin\/teams"/);
   assert.match(home, /org_admin/);
   assert.match(home, /\/admin\/users/);
   assert.doesNotMatch(home, /org_admin.*\/me/);
   assert.match(router, /admin-enterprises/);
   assert.match(router, /org_admin/);
   const login = readFileSync(resolve(root, "web/src/views/LoginView.vue"), "utf8");
-  assert.match(login, /个人注册/);
-  assert.match(login, /企业注册/);
+  assert.match(login, /提交注册/);
+  assert.doesNotMatch(login, /企业注册/);
+  assert.doesNotMatch(login, /Hz@123456/);
+  assert.match(login, /registerForm.password/);
   const meHome = readFileSync(resolve(root, "web/src/views/me/HomeView.vue"), "utf8");
-  assert.match(meHome, /企业编号/);
-  assert.match(meHome, /没有 Token 额度/);
+  assert.match(meHome, /申请合作企业/);
+  assert.match(meHome, /普通注册用户/);
+  const enterprisesView = readFileSync(
+    resolve(root, "web/src/views/admin/EnterprisesView.vue"),
+    "utf8",
+  );
+  assert.match(enterprisesView, /审核通过/);
+  assert.match(enterprisesView, /分配套餐/);
+  assert.match(enterprisesView, /ENTERPRISE_PACKAGES/);
+  assert.doesNotMatch(enterprisesView, /指定企业管理员/);
+  const usersView = readFileSync(resolve(root, "web/src/views/admin/UsersView.vue"), "utf8");
+  assert.match(usersView, /邀请已注册员工/);
+  assert.doesNotMatch(usersView, /新建员工/);
+  assert.doesNotMatch(usersView, /批量导入/);
 });

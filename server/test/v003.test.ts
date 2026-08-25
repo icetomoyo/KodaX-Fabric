@@ -11,7 +11,9 @@ process.env.QUOTA_TIMEZONE = "Asia/Shanghai";
 const {
   nextQuotaResetAt,
   quotaDayAt,
+  quotaMonthStartDay,
   zonedDateRange,
+  zonedMonthRange,
 } = await import("../src/lib/quota-time.js");
 const {
   appendOtherBucket,
@@ -31,6 +33,16 @@ test("quota day changes exactly at QUOTA_TIMEZONE midnight", () => {
     nextQuotaResetAt(new Date("2026-08-05T08:00:00.000Z"), "Asia/Shanghai"),
     "2026-08-06T00:00:00+08:00",
   );
+});
+
+test("quota month starts at QUOTA_TIMEZONE local midnight on the first", () => {
+  assert.equal(quotaMonthStartDay(new Date("2026-08-31T15:59:59.999Z"), "Asia/Shanghai"), "2026-08-01");
+  assert.equal(quotaMonthStartDay(new Date("2026-08-31T16:00:00.000Z"), "Asia/Shanghai"), "2026-09-01");
+  const august = zonedMonthRange(new Date("2026-08-15T08:00:00.000Z"), "Asia/Shanghai");
+  assert.equal(august.from, "2026-08-01");
+  assert.equal(august.to, "2026-08-31");
+  assert.equal(august.start.toISOString(), "2026-07-31T16:00:00.000Z");
+  assert.equal(august.endExclusive.toISOString(), "2026-08-31T16:00:00.000Z");
 });
 
 test("timezone date ranges use local closed days and survive DST", () => {

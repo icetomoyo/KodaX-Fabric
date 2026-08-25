@@ -1,5 +1,26 @@
 const numberFormatter = new Intl.NumberFormat("zh-CN");
 
+/** Quota is configured in millions of tokens. */
+export const TOKEN_MILLION = 1_000_000;
+
+export function tokensFromMillion(million: number): number {
+  return million * TOKEN_MILLION;
+}
+
+export function millionFromTokens(tokens: number): number {
+  return tokens / TOKEN_MILLION;
+}
+
+/** Quota / usage as millions, e.g. 12 M. */
+export function formatTokenMillion(value: number | null | undefined): string {
+  const n = Number(value ?? 0);
+  if (!Number.isFinite(n)) return "0 M";
+  const million = n / TOKEN_MILLION;
+  if (Number.isInteger(million)) return `${million} M`;
+  const rounded = Math.round(million * 1000) / 1000;
+  return `${rounded} M`;
+}
+
 /** Thousand-separated token count, e.g. 1,250,000. */
 export function formatTokenCount(value: number | null | undefined): string {
   const n = Number(value ?? 0);

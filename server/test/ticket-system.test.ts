@@ -42,18 +42,37 @@ test("employee ticket list is scoped to the current employee and omits content",
   assert.doesNotMatch(compiledSql, /join "employees"/);
 });
 
-test("admin ticket list joins employee data and searches all documented fields", () => {
+test("platform ticket list hides employee identity and searches enterprise name", () => {
   const query = buildAdminTicketListQuery({
     limit: 10,
     offset: 0,
-    q: "张三",
+    q: "海致",
+    includeEmployee: false,
   }).toSQL();
   const compiledSql = query.sql.replace(/\s+/g, " ");
 
   assert.match(compiledSql, /inner join "employees"/);
+  assert.match(compiledSql, /"enterprises"\."name"/);
   assert.match(compiledSql, /"tickets"\."ticket_no" ilike/);
   assert.match(compiledSql, /"tickets"\."subject" ilike/);
-  assert.match(compiledSql, /"employees"\."name" ilike/);
+  assert.doesNotMatch(compiledSql, /"employees"\."name" ilike/);
+  assert.doesNotMatch(compiledSql, /"employees"\."phone"/);
+  assert.doesNotMatch(compiledSql, /"content"/);
+});
+
+test("enterprise ticket list includes employee name for org admins", () => {
+  const query = buildAdminTicketListQuery({
+    limit: 10,
+    offset: 0,
+    q: "张三",
+    enterpriseId: 3,
+    includeEmployee: true,
+  }).toSQL();
+  const compiledSql = query.sql.replace(/\s+/g, " ");
+
+  assert.match(compiledSql, /"employees"\."name"/);
+  assert.match(compiledSql, /"employees"\."enterprise_id" =/);
+  assert.equal(query.params.includes(3), true);
   assert.doesNotMatch(compiledSql, /"content"/);
 });
 

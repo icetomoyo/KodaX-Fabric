@@ -1,0 +1,1 @@
+ALTER TABLE "enterprises" ADD COLUMN "daily_token_quota" bigint DEFAULT 0 NOT NULL;

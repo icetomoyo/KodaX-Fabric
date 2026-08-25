@@ -12,7 +12,6 @@ import {
 import { listEmployeeTeamQuotaViews } from "../../lib/team-quota.js";
 import {
   canAccessEmployee,
-  resolveCreatedUserFields,
   resolveUpdatedUserFields,
   resolveUserListScope,
 } from "../../lib/enterprise.js";
@@ -29,6 +28,7 @@ import {
   nextQuotaResetAt,
   quotaDayAt,
   zonedDateRange,
+  zonedMonthRange,
 } from "../../lib/quota-time.js";
 import {
   appendOtherBucket,
@@ -42,17 +42,7 @@ import {
   requireSession,
 } from "../../middleware/auth.js";
 
-const createRoleSchema = z.enum(["employee", "admin", "org_admin"]);
 const updateRoleSchema = z.enum(["employee", "admin", "org_admin", "team_admin"]);
-
-const createUserSchema = z.object({
-  name: z.string().min(1).max(100),
-  phone: z.string().min(5).max(20),
-  password: z.string().min(8).max(128),
-  dept: z.string().max(100).optional().nullable(),
-  role: createRoleSchema.default("employee"),
-  enterpriseId: z.number().int().positive().optional().nullable(),
-});
 
 const updateUserSchema = z
   .object({
@@ -110,7 +100,7 @@ function actorFrom(req: { session?: { role: SessionRole; enterpriseId: number | 
 export async function adminUserRoutes(app: FastifyInstance) {
   app.addHook("preHandler", requireSession);
   app.addHook("preHandler", requirePasswordChanged);
-  app.addHook("preHandler", requireRoles("admin", "org_admin"));
+  app.addHook("preHandler", requireRoles("org_admin"));
 
   app.get("/api/admin/users", async (req, reply) => {
     const query = z
@@ -274,7 +264,11 @@ export async function adminUserRoutes(app: FastifyInstance) {
         ))
         .limit(1);
     const usedToday = Number(todayRow?.totalTokens) || 0;
-    const teamQuotas = await listEmployeeTeamQuotaViews(employee.id, today);
+    const teamQuotas = await listEmployeeTeamQuotaViews(
+      employee.id,
+      today,
+      zonedMonthRange(now, env.QUOTA_TIMEZONE),
+    );
 
     return {
       success: true,
@@ -375,137 +369,18 @@ export async function adminUserRoutes(app: FastifyInstance) {
     return { success: true, data: result.employee };
   });
 
-  app.post("/api/admin/users", async (req, reply) => {
-    const body = createUserSchema.safeParse(req.body);
-    if (!body.success) {
-      return reply.code(400).send({ success: false, message: "参数无效", errors: body.error.flatten() });
-    }
-    const policy = validateNewPassword(body.data.password);
-    if (policy) {
-      return reply.code(400).send({ success: false, message: policy });
-    }
-
-    const membership = resolveCreatedUserFields(actorFrom(req), {
-      role: body.data.role,
-      enterpriseId: body.data.enterpriseId,
+  app.post("/api/admin/users", async (_req, reply) => {
+    return reply.code(403).send({
+      success: false,
+      message: "新账号只能由用户自行注册",
     });
-    if ("error" in membership) {
-      return reply.code(membership.status).send({ success: false, message: membership.error });
-    }
-
-    try {
-      const passwordHash = await hashPassword(body.data.password);
-      const [row] = await db
-        .insert(employees)
-        .values({
-          name: body.data.name,
-          phone: body.data.phone,
-          passwordHash,
-          dept: body.data.dept ?? null,
-          role: membership.role,
-          enterpriseId: membership.enterpriseId,
-          mustChangePassword: true,
-          createdBy: req.employeeId,
-        })
-        .returning({
-          id: employees.id,
-          name: employees.name,
-          phone: employees.phone,
-          role: employees.role,
-          status: employees.status,
-          enterpriseId: employees.enterpriseId,
-        });
-
-      await writeOpsAudit({
-        actorEmployeeId: req.employeeId,
-        action: "user.create",
-        targetType: "employee",
-        targetId: String(row.id),
-        detail: { phone: row.phone, role: row.role, enterpriseId: row.enterpriseId },
-        ip: req.ip,
-      });
-
-      return { success: true, data: row };
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      if (msg.includes("employees_phone_uidx") || msg.includes("unique")) {
-        return reply.code(409).send({ success: false, message: "手机号已存在" });
-      }
-      throw e;
-    }
   });
 
-  app.post("/api/admin/users/import", async (req, reply) => {
-    const body = z
-      .object({
-        users: z.array(createUserSchema).min(1).max(500),
-      })
-      .safeParse(req.body);
-
-    if (!body.success) {
-      return reply.code(400).send({ success: false, message: "参数无效" });
-    }
-
-    const results: Array<{ phone: string; ok: boolean; error?: string; id?: number }> = [];
-
-    for (const u of body.data.users) {
-      const policy = validateNewPassword(u.password);
-      if (policy) {
-        results.push({ phone: u.phone, ok: false, error: policy });
-        continue;
-      }
-      const membership = resolveCreatedUserFields(actorFrom(req), {
-        role: u.role,
-        enterpriseId: u.enterpriseId,
-      });
-      if ("error" in membership) {
-        results.push({ phone: u.phone, ok: false, error: membership.error });
-        continue;
-      }
-      try {
-        const passwordHash = await hashPassword(u.password);
-        const [row] = await db
-          .insert(employees)
-          .values({
-            name: u.name,
-            phone: u.phone,
-            passwordHash,
-            dept: u.dept ?? null,
-            role: membership.role,
-            enterpriseId: membership.enterpriseId,
-            mustChangePassword: true,
-            createdBy: req.employeeId,
-          })
-          .returning({ id: employees.id });
-        results.push({ phone: u.phone, ok: true, id: row.id });
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        results.push({
-          phone: u.phone,
-          ok: false,
-          error: msg.includes("unique") ? "手机号已存在" : msg,
-        });
-      }
-    }
-
-    const success = results.filter((r) => r.ok).length;
-    await writeOpsAudit({
-      actorEmployeeId: req.employeeId,
-      action: "user.import",
-      targetType: "employee",
-      detail: { total: results.length, success, failed: results.length - success },
-      ip: req.ip,
+  app.post("/api/admin/users/import", async (_req, reply) => {
+    return reply.code(403).send({
+      success: false,
+      message: "新账号只能由用户自行注册",
     });
-
-    return {
-      success: true,
-      data: {
-        total: results.length,
-        success,
-        failed: results.length - success,
-        results,
-      },
-    };
   });
 
   app.patch("/api/admin/users/:id", async (req, reply) => {

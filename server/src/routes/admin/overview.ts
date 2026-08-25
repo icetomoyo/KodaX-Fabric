@@ -3,10 +3,12 @@ import { count, desc, eq, sql } from "drizzle-orm";
 import { db } from "../../db/client.js";
 import {
   employees,
+  enterprises,
   modelRoutes,
   providers,
   requestAudits,
-  usageCountersDaily,
+  teams,
+  usageCountersTeamDaily,
 } from "../../db/schema/index.js";
 import { getChannelOverviewStats } from "../../lib/channel-overview.js";
 import {
@@ -22,11 +24,11 @@ export async function adminOverviewRoutes(app: FastifyInstance) {
 
   app.get("/api/admin/overview", async () => {
     const now = new Date();
-    const [userCount] = await db.select({ n: count() }).from(employees);
-    const [activeUsers] = await db
+    const [enterpriseCount] = await db.select({ n: count() }).from(enterprises);
+    const [activeEnterprises] = await db
       .select({ n: count() })
-      .from(employees)
-      .where(eq(employees.status, "active"));
+      .from(enterprises)
+      .where(eq(enterprises.status, "active"));
     const channels = await getChannelOverviewStats(now);
     const [providerCount] = await db.select({ n: count() }).from(providers);
     const [routeCount] = await db
@@ -51,18 +53,24 @@ export async function adminOverviewRoutes(app: FastifyInstance) {
         sql`${requestAudits.createdAt}::date = current_date and ${requestAudits.status} <> 'success'`,
       );
 
-    const topUsers = await db
+    const topTeams = await db
       .select({
-        employeeId: usageCountersDaily.employeeId,
-        name: employees.name,
-        phone: employees.phone,
-        totalTokens: usageCountersDaily.totalTokens,
-        requestCount: usageCountersDaily.requestCount,
+        teamId: usageCountersTeamDaily.teamId,
+        teamName: teams.name,
+        enterpriseName: enterprises.name,
+        totalTokens: sql<number>`coalesce(sum(${usageCountersTeamDaily.totalTokens}), 0)`,
+        requestCount: sql<number>`coalesce(sum(${usageCountersTeamDaily.requestCount}), 0)`,
       })
-      .from(usageCountersDaily)
-      .innerJoin(employees, eq(usageCountersDaily.employeeId, employees.id))
-      .where(sql`${usageCountersDaily.day} = current_date`)
-      .orderBy(desc(usageCountersDaily.totalTokens))
+      .from(usageCountersTeamDaily)
+      .innerJoin(teams, eq(usageCountersTeamDaily.teamId, teams.id))
+      .innerJoin(enterprises, eq(teams.enterpriseId, enterprises.id))
+      .where(sql`${usageCountersTeamDaily.day} = current_date`)
+      .groupBy(
+        usageCountersTeamDaily.teamId,
+        teams.name,
+        enterprises.name,
+      )
+      .orderBy(sql`sum(${usageCountersTeamDaily.totalTokens}) desc`)
       .limit(10);
 
     const byProvider = await db
@@ -79,8 +87,8 @@ export async function adminOverviewRoutes(app: FastifyInstance) {
     const recentErrors = await db
       .select({
         requestId: requestAudits.requestId,
-        employeeId: requestAudits.employeeId,
-        employeeName: employees.name,
+        enterpriseName: enterprises.name,
+        teamName: teams.name,
         clientModel: requestAudits.clientModel,
         providerCode: requestAudits.providerCode,
         status: requestAudits.status,
@@ -90,6 +98,8 @@ export async function adminOverviewRoutes(app: FastifyInstance) {
       })
       .from(requestAudits)
       .innerJoin(employees, eq(requestAudits.employeeId, employees.id))
+      .leftJoin(enterprises, eq(employees.enterpriseId, enterprises.id))
+      .leftJoin(teams, eq(requestAudits.teamId, teams.id))
       .where(sql`${requestAudits.status} <> 'success'`)
       .orderBy(desc(requestAudits.id))
       .limit(10);
@@ -97,7 +107,7 @@ export async function adminOverviewRoutes(app: FastifyInstance) {
     return {
       success: true,
       data: {
-        employees: { total: userCount.n, active: activeUsers.n },
+        enterprises: { total: enterpriseCount.n, active: activeEnterprises.n },
         channels,
         providers: providerCount.n,
         modelRoutesEnabled: routeCount.n,
@@ -106,7 +116,7 @@ export async function adminOverviewRoutes(app: FastifyInstance) {
           tokens: Number(todayTokens.tokens ?? 0),
           errors: todayErrors.n,
         },
-        topUsersToday: topUsers,
+        topTeamsToday: topTeams,
         byProviderToday: byProvider,
         recentErrors,
       },

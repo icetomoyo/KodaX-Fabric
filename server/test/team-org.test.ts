@@ -103,7 +103,7 @@ test("team_admin list SQL is constrained to administered teams", () => {
   const compiled = buildTeamListQuery(scope).toSQL();
   const compiledSql = compiled.sql.replace(/\s+/g, " ");
   assert.match(compiledSql, /from "teams"/);
-  assert.match(compiledSql, /daily_token_quota/);
+  assert.match(compiledSql, /monthly_yuan_quota/);
   assert.match(compiledSql, /usage_counters_team_daily/);
   assert.match(compiledSql, /"teams"\."id" in/i);
   assert.equal(compiled.params.includes(8), true);
@@ -125,16 +125,59 @@ test("org_admin list SQL constrains teams to one enterprise", () => {
   assert.doesNotMatch(compiled.sql.replace(/\s+/g, " "), /"teams"\."id" in/i);
 });
 
+test("super-admin cannot list or create teams", async () => {
+  const app = Fastify();
+  app.addHook("onRequest", async (req: { session?: Record<string, unknown>; employeeId?: number }) => {
+    req.session = {
+      sub: "1",
+      role: "admin",
+      phone: "13800000000",
+      name: "Super",
+      mustChangePassword: false,
+      enterpriseId: 1,
+    };
+    req.employeeId = 1;
+  });
+  await app.register(adminTeamRoutes);
+  await app.ready();
+  try {
+    const list = await app.inject({ method: "GET", url: "/api/admin/teams" });
+    const create = await app.inject({
+      method: "POST",
+      url: "/api/admin/teams",
+      payload: { name: "Platform Team", enterpriseId: 1 },
+    });
+    assert.equal(list.statusCode, 403);
+    assert.equal(create.statusCode, 403);
+  } finally {
+    await app.close();
+  }
+});
+
 test("admin shell source includes 团队管理 for org and team admins", () => {
   const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
   const layout = readFileSync(resolve(root, "web/src/layouts/AdminLayout.vue"), "utf8");
   const home = readFileSync(resolve(root, "web/src/lib/home.ts"), "utf8");
   const router = readFileSync(resolve(root, "web/src/router/index.ts"), "utf8");
   assert.match(layout, /团队管理/);
+  assert.match(layout, /v-if="!auth.isSuperAdmin" index="\/admin\/teams"/);
+  assert.match(layout, /团队成员/);
+  assert.match(layout, /v-if="auth.isTeamAdmin" index="\/admin\/members"/);
+  assert.match(layout, /项目管理/);
+  assert.match(layout, /v-if="auth.isTeamAdmin" index="\/admin\/projects"/);
   assert.match(home, /team_admin/);
   assert.match(home, /\/admin\/teams/);
   assert.match(router, /admin-teams/);
+  assert.match(router, /admin-members/);
+  assert.match(router, /admin-projects/);
   assert.match(router, /team_admin/);
+  assert.doesNotMatch(router, /admin-team-detail/);
+  const teamsView = readFileSync(resolve(root, "web/src/views/admin/TeamsView.vue"), "utf8");
+  assert.match(teamsView, />详情</);
+  assert.match(teamsView, /el-drawer/);
+  const membersView = readFileSync(resolve(root, "web/src/views/admin/MembersView.vue"), "utf8");
+  assert.match(membersView, /邀请已注册员工/);
+  assert.match(membersView, /已注册用户的手机号/);
 });
 
 test("joining a second team is rejected with a named 409 message", () => {
@@ -160,9 +203,9 @@ test("re-adding a member to the same team keeps the existing 409 copy", () => {
 
 test("team member add dialog surfaces backend 409 messages", () => {
   const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
-  const detail = readFileSync(resolve(root, "web/src/views/admin/TeamDetailView.vue"), "utf8");
-  assert.match(detail, /requestMessage/);
-  assert.match(detail, /response\?\.data\?\.message/);
+  const membersView = readFileSync(resolve(root, "web/src/views/admin/MembersView.vue"), "utf8");
+  assert.match(membersView, /response\?\.data\?\.message/);
+  assert.match(membersView, /已注册用户的手机号/);
 });
 
 test("employee unique membership migration cleans duplicates before the unique index", () => {

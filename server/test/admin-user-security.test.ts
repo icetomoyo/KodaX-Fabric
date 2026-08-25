@@ -40,6 +40,12 @@ test("admin routes do not expose employee API-key metadata or plaintext", async 
       false,
     );
     assert.equal(app.hasRoute({ method: "GET", url: "/api/admin/users" }), true);
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/admin/users",
+      payload: { name: "A", phone: "13800001111", password: "ChangeMe@123" },
+    });
+    assert.equal(created.statusCode, 401);
   } finally {
     await app.close();
   }

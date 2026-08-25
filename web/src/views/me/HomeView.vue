@@ -2,25 +2,35 @@
   <div class="page-card">
     <h2 class="page-title">我的工作台</h2>
     <el-alert
-      v-if="!hasEnterprise"
+      v-if="pendingApplication"
       class="join-alert"
-      title="当前未加入企业，没有 Token 额度"
+      :title="`合作企业「${pendingApplication.name}」审核中`"
+      type="info"
+      show-icon
+      :closable="false"
+    >
+      <p>超级管理员通过后，你将成为该企业的企业管理员。现在还是普通注册用户，没有员工权限。</p>
+    </el-alert>
+    <el-alert
+      v-else-if="!hasEnterprise"
+      class="join-alert"
+      title="当前是普通注册用户，没有员工权限"
       type="warning"
       show-icon
       :closable="false"
     >
-      <p>请向企业管理员索取企业编号并加入后，才能创建 API Key 和调用模型。</p>
-      <el-form inline @submit.prevent="onJoin">
+      <p>可申请成为合作企业，或等待已有企业的团队管理员用你的注册手机号邀请入团。</p>
+      <el-form inline @submit.prevent="onApply">
         <el-form-item>
-          <el-input v-model="joinCode" placeholder="企业编号，例如 E7K2M9QX" maxlength="16" />
+          <el-input v-model="applyName" placeholder="合作企业名称" maxlength="100" />
         </el-form-item>
         <el-form-item>
-          <el-button type="primary" :loading="joining" native-type="submit">加入企业</el-button>
+          <el-button type="primary" :loading="applying" native-type="submit">申请合作企业</el-button>
         </el-form-item>
       </el-form>
     </el-alert>
     <el-alert
-      v-else
+      v-else-if="hasTeam"
       class="join-alert"
       :title="`已加入 ${membershipName}（编号 ${membershipCode}）`"
       type="success"
@@ -46,24 +56,24 @@
           />
           <template v-else>
             <div class="quota-row">
-              <span>团队额度</span>
-              <b>{{ formatTokenCompact(team.teamQuota) }}</b>
+              <span>团队每月额度</span>
+              <b>{{ formatYuan(team.teamQuota) }}</b>
             </div>
             <div class="quota-row">
-              <span>团队今日已用</span>
-              <b>{{ formatTokenCompact(team.teamUsedToday) }}</b>
+              <span>团队本月已用</span>
+              <b>{{ formatYuan(team.teamUsedMonth) }}</b>
             </div>
             <el-progress
-              :percentage="usagePercent(team.teamUsedToday, team.teamQuota)"
-              :status="usageProgressStatus(team.teamUsedToday, team.teamQuota)"
+              :percentage="usagePercent(team.teamUsedMonth, team.teamQuota)"
+              :status="usageProgressStatus(team.teamUsedMonth, team.teamQuota)"
             />
             <div class="quota-row">
               <span>我的上限</span>
-              <b>{{ team.myLimit == null ? "不限（受团队池约束）" : formatTokenCompact(team.myLimit) }}</b>
+              <b>{{ team.myLimit == null ? "不限（受团队池约束）" : formatTokenMillion(team.myLimit) }}</b>
             </div>
             <div class="quota-row">
               <span>我的今日已用</span>
-              <b>{{ formatTokenCompact(team.myUsedToday) }}</b>
+              <b>{{ formatTokenMillion(team.myUsedToday) }}</b>
             </div>
             <el-progress
               v-if="team.myLimit != null"
@@ -75,9 +85,9 @@
       </div>
     </section>
     <el-alert
-      v-else-if="hasEnterprise"
+      v-else-if="hasEnterprise && !hasTeam"
       class="join-alert"
-      title="尚未加入团队。请让企业管理员或团队管理员把你加入团队后，才能创建 API Key 和调用模型。"
+      title="尚未加入团队，仍是普通注册用户。被邀请进团队后才有员工权限（API Key / 调用）。"
       type="info"
       show-icon
       :closable="false"
@@ -116,7 +126,7 @@
 import { computed, onMounted, ref } from "vue";
 import { ElMessage } from "element-plus";
 import { http } from "@/api/http";
-import { formatTokenCompact, usagePercent, usageProgressStatus } from "@/lib/tokens";
+import { formatTokenMillion, formatYuan, usagePercent, usageProgressStatus } from "@/lib/tokens";
 import { useAuthStore } from "@/stores/auth";
 import {
   RELAY_BASE_PATH,
@@ -127,7 +137,7 @@ type TeamQuota = {
   teamId: number;
   teamName: string;
   teamQuota: number;
-  teamUsedToday: number;
+  teamUsedMonth: number;
   myLimit: number | null;
   myUsedToday: number;
 };
@@ -146,8 +156,14 @@ type UsageResponse = {
 };
 
 const auth = useAuthStore();
-const joinCode = ref("");
-const joining = ref(false);
+const applyName = ref("");
+const applying = ref(false);
+const orgEnterprise = ref<{
+  id: number;
+  name: string;
+  code: string;
+  status: string;
+} | null>(null);
 const orgTeams = ref<
   Array<{
     id: number;
@@ -157,16 +173,18 @@ const orgTeams = ref<
 >([]);
 const usage = ref<UsageResponse | null>(null);
 
-const hasEnterprise = computed(
-  () => Boolean(usage.value?.membership?.enterpriseId || auth.user?.enterpriseId),
+const teamQuotas = computed(() => usage.value?.teams ?? []);
+const pendingApplication = computed(() =>
+  orgEnterprise.value?.status === "pending" ? orgEnterprise.value : null,
 );
+const hasEnterprise = computed(() => orgEnterprise.value?.status === "active");
+const hasTeam = computed(() => teamQuotas.value.length > 0 || orgTeams.value.length > 0);
 const membershipName = computed(
-  () => usage.value?.membership?.enterpriseName || auth.user?.enterprise?.name || "",
+  () => orgEnterprise.value?.name || usage.value?.membership?.enterpriseName || auth.user?.enterprise?.name || "",
 );
 const membershipCode = computed(
-  () => usage.value?.membership?.enterpriseCode || auth.user?.enterprise?.code || "",
+  () => orgEnterprise.value?.code || usage.value?.membership?.enterpriseCode || auth.user?.enterprise?.code || "",
 );
-const teamQuotas = computed(() => usage.value?.teams ?? []);
 
 const relayBaseUrl = computed(
   () => usage.value?.relay?.baseUrl || `${window.location.origin}${RELAY_BASE_PATH}`,
@@ -182,33 +200,35 @@ function teamRoleLabel(teamId: number): string {
 async function loadUsage() {
   const { data } = await http.get("/api/me/usage");
   if (data.success) usage.value = data.data;
-  if (auth.user?.enterpriseId) {
-    const org = await http.get("/api/me/org");
-    if (org.data.success) orgTeams.value = org.data.data.teams;
+  const org = await http.get("/api/me/org");
+  if (org.data.success) {
+    orgEnterprise.value = org.data.data.enterprise ?? null;
+    orgTeams.value = org.data.data.teams ?? [];
   } else {
+    orgEnterprise.value = null;
     orgTeams.value = [];
   }
 }
 
-async function onJoin() {
-  const code = joinCode.value.trim();
-  if (!code) {
-    ElMessage.warning("请填写企业编号");
+async function onApply() {
+  const name = applyName.value.trim();
+  if (!name) {
+    ElMessage.warning("请填写企业名称");
     return;
   }
-  joining.value = true;
+  applying.value = true;
   try {
-    const enterprise = await auth.joinEnterprise(code);
-    ElMessage.success(`已加入 ${enterprise.name}，请等待管理员将你加入团队并分配额度`);
-    joinCode.value = "";
+    const enterprise = await auth.applyEnterprise(name);
+    ElMessage.success(`已提交「${enterprise.name}」合作申请，请等待超级管理员审核`);
+    applyName.value = "";
     await loadUsage();
   } catch (e: unknown) {
     const message = (e as { response?: { data?: { message?: string } } }).response?.data?.message
       || (e as Error).message
-      || "加入失败";
+      || "提交失败";
     ElMessage.error(message);
   } finally {
-    joining.value = false;
+    applying.value = false;
   }
 }
 

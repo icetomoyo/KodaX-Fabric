@@ -2,8 +2,17 @@ import { randomUUID } from "node:crypto";
 import { and, eq, sql } from "drizzle-orm";
 import { env } from "../../config.js";
 import { db } from "../../db/client.js";
-import { teamMembers, teams, usageCountersTeamDaily } from "../../db/schema/index.js";
-import { quotaDayAt } from "../quota-time.js";
+import {
+  enterprises,
+  modelPrices,
+  requestAudits,
+  teamMembers,
+  teams,
+  usageCountersTeamDaily,
+} from "../../db/schema/index.js";
+import { packageMonthlyYuan, yuanToCents } from "../enterprise-package.js";
+import { sumRequestCostYuanSql } from "../model-cost.js";
+import { quotaDayAt, zonedMonthRange } from "../quota-time.js";
 import { redis } from "../../redis.js";
 
 export type RelayQuotaLease = {
@@ -24,6 +33,7 @@ export class RelayLimitError extends Error {
 
 const PERMISSION_LIMIT_CODES = new Set([
   "enterprise_required",
+  "enterprise_quota_not_assigned",
   "team_required",
   "team_quota_not_assigned",
 ]);
@@ -44,15 +54,21 @@ export function assertTeamBound(teamId: number | null | undefined): asserts team
   }
 }
 
-export function assertTeamQuotaAssigned(dailyTokenQuota: number): void {
-  if (dailyTokenQuota <= 0) {
-    throw new RelayLimitError("团队尚未分配每日 Token 额度", "team_quota_not_assigned");
+export function assertEnterprisePackageAssigned(monthlyYuan: number): void {
+  if (monthlyYuan <= 0) {
+    throw new RelayLimitError("企业尚未获得套餐，无法转发", "enterprise_quota_not_assigned");
   }
 }
 
-export function assertTeamQuotaNotExceeded(usedTokens: number, dailyTokenQuota: number): void {
-  if (usedTokens >= dailyTokenQuota) {
-    throw new RelayLimitError("团队今日 Token 配额已用尽", "team_quota_exceeded");
+export function assertTeamQuotaAssigned(monthlyYuan: number): void {
+  if (monthlyYuan <= 0) {
+    throw new RelayLimitError("团队尚未分配每月额度，无法转发", "team_quota_not_assigned");
+  }
+}
+
+export function assertTeamQuotaNotExceeded(usedYuan: number, monthlyYuan: number): void {
+  if (yuanToCents(usedYuan) >= yuanToCents(monthlyYuan)) {
+    throw new RelayLimitError("团队本月套餐额度已用尽", "team_quota_exceeded");
   }
 }
 
@@ -150,31 +166,42 @@ export async function acquireRelayQuota(
 ): Promise<RelayQuotaLease> {
   assertTeamBound(teamId);
 
-  const quotaDay = quotaDayAt(new Date(), env.QUOTA_TIMEZONE);
+  const now = new Date();
+  const quotaDay = quotaDayAt(now, env.QUOTA_TIMEZONE);
+  const month = zonedMonthRange(now, env.QUOTA_TIMEZONE);
+  const monthStartAt = month.start.toISOString();
+  const monthEndAt = month.endExclusive.toISOString();
   const [team] = await db
     .select({
       id: teams.id,
-      dailyTokenQuota: teams.dailyTokenQuota,
+      monthlyYuanQuota: teams.monthlyYuanQuota,
+      packagePlan: enterprises.packagePlan,
     })
     .from(teams)
+    .innerJoin(enterprises, eq(teams.enterpriseId, enterprises.id))
     .where(eq(teams.id, teamId))
     .limit(1);
   if (!team) {
     throw new RelayLimitError("API Key 未绑定团队，无法转发", "team_required");
   }
 
-  assertTeamQuotaAssigned(team.dailyTokenQuota);
+  const packageYuan = packageMonthlyYuan(team.packagePlan);
+  const teamYuan = Number(team.monthlyYuanQuota);
+  assertEnterprisePackageAssigned(packageYuan);
+  assertTeamQuotaAssigned(teamYuan);
 
   const [[teamUsed], [member], [memberUsed]] = await Promise.all([
     db
       .select({
-        totalTokens: sql<number>`coalesce(sum(${usageCountersTeamDaily.totalTokens}), 0)`,
+        costYuan: sumRequestCostYuanSql,
       })
-      .from(usageCountersTeamDaily)
+      .from(requestAudits)
+      .leftJoin(modelPrices, eq(modelPrices.model, requestAudits.clientModel))
       .where(
         and(
-          eq(usageCountersTeamDaily.teamId, teamId),
-          eq(usageCountersTeamDaily.day, quotaDay),
+          eq(requestAudits.teamId, teamId),
+          sql`${requestAudits.createdAt} >= ${monthStartAt}::timestamptz`,
+          sql`${requestAudits.createdAt} < ${monthEndAt}::timestamptz`,
         ),
       ),
     db
@@ -195,7 +222,7 @@ export async function acquireRelayQuota(
       .limit(1),
   ]);
 
-  assertTeamQuotaNotExceeded(Number(teamUsed?.totalTokens ?? 0), team.dailyTokenQuota);
+  assertTeamQuotaNotExceeded(Number(teamUsed?.costYuan ?? 0), teamYuan);
   assertMemberLimitNotExceeded(memberUsed?.totalTokens ?? 0, member?.dailyTokenLimit);
 
   await ensureRedisReady();

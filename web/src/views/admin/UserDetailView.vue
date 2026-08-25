@@ -51,14 +51,14 @@
         />
         <el-table v-else :data="usage.quota.teams" stripe>
           <el-table-column prop="teamName" label="团队" min-width="140" />
-          <el-table-column label="团队每日额度" min-width="140">
+          <el-table-column label="团队每月额度" min-width="140">
             <template #default="{ row }">
               <el-tag v-if="row.teamQuota === 0" type="danger" size="small">未分配</el-tag>
-              <span v-else>{{ formatNumber(row.teamQuota) }}</span>
+              <span v-else>{{ formatYuan(row.teamQuota) }}</span>
             </template>
           </el-table-column>
-          <el-table-column label="团队今日已用" min-width="130">
-            <template #default="{ row }">{{ formatNumber(row.teamUsedToday) }}</template>
+          <el-table-column label="团队本月已用" min-width="130">
+            <template #default="{ row }">{{ formatYuan(row.teamUsedMonth) }}</template>
           </el-table-column>
           <el-table-column label="个人每日上限" min-width="180">
             <template #default="{ row }">
@@ -152,6 +152,7 @@ import type { EChartsCoreOption } from "echarts/core";
 import { http } from "@/api/http";
 import UsageChart from "@/components/UsageChart.vue";
 import { formatDateTime, formatDateTimeInTimeZone } from "@/lib/date-time";
+import { formatYuan } from "@/lib/tokens";
 
 type UsageCounts = {
   promptTokens: number;
@@ -185,7 +186,7 @@ type UsageResponse = {
       teamId: number;
       teamName: string;
       teamQuota: number;
-      teamUsedToday: number;
+      teamUsedMonth: number;
       myLimit: number | null;
       myUsedToday: number;
     }>;

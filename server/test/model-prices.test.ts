@@ -161,7 +161,7 @@ test("daily usage fill keeps costYuan as a 2-decimal string", () => {
 
 test("team list SQL folds request_audits cost with coalesce-0 for missing prices", () => {
   const scope = resolveTeamListScope(
-    { role: "admin", enterpriseId: null, employeeId: 1 },
+    { role: "org_admin", enterpriseId: 4, employeeId: 1 },
     undefined,
     [],
   );
@@ -175,6 +175,11 @@ test("team list SQL folds request_audits cost with coalesce-0 for missing prices
   assert.match(compiledSql, /\/ 1000000/);
   assert.match(compiledSql, /coalesce\("model_prices"\."prompt_price_per_million", 0\)/);
   assert.match(compiledSql, /coalesce\("model_prices"\."completion_price_per_million", 0\)/);
+  assert.equal(
+    compiled.params.some((value) => value instanceof Date),
+    false,
+    "cost window must bind ISO strings; Date params throw in postgres.js",
+  );
 });
 
 test("team usage SQL aggregates cost in numeric and marks unpriced models", () => {
@@ -189,9 +194,15 @@ test("team usage SQL aggregates cost in numeric and marks unpriced models", () =
   assert.match(dailySql, /from "request_audits"/);
   assert.match(dailySql, /left join "model_prices"/);
   assert.match(dailySql, /at time zone/);
+  assert.match(dailySql, /group by 1/i);
   assert.match(dailySql, /\/ 1000000/);
   assert.match(dailySql, /coalesce\(sum\(/);
   assert.equal(daily.params.includes(8), true);
+  assert.equal(
+    daily.params.some((value) => value instanceof Date),
+    false,
+    "usage window must bind ISO strings; Date params throw in postgres.js",
+  );
 
   const byModel = buildTeamUsageByModelQuery(range).toSQL();
   const byModelSql = byModel.sql.replace(/\s+/g, " ");

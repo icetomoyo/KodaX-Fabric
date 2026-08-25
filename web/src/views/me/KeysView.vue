@@ -9,17 +9,9 @@
         <el-button type="primary" :disabled="!canIssueKey" @click="openCreate">创建 Key</el-button>
       </div>
       <el-alert
-        v-if="!hasEnterprise"
+        v-if="!hasTeam"
         class="join-alert"
-        title="未加入企业，无法创建 API Key。请先在工作台填写企业编号加入企业。"
-        type="warning"
-        show-icon
-        :closable="false"
-      />
-      <el-alert
-        v-else-if="!hasTeam"
-        class="join-alert"
-        title="未加入团队，无法创建 API Key。请让企业管理员或团队管理员把你加入团队。"
+        title="尚未加入团队，没有员工权限。请等待团队管理员用你的注册手机号邀请。"
         type="warning"
         show-icon
         :closable="false"
@@ -324,10 +316,9 @@ import {
 } from "@/views/relay-protocol";
 
 const auth = useAuthStore();
-const hasEnterprise = computed(() => Boolean(auth.user?.enterpriseId));
 const teams = ref<Array<{ id: number; name: string }>>([]);
 const hasTeam = computed(() => teams.value.length > 0);
-const canIssueKey = computed(() => hasEnterprise.value && hasTeam.value);
+const canIssueKey = computed(() => hasTeam.value);
 
 type KeyRow = {
   id: number;
@@ -457,10 +448,6 @@ function keyStatusLabel(status: string) {
 }
 
 async function loadTeams() {
-  if (!hasEnterprise.value) {
-    teams.value = [];
-    return;
-  }
   try {
     const { data } = await http.get("/api/me/org");
     if (data.success) teams.value = Array.isArray(data.data?.teams) ? data.data.teams : [];

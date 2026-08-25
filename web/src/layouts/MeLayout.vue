@@ -16,7 +16,7 @@
           <strong>{{ auth.user?.name }}</strong>
           <span class="muted">
             · {{ auth.user?.phone }}
-            · {{ auth.user?.enterprise?.name ? `${auth.user.enterprise.name} · ${auth.user.enterprise.code}` : "未加入企业" }}
+            · {{ auth.user?.enterprise?.name ? `${auth.user.enterprise.name} · ${auth.user.enterprise.code}` : "普通注册用户" }}
           </span>
         </div>
         <div class="header-right">

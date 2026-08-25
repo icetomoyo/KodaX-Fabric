@@ -2,7 +2,7 @@
   <div class="wrap">
     <div class="card">
       <h1>TokenHub</h1>
-      <p class="muted">个人注册后暂无 Token 额度，加入企业后才能调用模型</p>
+      <p class="muted">注册后为普通用户。申请合作企业通过后成为企业管理员；被邀请进团队后才有员工权限。</p>
       <el-form label-position="top" @submit.prevent="onSubmit">
         <el-form-item label="手机号">
           <el-input v-model="phone" autocomplete="username" placeholder="登录手机号" />
@@ -13,7 +13,7 @@
             type="password"
             show-password
             autocomplete="current-password"
-            placeholder="初始密码首次登录后需修改"
+            placeholder="请输入密码"
           />
         </el-form-item>
         <el-button type="primary" native-type="submit" :loading="loading" style="width: 100%">
@@ -24,27 +24,12 @@
     </div>
 
     <el-dialog v-model="showRegister" title="注册" width="460px" destroy-on-close>
-      <el-tabs v-model="registerKind">
-        <el-tab-pane label="个人注册" name="personal">
-          <p class="register-tip">
-            注册后可立即使用初始密码 Hz@123456 登录。加入企业（填写企业编号）后才有 Token 额度。
-          </p>
-        </el-tab-pane>
-        <el-tab-pane label="企业注册" name="enterprise">
-          <p class="register-tip">
-            提交后由超级管理员审核企业。审核通过后，申请人成为该企业的企业管理员，可使用初始密码 Hz@123456 登录。
-          </p>
-        </el-tab-pane>
-      </el-tabs>
+      <p class="register-tip">
+        设置登录密码后即可使用。登录后可申请合作企业，或等待团队邀请后获得员工权限。
+      </p>
       <el-form label-position="top" @submit.prevent="onRegister">
-        <el-form-item v-if="registerKind === 'enterprise'" label="企业名称" required>
-          <el-input v-model="registerForm.enterpriseName" placeholder="请输入企业名称" />
-        </el-form-item>
         <el-form-item label="姓名" required>
           <el-input v-model="registerForm.name" autocomplete="name" placeholder="请输入姓名" />
-        </el-form-item>
-        <el-form-item v-if="registerKind === 'personal'" label="部门" required>
-          <el-input v-model="registerForm.dept" autocomplete="organization" placeholder="请输入部门" />
         </el-form-item>
         <el-form-item label="手机号" required>
           <el-input
@@ -53,12 +38,19 @@
             placeholder="请输入手机号"
           />
         </el-form-item>
+        <el-form-item label="密码" required>
+          <el-input
+            v-model="registerForm.password"
+            type="password"
+            show-password
+            autocomplete="new-password"
+            placeholder="至少 8 位，需包含字母和数字"
+          />
+        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="showRegister = false">取消</el-button>
-        <el-button type="primary" :loading="registering" @click="onRegister">
-          {{ registerKind === "enterprise" ? "提交企业申请" : "提交注册" }}
-        </el-button>
+        <el-button type="primary" :loading="registering" @click="onRegister">提交注册</el-button>
       </template>
     </el-dialog>
   </div>
@@ -76,12 +68,10 @@ const password = ref("");
 const loading = ref(false);
 const showRegister = ref(false);
 const registering = ref(false);
-const registerKind = ref<"personal" | "enterprise">("personal");
 const registerForm = reactive({
   name: "",
-  dept: "",
   phone: "",
-  enterpriseName: "",
+  password: "",
 });
 const auth = useAuthStore();
 const router = useRouter();
@@ -122,45 +112,29 @@ async function onSubmit() {
 }
 
 function openRegister() {
-  registerKind.value = "personal";
   registerForm.name = "";
-  registerForm.dept = "";
   registerForm.phone = "";
-  registerForm.enterpriseName = "";
+  registerForm.password = "";
   showRegister.value = true;
 }
 
 async function onRegister() {
-  if (!registerForm.name.trim() || !registerForm.phone.trim()) {
-    ElMessage.warning("请填写姓名和手机号");
-    return;
-  }
-  if (registerKind.value === "personal" && !registerForm.dept.trim()) {
-    ElMessage.warning("请填写部门");
-    return;
-  }
-  if (registerKind.value === "enterprise" && !registerForm.enterpriseName.trim()) {
-    ElMessage.warning("请填写企业名称");
+  if (!registerForm.name.trim() || !registerForm.phone.trim() || !registerForm.password) {
+    ElMessage.warning("请填写姓名、手机号和密码");
     return;
   }
 
   registering.value = true;
   try {
-    const result = await auth.register({
-      kind: registerKind.value,
+    await auth.register({
       name: registerForm.name.trim(),
       phone: registerForm.phone.trim(),
-      dept: registerForm.dept.trim() || undefined,
-      enterpriseName: registerForm.enterpriseName.trim() || undefined,
+      password: registerForm.password,
     });
     phone.value = registerForm.phone.trim();
+    password.value = registerForm.password;
     showRegister.value = false;
-    if (registerKind.value === "enterprise") {
-      const code = result.enterprise?.code ? `企业编号 ${result.enterprise.code}。` : "";
-      ElMessage.success(`企业申请已提交。${code}请等待超级管理员审核，通过后使用初始密码 Hz@123456 登录。`);
-    } else {
-      ElMessage.success("注册成功。请使用初始密码 Hz@123456 登录，加入企业后才有 Token 额度。");
-    }
+    ElMessage.success("注册成功，请登录");
   } catch (e: unknown) {
     const msg =
       (e as { response?: { data?: { message?: string } } })?.response?.data?.message ||

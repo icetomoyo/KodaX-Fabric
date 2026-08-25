@@ -1,163 +1,133 @@
 <template>
-  <div class="page-card logs-page">
-    <h2 class="page-title">我的调用记录</h2>
+  <div class="logs-page">
+    <section class="page-card">
+      <div class="page-head">
+        <div>
+          <h2 class="page-title">我的调用</h2>
+          <p class="page-subtitle">查看自己的调用记录、耗时与用量</p>
+        </div>
+      </div>
 
-    <el-form :inline="true" size="small" class="filters" @keyup.enter="search">
-      <el-form-item>
-        <div class="metric-filter">
-          <span class="metric-filter-label">耗时</span>
-          <el-select v-model="filters.latencyOp" style="width: 76px">
-            <el-option label="大于" value="gt" />
-            <el-option label="小于" value="lt" />
-          </el-select>
-          <el-input v-model="filters.latencyMs" clearable placeholder="ms" style="width: 92px" />
-        </div>
-      </el-form-item>
-      <el-form-item>
-        <div class="metric-filter">
-          <span class="metric-filter-label">Tokens</span>
-          <el-select v-model="filters.tokensOp" style="width: 76px">
-            <el-option label="大于" value="gt" />
-            <el-option label="小于" value="lt" />
-          </el-select>
-          <el-input v-model="filters.tokens" clearable placeholder="数值" style="width: 92px" />
-        </div>
-      </el-form-item>
-      <el-form-item>
-        <div class="metric-filter">
-          <span class="metric-filter-label">TTFT</span>
-          <el-select v-model="filters.ttftOp" style="width: 76px">
-            <el-option label="大于" value="gt" />
-            <el-option label="小于" value="lt" />
-          </el-select>
-          <el-input v-model="filters.ttftMs" clearable placeholder="ms" style="width: 92px" />
-        </div>
-      </el-form-item>
-      <el-form-item>
-        <el-button type="primary" @click="search">查询</el-button>
-      </el-form-item>
-      <el-form-item v-if="hasFilters">
-        <el-button @click="resetFilters">重置</el-button>
-      </el-form-item>
-    </el-form>
+      <el-form inline class="filters" @keyup.enter="search">
+        <el-form-item label="耗时">
+          <div class="filter-pair">
+            <el-select v-model="filters.latencyOp" style="width: 96px">
+              <el-option label="大于" value="gt" />
+              <el-option label="小于" value="lt" />
+            </el-select>
+            <el-input v-model="filters.latencyMs" clearable placeholder="ms" style="width: 120px" />
+          </div>
+        </el-form-item>
+        <el-form-item label="Tokens">
+          <div class="filter-pair">
+            <el-select v-model="filters.tokensOp" style="width: 96px">
+              <el-option label="大于" value="gt" />
+              <el-option label="小于" value="lt" />
+            </el-select>
+            <el-input v-model="filters.tokens" clearable placeholder="数值" style="width: 120px" />
+          </div>
+        </el-form-item>
+        <el-form-item label="TTFT">
+          <div class="filter-pair">
+            <el-select v-model="filters.ttftOp" style="width: 96px">
+              <el-option label="大于" value="gt" />
+              <el-option label="小于" value="lt" />
+            </el-select>
+            <el-input v-model="filters.ttftMs" clearable placeholder="ms" style="width: 120px" />
+          </div>
+        </el-form-item>
+        <el-form-item>
+          <el-button type="primary" @click="search">查询</el-button>
+          <el-button v-if="hasFilters" @click="resetFilters">重置</el-button>
+        </el-form-item>
+      </el-form>
 
-    <el-table
-      v-loading="loading"
-      :data="items"
-      stripe
-      size="small"
-      class="logs-table"
-      empty-text="暂无记录"
-    >
-      <el-table-column label="Request ID" min-width="300">
-        <template #default="{ row }">
-          <el-button class="request-id-button" link @click="copyRequestId(row.requestId)">
-            {{ row.requestId }}
-          </el-button>
-        </template>
-      </el-table-column>
-      <el-table-column label="耗时" width="68" align="right" header-align="right">
-        <template #default="{ row }">
-          <span class="metric-text">{{ formatLatency(row.latencyMs) }}</span>
-        </template>
-      </el-table-column>
-      <el-table-column label="Tokens" width="76" align="right" header-align="right">
-        <template #default="{ row }">
-          <span class="metric-text">{{ formatNumber(row.totalTokens) }}</span>
-        </template>
-      </el-table-column>
-      <el-table-column label="TTFT" width="64" align="right" header-align="right">
-        <template #default="{ row }">
-          <span class="metric-text">{{ formatLatency(row.ttftMs) }}</span>
-        </template>
-      </el-table-column>
-      <el-table-column label="缓存命中" width="86" align="right" header-align="right">
-        <template #default="{ row }">
-          <el-tooltip
-            :disabled="row.cacheReadTokens == null"
-            :content="cacheHitText(row.cacheReadTokens, row.promptTokens)"
-            placement="top"
-            :show-after="300"
-          >
-            <span class="metric-text">{{ formatNumber(row.cacheReadTokens) }}</span>
-          </el-tooltip>
-        </template>
-      </el-table-column>
-      <el-table-column label="渠道" width="148">
-        <template #default="{ row }">
-          <el-tooltip :content="channelTooltip(row)" placement="top" :show-after="400">
-            <span class="channel-cell">
-              <span class="channel-name">{{ providerText(row.providerCode) }}</span>
-              <span v-if="row.productType === 'coding_plan'" class="type-chip">套餐</span>
-              <span v-if="row.credentialSuffix" class="key-suffix">{{ row.credentialSuffix }}</span>
-            </span>
-          </el-tooltip>
-        </template>
-      </el-table-column>
-      <el-table-column label="模型" width="120">
-        <template #default="{ row }">
-          <el-tooltip :content="modelTooltip(row)" placement="top" :show-after="400">
-            <span class="model-text">{{ row.clientModel }}</span>
-          </el-tooltip>
-        </template>
-      </el-table-column>
-      <el-table-column label="协议" width="136">
-        <template #default="{ row }">
-          <el-tag size="small" effect="plain">
-            {{ relayProtocolLabel(row.protocol, true) }}
-          </el-tag>
-        </template>
-      </el-table-column>
-      <el-table-column label="状态" width="112">
-        <template #default="{ row }">
-          <el-tooltip
-            :disabled="!hasErrorDetail(row)"
-            :content="errorTooltip(row)"
-            placement="top"
-            :show-after="300"
-          >
-            <span class="result-cell">
-              <span class="status-pill" :class="`is-${row.status}`">
-                <i class="status-dot" />
-                {{ statusText(row.status) }}
+      <el-table v-loading="loading" :data="items" stripe empty-text="暂无记录">
+        <el-table-column label="Request ID" min-width="240">
+          <template #default="{ row }">
+            <el-button link type="primary" @click="copyRequestId(row.requestId)">
+              <code class="request-id">{{ row.requestId }}</code>
+            </el-button>
+          </template>
+        </el-table-column>
+        <el-table-column label="耗时" width="100">
+          <template #default="{ row }">{{ formatLatency(row.latencyMs) }}</template>
+        </el-table-column>
+        <el-table-column label="Tokens" width="110">
+          <template #default="{ row }">{{ formatNumber(row.totalTokens) }}</template>
+        </el-table-column>
+        <el-table-column label="TTFT" width="100">
+          <template #default="{ row }">{{ formatLatency(row.ttftMs) }}</template>
+        </el-table-column>
+        <el-table-column label="缓存命中" width="120">
+          <template #default="{ row }">
+            <el-tooltip
+              :disabled="row.cacheReadTokens == null"
+              :content="cacheHitText(row.cacheReadTokens, row.promptTokens)"
+              placement="top"
+            >
+              <span>{{ formatNumber(row.cacheReadTokens) }}</span>
+            </el-tooltip>
+          </template>
+        </el-table-column>
+        <el-table-column label="渠道" min-width="160">
+          <template #default="{ row }">
+            <el-tooltip :content="channelTooltip(row)" placement="top">
+              <span>
+                {{ providerText(row.providerCode) }}
+                <el-tag v-if="row.productType === 'coding_plan'" size="small" effect="plain">套餐</el-tag>
               </span>
-              <span v-if="row.httpStatus" class="http-status">{{ row.httpStatus }}</span>
-            </span>
-          </el-tooltip>
-        </template>
-      </el-table-column>
-      <el-table-column label="时间" width="156">
-        <template #default="{ row }">
-          <span class="time-text">{{ formatDateTime(row.createdAt) }}</span>
-        </template>
-      </el-table-column>
-      <el-table-column label="操作" width="60">
-        <template #default="{ row }">
-          <el-button link type="primary" @click="openDetail(row.requestId)">查看</el-button>
-        </template>
-      </el-table-column>
-    </el-table>
+            </el-tooltip>
+          </template>
+        </el-table-column>
+        <el-table-column label="模型" min-width="140" show-overflow-tooltip>
+          <template #default="{ row }">{{ row.clientModel }}</template>
+        </el-table-column>
+        <el-table-column label="协议" width="150">
+          <template #default="{ row }">
+            {{ relayProtocolLabel(row.protocol, true) }}
+          </template>
+        </el-table-column>
+        <el-table-column label="状态" width="120">
+          <template #default="{ row }">
+            <el-tooltip :disabled="!hasErrorDetail(row)" :content="errorTooltip(row)" placement="top">
+              <el-tag :type="statusTagType(row.status)" size="small">
+                {{ statusText(row.status) }}
+              </el-tag>
+            </el-tooltip>
+          </template>
+        </el-table-column>
+        <el-table-column label="时间" width="180">
+          <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
+        </el-table-column>
+        <el-table-column label="操作" width="90" fixed="right">
+          <template #default="{ row }">
+            <el-button link type="primary" @click="openDetail(row.requestId)">查看</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
 
-    <div class="pager">
-      <el-pagination
-        v-model:current-page="page"
-        background
-        size="small"
-        layout="total, prev, pager, next"
-        :total="total"
-        :page-size="limit"
-        @current-change="load"
-      />
-    </div>
+      <div class="pager">
+        <el-pagination
+          v-model:current-page="page"
+          background
+          size="small"
+          layout="total, prev, pager, next"
+          :total="total"
+          :page-size="limit"
+          @current-change="load"
+        />
+      </div>
+    </section>
 
     <el-drawer v-model="drawer" title="调用详情" size="min(720px, 96vw)">
-      <div v-loading="detailLoading" class="log-detail-body">
+      <div v-loading="detailLoading" class="detail-body">
         <template v-if="detail">
-          <div class="detail-heading">
-            <span class="detail-request-id">{{ detail.meta.requestId }}</span>
-            <el-button link type="primary" @click="copyRequestId(detail.meta.requestId)">复制</el-button>
-          </div>
-          <el-descriptions :column="1" border size="small" class="detail-descriptions">
+          <el-descriptions :column="1" border>
+            <el-descriptions-item label="Request ID">
+              <code class="request-id">{{ detail.meta.requestId }}</code>
+              <el-button link type="primary" @click="copyRequestId(detail.meta.requestId)">复制</el-button>
+            </el-descriptions-item>
             <el-descriptions-item label="时间">{{ formatDateTime(detail.meta.createdAt) }}</el-descriptions-item>
             <el-descriptions-item label="协议">{{ relayProtocolLabel(detail.meta.protocol) }}</el-descriptions-item>
             <el-descriptions-item label="模型">{{ modelTooltip(detail.meta) }}</el-descriptions-item>
@@ -165,12 +135,10 @@
               {{ providerText(detail.meta.providerCode) }} · {{ productTypeText(detail.meta.productType) }} · Key {{ detail.meta.credentialSuffix || "—" }}
             </el-descriptions-item>
             <el-descriptions-item label="状态">
-              <span class="result-cell">
-                <span class="status-pill" :class="`is-${detail.meta.status}`">
-                  <i class="status-dot" />{{ statusText(detail.meta.status) }}
-                </span>
-                <span v-if="detail.meta.httpStatus" class="http-status">HTTP {{ detail.meta.httpStatus }}</span>
-              </span>
+              <el-tag :type="statusTagType(detail.meta.status)" size="small">
+                {{ statusText(detail.meta.status) }}
+              </el-tag>
+              <span v-if="detail.meta.httpStatus" class="muted"> HTTP {{ detail.meta.httpStatus }}</span>
             </el-descriptions-item>
             <el-descriptions-item label="Tokens">
               {{ formatNumber(detail.meta.promptTokens) }} + {{ formatNumber(detail.meta.completionTokens) }} = {{ formatNumber(detail.meta.totalTokens) }}
@@ -187,10 +155,14 @@
             </el-descriptions-item>
           </el-descriptions>
           <template v-if="detail.body">
-            <h3 class="detail-section-title">请求</h3>
-            <StructuredJson :value="detail.body.requestBody" empty-text="无请求正文" />
-            <h3 class="detail-section-title">响应</h3>
-            <StructuredJson :value="detail.body.responseBody" empty-text="无响应正文" />
+            <div class="content-section">
+              <div class="content-label">请求</div>
+              <StructuredJson :value="detail.body.requestBody" empty-text="无请求正文" />
+            </div>
+            <div class="content-section">
+              <div class="content-label">响应</div>
+              <StructuredJson :value="detail.body.responseBody" empty-text="无响应正文" />
+            </div>
           </template>
           <p v-else class="muted">请求/响应正文已按保留策略清理，列表里的用量和耗时仍在。</p>
         </template>
@@ -283,6 +255,15 @@ function statusText(status: LogStatus): string {
     upstream_error: "上游错误",
     client_error: "请求错误",
     cancelled: "已取消",
+  }[status];
+}
+
+function statusTagType(status: LogStatus): "success" | "danger" | "warning" | "info" {
+  return {
+    success: "success",
+    upstream_error: "danger",
+    client_error: "warning",
+    cancelled: "info",
   }[status];
 }
 
@@ -436,191 +417,70 @@ onMounted(load);
 
 <style scoped>
 .logs-page {
-  padding: 16px 20px 14px;
-  border: 1px solid #e9edf3;
-  overflow-x: auto;
-}
-.logs-page .page-title {
-  margin-bottom: 12px;
-}
-.filters {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 10px;
-}
-.metric-filter {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-.metric-filter-label {
-  color: #667085;
-  font-size: 12px;
-  font-weight: 600;
-  white-space: nowrap;
-}
-.filters :deep(.el-form-item) {
-  flex: none;
-  margin-right: 0;
-  margin-bottom: 0;
-}
-.filters :deep(.el-input__wrapper),
-.filters :deep(.el-select__wrapper) {
-  border-radius: 6px;
-}
-.logs-table {
-  --el-table-border-color: #edf0f5;
-  --el-table-header-bg-color: #f8fafc;
-  --el-table-row-hover-bg-color: #f3f7fc;
-  width: 100%;
-  color: #344054;
-}
-.logs-table :deep(.cell) {
-  padding: 0 8px;
-  white-space: nowrap;
-}
-.logs-table :deep(th.el-table__cell) {
-  padding: 7px 0;
-  color: #667085;
-  font-size: 12px;
-  font-weight: 600;
-}
-.logs-table :deep(td.el-table__cell) {
-  padding: 6px 0;
-}
-.logs-table :deep(.el-table__row--striped td.el-table__cell) {
-  background: #fafbfc;
-}
-.logs-table :deep(.el-table__inner-wrapper::before) {
-  display: none;
-}
-.time-text,
-.metric-text,
-.http-status,
-.request-id-button,
-.detail-request-id {
-  font-variant-numeric: tabular-nums;
-}
-.time-text {
-  color: #475467;
-}
-.model-text {
-  display: block;
-  overflow: hidden;
-  color: #344054;
-  text-overflow: ellipsis;
-}
-.channel-cell,
-.result-cell {
-  display: inline-flex;
-  align-items: center;
   min-width: 0;
-  max-width: 100%;
 }
-.channel-cell {
-  gap: 4px;
+
+.page-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
 }
-.channel-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
+
+.page-title {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 650;
+  color: #0f172a;
 }
-.key-suffix {
-  flex: none;
-  color: #98a2b3;
+
+.page-subtitle {
+  margin: 6px 0 0;
+  color: #94a3b8;
+  font-size: 13px;
+}
+
+.filters {
+  margin-bottom: 8px;
+}
+
+.filter-pair {
+  display: flex;
+  gap: 8px;
+}
+
+.request-id {
+  color: #475569;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 11px;
-}
-.type-chip {
-  flex: none;
-  padding: 0 5px;
-  border-radius: 4px;
-  background: #eef4ff;
-  color: #3538cd;
-  font-size: 11px;
-  line-height: 18px;
-}
-.result-cell {
-  gap: 6px;
-}
-.status-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  height: 22px;
-  padding: 0 7px;
-  border-radius: 999px;
   font-size: 12px;
-  font-weight: 500;
 }
-.status-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: currentColor;
-}
-.status-pill.is-success {
-  background: #ecfdf3;
-  color: #027a48;
-}
-.status-pill.is-upstream_error {
-  background: #fef3f2;
-  color: #b42318;
-}
-.status-pill.is-client_error {
-  background: #fffaeb;
-  color: #b54708;
-}
-.status-pill.is-cancelled {
-  background: #f2f4f7;
-  color: #475467;
-}
-.http-status {
-  color: #98a2b3;
-  font-size: 11px;
-}
-.metric-text {
-  color: #344054;
-}
-.request-id-button {
-  height: auto;
-  padding: 0;
-  color: #667085;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 11px;
-}
-.request-id-button:hover {
-  color: var(--el-color-primary);
-}
+
 .pager {
-  margin-top: 10px;
   display: flex;
   justify-content: flex-end;
+  margin-top: 16px;
 }
-.detail-heading {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 30px;
-  margin-bottom: 12px;
+
+.detail-body {
+  min-height: 160px;
 }
-.detail-request-id {
-  overflow-wrap: anywhere;
-  color: #475467;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 12px;
+
+.content-section {
+  margin-top: 18px;
 }
-.detail-descriptions :deep(.el-descriptions__label) {
-  width: 92px;
-  color: #667085;
-}
-.log-detail-body {
-  min-height: 220px;
-}
-.detail-section-title {
-  margin: 18px 0 8px;
-  color: #344054;
+
+.content-label {
+  margin-bottom: 8px;
+  color: #475569;
   font-size: 13px;
+  font-weight: 600;
+}
+
+@media (max-width: 640px) {
+  .page-head {
+    align-items: stretch;
+    flex-direction: column;
+  }
 }
 </style>

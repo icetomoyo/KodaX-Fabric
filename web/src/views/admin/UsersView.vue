@@ -2,10 +2,7 @@
   <div class="page-card">
     <div class="head">
       <h2 class="page-title" style="margin: 0">员工管理</h2>
-      <div>
-        <el-button @click="showImport = true">批量导入</el-button>
-        <el-button type="primary" @click="openCreate">新建员工</el-button>
-      </div>
+      <el-button v-if="auth.isOrgAdmin" type="primary" @click="openInvite">邀请已注册员工</el-button>
     </div>
 
     <el-form inline style="margin: 12px 0">
@@ -118,38 +115,6 @@
       </el-table-column>
     </el-table>
 
-    <el-dialog v-model="showCreate" title="新建员工" width="480px">
-      <el-form label-width="90px">
-        <el-form-item label="姓名"><el-input v-model="form.name" /></el-form-item>
-        <el-form-item label="手机号"><el-input v-model="form.phone" /></el-form-item>
-        <el-form-item label="初始密码">
-          <el-input v-model="form.password" type="password" show-password autocomplete="new-password" />
-        </el-form-item>
-        <el-form-item label="部门"><el-input v-model="form.dept" /></el-form-item>
-        <el-form-item v-if="auth.isSuperAdmin" label="所属企业">
-          <el-select v-model="form.enterpriseId" style="width: 100%">
-            <el-option
-              v-for="item in enterprises"
-              :key="item.id"
-              :label="item.name"
-              :value="item.id"
-            />
-          </el-select>
-        </el-form-item>
-        <el-form-item v-if="auth.isSuperAdmin" label="角色">
-          <el-select v-model="form.role" style="width: 100%">
-            <el-option label="员工" value="employee" />
-            <el-option label="企业管理员" value="org_admin" />
-            <el-option label="超级管理员" value="admin" />
-          </el-select>
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="showCreate = false">取消</el-button>
-        <el-button type="primary" :loading="saving" @click="createOne">创建</el-button>
-      </template>
-    </el-dialog>
-
     <el-dialog v-model="showEdit" :title="`编辑用户 · ${editUser?.name || ''}`" width="480px">
       <el-form label-width="90px">
         <el-form-item label="姓名" required><el-input v-model="editForm.name" /></el-form-item>
@@ -197,6 +162,30 @@
       </template>
     </el-dialog>
 
+    <el-dialog v-model="showInvite" title="邀请已注册员工" width="480px">
+      <el-form label-width="90px">
+        <el-form-item label="手机号" required>
+          <el-input v-model="invitePhone" placeholder="已注册用户的手机号" />
+        </el-form-item>
+        <el-form-item label="加入团队" required>
+          <el-select v-model="inviteTeamId" style="width: 100%" placeholder="选择团队">
+            <el-option v-for="item in teams" :key="item.id" :label="item.name" :value="item.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="团队角色">
+          <el-select v-model="inviteRole" style="width: 100%">
+            <el-option label="成员" value="member" />
+            <el-option label="团队管理员" value="team_admin" />
+          </el-select>
+        </el-form-item>
+        <p class="form-help">不能新建账号。对方必须已自行注册，邀请进团队后才有员工权限。</p>
+      </el-form>
+      <template #footer>
+        <el-button @click="showInvite = false">取消</el-button>
+        <el-button type="primary" :loading="inviting" @click="inviteMember">邀请</el-button>
+      </template>
+    </el-dialog>
+
     <el-dialog
       v-model="showResetPassword"
       :title="`重置密码 · ${resetUser?.name || ''}`"
@@ -227,18 +216,6 @@
       </template>
     </el-dialog>
 
-    <el-dialog v-model="showImport" title="批量导入 JSON" width="640px">
-      <el-input
-        v-model="importText"
-        type="textarea"
-        :rows="10"
-        placeholder='[{"name":"","phone":"","password":"","dept":"","role":"employee"}]'
-      />
-      <template #footer>
-        <el-button @click="showImport = false">取消</el-button>
-        <el-button type="primary" :loading="importing" @click="doImport">导入</el-button>
-      </template>
-    </el-dialog>
   </div>
 </template>
 
@@ -264,6 +241,7 @@ type UserRow = {
 };
 
 type EnterpriseRow = { id: number; name: string; status: string };
+type TeamRow = { id: number; name: string };
 
 const rows = ref<UserRow[]>([]);
 const router = useRouter();
@@ -272,26 +250,19 @@ const q = ref("");
 const statusFilter = ref<"" | UserRow["status"]>("");
 const enterpriseFilter = ref<number | "">("");
 const enterprises = ref<EnterpriseRow[]>([]);
-const showCreate = ref(false);
-const showImport = ref(false);
+const teams = ref<TeamRow[]>([]);
 const showEdit = ref(false);
+const showInvite = ref(false);
 const showResetPassword = ref(false);
-const saving = ref(false);
-const importing = ref(false);
 const updating = ref(false);
+const inviting = ref(false);
 const resetting = ref(false);
+const invitePhone = ref("");
+const inviteTeamId = ref<number | undefined>();
+const inviteRole = ref<"member" | "team_admin">("member");
 const approvingId = ref<number | null>(null);
 const editUser = ref<UserRow | null>(null);
 const resetUser = ref<UserRow | null>(null);
-const importText = ref("");
-const form = reactive({
-  name: "",
-  phone: "",
-  password: "",
-  dept: "",
-  role: "employee" as UserRow["role"],
-  enterpriseId: undefined as number | undefined,
-});
 const resetForm = reactive({
   password: "",
   confirmPassword: "",
@@ -317,6 +288,48 @@ async function loadEnterprises() {
   if (data.success) enterprises.value = data.data;
 }
 
+async function loadTeams() {
+  if (!auth.isOrgAdmin) return;
+  const { data } = await http.get("/api/admin/teams");
+  if (data.success) teams.value = data.data;
+}
+
+function openInvite() {
+  invitePhone.value = "";
+  inviteRole.value = "member";
+  inviteTeamId.value = teams.value[0]?.id;
+  showInvite.value = true;
+}
+
+async function inviteMember() {
+  const phone = invitePhone.value.trim();
+  if (phone.length < 5) {
+    ElMessage.warning("请填写已注册用户的手机号");
+    return;
+  }
+  if (!inviteTeamId.value) {
+    ElMessage.warning("请先创建团队，再邀请员工入团");
+    return;
+  }
+  inviting.value = true;
+  try {
+    const { data } = await http.post(`/api/admin/teams/${inviteTeamId.value}/members`, {
+      phone,
+      role: inviteRole.value,
+    });
+    if (!data.success) throw new Error(data.message);
+    ElMessage.success("已邀请入团");
+    showInvite.value = false;
+    await load();
+  } catch (e: unknown) {
+    const message = (e as { response?: { data?: { message?: string } }; message?: string })
+      .response?.data?.message;
+    ElMessage.error(message || (e as Error).message || "邀请失败");
+  } finally {
+    inviting.value = false;
+  }
+}
+
 function enterpriseName(id: number | null | undefined) {
   if (id == null) return "未加入企业";
   return enterprises.value.find((item) => item.id === id)?.name || String(id);
@@ -331,16 +344,6 @@ async function load() {
     },
   });
   if (data.success) rows.value = data.data;
-}
-
-function openCreate() {
-  form.name = "";
-  form.phone = "";
-  form.password = "";
-  form.dept = "";
-  form.role = "employee";
-  form.enterpriseId = auth.user?.enterpriseId ?? undefined;
-  showCreate.value = true;
 }
 
 function openDetail(row: UserRow) {
@@ -370,40 +373,6 @@ async function approveRegistration(row: UserRow) {
     ElMessage.error(message || (e as Error).message || "审核失败");
   } finally {
     approvingId.value = null;
-  }
-}
-
-async function createOne() {
-  saving.value = true;
-  try {
-    const { data } = await http.post("/api/admin/users", form);
-    if (!data.success) throw new Error(data.message);
-    ElMessage.success("已创建");
-    showCreate.value = false;
-    await load();
-  } catch (e: unknown) {
-    const msg =
-      (e as { response?: { data?: { message?: string } } })?.response?.data?.message ||
-      (e as Error).message;
-    ElMessage.error(msg);
-  } finally {
-    saving.value = false;
-  }
-}
-
-async function doImport() {
-  importing.value = true;
-  try {
-    const users = JSON.parse(importText.value);
-    const { data } = await http.post("/api/admin/users/import", { users });
-    if (!data.success) throw new Error(data.message);
-    ElMessage.success(`成功 ${data.data.success}，失败 ${data.data.failed}`);
-    showImport.value = false;
-    await load();
-  } catch (e: unknown) {
-    ElMessage.error((e as Error).message || "导入失败");
-  } finally {
-    importing.value = false;
   }
 }
 
@@ -495,7 +464,7 @@ async function setStatus(id: number, status: "active" | "disabled") {
 }
 
 onMounted(async () => {
-  await loadEnterprises();
+  await Promise.all([loadEnterprises(), loadTeams()]);
   await load();
 });
 </script>
@@ -514,6 +483,12 @@ onMounted(async () => {
 .muted {
   color: #94a3b8;
   font-size: 13px;
+}
+.form-help {
+  margin: 0 0 0 90px;
+  color: #94a3b8;
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 </style>

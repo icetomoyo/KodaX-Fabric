@@ -5,18 +5,37 @@
     <el-form :inline="true" size="small" class="filters" @keyup.enter="search">
       <el-form-item>
         <el-select
-          v-model="filters.employeeId"
+          v-model="filters.enterpriseId"
           clearable
           filterable
-          :loading="employeesLoading"
-          placeholder="全部员工"
+          :loading="enterprisesLoading"
+          placeholder="全部企业"
+          style="width: 180px"
+          @change="onEnterpriseChange"
+        >
+          <el-option
+            v-for="item in enterprises"
+            :key="item.id"
+            :label="item.name"
+            :value="item.id"
+          />
+        </el-select>
+      </el-form-item>
+      <el-form-item>
+        <el-select
+          v-model="filters.teamId"
+          clearable
+          filterable
+          :disabled="!filters.enterpriseId"
+          :loading="teamsLoading"
+          placeholder="全部团队"
           style="width: 180px"
         >
           <el-option
-            v-for="employee in employees"
-            :key="employee.id"
-            :label="employeeOptionText(employee)"
-            :value="employee.id"
+            v-for="item in teams"
+            :key="item.id"
+            :label="item.name"
+            :value="item.id"
           />
         </el-select>
       </el-form-item>
@@ -158,11 +177,12 @@
           </el-tooltip>
         </template>
       </el-table-column>
-      <el-table-column label="员工" width="76">
+      <el-table-column label="企业 / 团队" min-width="160">
         <template #default="{ row }">
-          <el-tooltip :content="row.employeePhone" placement="top" :show-after="400">
-            <span class="employee-text">{{ row.employeeName }}</span>
-          </el-tooltip>
+          <span class="employee-text">
+            {{ row.enterpriseName || "—" }}
+            <template v-if="row.teamName"> · {{ row.teamName }}</template>
+          </span>
         </template>
       </el-table-column>
       <el-table-column label="时间" width="156">
@@ -290,7 +310,10 @@
               <div class="tab-content">
                 <el-descriptions :column="1" border size="small" class="detail-descriptions">
                   <el-descriptions-item label="时间">{{ formatDateTime(detail.meta.createdAt) }}</el-descriptions-item>
-                  <el-descriptions-item label="员工">{{ detail.meta.employeeName }} / {{ detail.meta.employeePhone }}</el-descriptions-item>
+                  <el-descriptions-item label="企业 / 团队">
+                    {{ detail.meta.enterpriseName || "—" }}
+                    <template v-if="detail.meta.teamName"> · {{ detail.meta.teamName }}</template>
+                  </el-descriptions-item>
                   <el-descriptions-item label="协议">{{ relayProtocolLabel(detail.meta.protocol) }}</el-descriptions-item>
                   <el-descriptions-item label="模型">{{ modelTooltip(detail.meta) }}</el-descriptions-item>
                   <el-descriptions-item label="渠道">
@@ -358,9 +381,8 @@ type ProductType = "api" | "coding_plan";
 interface LogRow {
   id: number;
   requestId: string;
-  employeeId: number;
-  employeeName: string;
-  employeePhone: string;
+  enterpriseName: string | null;
+  teamName: string | null;
   protocol: RelayProtocol;
   clientModel: string;
   upstreamModel: string | null;
@@ -405,10 +427,9 @@ interface LogDetail {
   meta: LogDetailMeta;
 }
 
-interface EmployeeOption {
+interface NamedOption {
   id: number;
   name: string;
-  phone: string;
 }
 
 interface AuditContext {
@@ -439,7 +460,8 @@ const numberFormatter = new Intl.NumberFormat("zh-CN");
 type CompareOp = "gt" | "lt";
 
 const filters = reactive({
-  employeeId: undefined as number | undefined,
+  enterpriseId: undefined as number | undefined,
+  teamId: undefined as number | undefined,
   tokensOp: "gt" as CompareOp,
   tokens: "",
   latencyOp: "gt" as CompareOp,
@@ -447,8 +469,10 @@ const filters = reactive({
   ttftOp: "gt" as CompareOp,
   ttftMs: "",
 });
-const employees = ref<EmployeeOption[]>([]);
-const employeesLoading = ref(false);
+const enterprises = ref<NamedOption[]>([]);
+const enterprisesLoading = ref(false);
+const teams = ref<NamedOption[]>([]);
+const teamsLoading = ref(false);
 const items = ref<LogRow[]>([]);
 const total = ref(0);
 const page = ref(1);
@@ -464,7 +488,8 @@ const rawPanels = ref<string[]>([]);
 let detailSequence = 0;
 
 const hasFilters = computed(() => Boolean(
-  filters.employeeId
+  filters.enterpriseId
+  || filters.teamId
   || filters.tokens.trim()
   || filters.latencyMs.trim()
   || filters.ttftMs.trim(),
@@ -532,8 +557,19 @@ function cacheHitText(cacheRead: number | null, promptTokens: number | null): st
   return `${formatNumber(cacheRead)} (${percent.toFixed(1)}%)`;
 }
 
-function employeeOptionText(employee: EmployeeOption): string {
-  return employee.phone ? `${employee.name} · ${employee.phone}` : employee.name;
+async function onEnterpriseChange() {
+  filters.teamId = undefined;
+  teams.value = [];
+  if (!filters.enterpriseId) return;
+  teamsLoading.value = true;
+  try {
+    const { data } = await http.get(`/api/admin/enterprises/${filters.enterpriseId}/teams`);
+    if (data.success) teams.value = data.data;
+  } catch (e: any) {
+    ElMessage.error(e.response?.data?.message || "团队列表加载失败");
+  } finally {
+    teamsLoading.value = false;
+  }
 }
 
 function modelTooltip(row: Pick<LogRow, "clientModel" | "upstreamModel">): string {
@@ -619,7 +655,8 @@ async function load() {
       params: {
         limit,
         offset: (page.value - 1) * limit,
-        employeeId: filters.employeeId,
+        enterpriseId: filters.enterpriseId,
+        teamId: filters.teamId,
         ...(tokens != null ? { tokensOp: filters.tokensOp, tokens } : {}),
         ...(latencyMs != null ? { latencyOp: filters.latencyOp, latencyMs } : {}),
         ...(ttftMs != null ? { ttftOp: filters.ttftOp, ttftMs } : {}),
@@ -636,15 +673,20 @@ async function load() {
   }
 }
 
-async function loadEmployees() {
-  employeesLoading.value = true;
+async function loadEnterprises() {
+  enterprisesLoading.value = true;
   try {
-    const { data } = await http.get("/api/admin/users", { params: { limit: 200 } });
-    if (data.success) employees.value = data.data;
+    const { data } = await http.get("/api/admin/enterprises");
+    if (data.success) {
+      enterprises.value = data.data.map((row: { id: number; name: string }) => ({
+        id: row.id,
+        name: row.name,
+      }));
+    }
   } catch (e: any) {
-    ElMessage.error(e.response?.data?.message || "员工列表加载失败");
+    ElMessage.error(e.response?.data?.message || "企业列表加载失败");
   } finally {
-    employeesLoading.value = false;
+    enterprisesLoading.value = false;
   }
 }
 
@@ -654,7 +696,9 @@ function search() {
 }
 
 function resetFilters() {
-  filters.employeeId = undefined;
+  filters.enterpriseId = undefined;
+  filters.teamId = undefined;
+  teams.value = [];
   filters.tokensOp = "gt";
   filters.tokens = "";
   filters.latencyOp = "gt";
@@ -703,7 +747,7 @@ async function openDetail(requestId: string) {
 
 onMounted(() => {
   void load();
-  void loadEmployees();
+  void loadEnterprises();
 });
 </script>
 

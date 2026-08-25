@@ -4,7 +4,7 @@
       <div class="page-head">
         <div>
           <h2 class="page-title">管理概览</h2>
-          <p class="page-subtitle">今日运行概况 · 渠道与员工状态一目了然</p>
+          <p class="page-subtitle">今日运行概况 · 渠道与企业用量一目了然</p>
         </div>
         <div class="head-actions">
           <el-button :loading="loading" @click="load">刷新</el-button>
@@ -28,12 +28,12 @@
         <div class="kpi-card accent">
           <span class="kpi-label">今日 Tokens</span>
           <strong class="kpi-value">{{ formatCompact(data?.today?.tokens) }}</strong>
-          <span class="kpi-foot">全员合计消耗</span>
+          <span class="kpi-foot">全平台合计消耗</span>
         </div>
         <div class="kpi-card">
-          <span class="kpi-label">员工</span>
-          <strong class="kpi-value">{{ formatNumber(data?.employees?.active) }}</strong>
-          <span class="kpi-foot">启用 / 共 {{ formatNumber(data?.employees?.total) }}</span>
+          <span class="kpi-label">企业</span>
+          <strong class="kpi-value">{{ formatNumber(data?.enterprises?.active) }}</strong>
+          <span class="kpi-foot">启用 / 共 {{ formatNumber(data?.enterprises?.total) }}</span>
         </div>
         <div class="kpi-card success">
           <span class="kpi-label">启用渠道</span>
@@ -60,25 +60,25 @@
             <small>凭证池 · 连通测试 · 启停</small>
           </span>
         </button>
-        <button type="button" class="quick-link" @click="router.push('/admin/users')">
+        <button type="button" class="quick-link" @click="router.push('/admin/enterprises')">
           <span class="quick-dot violet" />
           <span>
-            <strong>员工管理</strong>
-            <small>建号 · 启停 · 重置密码</small>
+            <strong>企业管理</strong>
+            <small>审核合作申请 · 启停企业</small>
           </span>
         </button>
         <button type="button" class="quick-link" @click="router.push('/admin/logs')">
           <span class="quick-dot teal" />
           <span>
             <strong>调用日志</strong>
-            <small>全文审计 · 用量追踪</small>
+            <small>按企业 / 团队 / 渠道排障</small>
           </span>
         </button>
-        <button type="button" class="quick-link" @click="router.push('/admin/teams')">
+        <button type="button" class="quick-link" @click="router.push('/admin/model-prices')">
           <span class="quick-dot amber" />
           <span>
-            <strong>团队管理</strong>
-            <small>每日额度 · 成员上限</small>
+            <strong>模型单价</strong>
+            <small>对外标价 · 输入 / 输出</small>
           </span>
         </button>
       </div>
@@ -88,26 +88,26 @@
       <section class="page-card panel-card">
         <div class="panel-head">
           <div>
-            <h3 class="panel-title">今日消耗 Top 员工</h3>
-            <p class="panel-desc">按 Tokens 排序</p>
+            <h3 class="panel-title">今日消耗 Top 团队</h3>
+            <p class="panel-desc">按 Tokens 排序，记账到团队</p>
           </div>
           <el-button link type="primary" @click="router.push('/admin/logs')">查看日志</el-button>
         </div>
         <el-empty
-          v-if="!loading && !(data?.topUsersToday?.length)"
+          v-if="!loading && !(data?.topTeamsToday?.length)"
           description="今日暂无用量"
           :image-size="72"
         />
         <div v-else class="rank-list">
           <div
-            v-for="(row, index) in data?.topUsersToday ?? []"
-            :key="String(row.employeeId ?? index)"
+            v-for="(row, index) in data?.topTeamsToday ?? []"
+            :key="String(row.teamId ?? index)"
             class="rank-row"
           >
             <span class="rank-index" :class="{ top: index < 3 }">{{ index + 1 }}</span>
             <div class="rank-main">
-              <div class="rank-name">{{ row.name || "—" }}</div>
-              <div class="rank-sub">{{ row.phone || "—" }}</div>
+              <div class="rank-name">{{ row.teamName || "—" }}</div>
+              <div class="rank-sub">{{ row.enterpriseName || "—" }}</div>
             </div>
             <div class="rank-metrics">
               <strong>{{ formatCompact(row.totalTokens) }}</strong>
@@ -191,7 +191,12 @@
             <span class="mono-cell">{{ formatDateTime(row.createdAt) }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="employeeName" label="员工" min-width="90" />
+        <el-table-column label="企业 / 团队" min-width="160">
+          <template #default="{ row }">
+            {{ row.enterpriseName || "—" }}
+            <span v-if="row.teamName"> · {{ row.teamName }}</span>
+          </template>
+        </el-table-column>
         <el-table-column prop="clientModel" label="模型" min-width="120" show-overflow-tooltip />
         <el-table-column label="上游" min-width="100">
           <template #default="{ row }">
@@ -220,15 +225,15 @@ import { http } from "@/api/http";
 import { formatDateTime } from "@/lib/date-time";
 
 type OverviewData = {
-  employees?: { total: number; active: number };
+  enterprises?: { total: number; active: number };
   channels?: { total: number; enabled: number; unavailable: number };
   providers?: number;
   modelRoutesEnabled?: number;
   today?: { requests: number; tokens: number; errors: number };
-  topUsersToday?: Array<{
-    employeeId?: number;
-    name?: string;
-    phone?: string;
+  topTeamsToday?: Array<{
+    teamId?: number;
+    teamName?: string;
+    enterpriseName?: string;
     totalTokens?: number;
     requestCount?: number;
   }>;
@@ -239,7 +244,8 @@ type OverviewData = {
   }>;
   recentErrors?: Array<{
     requestId?: string;
-    employeeName?: string;
+    enterpriseName?: string;
+    teamName?: string;
     clientModel?: string;
     providerCode?: string | null;
     status?: string;
@@ -261,7 +267,7 @@ const loading = ref(false);
 const data = ref<OverviewData | null>(null);
 
 const maxTopTokens = computed(() => {
-  const list = data.value?.topUsersToday ?? [];
+  const list = data.value?.topTeamsToday ?? [];
   return Math.max(1, ...list.map((row) => Number(row.totalTokens) || 0));
 });
 

@@ -1,9 +1,11 @@
 import type { FastifyInstance } from "fastify";
-import { and, desc, eq } from "drizzle-orm";
+import { asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../../db/client.js";
-import { employeeApiKeys, employees, enterprises } from "../../db/schema/index.js";
+import { employees, enterprises, teams } from "../../db/schema/index.js";
 import { insertEnterprise } from "../../lib/enterprise.js";
+import { packageMonthlyYuan, parseYuanNumber } from "../../lib/enterprise-package.js";
+import { sumAssignedTeamQuota } from "../../lib/team-quota.js";
 import { writeOpsAudit } from "../../lib/ops-audit.js";
 import {
   requirePasswordChanged,
@@ -18,6 +20,7 @@ export function buildEnterpriseListQuery() {
       name: enterprises.name,
       code: enterprises.code,
       status: enterprises.status,
+      packagePlan: enterprises.packagePlan,
       createdAt: enterprises.createdAt,
       updatedAt: enterprises.updatedAt,
     })
@@ -33,6 +36,7 @@ const updateEnterpriseSchema = z
   .object({
     name: z.string().trim().min(1).max(100).optional(),
     status: z.enum(["active", "disabled"]).optional(),
+    packagePlan: z.enum(["plus", "pro", "max"]).nullable().optional(),
   })
   .refine((data) => Object.keys(data).length > 0);
 
@@ -43,6 +47,75 @@ export async function adminEnterpriseRoutes(app: FastifyInstance) {
 
   app.get("/api/admin/enterprises", async () => {
     const rows = await buildEnterpriseListQuery();
+    const ids = rows.map((row) => row.id);
+    const contacts = ids.length
+      ? await db
+          .select({
+            id: employees.id,
+            enterpriseId: employees.enterpriseId,
+            name: employees.name,
+            phone: employees.phone,
+            role: employees.role,
+            createdAt: employees.createdAt,
+          })
+          .from(employees)
+          .where(inArray(employees.enterpriseId, ids))
+      : [];
+    const byEnterprise = new Map<number, typeof contacts>();
+    for (const person of contacts) {
+      if (person.enterpriseId == null) continue;
+      const list = byEnterprise.get(person.enterpriseId) ?? [];
+      list.push(person);
+      byEnterprise.set(person.enterpriseId, list);
+    }
+    const assignedRows = ids.length
+      ? await db
+          .select({
+            enterpriseId: teams.enterpriseId,
+            total: sql<string>`coalesce(sum(${teams.monthlyYuanQuota}), 0)`,
+          })
+          .from(teams)
+          .where(inArray(teams.enterpriseId, ids))
+          .groupBy(teams.enterpriseId)
+      : [];
+    const assignedByEnterprise = new Map(
+      assignedRows.map((row) => [row.enterpriseId, parseYuanNumber(row.total)]),
+    );
+    return {
+      success: true,
+      data: rows.map((row) => {
+        const people = byEnterprise.get(row.id) ?? [];
+        const contact =
+          people.find((person) => person.role === "org_admin") ??
+          [...people].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())[0] ??
+          null;
+        return {
+          ...row,
+          monthlyYuan: packageMonthlyYuan(row.packagePlan),
+          assignedTeamQuota: assignedByEnterprise.get(row.id) ?? 0,
+          contact: contact
+            ? {
+                employeeId: contact.id,
+                name: contact.name,
+                phone: contact.phone,
+                role: contact.role,
+              }
+            : null,
+        };
+      }),
+    };
+  });
+
+  app.get("/api/admin/enterprises/:id/teams", async (req, reply) => {
+    const params = z.object({ id: z.coerce.number().int().positive() }).safeParse(req.params);
+    if (!params.success) {
+      return reply.code(400).send({ success: false, message: "参数无效" });
+    }
+    const rows = await db
+      .select({ id: teams.id, name: teams.name })
+      .from(teams)
+      .where(eq(teams.enterpriseId, params.data.id))
+      .orderBy(teams.name);
     return { success: true, data: rows };
   });
 
@@ -85,6 +158,16 @@ export async function adminEnterpriseRoutes(app: FastifyInstance) {
     }
 
     try {
+      if (body.data.packagePlan !== undefined) {
+        const assigned = await sumAssignedTeamQuota(params.data.id);
+        const nextYuan = packageMonthlyYuan(body.data.packagePlan);
+        if (assigned > nextYuan) {
+          return reply.code(400).send({
+            success: false,
+            message: "已分配给团队的额度超过该套餐，请先下调团队额度",
+          });
+        }
+      }
       const [row] = await db
         .update(enterprises)
         .set({
@@ -97,6 +180,7 @@ export async function adminEnterpriseRoutes(app: FastifyInstance) {
           name: enterprises.name,
           code: enterprises.code,
           status: enterprises.status,
+          packagePlan: enterprises.packagePlan,
           createdAt: enterprises.createdAt,
           updatedAt: enterprises.updatedAt,
         });
@@ -110,7 +194,13 @@ export async function adminEnterpriseRoutes(app: FastifyInstance) {
         action: "enterprise.update",
         targetType: "enterprise",
         targetId: String(row.id),
-        detail: { fields: Object.keys(body.data), name: row.name, status: row.status },
+        detail: {
+          fields: Object.keys(body.data),
+          name: row.name,
+          status: row.status,
+          packagePlan: row.packagePlan,
+          monthlyYuan: packageMonthlyYuan(row.packagePlan),
+        },
         ip: req.ip,
       });
 
@@ -131,6 +221,18 @@ export async function adminEnterpriseRoutes(app: FastifyInstance) {
       return reply.code(400).send({ success: false, message: "参数无效" });
     }
 
+    const [current] = await db
+      .select({ id: enterprises.id, status: enterprises.status })
+      .from(enterprises)
+      .where(eq(enterprises.id, params.data.id))
+      .limit(1);
+    if (!current) {
+      return reply.code(404).send({ success: false, message: "企业不存在" });
+    }
+    if (current.status === "pending" && body.data.status === "active") {
+      return reply.code(400).send({ success: false, message: "待审核企业请使用“审核通过”" });
+    }
+
     const [row] = await db
       .update(enterprises)
       .set({ status: body.data.status, updatedAt: new Date() })
@@ -146,13 +248,6 @@ export async function adminEnterpriseRoutes(app: FastifyInstance) {
       return reply.code(404).send({ success: false, message: "企业不存在" });
     }
 
-    if (body.data.status === "active") {
-      await db
-        .update(employees)
-        .set({ status: "active", updatedAt: new Date() })
-        .where(and(eq(employees.enterpriseId, row.id), eq(employees.status, "pending")));
-    }
-
     await writeOpsAudit({
       actorEmployeeId: req.employeeId,
       action: "enterprise.status",
@@ -165,102 +260,88 @@ export async function adminEnterpriseRoutes(app: FastifyInstance) {
     return { success: true, data: row };
   });
 
-  app.post("/api/admin/enterprises/:id/admins", async (req, reply) => {
+  app.post("/api/admin/enterprises/:id/approve", async (req, reply) => {
     const params = z.object({ id: z.coerce.number().int().positive() }).safeParse(req.params);
-    const body = z.object({ employeeId: z.number().int().positive() }).safeParse(req.body);
-    if (!params.success || !body.success) {
+    if (!params.success) {
       return reply.code(400).send({ success: false, message: "参数无效" });
     }
 
-    const [enterprise] = await db
-      .select({ id: enterprises.id, name: enterprises.name, status: enterprises.status })
-      .from(enterprises)
-      .where(eq(enterprises.id, params.data.id))
-      .limit(1);
-    if (!enterprise) {
-      return reply.code(404).send({ success: false, message: "企业不存在" });
-    }
-
     const result = await db.transaction(async (tx) => {
-        const [target] = await tx
-          .select({
-            id: employees.id,
-            role: employees.role,
-            status: employees.status,
-            enterpriseId: employees.enterpriseId,
-          })
-          .from(employees)
-          .where(eq(employees.id, body.data.employeeId))
-          .limit(1)
-          .for("update");
+      const [enterprise] = await tx
+        .select({
+          id: enterprises.id,
+          name: enterprises.name,
+          code: enterprises.code,
+          status: enterprises.status,
+        })
+        .from(enterprises)
+        .where(eq(enterprises.id, params.data.id))
+        .limit(1)
+        .for("update");
+      if (!enterprise) return { outcome: "not_found" } as const;
+      if (enterprise.status !== "pending") return { outcome: "not_pending" } as const;
 
-        if (!target) return { outcome: "not_found" } as const;
-        if (target.status === "pending") return { outcome: "pending_review" } as const;
-        if (target.role === "admin") return { outcome: "super_admin" } as const;
-        if (target.id === req.employeeId) return { outcome: "self" } as const;
+      const [applicant] = await tx
+        .select({
+          id: employees.id,
+          role: employees.role,
+          status: employees.status,
+        })
+        .from(employees)
+        .where(eq(employees.enterpriseId, enterprise.id))
+        .orderBy(asc(employees.createdAt), asc(employees.id))
+        .limit(1)
+        .for("update");
 
-        const [row] = await tx
+      const [row] = await tx
+        .update(enterprises)
+        .set({ status: "active", updatedAt: new Date() })
+        .where(eq(enterprises.id, enterprise.id))
+        .returning({
+          id: enterprises.id,
+          name: enterprises.name,
+          code: enterprises.code,
+          status: enterprises.status,
+        });
+
+      if (applicant && (applicant.role === "employee" || applicant.status === "pending")) {
+        await tx
           .update(employees)
           .set({
             role: "org_admin",
-            enterpriseId: enterprise.id,
+            status: "active",
             updatedAt: new Date(),
           })
-          .where(eq(employees.id, target.id))
-          .returning({
-            id: employees.id,
-            name: employees.name,
-            phone: employees.phone,
-            role: employees.role,
-            status: employees.status,
-            enterpriseId: employees.enterpriseId,
-          });
-
-        let revokedApiKeyCount = 0;
-        if (target.role === "employee") {
-          const revokedKeys = await tx
-            .update(employeeApiKeys)
-            .set({ status: "revoked" })
-            .where(
-              and(
-                eq(employeeApiKeys.employeeId, target.id),
-                eq(employeeApiKeys.status, "active"),
-              ),
-            )
-            .returning({ id: employeeApiKeys.id });
-          revokedApiKeyCount = revokedKeys.length;
-        }
-
-        return { outcome: "assigned", row, previousRole: target.role, revokedApiKeyCount } as const;
-      });
-
-      if (result.outcome === "not_found") {
-        return reply.code(404).send({ success: false, message: "用户不存在" });
-      }
-      if (result.outcome === "pending_review") {
-        return reply.code(400).send({ success: false, message: "待审核注册申请请使用“审核通过”操作" });
-      }
-      if (result.outcome === "super_admin") {
-        return reply.code(400).send({ success: false, message: "不能将超级管理员改为企业管理员" });
-      }
-      if (result.outcome === "self") {
-        return reply.code(400).send({ success: false, message: "不能修改自己的角色或状态" });
+          .where(eq(employees.id, applicant.id));
       }
 
-      await writeOpsAudit({
-        actorEmployeeId: req.employeeId,
-        action: "enterprise.assign_admin",
-        targetType: "enterprise",
-        targetId: String(enterprise.id),
-        detail: {
-          employeeId: result.row.id,
-          previousRole: result.previousRole,
-          role: result.row.role,
-          revokedApiKeyCount: result.revokedApiKeyCount,
-        },
-        ip: req.ip,
-      });
+      return {
+        outcome: "approved" as const,
+        row,
+        applicantId: applicant?.id ?? null,
+      };
+    });
 
-      return { success: true, data: result.row };
+    if (result.outcome === "not_found") {
+      return reply.code(404).send({ success: false, message: "企业不存在" });
+    }
+    if (result.outcome === "not_pending") {
+      return reply.code(409).send({ success: false, message: "该企业已审核" });
+    }
+
+    await writeOpsAudit({
+      actorEmployeeId: req.employeeId,
+      action: "enterprise.approve",
+      targetType: "enterprise",
+      targetId: String(result.row.id),
+      detail: {
+        name: result.row.name,
+        code: result.row.code,
+        applicantId: result.applicantId,
+      },
+      ip: req.ip,
+    });
+
+    return { success: true, data: result.row };
   });
 }

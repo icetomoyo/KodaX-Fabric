@@ -59,20 +59,18 @@ export const useAuthStore = defineStore("auth", () => {
   }
 
   async function register(payload: {
-    kind: "personal" | "enterprise";
     name: string;
     phone: string;
-    dept?: string;
-    enterpriseName?: string;
+    password: string;
   }) {
     const { data } = await http.post("/api/auth/register", payload);
     if (!data.success) throw new Error(data.message || "提交申请失败");
     return data.data;
   }
 
-  async function joinEnterprise(code: string) {
-    const { data } = await http.post("/api/me/join-enterprise", { code });
-    if (!data.success) throw new Error(data.message || "加入企业失败");
+  async function applyEnterprise(name: string) {
+    const { data } = await http.post("/api/me/enterprise-applications", { name });
+    if (!data.success) throw new Error(data.message || "提交合作申请失败");
     if (user.value) {
       user.value = {
         ...user.value,
@@ -114,7 +112,7 @@ export const useAuthStore = defineStore("auth", () => {
     logout,
     login,
     register,
-    joinEnterprise,
+    applyEnterprise,
     changePassword,
     fetchMe,
   };

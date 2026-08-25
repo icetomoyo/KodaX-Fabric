@@ -9,17 +9,29 @@
       <div v-if="team" class="quota-panel">
         <div class="quota-stats">
           <div>
-            <span>团队每日额度</span>
-            <el-tag v-if="team.dailyTokenQuota === 0" type="danger" size="small">未分配</el-tag>
-            <strong v-else>{{ formatTokenCompact(team.dailyTokenQuota) }}</strong>
+            <span>企业套餐</span>
+            <el-tag v-if="enterpriseMonthlyYuan === 0" type="danger" size="small">未发放</el-tag>
+            <strong v-else>{{ packageLabel(packagePlan) }} · {{ formatYuan(enterpriseMonthlyYuan) }}/月</strong>
           </div>
           <div>
-            <span>今日已用</span>
-            <strong>{{ formatTokenCompact(team.todayTotalTokens) }}</strong>
+            <span>团队每月额度</span>
+            <el-tag v-if="Number(team.monthlyYuanQuota) === 0" type="danger" size="small">未分配</el-tag>
+            <strong v-else>{{ formatYuan(team.monthlyYuanQuota) }}</strong>
+          </div>
+          <div>
+            <span>本月已用</span>
+            <strong>{{ formatYuan(team.monthCostYuan) }}</strong>
           </div>
         </div>
         <el-alert
-          v-if="team.dailyTokenQuota === 0"
+          v-if="canEditQuota && enterpriseMonthlyYuan === 0"
+          title="企业尚未获得套餐，无法给团队分配大于 0 的额度"
+          type="warning"
+          :closable="false"
+          show-icon
+        />
+        <el-alert
+          v-else-if="Number(team.monthlyYuanQuota) === 0"
           title="该团队未分配额度，暂不可调用"
           type="warning"
           :closable="false"
@@ -27,8 +39,8 @@
         />
         <el-progress
           v-else
-          :percentage="usagePercent(team.todayTotalTokens, team.dailyTokenQuota)"
-          :status="usageProgressStatus(team.todayTotalTokens, team.dailyTokenQuota)"
+          :percentage="usagePercent(Number(team.monthCostYuan), Number(team.monthlyYuanQuota))"
+          :status="usageProgressStatus(Number(team.monthCostYuan), Number(team.monthlyYuanQuota))"
         />
       </div>
     </div>
@@ -87,12 +99,12 @@
         <el-table-column label="个人每日上限" min-width="180">
           <template #default="{ row }">
             <span v-if="row.dailyTokenLimit == null">不限（受团队池约束）</span>
-            <span v-else class="mono-num">{{ formatTokenCompact(row.dailyTokenLimit) }}</span>
+            <span v-else class="mono-num">{{ formatTokenMillion(row.dailyTokenLimit) }}</span>
           </template>
         </el-table-column>
         <el-table-column label="今日已用" width="120">
           <template #default="{ row }">
-            <span class="mono-num">{{ formatTokenCompact(row.todayTotalTokens) }}</span>
+            <span class="mono-num">{{ formatTokenMillion(row.todayTotalTokens) }}</span>
           </template>
         </el-table-column>
         <el-table-column label="今日成本（元）" width="130">
@@ -127,10 +139,10 @@
       </el-table>
     </div>
 
-    <el-dialog v-model="showAddMember" title="添加团队成员" width="480px">
+    <el-dialog v-model="showAddMember" title="邀请已注册用户" width="480px">
       <el-form label-width="90px">
-        <el-form-item label="员工 ID" required>
-          <el-input v-model="addEmployeeId" placeholder="本企业员工 ID" />
+        <el-form-item label="手机号" required>
+          <el-input v-model="addPhone" placeholder="已注册用户的手机号" />
         </el-form-item>
         <el-form-item v-if="canAssignAdmin" label="角色">
           <el-select v-model="addRole" style="width: 100%">
@@ -145,18 +157,21 @@
       </template>
     </el-dialog>
 
-    <el-dialog v-model="showQuota" title="设置团队每日额度" width="440px">
+    <el-dialog v-model="showQuota" title="设置团队每月额度" width="440px">
       <el-form label-width="90px">
-        <el-form-item label="每日额度" required>
+        <el-form-item label="每月额度" required>
           <el-input-number
             v-model="quotaValue"
             :min="0"
-            :max="Number.MAX_SAFE_INTEGER"
-            :step="10000"
+            :max="maxTeamQuotaYuan"
+            :step="100"
+            :precision="0"
             controls-position="right"
             style="width: 100%"
           />
-          <div class="form-help">非负整数；0 表示未分配，该团队 Key 不能转发。</div>
+          <div class="form-help">
+            单位元。0 表示未分配，该团队 Key 不能转发。本团队最多可分配 {{ formatYuan(maxTeamQuotaYuan) }}。
+          </div>
         </el-form-item>
       </el-form>
       <template #footer>
@@ -173,12 +188,14 @@
         <el-form-item v-if="!limitUnlimited" label="每日上限" required>
           <el-input-number
             v-model="limitValue"
-            :min="0"
-            :max="Number.MAX_SAFE_INTEGER"
-            :step="1000"
+            :min="1"
+            :max="100000"
+            :step="1"
+            :precision="0"
             controls-position="right"
             style="width: 100%"
           />
+          <div class="form-help">单位 M（百万 Token）。</div>
         </el-form-item>
       </el-form>
       <template #footer>
@@ -196,14 +213,26 @@ import { ElMessage, ElMessageBox } from "element-plus";
 import type { EChartsCoreOption } from "echarts/core";
 import { http } from "@/api/http";
 import UsageChart from "@/components/UsageChart.vue";
-import { formatTokenCompact, formatYuan, usagePercent, usageProgressStatus } from "@/lib/tokens";
+import { packageLabel } from "@/lib/packages";
+import {
+  formatTokenCompact,
+  formatTokenMillion,
+  formatYuan,
+  millionFromTokens,
+  tokensFromMillion,
+  usagePercent,
+  usageProgressStatus,
+} from "@/lib/tokens";
 import { useAuthStore } from "@/stores/auth";
 
 type TeamInfo = {
   id: number;
   name: string;
-  dailyTokenQuota: number;
+  monthlyYuanQuota: number;
+  packagePlan: "plus" | "pro" | "max" | null;
+  enterpriseMonthlyYuan: number;
   todayTotalTokens: number;
+  monthCostYuan: string;
 };
 
 type MemberRow = {
@@ -244,10 +273,12 @@ const route = useRoute();
 const router = useRouter();
 const teamId = computed(() => Number(route.params.id));
 const team = ref<TeamInfo | null>(null);
+const packagePlan = ref<"plus" | "pro" | "max" | null>(null);
+const enterpriseMonthlyYuan = ref(0);
 const members = ref<MemberRow[]>([]);
 const showAddMember = ref(false);
 const addingMember = ref(false);
-const addEmployeeId = ref("");
+const addPhone = ref("");
 const addRole = ref<"member" | "team_admin">("member");
 const showQuota = ref(false);
 const savingQuota = ref(false);
@@ -259,6 +290,16 @@ const limitUnlimited = ref(true);
 const limitValue = ref(0);
 const canAssignAdmin = computed(() => auth.isSuperAdmin || auth.isOrgAdmin);
 const canEditQuota = computed(() => auth.isSuperAdmin || auth.isOrgAdmin);
+const assignedAllTeams = ref(0);
+const remainingForThisTeam = computed(() => {
+  if (!team.value) return 0;
+  const assignedOthers = Math.max(
+    0,
+    assignedAllTeams.value - Number(team.value.monthlyYuanQuota || 0),
+  );
+  return Math.max(0, enterpriseMonthlyYuan.value - assignedOthers);
+});
+const maxTeamQuotaYuan = computed(() => remainingForThisTeam.value);
 const canEditMemberLimit = computed(
   () => auth.isSuperAdmin || auth.isOrgAdmin || auth.isTeamAdmin,
 );
@@ -298,6 +339,14 @@ async function loadTeam() {
   if (data.success) {
     const rows = Array.isArray(data.data) ? (data.data as TeamInfo[]) : [];
     team.value = rows.find((item) => item.id === teamId.value) ?? null;
+    packagePlan.value = data.packagePlan ?? team.value?.packagePlan ?? null;
+    const fromList =
+      typeof data.enterpriseMonthlyYuan === "number" ? data.enterpriseMonthlyYuan : null;
+    enterpriseMonthlyYuan.value = fromList ?? Number(team.value?.enterpriseMonthlyYuan ?? 0);
+    assignedAllTeams.value = rows.reduce(
+      (sum, row) => sum + Number(row.monthlyYuanQuota || 0),
+      0,
+    );
   }
 }
 
@@ -367,34 +416,34 @@ const usageChartOption = computed<EChartsCoreOption>(() => ({
 }));
 
 function openAddMember() {
-  addEmployeeId.value = "";
+  addPhone.value = "";
   addRole.value = "member";
   showAddMember.value = true;
 }
 
 function openQuota() {
   if (!team.value) return;
-  quotaValue.value = team.value.dailyTokenQuota;
+  quotaValue.value = Number(team.value.monthlyYuanQuota || 0);
   showQuota.value = true;
 }
 
 function openMemberLimit(row: MemberRow) {
   limitRow.value = row;
   limitUnlimited.value = row.dailyTokenLimit == null;
-  limitValue.value = row.dailyTokenLimit ?? 0;
+  limitValue.value = row.dailyTokenLimit == null ? 1 : millionFromTokens(row.dailyTokenLimit);
   showMemberLimit.value = true;
 }
 
 async function addMember() {
-  const employeeId = Number(addEmployeeId.value);
-  if (!Number.isSafeInteger(employeeId) || employeeId <= 0) {
-    ElMessage.warning("请填写有效的员工 ID");
+  const phone = addPhone.value.trim();
+  if (phone.length < 5) {
+    ElMessage.warning("请填写已注册用户的手机号");
     return;
   }
   addingMember.value = true;
   try {
     const { data } = await http.post(`/api/admin/teams/${teamId.value}/members`, {
-      employeeId,
+      phone,
       role: canAssignAdmin.value ? addRole.value : "member",
     });
     if (!data.success) throw new Error(data.message);
@@ -411,13 +460,21 @@ async function addMember() {
 async function saveQuota() {
   if (!team.value) return;
   if (!Number.isSafeInteger(quotaValue.value) || quotaValue.value < 0) {
-    ElMessage.warning("每日额度必须是非负整数");
+    ElMessage.warning("每月额度必须是非负整数，单位元");
+    return;
+  }
+  if (quotaValue.value > maxTeamQuotaYuan.value) {
+    ElMessage.warning(
+      enterpriseMonthlyYuan.value <= 0
+        ? "企业尚未获得套餐，无法给团队分配额度"
+        : "团队额度合计不能超过企业套餐金额",
+    );
     return;
   }
   savingQuota.value = true;
   try {
     const { data } = await http.patch(`/api/admin/teams/${teamId.value}`, {
-      dailyTokenQuota: quotaValue.value,
+      monthlyYuanQuota: quotaValue.value,
     });
     if (!data.success) throw new Error(data.message);
     ElMessage.success("已更新额度");
@@ -432,9 +489,9 @@ async function saveQuota() {
 
 async function saveMemberLimit() {
   if (!limitRow.value) return;
-  const dailyTokenLimit = limitUnlimited.value ? null : limitValue.value;
-  if (dailyTokenLimit !== null && (!Number.isSafeInteger(dailyTokenLimit) || dailyTokenLimit < 0)) {
-    ElMessage.warning("个人每日上限必须是非负整数");
+  const dailyTokenLimit = limitUnlimited.value ? null : tokensFromMillion(limitValue.value);
+  if (dailyTokenLimit !== null && (!Number.isSafeInteger(limitValue.value) || limitValue.value < 1)) {
+    ElMessage.warning("个人每日上限必须是至少 1 M 的整数");
     return;
   }
   savingLimit.value = true;
@@ -504,8 +561,13 @@ watch(teamId, async () => {
 }
 .quota-stats {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 16px;
+}
+@media (max-width: 768px) {
+  .quota-stats {
+    grid-template-columns: 1fr;
+  }
 }
 .quota-stats span {
   display: block;
