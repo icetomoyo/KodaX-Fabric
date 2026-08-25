@@ -26,6 +26,7 @@ import {
   canAdminTeam,
   canCreateTeam,
   canReadTeam,
+  employeeSingleTeamConflictMessage,
   listAdminTeamIds,
   loadTeamAccessForActor,
   resolveTeamListScope,
@@ -90,6 +91,19 @@ function actorFrom(req: {
     enterpriseId: req.session!.enterpriseId ?? null,
     employeeId: req.employeeId!,
   };
+}
+
+async function loadEmployeeTeamMembership(employeeId: number) {
+  const [row] = await db
+    .select({
+      teamId: teamMembers.teamId,
+      teamName: teams.name,
+    })
+    .from(teamMembers)
+    .innerJoin(teams, eq(teamMembers.teamId, teams.id))
+    .where(eq(teamMembers.employeeId, employeeId))
+    .limit(1);
+  return row ?? null;
 }
 
 async function refreshConsoleRole(employeeId: number) {
@@ -378,6 +392,11 @@ export async function adminTeamRoutes(app: FastifyInstance) {
     if (target.role === "admin") {
       return reply.code(400).send({ success: false, message: "不能将超级管理员加入团队" });
     }
+    const existingMembership = await loadEmployeeTeamMembership(target.id);
+    const conflict = employeeSingleTeamConflictMessage(existingMembership, access.teamId);
+    if (conflict) {
+      return reply.code(409).send({ success: false, message: conflict });
+    }
     try {
       const [row] = await db
         .insert(teamMembers)
@@ -403,8 +422,16 @@ export async function adminTeamRoutes(app: FastifyInstance) {
       return { success: true, data: row };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      if (message.includes("team_members_team_employee_uidx") || message.includes("unique")) {
-        return reply.code(409).send({ success: false, message: "该员工已在团队中" });
+      if (
+        message.includes("team_members_team_employee_uidx") ||
+        message.includes("team_members_employee_uidx") ||
+        message.includes("unique")
+      ) {
+        const raced = await loadEmployeeTeamMembership(target.id);
+        return reply.code(409).send({
+          success: false,
+          message: employeeSingleTeamConflictMessage(raced, access.teamId) ?? "该员工已在团队中",
+        });
       }
       throw error;
     }

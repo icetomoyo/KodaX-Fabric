@@ -88,6 +88,15 @@ export function canCreateTeam(actor: OrgActor, enterpriseId: number): boolean {
   return actor.role === "org_admin" && actor.enterpriseId === enterpriseId;
 }
 
+export function employeeSingleTeamConflictMessage(
+  existing: { teamId: number; teamName: string } | null,
+  targetTeamId: number,
+): string | null {
+  if (!existing) return null;
+  if (existing.teamId === targetTeamId) return "该员工已在团队中";
+  return `该员工已加入团队 ${existing.teamName}，一名员工只能属于一个团队`;
+}
+
 export function resolveTeamListScope(
   actor: OrgActor,
   requestedEnterpriseId: number | undefined,

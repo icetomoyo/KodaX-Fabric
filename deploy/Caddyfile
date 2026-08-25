@@ -18,7 +18,7 @@ https://tokenhub.haizhi.com {
 			encode zstd gzip
 
 			@backend path /api/* /ai/* /health
-			reverse_proxy @backend api:3100 {
+			reverse_proxy @backend api:3000 {
 				flush_interval -1
 			}
 

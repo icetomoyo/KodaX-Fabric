@@ -15,7 +15,7 @@ import {
 } from "../src/db/schema/index.js";
 import { encryptEmployeeApiKey, generateApiKey } from "../src/lib/api-key.js";
 
-const baseUrl = process.env.TOKENHUB_SMOKE_BASE_URL ?? "http://127.0.0.1:3100";
+const baseUrl = process.env.TOKENHUB_SMOKE_BASE_URL ?? "http://127.0.0.1:3000";
 const smokeModels = (process.env.TOKENHUB_SMOKE_MODELS ?? "glm-4.5-air,deepseek-v4-flash")
   .split(",")
   .map((item) => item.trim())

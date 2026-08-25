@@ -75,7 +75,7 @@ test("relay base URL uses the proxy-facing host instead of the API listener port
       method: "GET",
       url: "/relay-url",
       headers: {
-        host: "tokenhub:3100",
+        host: "tokenhub:3000",
         "x-forwarded-host": "10.10.0.144",
         "x-forwarded-proto": "https",
       },

@@ -121,7 +121,8 @@ export const teamMembers = pgTable(
   },
   (t) => [
     uniqueIndex("team_members_team_employee_uidx").on(t.teamId, t.employeeId),
-    index("team_members_employee_idx").on(t.employeeId),
+    // One employee belongs to at most one team at a time.
+    uniqueIndex("team_members_employee_uidx").on(t.employeeId),
   ],
 );
 

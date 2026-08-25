@@ -192,6 +192,7 @@
             <h3 class="detail-section-title">响应</h3>
             <StructuredJson :value="detail.body.responseBody" empty-text="无响应正文" />
           </template>
+          <p v-else class="muted">请求/响应正文已按保留策略清理，列表里的用量和耗时仍在。</p>
         </template>
       </div>
     </el-drawer>

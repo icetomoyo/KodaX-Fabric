@@ -13,7 +13,7 @@ process.env.CREDENTIAL_ENCRYPT_KEY ??= "unit-test-credential-secret";
 const { adminTeamRoutes, buildTeamListQuery } = await import("../src/routes/admin/teams.js");
 const { adminEnterpriseRoutes } = await import("../src/routes/admin/enterprises.js");
 const { meRoutes } = await import("../src/routes/me.js");
-const { resolveTeamListScope } = await import("../src/lib/org.js");
+const { employeeSingleTeamConflictMessage, resolveTeamListScope } = await import("../src/lib/org.js");
 
 const teamAdminSession = {
   sub: "11",
@@ -135,4 +135,49 @@ test("admin shell source includes 团队管理 for org and team admins", () => {
   assert.match(home, /\/admin\/teams/);
   assert.match(router, /admin-teams/);
   assert.match(router, /team_admin/);
+});
+
+test("joining a second team is rejected with a named 409 message", () => {
+  assert.equal(
+    employeeSingleTeamConflictMessage({ teamId: 2, teamName: "研发一组" }, 8),
+    "该员工已加入团队 研发一组，一名员工只能属于一个团队",
+  );
+  const teamsRoute = readFileSync(
+    resolve(dirname(fileURLToPath(import.meta.url)), "../src/routes/admin/teams.ts"),
+    "utf8",
+  );
+  assert.match(teamsRoute, /employeeSingleTeamConflictMessage/);
+  assert.match(teamsRoute, /code\(409\)/);
+});
+
+test("re-adding a member to the same team keeps the existing 409 copy", () => {
+  assert.equal(
+    employeeSingleTeamConflictMessage({ teamId: 8, teamName: "研发一组" }, 8),
+    "该员工已在团队中",
+  );
+  assert.equal(employeeSingleTeamConflictMessage(null, 8), null);
+});
+
+test("team member add dialog surfaces backend 409 messages", () => {
+  const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+  const detail = readFileSync(resolve(root, "web/src/views/admin/TeamDetailView.vue"), "utf8");
+  assert.match(detail, /requestMessage/);
+  assert.match(detail, /response\?\.data\?\.message/);
+});
+
+test("employee unique membership migration cleans duplicates before the unique index", () => {
+  const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+  const journal = JSON.parse(
+    readFileSync(resolve(root, "drizzle/meta/_journal.json"), "utf8"),
+  ) as { entries: Array<{ tag: string }> };
+  const migration = journal.entries
+    .map((entry) => readFileSync(resolve(root, `drizzle/${entry.tag}.sql`), "utf8"))
+    .find((sql) => sql.includes('CREATE UNIQUE INDEX "team_members_employee_uidx"'));
+  assert.ok(migration, "expected a migration that creates team_members_employee_uidx");
+  const deleteAt = migration.indexOf('DELETE FROM "team_members"');
+  const indexAt = migration.indexOf('CREATE UNIQUE INDEX "team_members_employee_uidx"');
+  assert.ok(deleteAt >= 0, "expected a cleanup DELETE before the unique index");
+  assert.ok(indexAt > deleteAt);
+  assert.match(migration, /team_admin/);
+  assert.match(migration, /created_at/);
 });

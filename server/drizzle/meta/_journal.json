@@ -78,6 +78,13 @@
       "when": 1787451466318,
       "tag": "0010_brown_callisto",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1787541973168,
+      "tag": "0011_sour_alex_power",
+      "breakpoints": true
     }
   ]
 }

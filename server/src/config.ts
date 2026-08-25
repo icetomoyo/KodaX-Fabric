@@ -19,7 +19,7 @@ loadEnv({ path: resolve(dirname(fileURLToPath(import.meta.url)), "../.env") });
 const envSchema = z.object({
   DATABASE_URL: z.string().min(1),
   REDIS_URL: z.string().min(1),
-  PORT: z.coerce.number().default(3100),
+  PORT: z.coerce.number().default(3000),
   HOST: z.string().default("0.0.0.0"),
   CORS_ORIGIN: z.string().default("http://127.0.0.1:5173"),
   JWT_SECRET: z.string().min(16),
@@ -43,6 +43,10 @@ const envSchema = z.object({
     .int()
     .min(1_024)
     .default(20 * 1024 * 1024),
+  // 0 disables pruning and keeps every JSON body.
+  AUDIT_BODY_KEEP_LAST: z.coerce.number().int().min(0).default(2_000),
+  // 0 runs the startup prune only. Default 10 minutes.
+  AUDIT_BODY_PRUNE_INTERVAL_MS: z.coerce.number().int().min(0).default(600_000),
   SEED_ADMIN_NAME: z.string().default("管理员"),
   SEED_ADMIN_PHONE: z.string().default("13800000000"),
   SEED_ADMIN_PASSWORD: z.string().min(8).default("ChangeMe@123"),

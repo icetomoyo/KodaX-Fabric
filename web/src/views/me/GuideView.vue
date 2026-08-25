@@ -169,7 +169,7 @@
             <li>打开 Cursor Settings → Models（或 OpenAI 兼容相关设置）。</li>
             <li>
               Override OpenAI Base URL 填 <code>{{ clientBaseUrl }}</code>
-              （不要加 <code>:3100</code>，不要漏协议）。
+              （不要加端口号，不要漏协议）。
             </li>
             <li>OpenAI API Key 填员工 Key（<code>th_...</code>）。</li>
             <li>模型选择与 <code>/ai/models</code> 返回一致；保存后新开对话验证。</li>
@@ -343,9 +343,9 @@ const troubleshootingItems = computed(() => [
     resolution: `先在浏览器打开 ${healthUrl.value}；确认客户端 Base URL 使用 ${clientBaseUrl.value}，随后完全退出并重启客户端。`,
   },
   {
-    title: "地址中出现 :3100",
-    cause: "3100 是 KodaX Fabric 容器内部端口，员工电脑无法直接访问。",
-    resolution: `Base URL 必须使用 ${clientBaseUrl.value}，不要添加 :3100。`,
+    title: "地址中出现 :3000 或 :3100",
+    cause: "那是 API 内部监听端口（现为 3000；旧文档可能写 3100），员工电脑无法直接访问。",
+    resolution: `Base URL 必须使用 ${clientBaseUrl.value}，不要添加端口号。`,
   },
   {
     title: "401 / invalid_api_key",
