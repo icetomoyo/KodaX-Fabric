@@ -14,7 +14,7 @@ const { parseRelayUsage, sanitizeRelayAuditBody, sanitizeRelayHeaderRecord } = a
 const { credentialSupportsProtocol, orderRelayCandidates } = await import(
   "../src/lib/relay/routing.js"
 );
-const { beginCredentialUse, getCredentialLoad } = await import(
+const { beginCredentialUse, getCredentialLoad, recordCredentialTokens } = await import(
   "../src/lib/relay/credential-load.js"
 );
 const { SseAuditInspector, createSsePassthrough } = await import(
@@ -138,9 +138,9 @@ test("equal-rank duplicate routes are weighted before credential deduplication",
 
 test("equal-priority candidates prefer idle credentials then least-used ones", () => {
   const load = (credentialId: number) => {
-    if (credentialId === 1) return { inFlight: 2, totalUses: 1 };
-    if (credentialId === 2) return { inFlight: 0, totalUses: 9 };
-    return { inFlight: 0, totalUses: 3 };
+    if (credentialId === 1) return { inFlight: 2, totalUses: 1, totalTokens: 0 };
+    if (credentialId === 2) return { inFlight: 0, totalUses: 9, totalTokens: 0 };
+    return { inFlight: 0, totalUses: 3, totalTokens: 0 };
   };
   const result = orderRelayCandidates(
     [candidate(1), candidate(2), candidate(3)],
@@ -151,17 +151,44 @@ test("equal-priority candidates prefer idle credentials then least-used ones", (
   assert.deepEqual(result.map((item) => item.credentialId), [3, 2, 1]);
 });
 
+test("equal-priority candidates prefer lower token volume over request count", () => {
+  const load = (credentialId: number) => {
+    if (credentialId === 1) return { inFlight: 0, totalUses: 200, totalTokens: 2_000_000 };
+    if (credentialId === 2) return { inFlight: 0, totalUses: 100, totalTokens: 25_000_000 };
+    return { inFlight: 0, totalUses: 0, totalTokens: 0 };
+  };
+  const result = orderRelayCandidates(
+    [candidate(1), candidate(2), candidate(3)],
+    () => 0,
+    load,
+  );
+
+  assert.deepEqual(result.map((item) => item.credentialId), [3, 1, 2]);
+});
+
 test("credential load counts in-flight uses and releases idempotently", () => {
   const credentialId = 990_001;
-  assert.deepEqual(getCredentialLoad(credentialId), { inFlight: 0, totalUses: 0 });
+  assert.deepEqual(getCredentialLoad(credentialId), { inFlight: 0, totalUses: 0, totalTokens: 0 });
   const releaseFirst = beginCredentialUse(credentialId);
   const releaseSecond = beginCredentialUse(credentialId);
-  assert.deepEqual(getCredentialLoad(credentialId), { inFlight: 2, totalUses: 2 });
+  assert.deepEqual(getCredentialLoad(credentialId), { inFlight: 2, totalUses: 2, totalTokens: 0 });
   releaseFirst();
   releaseFirst();
-  assert.deepEqual(getCredentialLoad(credentialId), { inFlight: 1, totalUses: 2 });
+  assert.deepEqual(getCredentialLoad(credentialId), { inFlight: 1, totalUses: 2, totalTokens: 0 });
   releaseSecond();
-  assert.deepEqual(getCredentialLoad(credentialId), { inFlight: 0, totalUses: 2 });
+  assert.deepEqual(getCredentialLoad(credentialId), { inFlight: 0, totalUses: 2, totalTokens: 0 });
+});
+
+test("credential load accumulates observed tokens for later scheduling", () => {
+  const credentialId = 990_002;
+  recordCredentialTokens(credentialId, 10_000);
+  recordCredentialTokens(credentialId, 250_000);
+  recordCredentialTokens(credentialId, 0);
+  assert.deepEqual(getCredentialLoad(credentialId), {
+    inFlight: 0,
+    totalUses: 0,
+    totalTokens: 260_000,
+  });
 });
 
 test("zero-weight candidates are excluded", () => {

@@ -2,26 +2,46 @@
  * In-process load tracking for upstream credentials.
  *
  * Scheduling prefers the credential with the fewest in-flight requests, then
- * the fewest total uses, so pool pressure stays evenly spread. Counters live
- * in process memory: they reset on restart, which only affects tie-breaking,
+ * the fewest observed tokens. Official upstream limits are usually token
+ * budgets, not request counts, so a few huge completions must outweigh many
+ * tiny ones. Request count remains a later tie-breaker. Counters live in
+ * process memory: they reset on restart, which only affects tie-breaking,
  * and they assume a single relay instance.
  */
 
 export type CredentialLoad = {
   inFlight: number;
   totalUses: number;
+  totalTokens: number;
 };
 
 export type CredentialLoadReader = (credentialId: number) => CredentialLoad;
 
+export const EMPTY_CREDENTIAL_LOAD: CredentialLoad = {
+  inFlight: 0,
+  totalUses: 0,
+  totalTokens: 0,
+};
+
 const inFlightByCredential = new Map<number, number>();
 const totalUsesByCredential = new Map<number, number>();
+const totalTokensByCredential = new Map<number, number>();
 
 export function getCredentialLoad(credentialId: number): CredentialLoad {
   return {
     inFlight: inFlightByCredential.get(credentialId) ?? 0,
     totalUses: totalUsesByCredential.get(credentialId) ?? 0,
+    totalTokens: totalTokensByCredential.get(credentialId) ?? 0,
   };
+}
+
+export function recordCredentialTokens(credentialId: number, tokens: number): void {
+  const amount = Number.isFinite(tokens) ? Math.trunc(tokens) : 0;
+  if (amount <= 0) return;
+  totalTokensByCredential.set(
+    credentialId,
+    (totalTokensByCredential.get(credentialId) ?? 0) + amount,
+  );
 }
 
 /**

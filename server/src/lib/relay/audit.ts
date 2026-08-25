@@ -10,6 +10,7 @@ import {
   usageCountersTeamDaily,
 } from "../../db/schema/index.js";
 import { quotaDayAt } from "../quota-time.js";
+import { recordCredentialTokens } from "./credential-load.js";
 import type { RelayProtocol } from "./protocol.js";
 import type {
   RelayCandidate,
@@ -228,7 +229,7 @@ export async function writeRelayAudit(input: RelayAuditInput): Promise<void> {
   const errorCount = input.status === "success" ? 0 : 1;
   const quotaDay = quotaDayAt(new Date(), env.QUOTA_TIMEZONE);
 
-  await db.transaction(async (tx) => {
+  const recorded = await db.transaction(async (tx) => {
     const [inserted] = await tx
       .insert(requestAudits)
       .values({
@@ -269,7 +270,7 @@ export async function writeRelayAudit(input: RelayAuditInput): Promise<void> {
       .onConflictDoNothing()
       .returning({ requestId: requestAudits.requestId });
 
-    if (!inserted) return;
+    if (!inserted) return false;
 
     await tx.insert(requestAuditBodies).values({
       requestId: input.requestId,
@@ -337,5 +338,9 @@ export async function writeRelayAudit(input: RelayAuditInput): Promise<void> {
       .update(employeeApiKeys)
       .set({ lastUsedAt: new Date() })
       .where(sql`${employeeApiKeys.id} = ${input.principal.employeeApiKeyId}`);
+    return true;
   });
+  if (recorded && input.candidate?.credentialId && totalTokens > 0) {
+    recordCredentialTokens(input.candidate.credentialId, totalTokens);
+  }
 }

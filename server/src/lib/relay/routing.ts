@@ -10,6 +10,7 @@ import { effectiveCredentialStatus } from "../credential-status.js";
 import {
   type CredentialLoad,
   type CredentialLoadReader,
+  EMPTY_CREDENTIAL_LOAD,
   getCredentialLoad,
 } from "./credential-load.js";
 import { resolveProtocolUpstreamConfig } from "../upstream-protocol-config.js";
@@ -259,9 +260,9 @@ function shuffle(
 
 /**
  * Least-loaded ordering inside one priority group: fewest in-flight requests
- * first, then fewest total uses, then higher combined weight (so duplicate
- * routes of the same credential stay deterministic), and finally random via
- * the pre-shuffle plus stable sort.
+ * first, then fewest observed tokens (official limits are token budgets),
+ * then fewest request counts, then higher combined weight, and finally
+ * random via the pre-shuffle plus stable sort.
  */
 function leastLoadedOrder(
   group: RelayCandidate[],
@@ -275,12 +276,13 @@ function leastLoadedOrder(
     }
   }
   const loadFor = (candidate: RelayCandidate): CredentialLoad =>
-    loads.get(candidate.credentialId) ?? { inFlight: 0, totalUses: 0 };
+    loads.get(candidate.credentialId) ?? EMPTY_CREDENTIAL_LOAD;
   return shuffle(group, random).sort((a, b) => {
     const la = loadFor(a);
     const lb = loadFor(b);
     return (
       la.inFlight - lb.inFlight ||
+      la.totalTokens - lb.totalTokens ||
       la.totalUses - lb.totalUses ||
       b.routeWeight * b.credentialWeight - a.routeWeight * a.credentialWeight
     );
