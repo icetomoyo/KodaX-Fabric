@@ -4,7 +4,7 @@ import { db } from "../db/client.js";
 import { enterprises } from "../db/schema/index.js";
 import type { SessionRole } from "./jwt.js";
 
-export const DEFAULT_ENTERPRISE_NAME = "默认企业";
+export const DEFAULT_ENTERPRISE_NAME = "海致集团";
 export const ENTERPRISE_CODE_PATTERN = /^E[A-HJ-NP-Z2-9]{8}$/;
 const ENTERPRISE_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
@@ -146,6 +146,13 @@ export async function getDefaultEnterpriseId(): Promise<number> {
     .where(eq(enterprises.name, DEFAULT_ENTERPRISE_NAME))
     .limit(1);
   if (named) return named.id;
+
+  const [legacy] = await db
+    .select({ id: enterprises.id })
+    .from(enterprises)
+    .where(eq(enterprises.name, "默认企业"))
+    .limit(1);
+  if (legacy) return legacy.id;
 
   try {
     const created = await insertEnterprise({ name: DEFAULT_ENTERPRISE_NAME, status: "active" });
