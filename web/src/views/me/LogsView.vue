@@ -259,12 +259,13 @@ function statusText(status: LogStatus): string {
 }
 
 function statusTagType(status: LogStatus): "success" | "danger" | "warning" | "info" {
-  return {
+  const tags: Record<LogStatus, "success" | "danger" | "warning" | "info"> = {
     success: "success",
     upstream_error: "danger",
     client_error: "warning",
     cancelled: "info",
-  }[status];
+  };
+  return tags[status];
 }
 
 function providerText(code: string | null): string {
