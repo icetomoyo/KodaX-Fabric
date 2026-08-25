@@ -98,7 +98,13 @@
                 </div>
               </div>
 
-              <div class="kanban-board">
+              <el-empty
+                v-if="!selectedChannel.keys.length"
+                class="empty-keys"
+                description="该渠道还没有 Key，点右上角「添加 Key」导入"
+                :image-size="64"
+              />
+              <div v-else class="kanban-board">
                 <div
                   v-for="column in boardColumns"
                   :key="column.status"
@@ -259,7 +265,10 @@
             :key="`${item.template.code}:${item.option.productLineCode}`"
             type="button"
             class="provider-card"
-            :class="{ selected: isBulkChannelOptionSelected(item) }"
+            :class="{
+              selected: isBulkChannelOptionSelected(item),
+              configured: isTemplateOptionConfigured(item.template, item.option),
+            }"
             @click="selectBulkChannelOption(item)"
           >
             <span class="provider-logo" :style="{ background: item.template.color }">
@@ -267,7 +276,10 @@
             </span>
             <span class="provider-card-copy">
               <strong>{{ channelOptionDisplayName(item) }}</strong>
-              <small>{{ item.template.name }} · {{ item.option.label }}</small>
+              <small>
+                {{ item.template.name }} · {{ item.option.label }}
+                <template v-if="isTemplateOptionConfigured(item.template, item.option)"> · 已添加</template>
+              </small>
             </span>
           </button>
           <button
@@ -696,6 +708,23 @@ type ConfiguredProductLine = {
   code: string;
   name: string;
   status: ChannelStatus;
+  baseUrl?: string;
+  protocolConfigs?: RelayProtocolConfigs;
+  configVersion?: number;
+};
+
+type ListedProductLine = {
+  id: number;
+  code: string;
+  name: string;
+  status: ChannelStatus;
+  productType: CredentialRow["productType"];
+  protocolConfigs: RelayProtocolConfigs | null;
+  configVersion: number;
+  providerCode: string;
+  providerName: string;
+  providerStatus: string;
+  baseUrl: string;
 };
 
 type ProviderTemplate = {
@@ -788,6 +817,7 @@ const auth = useAuthStore();
 const canWrite = computed(() => auth.isSuperAdmin);
 
 const rows = ref<CredentialRow[]>([]);
+const listedProductLines = ref<ListedProductLine[]>([]);
 const templates = ref<ProviderTemplate[]>([]);
 const loading = ref(false);
 const selectedProductLineId = ref<number | null>(null);
@@ -845,7 +875,7 @@ const channels = computed<ChannelGroup[]>(() => {
     else grouped.set(row.productLineId, [row]);
   }
 
-  return [...grouped.entries()].map(([id, keys]) => {
+  const fromKeys = [...grouped.entries()].map(([id, keys]) => {
     const first = keys[0];
     const coolingCount = keys.filter((key) => visibleStatus(key) === "cooling").length;
     const channelCanSchedule = first.providerStatus === "active"
@@ -875,6 +905,12 @@ const channels = computed<ChannelGroup[]>(() => {
       recentErrorCount: keys.reduce((sum, key) => sum + (key.recentErrorCount ?? 0), 0),
     };
   });
+
+  const keyedIds = new Set(fromKeys.map((channel) => channel.id));
+  const emptyChannels = listedProductLines.value
+    .filter((line) => !keyedIds.has(line.id))
+    .map((line) => emptyChannelFromProductLine(line));
+  return [...fromKeys, ...emptyChannels];
 });
 
 const selectedChannel = computed(
@@ -932,9 +968,7 @@ function isTemplateOptionConfigured(
 
 const bulkChannelOptions = computed<BulkChannelOption[]>(() =>
   templates.value.flatMap((template) =>
-    template.baseUrls
-      .filter((option) => !isTemplateOptionConfigured(template, option))
-      .map((option) => ({ template, option })),
+    template.baseUrls.map((option) => ({ template, option })),
   ),
 );
 
@@ -1293,15 +1327,25 @@ function channelOptionDisplayName(item: BulkChannelOption): string {
 }
 
 function isBulkChannelOptionSelected(item: BulkChannelOption): boolean {
-  return !bulkForm.custom
+  if (bulkForm.custom) return false;
+  const configured = item.template.productLines?.find(
+    (line) => line.code === item.option.productLineCode,
+  );
+  if (configured) return bulkForm.productLineId === configured.id;
+  return !bulkForm.productLineId
     && bulkForm.providerCode === item.template.code
     && bulkForm.baseUrl === item.option.url;
 }
 
 function channelDisplayName(
-  channel: Pick<ChannelGroup, "providerName" | "productLineName"> | Pick<CredentialRow, "providerName" | "productLineName">,
+  channel: Pick<ChannelGroup, "providerCode" | "providerName" | "productLineCode" | "productLineName">
+    | Pick<CredentialRow, "providerCode" | "providerName" | "productLineCode" | "productLineName">,
 ): string {
-  return formatChannelName(channel.providerName, channel.productLineName);
+  const template = templates.value.find((item) => item.code === channel.providerCode);
+  const optionName = template?.baseUrls.find(
+    (option) => option.productLineCode === channel.productLineCode,
+  )?.productLineName;
+  return formatChannelName(channel.providerName, optionName || channel.productLineName);
 }
 
 function statusText(status: CredentialStatus): string {
@@ -1388,6 +1432,7 @@ async function loadCredentials() {
   const { data } = await http.get("/api/admin/credentials");
   if (data.success) {
     rows.value = data.data;
+    listedProductLines.value = data.productLines ?? [];
     channelSummaries.value = new Map();
   }
 }
@@ -1443,9 +1488,19 @@ function resetBulkForm() {
   bulkForm.productLineId = null;
   bulkForm.rawKeys = "";
   bulkForm.status = "active";
-  const firstAvailable = bulkChannelOptions.value[0];
-  if (firstAvailable) {
-    selectBulkChannelOption(firstAvailable);
+  const firstNew = bulkChannelOptions.value.find(
+    (item) => !isTemplateOptionConfigured(item.template, item.option),
+  );
+  if (firstNew) {
+    bulkForm.custom = false;
+    bulkForm.providerCode = firstNew.template.code;
+    bulkForm.baseUrl = firstNew.option.url;
+    bulkForm.name = firstNew.option.productLineName;
+    bulkForm.supportedProtocols = initialOptionProtocols(firstNew.option, firstNew.template);
+    bulkFormProtocolConfigs.value = providerOptionProtocolConfigs(
+      firstNew.option,
+      firstNew.template,
+    );
     return;
   }
   selectCustomChannelOption();
@@ -1612,13 +1667,52 @@ function openAddKeys(channel: ChannelGroup) {
   showBulkForm.value = true;
 }
 
+function emptyChannelFromProductLine(line: ListedProductLine): ChannelGroup {
+  const configs = line.protocolConfigs ?? {};
+  const protocols = RELAY_PROTOCOLS.filter((protocol) => isValidProtocolConfig(configs[protocol]));
+  return {
+    id: line.id,
+    providerCode: line.providerCode,
+    providerName: line.providerName,
+    providerStatus: line.providerStatus,
+    productLineCode: line.code,
+    productLineName: line.name || line.code,
+    productLineStatus: line.status,
+    productType: line.productType,
+    protocolConfigs: configs,
+    configVersion: line.configVersion ?? 1,
+    baseUrl: line.baseUrl,
+    protocols,
+    keys: [],
+    totalCount: 0,
+    schedulableCount: 0,
+    coolingCount: 0,
+    unschedulableCount: 0,
+    recentSuccessCount: 0,
+    recentErrorCount: 0,
+  };
+}
+
 function selectBulkChannelOption(item: BulkChannelOption) {
+  const configured = item.template.productLines?.find(
+    (line) => line.code === item.option.productLineCode,
+  );
+  const channel = configured
+    ? channels.value.find((entry) => entry.id === configured.id)
+    : undefined;
+
   bulkForm.custom = false;
   bulkForm.providerCode = item.template.code;
-  bulkForm.baseUrl = item.option.url;
-  bulkForm.name = item.option.productLineName;
-  bulkForm.supportedProtocols = initialOptionProtocols(item.option, item.template);
-  bulkFormProtocolConfigs.value = providerOptionProtocolConfigs(item.option, item.template);
+  bulkForm.baseUrl = channel?.baseUrl ?? item.option.url;
+  bulkForm.name = channel?.productLineName ?? item.option.productLineName;
+  bulkForm.supportedProtocols = channel
+    ? [...channel.protocols]
+    : initialOptionProtocols(item.option, item.template);
+  bulkForm.status = channel?.productLineStatus ?? "active";
+  bulkFormProtocolConfigs.value = channel
+    ? { ...channel.protocolConfigs }
+    : providerOptionProtocolConfigs(item.option, item.template);
+  bulkForm.productLineId = configured?.id ?? null;
 }
 
 function selectCustomChannelOption() {
@@ -2575,6 +2669,14 @@ onMounted(refreshAll);
   border-color: #3b82f6;
   background: #eff6ff;
   box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.12);
+}
+
+.provider-card.configured:not(.selected) {
+  background: #f8fafc;
+}
+
+.empty-keys {
+  padding: 32px 0;
 }
 
 .provider-card-copy {

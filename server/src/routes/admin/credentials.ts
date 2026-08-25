@@ -1644,6 +1644,25 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
         ]),
     );
 
+    const productLineRows = await db
+      .select({
+        id: productLines.id,
+        code: productLines.code,
+        name: productLines.name,
+        status: productLines.status,
+        productType: productLines.productType,
+        protocolConfigs: productLines.protocolConfigs,
+        configVersion: productLines.configVersion,
+        baseUrlOverride: productLines.baseUrlOverride,
+        providerCode: providers.code,
+        providerName: providers.name,
+        providerStatus: providers.status,
+        defaultBaseUrl: providers.defaultBaseUrl,
+      })
+      .from(productLines)
+      .innerJoin(providers, eq(productLines.providerId, providers.id))
+      .orderBy(asc(productLines.id));
+
     return {
       success: true,
       data: rows.map((row) => ({
@@ -1651,6 +1670,10 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
         recentWindowHours: 24,
         recentSuccessCount: recentById.get(row.id)?.recentSuccessCount ?? 0,
         recentErrorCount: recentById.get(row.id)?.recentErrorCount ?? 0,
+      })),
+      productLines: productLineRows.map((line) => ({
+        ...line,
+        baseUrl: line.baseUrlOverride || line.defaultBaseUrl,
       })),
     };
   });
