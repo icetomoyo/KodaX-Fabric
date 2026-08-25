@@ -15,7 +15,7 @@
         v-model="supportedProtocols"
         class="protocol-checkbox-group"
         :disabled="disabled"
-        @change="emit('protocols-change')"
+        @change="onProtocolsChange"
       >
         <el-checkbox
           v-for="option in relayProtocolOptions"
@@ -32,7 +32,7 @@
         </el-checkbox>
       </el-checkbox-group>
       <div class="form-help">
-        协议决定上游地址和鉴权方式，地址不可在此单独修改；标记“当前渠道不支持”的协议不可选择。
+        {{ protocolHelpText }}
       </div>
     </el-form-item>
 
@@ -45,14 +45,32 @@
         >
           <div class="protocol-config-head">
             <strong>{{ row.label }}</strong>
-            <el-tag size="small" effect="plain">{{ authStyleLabel(row.authStyle) }}</el-tag>
+            <el-select
+              v-if="editable"
+              :model-value="row.authStyle"
+              size="small"
+              style="width: 132px"
+              :disabled="disabled"
+              @change="updateAuthStyle(row.protocol, $event)"
+            >
+              <el-option label="Bearer" value="bearer" />
+              <el-option label="x-api-key" value="x-api-key" />
+            </el-select>
+            <el-tag v-else size="small" effect="plain">{{ authStyleLabel(row.authStyle) }}</el-tag>
           </div>
-          <code>{{ row.baseUrl }}</code>
+          <el-input
+            v-if="editable"
+            :model-value="row.baseUrl"
+            placeholder="http://host:port/v1"
+            :disabled="disabled"
+            @update:model-value="updateProtocolBaseUrl(row.protocol, $event)"
+          />
+          <code v-else>{{ row.baseUrl }}</code>
         </div>
       </div>
       <el-empty v-else description="请先选择协议" :image-size="48" />
       <el-alert
-        v-if="missingProtocols.length"
+        v-if="!editable && missingProtocols.length"
         class="config-missing-alert"
         type="error"
         :closable="false"
@@ -104,7 +122,9 @@ import { computed } from "vue";
 import {
   relayProtocolLabel,
   relayProtocolOptions,
+  type RelayAuthStyle,
   type RelayProtocol,
+  type RelayProtocolConfig,
   type RelayProtocolConfigs,
   type RelayProtocolOption,
 } from "@/views/relay-protocol";
@@ -112,18 +132,19 @@ import {
 type ChannelStatus = "active" | "disabled";
 
 const props = withDefaults(defineProps<{
-  protocolConfigs: RelayProtocolConfigs;
   protocolsTouched?: boolean;
   routingConfigDrift?: boolean;
   routingUpgradeRequested?: boolean;
   disabled?: boolean;
   showChangeRisk?: boolean;
+  editable?: boolean;
 }>(), {
   protocolsTouched: false,
   routingConfigDrift: false,
   routingUpgradeRequested: false,
   disabled: false,
   showChangeRisk: false,
+  editable: false,
 });
 
 const emit = defineEmits<{
@@ -134,23 +155,32 @@ const emit = defineEmits<{
 const name = defineModel<string>("name", { required: true });
 const supportedProtocols = defineModel<RelayProtocol[]>("supportedProtocols", { required: true });
 const status = defineModel<ChannelStatus>("status", { required: true });
+const protocolConfigs = defineModel<RelayProtocolConfigs>("protocolConfigs", { required: true });
 
 const selectedConfigRows = computed(() => relayProtocolOptions
   .filter((option) => supportedProtocols.value.includes(option.value))
   .flatMap((option) => {
-    const config = props.protocolConfigs[option.value];
-    return config
-      ? [{
+    const config = protocolConfigs.value[option.value];
+    if (config) {
+      return [{
         protocol: option.value,
         label: option.shortLabel,
         baseUrl: config.baseUrl,
         authStyle: config.authStyle,
+      }];
+    }
+    return props.editable
+      ? [{
+        protocol: option.value,
+        label: option.shortLabel,
+        baseUrl: "",
+        authStyle: defaultAuthStyle(option.value),
       }]
       : [];
   }));
 
 const missingProtocols = computed(() => supportedProtocols.value.filter(
-  (protocol) => !props.protocolConfigs[protocol],
+  (protocol) => !hasUsableProtocolConfig(protocol),
 ));
 
 const missingProtocolLabels = computed(() => missingProtocols.value
@@ -165,6 +195,12 @@ const changeRiskTitle = computed(() => props.routingConfigDrift
   ? "检测到旧的 URL / 鉴权配置，保存后协议路由将更新；请重新测试连接。"
   : "协议变更会影响该渠道下所有 Key 的转发，保存后建议重新测试连接。");
 
+const protocolHelpText = computed(() => (
+  props.editable
+    ? "协议决定转发格式。自定义渠道需要为每个所选协议填写上游地址和鉴权方式。"
+    : "协议决定上游地址和鉴权方式，地址不可在此单独修改；标记“当前渠道不支持”的协议不可选择。"
+));
+
 const protocolRouteLabel = computed(() => (
   props.routingConfigDrift && !routingUpgradePending.value
     ? "模板协议路由（应用后生效）"
@@ -175,13 +211,67 @@ const routingUpgradeTitle = computed(() => routingUpgradePending.value
   ? "保存后协议路由将更新为上方模板 URL / 鉴权，请重新测试连接。"
   : "检测到当前渠道仍使用旧固定 URL；上方为模板路由，尚未生效。普通字段保存不会自动升级。" );
 
+function defaultAuthStyle(protocol: RelayProtocol): RelayAuthStyle {
+  return protocol === "anthropic_messages" ? "x-api-key" : "bearer";
+}
+
 function authStyleLabel(authStyle: "bearer" | "x-api-key"): string {
   return authStyle === "x-api-key" ? "x-api-key" : "Bearer";
 }
 
+function hasUsableProtocolConfig(protocol: RelayProtocol): boolean {
+  const config = protocolConfigs.value[protocol];
+  return Boolean(config?.baseUrl?.trim() && config.authStyle);
+}
+
 function isProtocolAvailable(protocol: RelayProtocol): boolean {
-  const config = props.protocolConfigs[protocol];
-  return Boolean(config?.baseUrl && config.authStyle);
+  return props.editable || hasUsableProtocolConfig(protocol);
+}
+
+function updateProtocolConfig(
+  protocol: RelayProtocol,
+  patch: Partial<RelayProtocolConfig>,
+) {
+  if (!props.editable) return;
+  const current = protocolConfigs.value[protocol];
+  protocolConfigs.value = {
+    ...protocolConfigs.value,
+    [protocol]: {
+      baseUrl: current?.baseUrl ?? "",
+      authStyle: current?.authStyle ?? defaultAuthStyle(protocol),
+      ...patch,
+    },
+  };
+}
+
+function updateAuthStyle(protocol: RelayProtocol, value: unknown) {
+  if (value !== "bearer" && value !== "x-api-key") return;
+  updateProtocolConfig(protocol, { authStyle: value });
+}
+
+function updateProtocolBaseUrl(protocol: RelayProtocol, value: string) {
+  updateProtocolConfig(protocol, { baseUrl: value });
+}
+
+function seedMissingEditableConfigs() {
+  if (!props.editable) return;
+  const next = { ...protocolConfigs.value };
+  const donor = Object.values(next).find((config) => config?.baseUrl?.trim());
+  let changed = false;
+  for (const protocol of supportedProtocols.value) {
+    if (next[protocol]?.baseUrl?.trim()) continue;
+    next[protocol] = {
+      baseUrl: donor?.baseUrl ?? next[protocol]?.baseUrl ?? "",
+      authStyle: next[protocol]?.authStyle ?? defaultAuthStyle(protocol),
+    };
+    changed = true;
+  }
+  if (changed) protocolConfigs.value = next;
+}
+
+function onProtocolsChange() {
+  emit("protocols-change");
+  seedMissingEditableConfigs();
 }
 
 function protocolOptionLabel(option: RelayProtocolOption): string {
@@ -298,6 +388,10 @@ function protocolOptionLabel(option: RelayProtocolOption): string {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 12px;
   line-height: 1.5;
+}
+
+.protocol-config-row :deep(.el-input) {
+  width: 100%;
 }
 
 .config-missing-alert {

@@ -3,6 +3,29 @@ import {
   RELAY_PROTOCOLS,
   type RelayProtocol,
 } from "./relay/protocol.js";
+import { UPSTREAM_AUTH_STYLES } from "./upstream-protocol-config.js";
+
+const protocolUpstreamConfigInputSchema = z.object({
+  baseUrl: z
+    .string()
+    .trim()
+    .min(1, "上游地址不能为空")
+    .max(2048, "上游地址过长")
+    .refine((value) => {
+      try {
+        const url = new URL(value);
+        return url.protocol === "http:" || url.protocol === "https:";
+      } catch {
+        return false;
+      }
+    }, "上游地址必须是有效的 http 或 https URL"),
+  authStyle: z.enum(UPSTREAM_AUTH_STYLES),
+});
+
+const customProtocolConfigsInputSchema = z.object({
+  openai_chat: protocolUpstreamConfigInputSchema.optional(),
+  anthropic_messages: protocolUpstreamConfigInputSchema.optional(),
+}).strict();
 
 export const configurableSupportedProtocolsSchema = z
   .array(z.enum(RELAY_PROTOCOLS))
@@ -18,6 +41,7 @@ export const upstreamChannelUpdateSchema = z
     name: z.string().trim().min(1).max(100).optional(),
     status: z.enum(["active", "disabled"]).optional(),
     supportedProtocols: configurableSupportedProtocolsSchema.optional(),
+    protocolConfigs: customProtocolConfigsInputSchema.optional(),
   })
   .strict()
   .refine((value) => Object.keys(value).some((key) => key !== "expectedConfigVersion"), {

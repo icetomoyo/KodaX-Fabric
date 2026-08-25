@@ -11,6 +11,30 @@ export type BulkChannelCreationIntent = {
   status?: string;
 };
 
+export type BulkCreateLocatorKind = "existing" | "template" | "custom" | "invalid";
+
+/**
+ * Exactly one locator is allowed: an existing product line, an official
+ * template (providerCode + baseUrl), or a new custom channel.
+ */
+export function describeBulkCreateLocator(input: {
+  productLineId?: number;
+  providerCode?: string;
+  baseUrl?: string;
+  custom?: boolean;
+}): BulkCreateLocatorKind {
+  const locatesById = input.productLineId !== undefined;
+  const locatesByCustom = input.custom === true;
+  const locatesByTemplate = !locatesByCustom
+    && (input.providerCode !== undefined || input.baseUrl !== undefined);
+  const locatorCount = [locatesById, locatesByTemplate, locatesByCustom]
+    .filter(Boolean).length;
+  if (locatorCount !== 1) return "invalid";
+  if (locatesById) return "existing";
+  if (locatesByCustom) return "custom";
+  return input.providerCode && input.baseUrl ? "template" : "invalid";
+}
+
 /**
  * A provider/base-URL request carrying channel metadata means "create", not
  * "locate or reuse". If another transaction won the unique product-line

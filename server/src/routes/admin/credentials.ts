@@ -12,9 +12,14 @@ import {
   upstreamCredentials,
 } from "../../db/schema/index.js";
 import {
+  describeBulkCreateLocator,
   inspectCredentialSecretDuplicates,
   shouldRejectExistingChannelForMetadataRequest,
 } from "../../lib/credential-bulk.js";
+import {
+  allocateCustomProductLineCode,
+  resolveCustomProtocolConfigs,
+} from "../../lib/custom-channel.js";
 import { effectiveCredentialStatus } from "../../lib/credential-status.js";
 import { decryptSecret, encryptSecret, secretSuffix } from "../../lib/crypto-secret.js";
 import { writeOpsAudit } from "../../lib/ops-audit.js";
@@ -23,8 +28,10 @@ import {
   parseUpstreamBusinessFailure,
 } from "../../lib/upstream-connection-test.js";
 import {
+  CUSTOM_PROVIDER_CODE,
+  CUSTOM_PROVIDER_NAME,
   getProviderTemplate,
-  isAllowedTemplateHost,
+  isTestableUpstreamUrl,
   PROVIDER_TEMPLATES,
   resolveTemplateBaseUrlOption,
   resolveTemplateProtocolConfigs,
@@ -48,6 +55,7 @@ import {
   parseProductLineProtocolConfigs,
   planEmptyChannelProtocolConfigInitialization,
   resolveProtocolUpstreamConfig,
+  UPSTREAM_AUTH_STYLES,
 } from "../../lib/upstream-protocol-config.js";
 import {
   requirePasswordChanged,
@@ -93,11 +101,35 @@ const optionalCredentialLabelSchema = z.preprocess(
   z.string().trim().min(1).max(200).optional(),
 );
 
+const protocolUpstreamConfigSchema = z.object({
+  baseUrl: z
+    .string()
+    .trim()
+    .min(1, "上游地址不能为空")
+    .max(2048, "上游地址过长")
+    .refine((value) => {
+      try {
+        const url = new URL(value);
+        return url.protocol === "http:" || url.protocol === "https:";
+      } catch {
+        return false;
+      }
+    }, "上游地址必须是有效的 http 或 https URL"),
+  authStyle: z.enum(UPSTREAM_AUTH_STYLES),
+});
+
+const customProtocolConfigsSchema = z.object({
+  openai_chat: protocolUpstreamConfigSchema.optional(),
+  anthropic_messages: protocolUpstreamConfigSchema.optional(),
+}).strict();
+
 const bulkCredentialCreateSchema = z
   .object({
     productLineId: z.number().int().positive().optional(),
     providerCode: z.string().trim().min(1).max(64).optional(),
     baseUrl: z.string().url().optional(),
+    custom: z.boolean().optional(),
+    protocolConfigs: customProtocolConfigsSchema.optional(),
     name: z.string().trim().min(1).max(100).optional(),
     status: z.enum(["active", "disabled"]).optional(),
     keys: z
@@ -116,17 +148,16 @@ const bulkCredentialCreateSchema = z
     priority: z.number().int().min(-1000).max(1000).optional(),
   })
   .superRefine((value, context) => {
-    const locatesById = value.productLineId !== undefined;
-    const hasProviderLocator = value.providerCode !== undefined || value.baseUrl !== undefined;
+    const locator = describeBulkCreateLocator(value);
 
-    if (locatesById === hasProviderLocator) {
+    if (locator === "invalid") {
       context.addIssue({
         code: z.ZodIssueCode.custom,
-        message: "必须且只能通过 productLineId 或 providerCode + baseUrl 定位渠道",
+        message: "必须且只能通过 productLineId、官方模板 providerCode + baseUrl，或 custom 定位渠道",
         path: ["productLineId"],
       });
     }
-    if (hasProviderLocator && (!value.providerCode || !value.baseUrl)) {
+    if (locator === "template" && (!value.providerCode || !value.baseUrl)) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
         message: "providerCode 和 baseUrl 必须同时提供",
@@ -134,13 +165,48 @@ const bulkCredentialCreateSchema = z
       });
     }
     if (
-      locatesById &&
-      (value.name !== undefined || value.status !== undefined)
+      locator === "existing"
+      && (
+        value.name !== undefined
+        || value.status !== undefined
+        || value.protocolConfigs !== undefined
+        || value.custom !== undefined
+      )
     ) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
         message: "渠道配置项仅可在新建渠道时提供",
         path: ["productLineId"],
+      });
+    }
+    if (locator === "custom") {
+      if (value.providerCode !== undefined || value.baseUrl !== undefined) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "自定义渠道不能同时提供官方模板定位参数",
+          path: value.providerCode ? ["providerCode"] : ["baseUrl"],
+        });
+      }
+      if (!value.name) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "自定义渠道必须提供名称",
+          path: ["name"],
+        });
+      }
+      if (!value.protocolConfigs) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "自定义渠道必须提供协议路由",
+          path: ["protocolConfigs"],
+        });
+      }
+    }
+    if (locator !== "custom" && value.protocolConfigs !== undefined) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "协议路由仅自定义渠道可提交",
+        path: ["protocolConfigs"],
       });
     }
   });
@@ -367,9 +433,12 @@ async function testCredentialConnection(
   if (!upstreamConfig) {
     throw new Error("该渠道缺少所选协议的端点配置");
   }
-  const template = getProviderTemplate(credential.providerCode);
-  if (!template || !isAllowedTemplateHost(template, upstreamConfig.baseUrl)) {
-    throw new Error("当前仅支持对已确认供应商的官方 HTTPS 地址进行连通性测试");
+  if (!isTestableUpstreamUrl(credential.providerCode, upstreamConfig.baseUrl)) {
+    throw new Error(
+      getProviderTemplate(credential.providerCode)
+        ? "当前仅支持对已确认供应商的官方 HTTPS 地址进行连通性测试"
+        : "自定义渠道缺少可测试的上游地址",
+    );
   }
 
   const testedAt = new Date().toISOString();
@@ -960,32 +1029,61 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
       const weight = body.data.defaults?.weight ?? body.data.weight ?? 100;
       const priority = body.data.defaults?.priority ?? body.data.priority ?? 0;
 
-      const template = body.data.providerCode
+      const creatingCustomChannel = body.data.custom === true
+        && body.data.productLineId === undefined;
+      const template = !creatingCustomChannel && body.data.providerCode
         ? getProviderTemplate(body.data.providerCode)
         : undefined;
       const baseUrlOption = template && body.data.baseUrl
         ? resolveTemplateBaseUrlOption(template, body.data.baseUrl)
         : undefined;
 
-      if (body.data.productLineId === undefined && !template) {
+      if (body.data.productLineId === undefined && !creatingCustomChannel && !template) {
         return reply.code(400).send({ success: false, message: "暂不支持该供应商" });
       }
-      if (body.data.productLineId === undefined && !baseUrlOption) {
+      if (body.data.productLineId === undefined && !creatingCustomChannel && !baseUrlOption) {
         return reply.code(400).send({
           success: false,
           message: "Base URL 必须选择该供应商的官方地址",
         });
       }
-      const newChannelProtocols = requestedSupportedProtocols
-        ?? template?.defaultProtocols
-        ?? [DEFAULT_RELAY_PROTOCOL];
+      const customProtocolConfigResolution = creatingCustomChannel
+        ? resolveCustomProtocolConfigs(
+          body.data.protocolConfigs,
+          requestedSupportedProtocols
+            ?? configuredProtocols(parseProductLineProtocolConfigs(body.data.protocolConfigs)),
+        )
+        : null;
+      if (creatingCustomChannel && customProtocolConfigResolution && !customProtocolConfigResolution.ok) {
+        return reply.code(400).send({
+          success: false,
+          code: "CHANNEL_PROTOCOL_UNSUPPORTED",
+          message: "自定义渠道必须为每个所选协议提供 URL 和鉴权配置",
+          unsupportedProtocols: customProtocolConfigResolution.unsupportedProtocols,
+        });
+      }
+      if (
+        creatingCustomChannel
+        && customProtocolConfigResolution?.ok
+        && Object.keys(customProtocolConfigResolution.configs).length === 0
+      ) {
+        return reply.code(400).send({
+          success: false,
+          message: "自定义渠道必须为至少一个协议配置上游地址",
+        });
+      }
+      const newChannelProtocols = creatingCustomChannel && customProtocolConfigResolution?.ok
+        ? configuredProtocols(customProtocolConfigResolution.configs)
+        : requestedSupportedProtocols
+          ?? template?.defaultProtocols
+          ?? [DEFAULT_RELAY_PROTOCOL];
       const newChannelProtocolConfigResolution = template && baseUrlOption
         ? resolveTemplateProtocolConfigs(
           template,
           baseUrlOption.productLineCode,
           newChannelProtocols,
         )
-        : null;
+        : customProtocolConfigResolution;
       if (newChannelProtocolConfigResolution && !newChannelProtocolConfigResolution.ok) {
         return reply.code(400).send({
           success: false,
@@ -1010,6 +1108,83 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
           context = {
             ...located,
             baseUrl: located.productLine.baseUrlOverride || located.provider.defaultBaseUrl,
+          };
+        } else if (creatingCustomChannel) {
+          if (
+            !newChannelProtocolConfigResolution
+            || !newChannelProtocolConfigResolution.ok
+            || !body.data.name
+          ) {
+            throw new Error("渠道定位参数无效");
+          }
+
+          const customConfigs = newChannelProtocolConfigResolution.configs;
+          const primaryProtocol = newChannelProtocols[0] ?? DEFAULT_RELAY_PROTOCOL;
+          const primaryConfig = customConfigs[primaryProtocol]
+            ?? customConfigs.openai_chat
+            ?? customConfigs.anthropic_messages;
+          if (!primaryConfig) throw new Error("自定义渠道缺少协议路由");
+
+          let [provider] = await tx
+            .select()
+            .from(providers)
+            .where(eq(providers.code, CUSTOM_PROVIDER_CODE))
+            .limit(1);
+
+          if (!provider) {
+            [provider] = await tx
+              .insert(providers)
+              .values({
+                code: CUSTOM_PROVIDER_CODE,
+                name: CUSTOM_PROVIDER_NAME,
+                defaultBaseUrl: primaryConfig.baseUrl,
+                authStyle: primaryConfig.authStyle,
+                openaiCompatLevel: "full",
+                status: "active",
+              })
+              .onConflictDoNothing({ target: providers.code })
+              .returning();
+
+            if (!provider) {
+              [provider] = await tx
+                .select()
+                .from(providers)
+                .where(eq(providers.code, CUSTOM_PROVIDER_CODE))
+                .limit(1);
+            }
+          }
+          if (!provider) throw new Error("供应商创建失败");
+
+          let productLine: typeof productLines.$inferSelect | undefined;
+          for (let attempt = 0; attempt < 3 && !productLine; attempt += 1) {
+            const [inserted] = await tx
+              .insert(productLines)
+              .values({
+                providerId: provider.id,
+                code: allocateCustomProductLineCode(),
+                name: body.data.name,
+                productType: "api",
+                baseUrlOverride: primaryConfig.baseUrl,
+                protocolConfigs: customConfigs,
+                configVersion: 1,
+                status: body.data.status ?? "active",
+              })
+              .onConflictDoNothing({
+                target: [productLines.providerId, productLines.code],
+              })
+              .returning();
+            productLine = inserted;
+          }
+          if (!productLine) throw new Error("渠道创建失败");
+
+          await tx.execute(
+            sql`select pg_advisory_xact_lock(${productLine.id})`,
+          );
+
+          context = {
+            provider,
+            productLine,
+            baseUrl: productLine.baseUrlOverride || provider.defaultBaseUrl,
           };
         } else {
           // The guards above make these values available in this locator branch.
@@ -1251,7 +1426,9 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
               priority,
               meta: {
                 createdBy: "bulk_create",
-                ...(providerTemplate ? { providerTemplate: providerTemplate.code } : {}),
+                ...(providerTemplate
+                  ? { providerTemplate: providerTemplate.code }
+                  : { customChannel: true }),
               },
               status: "active" as const,
             })),

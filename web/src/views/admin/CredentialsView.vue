@@ -218,12 +218,13 @@
           v-model:name="channelEditForm.name"
           v-model:supported-protocols="channelEditForm.supportedProtocols"
           v-model:status="channelEditForm.status"
-          :protocol-configs="channelEditProtocolConfigs"
+          v-model:protocol-configs="channelEditProtocolConfigs"
+          :editable="channelEditIsCustom"
           :protocols-touched="channelEditProtocolsTouched"
           :routing-config-drift="channelEditRoutingConfigDrift"
           :routing-upgrade-requested="channelEditRoutingUpgradeRequested"
           :disabled="channelEditSaving"
-          show-change-risk
+          :show-change-risk="!channelEditIsCustom"
           @protocols-change="channelEditProtocolsTouched = true"
           @request-routing-upgrade="channelEditRoutingUpgradeRequested = true"
         />
@@ -269,6 +270,18 @@
               <small>{{ item.template.name }} · {{ item.option.label }}</small>
             </span>
           </button>
+          <button
+            type="button"
+            class="provider-card"
+            :class="{ selected: bulkForm.custom }"
+            @click="selectCustomChannelOption"
+          >
+            <span class="provider-logo" style="background: #0f766e">自</span>
+            <span class="provider-card-copy">
+              <strong>自定义渠道</strong>
+              <small>任意 OpenAI / Anthropic 兼容上游</small>
+            </span>
+          </button>
         </div>
 
         <el-form label-position="top" class="credential-form" @submit.prevent>
@@ -288,7 +301,8 @@
             v-model:name="bulkForm.name"
             v-model:supported-protocols="bulkForm.supportedProtocols"
             v-model:status="bulkForm.status"
-            :protocol-configs="bulkProtocolConfigs"
+            v-model:protocol-configs="bulkFormProtocolConfigs"
+            :editable="bulkForm.custom"
             :disabled="bulkSaving || Boolean(selectedConfiguredProductLine)"
           />
         </el-form>
@@ -674,6 +688,8 @@ type ProviderBaseUrl = {
 };
 
 type ProviderTemplateCode = "glm";
+const CUSTOM_PROVIDER_CODE = "custom";
+const CUSTOM_PROVIDER_COLOR = "#0f766e";
 
 type ConfiguredProductLine = {
   id: number;
@@ -748,6 +764,7 @@ type ChannelEditSnapshot = {
   name: string;
   supportedProtocols: RelayProtocol[];
   status: ChannelStatus;
+  protocolConfigs: RelayProtocolConfigs;
 };
 
 type ParsedKey = {
@@ -802,13 +819,15 @@ const batchTestProgress = reactive({ done: 0, total: 0 });
 
 const bulkForm = reactive({
   productLineId: null as number | null,
-  providerCode: "glm" as ProviderTemplateCode,
+  providerCode: "glm" as string,
+  custom: false,
   baseUrl: "",
   name: "",
   rawKeys: "",
   supportedProtocols: ["openai_chat"] as RelayProtocol[],
   status: "active" as ChannelStatus,
 });
+const bulkFormProtocolConfigs = ref<RelayProtocolConfigs>({});
 
 const channelEditForm = reactive({
   id: 0,
@@ -887,6 +906,10 @@ const channelEditTarget = computed(
   () => channels.value.find((channel) => channel.id === channelEditForm.id) ?? null,
 );
 
+const channelEditIsCustom = computed(
+  () => channelEditTarget.value?.providerCode === CUSTOM_PROVIDER_CODE,
+);
+
 const detailRow = computed(
   () => rows.value.find((row) => row.id === detailCredentialId.value) ?? null,
 );
@@ -922,6 +945,7 @@ const selectedBulkBaseUrlOption = computed(
 );
 
 const selectedConfiguredProductLine = computed<ConfiguredProductLine | null>(() => {
+  if (bulkForm.custom) return null;
   const option = selectedBulkBaseUrlOption.value;
   if (!option) return null;
   return selectedBulkTemplate.value?.productLines?.find(
@@ -929,11 +953,7 @@ const selectedConfiguredProductLine = computed<ConfiguredProductLine | null>(() 
   ) ?? null;
 });
 
-const bulkProtocolConfigs = computed<RelayProtocolConfigs>(() => (
-  selectedBulkBaseUrlOption.value && selectedBulkTemplate.value
-    ? providerOptionProtocolConfigs(selectedBulkBaseUrlOption.value, selectedBulkTemplate.value)
-    : {}
-));
+
 
 const importTargetChannel = computed(
   () => channels.value.find((channel) => channel.id === bulkForm.productLineId) ?? null,
@@ -941,6 +961,7 @@ const importTargetChannel = computed(
 
 const importChannelLabel = computed(() => {
   if (importTargetChannel.value) return channelDisplayName(importTargetChannel.value);
+  if (bulkForm.custom) return bulkForm.name.trim() || "自定义渠道";
   const option = bulkBaseUrlOptions.value.find((item) => item.url === bulkForm.baseUrl);
   if (option && selectedBulkTemplate.value) {
     return formatChannelName(selectedBulkTemplate.value.name, option.productLineName);
@@ -1084,6 +1105,15 @@ function isValidHttpBaseUrl(value: string): boolean {
   }
 }
 
+/** Allow `10.10.20.241:8078/v1` by prefixing http:// when the scheme is omitted. */
+function normalizeHttpBaseUrl(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) return trimmed;
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed)) return trimmed;
+  if (/^[\w.-]+(?::\d+)?(?:\/\S*)?$/.test(trimmed)) return `http://${trimmed}`;
+  return trimmed;
+}
+
 function configurableProtocols(protocols: readonly RelayProtocol[]): RelayProtocol[] {
   const configured = new Set(protocols);
   return relayProtocolOptions
@@ -1096,7 +1126,7 @@ function isValidProtocolConfig(
 ): config is { baseUrl: string; authStyle: RelayAuthStyle } {
   return Boolean(
     config
-      && isValidHttpBaseUrl(config.baseUrl)
+      && isValidHttpBaseUrl(normalizeHttpBaseUrl(config.baseUrl))
       && (config.authStyle === "bearer" || config.authStyle === "x-api-key"),
   );
 }
@@ -1146,6 +1176,22 @@ function protocolsHaveConfigs(
   configs: RelayProtocolConfigs,
 ): boolean {
   return protocols.every((protocol) => isValidProtocolConfig(configs[protocol]));
+}
+
+function selectedProtocolConfigs(
+  protocols: readonly RelayProtocol[],
+  configs: RelayProtocolConfigs,
+): RelayProtocolConfigs {
+  const result: RelayProtocolConfigs = {};
+  for (const protocol of protocols) {
+    const config = configs[protocol];
+    if (!isValidProtocolConfig(config)) continue;
+    result[protocol] = {
+      baseUrl: normalizeHttpBaseUrl(config.baseUrl).replace(/\/+$/, ""),
+      authStyle: config.authStyle,
+    };
+  }
+  return result;
 }
 
 function protocolConfigsMatch(
@@ -1214,10 +1260,12 @@ function visibleStatus(row: CredentialRow): CredentialStatus {
 }
 
 function providerColor(code: string): string {
+  if (code === CUSTOM_PROVIDER_CODE) return CUSTOM_PROVIDER_COLOR;
   return templates.value.find((item) => item.code === code)?.color ?? "#64748b";
 }
 
 function providerShortName(code: string): string {
+  if (code === CUSTOM_PROVIDER_CODE) return "自";
   return templates.value.find((item) => item.code === code)?.shortName
     ?? code.slice(0, 4).toUpperCase();
 }
@@ -1245,7 +1293,8 @@ function channelOptionDisplayName(item: BulkChannelOption): string {
 }
 
 function isBulkChannelOptionSelected(item: BulkChannelOption): boolean {
-  return bulkForm.providerCode === item.template.code
+  return !bulkForm.custom
+    && bulkForm.providerCode === item.template.code
     && bulkForm.baseUrl === item.option.url;
 }
 
@@ -1383,34 +1432,31 @@ async function refreshAll() {
   }
 }
 
+function defaultCustomProtocolConfigs(): RelayProtocolConfigs {
+  return {
+    openai_chat: { baseUrl: "", authStyle: "bearer" },
+    anthropic_messages: { baseUrl: "", authStyle: "x-api-key" },
+  };
+}
+
 function resetBulkForm() {
-  const firstAvailable = bulkChannelOptions.value[0];
-  const first = firstAvailable?.template ?? templates.value[0];
-  const firstOption = firstAvailable?.option ?? first?.baseUrls[0];
   bulkForm.productLineId = null;
-  bulkForm.providerCode = first?.code ?? "glm";
-  bulkForm.baseUrl = firstOption?.url ?? "";
-  bulkForm.name = firstOption?.productLineName ?? first?.modelName ?? "";
   bulkForm.rawKeys = "";
   bulkForm.status = "active";
-  bulkForm.supportedProtocols = first && firstOption
-    ? initialOptionProtocols(firstOption, first)
-    : ["openai_chat"];
+  const firstAvailable = bulkChannelOptions.value[0];
+  if (firstAvailable) {
+    selectBulkChannelOption(firstAvailable);
+    return;
+  }
+  selectCustomChannelOption();
 }
 
 async function openCreateChannel() {
   if (!canWrite.value) return;
   try {
     await loadMeta();
-  } catch (error) {
-    if (!templates.value.length) {
-      ElMessage.error(getErrorMessage(error, "加载可新增渠道失败"));
-      return;
-    }
-  }
-  if (!bulkChannelOptions.value.length) {
-    ElMessage.warning("没有可新增的渠道");
-    return;
+  } catch {
+    // Official templates are optional; custom channels remain available.
   }
   resetBulkForm();
   showBulkForm.value = true;
@@ -1452,6 +1498,7 @@ function openEditChannel(channel: ChannelGroup) {
     name: channel.productLineName,
     supportedProtocols: [...channel.protocols],
     status: channel.productLineStatus,
+    protocolConfigs: { ...channel.protocolConfigs },
   };
   showChannelEdit.value = true;
 }
@@ -1484,8 +1531,16 @@ async function saveChannelEdit() {
     !== protocolSignature(originalSelectableProtocols);
   const explicitlyUpgradingDrift = channelEditRoutingConfigDrift.value
     && (channelEditProtocolsTouched.value || channelEditRoutingUpgradeRequested.value);
+  const customChannel = channelEditTarget.value?.providerCode === CUSTOM_PROVIDER_CODE;
+  const protocolConfigsChanged = customChannel
+    && !protocolConfigsMatch(
+      channelEditForm.supportedProtocols,
+      original.protocolConfigs,
+      channelEditProtocolConfigs.value,
+    );
   const shouldSendProtocols = selectableProtocolsChanged
-    || explicitlyUpgradingDrift;
+    || explicitlyUpgradingDrift
+    || protocolConfigsChanged;
   if (shouldSendProtocols && !channelEditForm.supportedProtocols.length) {
     ElMessage.warning("请至少选择一种支持协议");
     return;
@@ -1505,6 +1560,12 @@ async function saveChannelEdit() {
   if (channelEditForm.status !== original.status) payload.status = channelEditForm.status;
   if (shouldSendProtocols) {
     payload.supportedProtocols = [...channelEditForm.supportedProtocols];
+    if (customChannel) {
+      payload.protocolConfigs = selectedProtocolConfigs(
+        channelEditForm.supportedProtocols,
+        channelEditProtocolConfigs.value,
+      );
+    }
   }
   if (Object.keys(payload).length === 1) {
     ElMessage.info("未检测到需要保存的修改");
@@ -1541,19 +1602,32 @@ async function saveChannelEdit() {
 function openAddKeys(channel: ChannelGroup) {
   resetBulkForm();
   bulkForm.productLineId = channel.id;
-  bulkForm.providerCode = channel.providerCode as ProviderTemplateCode;
+  bulkForm.custom = false;
+  bulkForm.providerCode = channel.providerCode;
   bulkForm.baseUrl = channel.baseUrl;
   bulkForm.name = channel.productLineName;
   bulkForm.supportedProtocols = [...channel.protocols];
   bulkForm.status = channel.productLineStatus;
+  bulkFormProtocolConfigs.value = { ...channel.protocolConfigs };
   showBulkForm.value = true;
 }
 
 function selectBulkChannelOption(item: BulkChannelOption) {
+  bulkForm.custom = false;
   bulkForm.providerCode = item.template.code;
   bulkForm.baseUrl = item.option.url;
   bulkForm.name = item.option.productLineName;
   bulkForm.supportedProtocols = initialOptionProtocols(item.option, item.template);
+  bulkFormProtocolConfigs.value = providerOptionProtocolConfigs(item.option, item.template);
+}
+
+function selectCustomChannelOption() {
+  bulkForm.custom = true;
+  bulkForm.providerCode = CUSTOM_PROVIDER_CODE;
+  bulkForm.baseUrl = "";
+  bulkForm.name = "";
+  bulkForm.supportedProtocols = ["openai_chat", "anthropic_messages"];
+  bulkFormProtocolConfigs.value = defaultCustomProtocolConfigs();
 }
 
 function useConfiguredVariant() {
@@ -1661,12 +1735,16 @@ async function saveBulkKeys() {
       ElMessage.warning("渠道名称不能超过 100 个字符");
       return;
     }
-    if (!selectedOption) {
+    if (!bulkForm.custom && !selectedOption) {
       ElMessage.warning("请选择渠道");
       return;
     }
-    if (!protocolsHaveConfigs(bulkForm.supportedProtocols, bulkProtocolConfigs.value)) {
-      ElMessage.warning("所选协议缺少有效的 URL 或鉴权配置");
+    if (!protocolsHaveConfigs(bulkForm.supportedProtocols, bulkFormProtocolConfigs.value)) {
+      ElMessage.warning(
+        bulkForm.custom
+          ? "请为每个所选协议填写有效的上游地址和鉴权方式"
+          : "所选协议缺少有效的 URL 或鉴权配置",
+      );
       return;
     }
   }
@@ -1676,13 +1754,23 @@ async function saveBulkKeys() {
     const payload = {
       ...(bulkForm.productLineId
         ? { productLineId: bulkForm.productLineId }
-        : {
-          providerCode: bulkForm.providerCode,
-          // Legacy locator only; protocolConfigs determine actual upstream URLs.
-          baseUrl: selectedOption!.url,
-          name: bulkForm.name.trim(),
-          status: bulkForm.status,
-        }),
+        : bulkForm.custom
+          ? {
+            custom: true,
+            name: bulkForm.name.trim(),
+            status: bulkForm.status,
+            protocolConfigs: selectedProtocolConfigs(
+              bulkForm.supportedProtocols,
+              bulkFormProtocolConfigs.value,
+            ),
+          }
+          : {
+            providerCode: bulkForm.providerCode,
+            // Legacy locator only; protocolConfigs determine actual upstream URLs.
+            baseUrl: selectedOption!.url,
+            name: bulkForm.name.trim(),
+            status: bulkForm.status,
+          }),
       keys: parsed.keys.map(({ label, secret, hasCustomLabel }) => (
         hasCustomLabel ? { label, secret } : { secret }
       )),
@@ -1707,10 +1795,12 @@ async function saveBulkKeys() {
     if (Number.isInteger(targetId) && channels.value.some((channel) => channel.id === targetId)) {
       selectedProductLineId.value = targetId;
     } else if (!bulkForm.productLineId) {
-      const createdChannel = channels.value.find(
-        (channel) => channel.providerCode === bulkForm.providerCode
-          && channel.productLineCode === selectedOption?.productLineCode,
-      );
+      const createdChannel = bulkForm.custom
+        ? channels.value.find((channel) => channel.id === targetId)
+        : channels.value.find(
+          (channel) => channel.providerCode === bulkForm.providerCode
+            && channel.productLineCode === selectedOption?.productLineCode,
+        );
       if (createdChannel) selectedProductLineId.value = createdChannel.id;
     }
     ElMessage.success({

@@ -11,7 +11,12 @@ import {
 } from "../../db/schema/index.js";
 import { writeOpsAudit } from "../../lib/ops-audit.js";
 import {
+  mergeCustomProtocolConfigs,
+  resolveCustomProtocolConfigs,
+} from "../../lib/custom-channel.js";
+import {
   getProviderTemplate,
+  isCustomProvider,
   resolveTemplateProtocolConfigs,
 } from "../../lib/provider-templates.js";
 import {
@@ -259,16 +264,28 @@ export async function adminProviderRoutes(app: FastifyInstance) {
 
         let nextProtocolConfigs = parseProductLineProtocolConfigs(existing.protocolConfigs);
         let configActuallyChanged = false;
-        if (body.data.supportedProtocols !== undefined) {
+        const updatingProtocolSurface = body.data.supportedProtocols !== undefined
+          || body.data.protocolConfigs !== undefined;
+        if (updatingProtocolSurface) {
           const template = getProviderTemplate(provider.code);
-          if (!template) {
+          let resolution;
+          if (template) {
+            resolution = resolveTemplateProtocolConfigs(
+              template,
+              existing.code,
+              protocolPlan.nextProtocols,
+            );
+          } else if (isCustomProvider(provider.code)) {
+            resolution = resolveCustomProtocolConfigs(
+              mergeCustomProtocolConfigs(
+                existing.protocolConfigs,
+                body.data.protocolConfigs,
+              ),
+              protocolPlan.nextProtocols,
+            );
+          } else {
             return { kind: "protocol_config_unavailable" } as const;
           }
-          const resolution = resolveTemplateProtocolConfigs(
-            template,
-            existing.code,
-            protocolPlan.nextProtocols,
-          );
           if (!resolution.ok) {
             return {
               kind: "protocol_unsupported",
@@ -318,7 +335,7 @@ export async function adminProviderRoutes(app: FastifyInstance) {
         }
 
         const storedProtocolConfigs = parseProductLineProtocolConfigs(existing.protocolConfigs);
-        const protocolConfigsStorageChanged = body.data.supportedProtocols !== undefined &&
+        const protocolConfigsStorageChanged = updatingProtocolSurface &&
           (storedProtocolConfigs === null || nextProtocolConfigs === null ||
             !protocolConfigsEqual(storedProtocolConfigs, nextProtocolConfigs));
         const metadataChanged =
@@ -337,7 +354,7 @@ export async function adminProviderRoutes(app: FastifyInstance) {
           .set({
             ...(body.data.name !== undefined ? { name: body.data.name } : {}),
             ...(body.data.status !== undefined ? { status: body.data.status } : {}),
-            ...(body.data.supportedProtocols !== undefined
+            ...(updatingProtocolSurface
               ? { protocolConfigs: nextProtocolConfigs }
               : {}),
             configVersion: nextConfigVersion,
@@ -377,7 +394,7 @@ export async function adminProviderRoutes(app: FastifyInstance) {
             before: {
               ...(body.data.name !== undefined ? { name: existing.name } : {}),
               ...(body.data.status !== undefined ? { status: existing.status } : {}),
-              ...(body.data.supportedProtocols !== undefined
+              ...(updatingProtocolSurface
                 ? {
                   supportedProtocols: protocolPlan.currentProtocols,
                   protocolConfigs: existing.protocolConfigs,
@@ -388,7 +405,7 @@ export async function adminProviderRoutes(app: FastifyInstance) {
             after: {
               ...(body.data.name !== undefined ? { name: row.name } : {}),
               ...(body.data.status !== undefined ? { status: row.status } : {}),
-              ...(body.data.supportedProtocols !== undefined
+              ...(updatingProtocolSurface
                 ? {
                   supportedProtocols: protocolPlan.nextProtocols,
                   protocolConfigs: nextProtocolConfigs,

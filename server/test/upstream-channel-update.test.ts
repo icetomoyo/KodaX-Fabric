@@ -20,6 +20,24 @@ test("channel update validation accepts the simplified editable surface", () => 
   if (result.success) assert.equal(result.data.name, "GLM Anthropic");
 });
 
+test("channel update validation accepts custom protocol configs", () => {
+  const result = upstreamChannelUpdateSchema.safeParse({
+    expectedConfigVersion: 1,
+    supportedProtocols: ["openai_chat", "anthropic_messages"],
+    protocolConfigs: {
+      openai_chat: {
+        baseUrl: "http://10.10.20.241:8078/v1",
+        authStyle: "bearer",
+      },
+      anthropic_messages: {
+        baseUrl: "http://10.10.20.241:8078/v1",
+        authStyle: "x-api-key",
+      },
+    },
+  });
+  assert.equal(result.success, true);
+});
+
 test("channel update validation rejects empty, duplicate, and unknown protocol sets", () => {
   assert.equal(
     upstreamChannelUpdateSchema.safeParse({

@@ -6,6 +6,10 @@ import type {
 
 export type ProviderTemplateCode = "glm";
 
+/** Catch-all provider for administrator-defined upstreams that are not official templates. */
+export const CUSTOM_PROVIDER_CODE = "custom" as const;
+export const CUSTOM_PROVIDER_NAME = "自定义";
+
 export type ProviderBaseUrlOption = {
   label: string;
   url: string;
@@ -170,6 +174,26 @@ export function isAllowedTemplateHost(template: ProviderTemplate, value: string)
   try {
     const url = new URL(value);
     return url.protocol === "https:" && template.baseUrls.some((item) => item.host === url.hostname);
+  } catch {
+    return false;
+  }
+}
+
+export function isCustomProvider(code: string): boolean {
+  return code === CUSTOM_PROVIDER_CODE;
+}
+
+/**
+ * Official templates may only be probed at their documented HTTPS hosts.
+ * Custom channels may use any http(s) URL the administrator stored.
+ */
+export function isTestableUpstreamUrl(providerCode: string, baseUrl: string): boolean {
+  const template = getProviderTemplate(providerCode);
+  if (template) return isAllowedTemplateHost(template, baseUrl);
+  if (!isCustomProvider(providerCode)) return false;
+  try {
+    const url = new URL(baseUrl);
+    return url.protocol === "http:" || url.protocol === "https:";
   } catch {
     return false;
   }
