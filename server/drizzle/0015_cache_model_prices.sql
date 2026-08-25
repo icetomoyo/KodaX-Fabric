@@ -1,0 +1,2 @@
+ALTER TABLE "model_prices" ADD COLUMN "cache_hit_price_per_million" numeric(12, 4) DEFAULT '0' NOT NULL;--> statement-breakpoint
+ALTER TABLE "model_prices" ADD COLUMN "cache_storage_price_per_million_per_hour" numeric(12, 4) DEFAULT '0' NOT NULL;

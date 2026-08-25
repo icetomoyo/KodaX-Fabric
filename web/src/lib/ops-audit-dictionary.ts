@@ -127,6 +127,8 @@ export const OPS_AUDIT_DETAIL_KEY_LABELS: Record<string, string> = {
   model: "模型",
   promptPricePerMillion: "输入单价",
   completionPricePerMillion: "输出单价",
+  cacheHitPricePerMillion: "缓存命中单价",
+  cacheStoragePricePerMillionPerHour: "缓存存储单价",
   fields: "变更字段",
   ownerEmployeeId: "内容所属员工 ID",
   ownerPhone: "内容所属手机号",

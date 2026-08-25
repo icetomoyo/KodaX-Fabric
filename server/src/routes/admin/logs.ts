@@ -11,6 +11,7 @@ import {
   teams,
 } from "../../db/schema/index.js";
 import { normalizeAuditContext } from "../../lib/audit-context.js";
+import { cacheReadTokensNullableSql } from "../../lib/usage-cache.js";
 import {
   requirePasswordChanged,
   requireRoles,
@@ -115,10 +116,7 @@ export async function adminLogRoutes(app: FastifyInstance) {
         // Anthropic-style usage exposes cache_read_input_tokens; OpenAI-style
         // exposes prompt_tokens_details.cached_tokens. Normalize both here so
         // the list view can render cache hits without shipping raw usage.
-        cacheReadTokens: sql<number | null>`COALESCE(
-          (${requestAudits.usageRaw}->>'cache_read_input_tokens')::int,
-          (${requestAudits.usageRaw}->'prompt_tokens_details'->>'cached_tokens')::int
-        )`,
+        cacheReadTokens: cacheReadTokensNullableSql,
         retryCount: requestAudits.retryCount,
         errorCode: requestAudits.errorCode,
         errorMessage: requestAudits.errorMessage,

@@ -297,9 +297,12 @@ function cacheReadTokensOf(usageRaw: Record<string, unknown> | null): number | n
   if (!usageRaw) return null;
   const anthropic = asTokenCount(usageRaw.cache_read_input_tokens);
   if (anthropic != null) return anthropic;
-  const details = usageRaw.prompt_tokens_details;
-  if (details && typeof details === "object" && !Array.isArray(details)) {
-    return asTokenCount((details as Record<string, unknown>).cached_tokens);
+  for (const key of ["prompt_tokens_details", "input_tokens_details"] as const) {
+    const details = usageRaw[key];
+    if (details && typeof details === "object" && !Array.isArray(details)) {
+      const cached = asTokenCount((details as Record<string, unknown>).cached_tokens);
+      if (cached != null) return cached;
+    }
   }
   return null;
 }

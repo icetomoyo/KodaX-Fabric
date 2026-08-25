@@ -9,6 +9,12 @@ process.env.CREDENTIAL_ENCRYPT_KEY ??= "unit-test-credential-secret";
 process.env.QUOTA_TIMEZONE = "Asia/Shanghai";
 
 const { adminModelPriceRoutes } = await import("../src/routes/admin/model-prices.js");
+const { collectDiscoveredModels, parseDiscoveredModels } = await import(
+  "../src/lib/discovered-models.js"
+);
+const { billedCacheReadTokens, extractCacheReadTokens } = await import(
+  "../src/lib/usage-cache.js"
+);
 const { adminTeamRoutes, buildTeamListQuery } = await import("../src/routes/admin/teams.js");
 const {
   buildTeamUsageByModelQuery,
@@ -124,6 +130,24 @@ test("unauthenticated team usage calls return 401", async () => {
   }
 });
 
+test("discovered models come from Key test metadata, not a typed catalog", () => {
+  assert.deepEqual(
+    parseDiscoveredModels({
+      discoveredModels: [" glm-4.6 ", "qwen38-27b", "", "glm-4.6"],
+      lastTest: { models: ["qwen38-27b", "extra-from-test"] },
+    }),
+    ["extra-from-test", "glm-4.6", "qwen38-27b"],
+  );
+  assert.deepEqual(
+    collectDiscoveredModels([
+      { discoveredModels: ["glm-4.6"] },
+      { lastTest: { models: ["qwen38-27b"] } },
+      null,
+    ]),
+    ["glm-4.6", "qwen38-27b"],
+  );
+});
+
 test("formatYuan keeps two decimals without exposing raw floats", () => {
   assert.equal(formatYuan("7.5"), "7.50");
   assert.equal(formatYuan("1.235"), "1.24");
@@ -147,6 +171,34 @@ test("priced usage converts tokens to yuan; unpriced models stay 0", () => {
     { model: "gpt-4o", totalTokens: 1_500_000, costYuan: "7.50", priced: true },
     { model: "new-model", totalTokens: 800_000, costYuan: "0.00", priced: false },
   ]);
+});
+
+test("cache hits are billed at cache-hit price, not full input price", () => {
+  const priced = {
+    promptPricePerMillion: "8",
+    completionPricePerMillion: "28",
+    cacheHitPricePerMillion: "2",
+  };
+  // 200k uncached * 8 + 800k cache * 2 + 100k out * 28 = 1.6 + 1.6 + 2.8 = 6.00
+  assert.equal(computeCostYuan(1_000_000, 100_000, priced, 800_000), "6.00");
+  // cache-hit price missing → cache portion is 0, not charged as input
+  assert.equal(computeCostYuan(1_000_000, 0, { ...priced, cacheHitPricePerMillion: undefined }, 800_000), "1.60");
+  assert.equal(computeCostYuan(1_000_000, 0, priced, 0), "8.00");
+});
+
+test("cache-read tokens come from Anthropic or OpenAI usage JSON", () => {
+  assert.equal(extractCacheReadTokens({ cache_read_input_tokens: 5 }), 5);
+  assert.equal(
+    extractCacheReadTokens({ prompt_tokens_details: { cached_tokens: 7 } }),
+    7,
+  );
+  assert.equal(
+    extractCacheReadTokens({ input_tokens_details: { cached_tokens: 9 } }),
+    9,
+  );
+  assert.equal(extractCacheReadTokens({ prompt_tokens: 10 }), null);
+  assert.equal(billedCacheReadTokens(100, { cache_read_input_tokens: 250 }), 100);
+  assert.equal(billedCacheReadTokens(100, { cache_read_input_tokens: 40 }), 40);
 });
 
 test("daily usage fill keeps costYuan as a 2-decimal string", () => {
@@ -175,6 +227,9 @@ test("team list SQL folds request_audits cost with coalesce-0 for missing prices
   assert.match(compiledSql, /\/ 1000000/);
   assert.match(compiledSql, /coalesce\("model_prices"\."prompt_price_per_million", 0\)/);
   assert.match(compiledSql, /coalesce\("model_prices"\."completion_price_per_million", 0\)/);
+  assert.match(compiledSql, /coalesce\("model_prices"\."cache_hit_price_per_million", 0\)/);
+  assert.match(compiledSql, /cache_read_input_tokens/);
+  assert.match(compiledSql, /prompt_tokens_details/);
   assert.equal(
     compiled.params.some((value) => value instanceof Date),
     false,
@@ -208,6 +263,7 @@ test("team usage SQL aggregates cost in numeric and marks unpriced models", () =
   const byModelSql = byModel.sql.replace(/\s+/g, " ");
   assert.match(byModelSql, /"model_prices"\."id" is not null/);
   assert.match(byModelSql, /coalesce\("model_prices"\."prompt_price_per_million", 0\)/);
+  assert.match(byModelSql, /coalesce\("model_prices"\."cache_hit_price_per_million", 0\)/);
   assert.match(byModelSql, /group by "request_audits"\."client_model"/);
 });
 
@@ -221,6 +277,8 @@ test("cost SQL fragment zeros missing prices before summing", () => {
     .toSQL();
   const compiledSql = compiled.sql.replace(/\s+/g, " ");
   assert.match(compiledSql, /coalesce\("model_prices"\."prompt_price_per_million", 0\)/);
+  assert.match(compiledSql, /coalesce\("model_prices"\."cache_hit_price_per_million", 0\)/);
   assert.match(compiledSql, /coalesce\("request_audits"\."prompt_tokens", 0\)/);
+  assert.match(compiledSql, /cache_read_input_tokens/);
   assert.match(compiledSql, /coalesce\(sum\(/);
 });

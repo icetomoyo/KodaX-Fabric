@@ -2,11 +2,16 @@ import { and, asc, desc, eq, sql } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { employees, modelPrices, requestAudits, teams } from "../db/schema/index.js";
 import { addCalendarDays, enumerateDays, formatUtcDate, quotaDayAt } from "./quota-time.js";
+import { billedCacheReadTokensSql, billedUncachedPromptTokensSql } from "./usage-cache.js";
 
-/** CNY cost for one audit row. Missing prices contribute 0. */
+/** CNY cost for one audit row. Missing prices contribute 0.
+ *  Cache hits are billed at cache-hit price, not full input price.
+ *  Cache storage is hourly and is not included (audits have no TTL). */
 export const requestCostYuanExpr = sql`(
-  coalesce(${requestAudits.promptTokens}, 0)::numeric / 1000000
+  ${billedUncachedPromptTokensSql}::numeric / 1000000
     * coalesce(${modelPrices.promptPricePerMillion}, 0)
+  + ${billedCacheReadTokensSql}::numeric / 1000000
+    * coalesce(${modelPrices.cacheHitPricePerMillion}, 0)
   + coalesce(${requestAudits.completionTokens}, 0)::numeric / 1000000
     * coalesce(${modelPrices.completionPricePerMillion}, 0)
 )`;
@@ -152,16 +157,31 @@ function addPositiveDecimals(left: string, right: string): string {
   return `${text.slice(0, text.length - scale)}.${text.slice(text.length - scale)}`;
 }
 
+export type ModelTokenPrice = {
+  promptPricePerMillion: string;
+  completionPricePerMillion: string;
+  cacheHitPricePerMillion?: string;
+};
+
 /** Reference implementation of the SQL cost formula (unpriced models are 0). */
 export function computeCostYuan(
   promptTokens: number,
   completionTokens: number,
-  price: { promptPricePerMillion: string; completionPricePerMillion: string } | null,
+  price: ModelTokenPrice | null,
+  cacheReadTokens = 0,
 ): string {
   if (!price) return "0.00";
+  const prompt = Number.isFinite(promptTokens) && promptTokens > 0 ? Math.trunc(promptTokens) : 0;
+  const cacheRead =
+    Number.isFinite(cacheReadTokens) && cacheReadTokens > 0
+      ? Math.min(prompt, Math.trunc(cacheReadTokens))
+      : 0;
   return formatYuan(
     addPositiveDecimals(
-      scaledTokenCost(promptTokens, price.promptPricePerMillion),
+      addPositiveDecimals(
+        scaledTokenCost(prompt - cacheRead, price.promptPricePerMillion),
+        scaledTokenCost(cacheRead, price.cacheHitPricePerMillion ?? "0"),
+      ),
       scaledTokenCost(completionTokens, price.completionPricePerMillion),
     ),
   );

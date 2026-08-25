@@ -454,7 +454,7 @@ export const systemSettings = pgTable("system_settings", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
-/** Unit prices in CNY per million tokens, keyed by the public client model name. */
+/** Unit prices in CNY, keyed by the public client model name. */
 export const modelPrices = pgTable(
   "model_prices",
   {
@@ -462,6 +462,16 @@ export const modelPrices = pgTable(
     model: varchar("model", { length: 128 }).notNull(),
     promptPricePerMillion: numeric("prompt_price_per_million", { precision: 12, scale: 4 }).notNull(),
     completionPricePerMillion: numeric("completion_price_per_million", { precision: 12, scale: 4 }).notNull(),
+    cacheHitPricePerMillion: numeric("cache_hit_price_per_million", { precision: 12, scale: 4 })
+      .notNull()
+      .default("0"),
+    /** CNY per million cached tokens per hour. Not applied to per-request cost. */
+    cacheStoragePricePerMillionPerHour: numeric("cache_storage_price_per_million_per_hour", {
+      precision: 12,
+      scale: 4,
+    })
+      .notNull()
+      .default("0"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },

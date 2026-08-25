@@ -1,9 +1,10 @@
 import type { FastifyInstance } from "fastify";
-import { and, asc, eq, gte, isNull, sql } from "drizzle-orm";
+import { and, asc, eq, gte, sql } from "drizzle-orm";
 import { z } from "zod";
 import { env } from "../../config.js";
 import { db } from "../../db/client.js";
-import { modelPrices, requestAudits } from "../../db/schema/index.js";
+import { modelPrices, requestAudits, upstreamCredentials } from "../../db/schema/index.js";
+import { collectDiscoveredModels } from "../../lib/discovered-models.js";
 import { writeOpsAudit } from "../../lib/ops-audit.js";
 import { addCalendarDays, quotaDayAt, zonedDayStart } from "../../lib/quota-time.js";
 import {
@@ -28,6 +29,8 @@ const createPriceSchema = z.object({
   model: z.string().trim().min(1).max(128),
   promptPricePerMillion: priceAmountSchema,
   completionPricePerMillion: priceAmountSchema,
+  cacheHitPricePerMillion: priceAmountSchema,
+  cacheStoragePricePerMillionPerHour: priceAmountSchema,
 });
 
 const updatePriceSchema = z
@@ -35,6 +38,8 @@ const updatePriceSchema = z
     model: z.string().trim().min(1).max(128).optional(),
     promptPricePerMillion: priceAmountSchema.optional(),
     completionPricePerMillion: priceAmountSchema.optional(),
+    cacheHitPricePerMillion: priceAmountSchema.optional(),
+    cacheStoragePricePerMillionPerHour: priceAmountSchema.optional(),
   })
   .refine((data) => Object.keys(data).length > 0);
 
@@ -43,11 +48,24 @@ function isUniqueConflict(error: unknown): boolean {
   return message.includes("model_prices_model_uidx") || message.includes("unique");
 }
 
+const priceReturning = {
+  id: modelPrices.id,
+  model: modelPrices.model,
+  promptPricePerMillion: modelPrices.promptPricePerMillion,
+  completionPricePerMillion: modelPrices.completionPricePerMillion,
+  cacheHitPricePerMillion: modelPrices.cacheHitPricePerMillion,
+  cacheStoragePricePerMillionPerHour: modelPrices.cacheStoragePricePerMillionPerHour,
+  createdAt: modelPrices.createdAt,
+  updatedAt: modelPrices.updatedAt,
+};
+
 function serializePrice(row: {
   id: number;
   model: string;
   promptPricePerMillion: string;
   completionPricePerMillion: string;
+  cacheHitPricePerMillion: string;
+  cacheStoragePricePerMillionPerHour: string;
   createdAt: Date;
   updatedAt: Date;
   lastUsedAt?: Date | null;
@@ -57,6 +75,8 @@ function serializePrice(row: {
     model: row.model,
     promptPricePerMillion: row.promptPricePerMillion,
     completionPricePerMillion: row.completionPricePerMillion,
+    cacheHitPricePerMillion: row.cacheHitPricePerMillion,
+    cacheStoragePricePerMillionPerHour: row.cacheStoragePricePerMillionPerHour,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
     lastUsedAt: row.lastUsedAt ?? null,
@@ -74,15 +94,10 @@ export async function adminModelPriceRoutes(app: FastifyInstance) {
     const since = zonedDayStart(addCalendarDays(today, -29), env.QUOTA_TIMEZONE);
     const lastUsedAt = sql<Date | null>`max(${requestAudits.createdAt})`;
 
-    const [prices, unpricedModels] = await Promise.all([
+    const [prices, usedModels, credentialMetas] = await Promise.all([
       db
         .select({
-          id: modelPrices.id,
-          model: modelPrices.model,
-          promptPricePerMillion: modelPrices.promptPricePerMillion,
-          completionPricePerMillion: modelPrices.completionPricePerMillion,
-          createdAt: modelPrices.createdAt,
-          updatedAt: modelPrices.updatedAt,
+          ...priceReturning,
           lastUsedAt,
         })
         .from(modelPrices)
@@ -98,6 +113,8 @@ export async function adminModelPriceRoutes(app: FastifyInstance) {
           modelPrices.model,
           modelPrices.promptPricePerMillion,
           modelPrices.completionPricePerMillion,
+          modelPrices.cacheHitPricePerMillion,
+          modelPrices.cacheStoragePricePerMillionPerHour,
           modelPrices.createdAt,
           modelPrices.updatedAt,
         )
@@ -108,21 +125,33 @@ export async function adminModelPriceRoutes(app: FastifyInstance) {
           lastUsedAt,
         })
         .from(requestAudits)
-        .leftJoin(modelPrices, eq(modelPrices.model, requestAudits.clientModel))
-        .where(and(gte(requestAudits.createdAt, since), isNull(modelPrices.id)))
+        .where(gte(requestAudits.createdAt, since))
         .groupBy(requestAudits.clientModel)
         .orderBy(asc(requestAudits.clientModel)),
+      db.select({ meta: upstreamCredentials.meta }).from(upstreamCredentials),
+    ]);
+
+    const pricedNames = new Set(prices.map((row) => row.model));
+    const discoveredModels = collectDiscoveredModels(credentialMetas.map((row) => row.meta));
+    const usedByName = new Map(usedModels.map((row) => [row.model, row.lastUsedAt]));
+    const unpricedNames = new Set([
+      ...discoveredModels.filter((model) => !pricedNames.has(model)),
+      ...usedModels.map((row) => row.model).filter((model) => !pricedNames.has(model)),
     ]);
 
     return {
       success: true,
       data: {
         prices: prices.map((row) => serializePrice(row)),
-        unpricedModels: unpricedModels.map((row) => ({
-          model: row.model,
-          lastUsedAt: row.lastUsedAt,
-          seenInLast30Days: true,
-        })),
+        discoveredModels,
+        unpricedModels: [...unpricedNames]
+          .sort((left, right) => left.localeCompare(right))
+          .map((model) => ({
+            model,
+            lastUsedAt: usedByName.get(model) ?? null,
+            seenInLast30Days: usedByName.has(model),
+            discovered: discoveredModels.includes(model),
+          })),
       },
     };
   });
@@ -139,15 +168,10 @@ export async function adminModelPriceRoutes(app: FastifyInstance) {
           model: body.data.model,
           promptPricePerMillion: body.data.promptPricePerMillion,
           completionPricePerMillion: body.data.completionPricePerMillion,
+          cacheHitPricePerMillion: body.data.cacheHitPricePerMillion,
+          cacheStoragePricePerMillionPerHour: body.data.cacheStoragePricePerMillionPerHour,
         })
-        .returning({
-          id: modelPrices.id,
-          model: modelPrices.model,
-          promptPricePerMillion: modelPrices.promptPricePerMillion,
-          completionPricePerMillion: modelPrices.completionPricePerMillion,
-          createdAt: modelPrices.createdAt,
-          updatedAt: modelPrices.updatedAt,
-        });
+        .returning(priceReturning);
       await writeOpsAudit({
         actorEmployeeId: req.employeeId,
         action: "model_price.create",
@@ -157,6 +181,8 @@ export async function adminModelPriceRoutes(app: FastifyInstance) {
           model: row.model,
           promptPricePerMillion: row.promptPricePerMillion,
           completionPricePerMillion: row.completionPricePerMillion,
+          cacheHitPricePerMillion: row.cacheHitPricePerMillion,
+          cacheStoragePricePerMillionPerHour: row.cacheStoragePricePerMillionPerHour,
         },
         ip: req.ip,
       });
@@ -179,6 +205,8 @@ export async function adminModelPriceRoutes(app: FastifyInstance) {
       model?: string;
       promptPricePerMillion?: string;
       completionPricePerMillion?: string;
+      cacheHitPricePerMillion?: string;
+      cacheStoragePricePerMillionPerHour?: string;
       updatedAt: Date;
     } = { updatedAt: new Date() };
     if (body.data.model !== undefined) patch.model = body.data.model;
@@ -188,19 +216,18 @@ export async function adminModelPriceRoutes(app: FastifyInstance) {
     if (body.data.completionPricePerMillion !== undefined) {
       patch.completionPricePerMillion = body.data.completionPricePerMillion;
     }
+    if (body.data.cacheHitPricePerMillion !== undefined) {
+      patch.cacheHitPricePerMillion = body.data.cacheHitPricePerMillion;
+    }
+    if (body.data.cacheStoragePricePerMillionPerHour !== undefined) {
+      patch.cacheStoragePricePerMillionPerHour = body.data.cacheStoragePricePerMillionPerHour;
+    }
     try {
       const [row] = await db
         .update(modelPrices)
         .set(patch)
         .where(eq(modelPrices.id, params.data.id))
-        .returning({
-          id: modelPrices.id,
-          model: modelPrices.model,
-          promptPricePerMillion: modelPrices.promptPricePerMillion,
-          completionPricePerMillion: modelPrices.completionPricePerMillion,
-          createdAt: modelPrices.createdAt,
-          updatedAt: modelPrices.updatedAt,
-        });
+        .returning(priceReturning);
       if (!row) {
         return reply.code(404).send({ success: false, message: "单价不存在" });
       }
@@ -214,6 +241,8 @@ export async function adminModelPriceRoutes(app: FastifyInstance) {
           model: row.model,
           promptPricePerMillion: row.promptPricePerMillion,
           completionPricePerMillion: row.completionPricePerMillion,
+          cacheHitPricePerMillion: row.cacheHitPricePerMillion,
+          cacheStoragePricePerMillionPerHour: row.cacheStoragePricePerMillionPerHour,
         },
         ip: req.ip,
       });

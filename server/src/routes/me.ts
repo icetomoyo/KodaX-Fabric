@@ -19,6 +19,7 @@ import {
 import { insertEnterprise } from "../lib/enterprise.js";
 import { quotaDayAt, zonedMonthRange } from "../lib/quota-time.js";
 import { listEmployeeTeamQuotaViews } from "../lib/team-quota.js";
+import { cacheReadTokensNullableSql } from "../lib/usage-cache.js";
 import { encryptEmployeeApiKey, generateApiKey } from "../lib/api-key.js";
 import {
   RELAY_BASE_PATH,
@@ -627,10 +628,7 @@ export async function meRoutes(app: FastifyInstance) {
           totalTokens: requestAudits.totalTokens,
           latencyMs: requestAudits.latencyMs,
           ttftMs: requestAudits.ttftMs,
-          cacheReadTokens: sql<number | null>`COALESCE(
-            (${requestAudits.usageRaw}->>'cache_read_input_tokens')::int,
-            (${requestAudits.usageRaw}->'prompt_tokens_details'->>'cached_tokens')::int
-          )`,
+          cacheReadTokens: cacheReadTokensNullableSql,
           retryCount: requestAudits.retryCount,
           errorCode: requestAudits.errorCode,
           errorMessage: requestAudits.errorMessage,
