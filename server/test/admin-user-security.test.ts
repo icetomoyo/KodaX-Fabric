@@ -17,9 +17,10 @@ test("admin user list selects employee data without API-key joins", () => {
     .sql.replace(/\s+/g, " ");
 
   assert.match(compiledSql, /from "employees"/);
+  assert.match(compiledSql, /left join "team_members"/);
+  assert.match(compiledSql, /left join "teams"/);
   assert.doesNotMatch(compiledSql, /employee_api_keys/);
   assert.doesNotMatch(compiledSql, /active_api_key_count/);
-  assert.doesNotMatch(compiledSql, /\bjoin\b/);
 });
 
 test("admin routes do not expose employee API-key metadata or plaintext", async () => {

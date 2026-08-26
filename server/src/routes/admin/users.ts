@@ -7,6 +7,8 @@ import {
   employeeApiKeys,
   employees,
   requestAudits,
+  teamMembers,
+  teams,
   usageCountersDaily,
 } from "../../db/schema/index.js";
 import { listEmployeeTeamQuotaViews } from "../../lib/team-quota.js";
@@ -76,8 +78,12 @@ export function buildAdminUserListQuery(query: AdminUserListQuery) {
       enterpriseId: employees.enterpriseId,
       lastLoginAt: employees.lastLoginAt,
       createdAt: employees.createdAt,
+      teamId: teams.id,
+      teamName: teams.name,
     })
     .from(employees)
+    .leftJoin(teamMembers, eq(teamMembers.employeeId, employees.id))
+    .leftJoin(teams, eq(teams.id, teamMembers.teamId))
     .where(
       and(
         query.q

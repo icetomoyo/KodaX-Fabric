@@ -151,7 +151,7 @@ test("org_admin user-list SQL constrains to that enterprise and does not scan un
   assert.match(compiledSql, /"employees"\."enterprise_id" = \$/);
   assert.equal(compiled.params.includes(7), true);
   assert.doesNotMatch(compiledSql, /employee_api_keys/);
-  assert.doesNotMatch(compiledSql, /\bjoin\b/);
+  assert.match(compiledSql, /left join "team_members"/);
   assert.match(compiledSql, /not in/i);
 
   const unscoped = buildAdminUserListQuery({ limit: 50, offset: 0 }).toSQL().sql.replace(/\s+/g, " ");

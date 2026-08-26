@@ -7,10 +7,10 @@
 
     <el-form inline style="margin: 12px 0">
       <el-form-item>
-        <el-input v-model="q" placeholder="姓名/手机号" clearable @clear="load" />
+        <el-input v-model="q" placeholder="姓名/手机号" clearable @clear="search" />
       </el-form-item>
       <el-form-item>
-        <el-select v-model="statusFilter" placeholder="全部状态" clearable style="width: 120px" @change="load">
+        <el-select v-model="statusFilter" placeholder="全部状态" clearable style="width: 120px" @change="search">
           <el-option label="待审核" value="pending" />
           <el-option label="正常" value="active" />
           <el-option label="已停用" value="disabled" />
@@ -22,7 +22,7 @@
           placeholder="全部企业"
           clearable
           style="width: 180px"
-          @change="load"
+          @change="search"
         >
           <el-option
             v-for="item in enterprises"
@@ -33,14 +33,18 @@
         </el-select>
       </el-form-item>
       <el-form-item>
-        <el-button type="primary" @click="load">搜索</el-button>
+        <el-button type="primary" @click="search">搜索</el-button>
       </el-form-item>
     </el-form>
 
-    <el-table :data="rows" stripe>
+    <el-table :data="pagedRows" stripe>
       <el-table-column prop="name" label="姓名" width="120" />
       <el-table-column prop="phone" label="手机号" width="140" />
-      <el-table-column prop="dept" label="部门" width="180" />
+      <el-table-column label="所属团队" min-width="180">
+        <template #default="{ row }">
+          {{ row.teamName || "—" }}
+        </template>
+      </el-table-column>
       <el-table-column v-if="auth.isSuperAdmin" label="企业" min-width="140">
         <template #default="{ row }">
           {{ enterpriseName(row.enterpriseId) }}
@@ -59,11 +63,6 @@
           >
             {{ statusLabel(row.status) }}
           </el-tag>
-        </template>
-      </el-table-column>
-      <el-table-column label="申请/创建时间" min-width="180">
-        <template #default="{ row }">
-          {{ formatDateTime(row.createdAt) }}
         </template>
       </el-table-column>
       <el-table-column label="最近登录" min-width="210">
@@ -115,11 +114,35 @@
       </el-table-column>
     </el-table>
 
+    <div class="pager">
+      <el-pagination
+        v-model:current-page="page"
+        background
+        size="small"
+        layout="total, prev, pager, next"
+        :total="rows.length"
+        :page-size="pageSize"
+      />
+    </div>
+
     <el-dialog v-model="showEdit" :title="`编辑用户 · ${editUser?.name || ''}`" width="480px">
       <el-form label-width="90px">
         <el-form-item label="姓名" required><el-input v-model="editForm.name" /></el-form-item>
         <el-form-item label="手机号" required><el-input v-model="editForm.phone" /></el-form-item>
-        <el-form-item label="部门"><el-input v-model="editForm.dept" /></el-form-item>
+        <el-form-item
+          v-if="editForm.role !== 'admin' && editForm.role !== 'org_admin'"
+          label="团队"
+        >
+          <el-select
+            v-model="editForm.teamId"
+            clearable
+            placeholder="选择团队"
+            style="width: 100%"
+            :disabled="editForm.status !== 'active'"
+          >
+            <el-option v-for="item in teams" :key="item.id" :label="item.name" :value="item.id" />
+          </el-select>
+        </el-form-item>
         <el-form-item v-if="auth.isSuperAdmin" label="所属企业">
           <el-select v-model="editForm.enterpriseId" style="width: 100%">
             <el-option
@@ -167,18 +190,17 @@
         <el-form-item label="手机号" required>
           <el-input v-model="invitePhone" placeholder="已注册用户的手机号" />
         </el-form-item>
-        <el-form-item label="加入团队" required>
+        <el-form-item label="团队" required>
           <el-select v-model="inviteTeamId" style="width: 100%" placeholder="选择团队">
             <el-option v-for="item in teams" :key="item.id" :label="item.name" :value="item.id" />
           </el-select>
         </el-form-item>
-        <el-form-item label="团队角色">
+        <el-form-item label="角色">
           <el-select v-model="inviteRole" style="width: 100%">
             <el-option label="成员" value="member" />
             <el-option label="团队管理员" value="team_admin" />
           </el-select>
         </el-form-item>
-        <p class="form-help">不能新建账号。对方必须已自行注册，邀请进团队后才有员工权限。</p>
       </el-form>
       <template #footer>
         <el-button @click="showInvite = false">取消</el-button>
@@ -220,7 +242,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref } from "vue";
+import { computed, onMounted, reactive, ref } from "vue";
 import { useRouter } from "vue-router";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { http } from "@/api/http";
@@ -238,12 +260,16 @@ type UserRow = {
   enterpriseId: number | null;
   createdAt: string;
   lastLoginAt: string | null;
+  teamId?: number | null;
+  teamName?: string | null;
 };
 
 type EnterpriseRow = { id: number; name: string; status: string };
 type TeamRow = { id: number; name: string };
 
 const rows = ref<UserRow[]>([]);
+const page = ref(1);
+const pageSize = 10;
 const router = useRouter();
 const auth = useAuthStore();
 const q = ref("");
@@ -270,10 +296,10 @@ const resetForm = reactive({
 const editForm = reactive({
   name: "",
   phone: "",
-  dept: "",
   role: "employee" as UserRow["role"],
   status: "active" as UserRow["status"],
   enterpriseId: undefined as number | undefined,
+  teamId: undefined as number | undefined,
 });
 
 const statusLabels: Record<UserRow["status"], string> = {
@@ -281,6 +307,11 @@ const statusLabels: Record<UserRow["status"], string> = {
   active: "正常",
   disabled: "已停用",
 };
+
+const pagedRows = computed(() => {
+  const start = (page.value - 1) * pageSize;
+  return rows.value.slice(start, start + pageSize);
+});
 
 async function loadEnterprises() {
   if (!auth.isSuperAdmin) return;
@@ -335,15 +366,58 @@ function enterpriseName(id: number | null | undefined) {
   return enterprises.value.find((item) => item.id === id)?.name || String(id);
 }
 
+async function loadTeamNameMap() {
+  const { data } = await http.get("/api/admin/teams");
+  if (!data.success) return new Map<number, { teamId: number; teamName: string }>();
+  const map = new Map<number, { teamId: number; teamName: string }>();
+  await Promise.all(
+    (data.data as TeamRow[]).map(async (team) => {
+      try {
+        const res = await http.get(`/api/admin/teams/${team.id}/members`);
+        if (!res.data.success) return;
+        for (const member of res.data.data as { employeeId: number }[]) {
+          map.set(member.employeeId, { teamId: team.id, teamName: team.name });
+        }
+      } catch {
+        // Ignore teams the current admin cannot read.
+      }
+    }),
+  );
+  return map;
+}
+
 async function load() {
   const { data } = await http.get("/api/admin/users", {
     params: {
       q: q.value || undefined,
       status: statusFilter.value || undefined,
       enterpriseId: enterpriseFilter.value || undefined,
+      limit: 200,
     },
   });
-  if (data.success) rows.value = data.data;
+  if (!data.success) return;
+  const list = data.data as UserRow[];
+  const hasTeamFromApi = list.some((row) => row.teamName != null);
+  if (hasTeamFromApi) {
+    rows.value = list;
+  } else {
+    const map = await loadTeamNameMap();
+    rows.value = list.map((row) => {
+      const membership = map.get(row.id);
+      return {
+        ...row,
+        teamId: membership?.teamId ?? null,
+        teamName: membership?.teamName ?? null,
+      };
+    });
+  }
+  const maxPage = Math.max(1, Math.ceil(rows.value.length / pageSize));
+  if (page.value > maxPage) page.value = maxPage;
+}
+
+function search() {
+  page.value = 1;
+  void load();
 }
 
 function openDetail(row: UserRow) {
@@ -384,11 +458,27 @@ function openEdit(row: UserRow) {
   editUser.value = row;
   editForm.name = row.name;
   editForm.phone = row.phone;
-  editForm.dept = row.dept ?? "";
   editForm.role = row.role;
   editForm.status = row.status;
   editForm.enterpriseId = row.enterpriseId ?? undefined;
+  editForm.teamId = row.teamId ?? undefined;
   showEdit.value = true;
+}
+
+async function syncUserTeam(employeeId: number, fromTeamId: number | null | undefined, toTeamId: number | undefined) {
+  const prev = fromTeamId ?? null;
+  const next = toTeamId ?? null;
+  if (prev === next) return;
+  if (prev != null) {
+    await http.delete(`/api/admin/teams/${prev}/members/${employeeId}`);
+  }
+  if (next != null) {
+    const { data } = await http.post(`/api/admin/teams/${next}/members`, {
+      employeeId,
+      role: "member",
+    });
+    if (!data.success) throw new Error(data.message);
+  }
 }
 
 async function updateUser() {
@@ -403,12 +493,14 @@ async function updateUser() {
     const { data } = await http.patch(`/api/admin/users/${editUser.value.id}`, {
       name: editForm.name.trim(),
       phone: editForm.phone.trim(),
-      dept: editForm.dept.trim() || null,
       role: editForm.role,
       status: editForm.status,
       ...(auth.isSuperAdmin ? { enterpriseId: editForm.enterpriseId } : {}),
     });
     if (!data.success) throw new Error(data.message);
+    if (editForm.role !== "admin" && editForm.role !== "org_admin") {
+      await syncUserTeam(editUser.value.id, editUser.value.teamId, editForm.teamId);
+    }
     if (editUser.value.id === auth.user?.id) await auth.fetchMe();
     ElMessage.success("用户信息已更新");
     showEdit.value = false;
@@ -476,6 +568,12 @@ onMounted(async () => {
   justify-content: space-between;
 }
 
+.pager {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 16px;
+}
+
 .self-edit-tip {
   margin: -8px 0 0 90px;
 }
@@ -483,12 +581,6 @@ onMounted(async () => {
 .muted {
   color: #94a3b8;
   font-size: 13px;
-}
-.form-help {
-  margin: 0 0 0 90px;
-  color: #94a3b8;
-  font-size: 12px;
-  line-height: 1.5;
 }
 
 </style>
