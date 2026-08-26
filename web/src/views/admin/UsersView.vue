@@ -153,16 +153,20 @@
             />
           </el-select>
         </el-form-item>
-        <el-form-item v-if="auth.isSuperAdmin" label="角色">
+        <el-form-item label="角色">
           <el-select
             v-model="editForm.role"
             style="width: 100%"
-            :disabled="editUser?.id === auth.user?.id || editForm.role === 'team_admin'"
+            :disabled="
+              editUser?.id === auth.user?.id ||
+              editForm.role === 'org_admin' ||
+              editForm.role === 'admin'
+            "
           >
             <el-option label="员工" value="employee" />
-            <el-option label="团队管理员" value="team_admin" disabled />
-            <el-option label="企业管理员" value="org_admin" />
-            <el-option label="超级管理员" value="admin" />
+            <el-option label="团队管理员" value="team_admin" />
+            <el-option v-if="auth.isSuperAdmin" label="企业管理员" value="org_admin" />
+            <el-option v-if="auth.isSuperAdmin" label="超级管理员" value="admin" />
           </el-select>
         </el-form-item>
         <el-form-item label="状态">
@@ -465,19 +469,35 @@ function openEdit(row: UserRow) {
   showEdit.value = true;
 }
 
-async function syncUserTeam(employeeId: number, fromTeamId: number | null | undefined, toTeamId: number | undefined) {
+async function syncUserTeam(
+  employeeId: number,
+  fromTeamId: number | null | undefined,
+  toTeamId: number | undefined,
+  teamRole: "member" | "team_admin" = "member",
+) {
   const prev = fromTeamId ?? null;
   const next = toTeamId ?? null;
-  if (prev === next) return;
-  if (prev != null) {
+  if (prev != null && prev !== next) {
     await http.delete(`/api/admin/teams/${prev}/members/${employeeId}`);
   }
-  if (next != null) {
+  if (next == null) return;
+  if (prev === next) {
+    await http.patch(`/api/admin/teams/${next}/members/${employeeId}`, { role: teamRole });
+    return;
+  }
+  try {
     const { data } = await http.post(`/api/admin/teams/${next}/members`, {
       employeeId,
-      role: "member",
+      role: teamRole,
     });
     if (!data.success) throw new Error(data.message);
+  } catch (error: unknown) {
+    const response = (error as { response?: { status?: number; data?: { message?: string } } })
+      .response;
+    const alreadyHere =
+      response?.status === 409 && response.data?.message === "该员工已在团队中";
+    if (!alreadyHere) throw error;
+    await http.patch(`/api/admin/teams/${next}/members/${employeeId}`, { role: teamRole });
   }
 }
 
@@ -488,19 +508,36 @@ async function updateUser() {
     return;
   }
 
+  if (editForm.role === "team_admin" && !editForm.teamId) {
+    ElMessage.warning("团队管理员必须选择所属团队");
+    return;
+  }
+
   updating.value = true;
   try {
+    const teamChanged = (editUser.value.teamId ?? null) !== (editForm.teamId ?? null);
+    const roleChanged = editUser.value.role !== editForm.role;
+    if (teamChanged || roleChanged) {
+      if (editForm.role === "org_admin" || editForm.role === "admin") {
+        await syncUserTeam(editUser.value.id, editUser.value.teamId, undefined);
+      } else {
+        await syncUserTeam(
+          editUser.value.id,
+          editUser.value.teamId,
+          editForm.teamId,
+          editForm.role === "team_admin" ? "team_admin" : "member",
+        );
+      }
+    }
     const { data } = await http.patch(`/api/admin/users/${editUser.value.id}`, {
       name: editForm.name.trim(),
       phone: editForm.phone.trim(),
-      role: editForm.role,
       status: editForm.status,
-      ...(auth.isSuperAdmin ? { enterpriseId: editForm.enterpriseId } : {}),
+      ...(auth.isSuperAdmin
+        ? { enterpriseId: editForm.enterpriseId, role: editForm.role }
+        : {}),
     });
     if (!data.success) throw new Error(data.message);
-    if (editForm.role !== "admin" && editForm.role !== "org_admin") {
-      await syncUserTeam(editUser.value.id, editUser.value.teamId, editForm.teamId);
-    }
     if (editUser.value.id === auth.user?.id) await auth.fetchMe();
     ElMessage.success("用户信息已更新");
     showEdit.value = false;

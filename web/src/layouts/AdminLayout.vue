@@ -6,13 +6,13 @@
         <span>Token Hub · 管理</span>
       </div>
       <el-menu :default-active="route.path" router>
-        <el-menu-item v-if="auth.isSuperAdmin" index="/admin">概览</el-menu-item>
+        <el-menu-item index="/admin">工作台</el-menu-item>
         <el-menu-item v-if="auth.isSuperAdmin" index="/admin/enterprises">企业管理</el-menu-item>
         <el-menu-item v-if="auth.isOrgAdmin" index="/admin/users">员工管理</el-menu-item>
         <el-menu-item v-if="!auth.isSuperAdmin" index="/admin/teams">团队管理</el-menu-item>
         <el-menu-item v-if="auth.isTeamAdmin" index="/admin/members">团队成员</el-menu-item>
         <el-menu-item v-if="auth.isTeamAdmin" index="/admin/projects">项目管理</el-menu-item>
-        <el-menu-item v-if="auth.isTeamAdmin" index="/me/keys">API Key</el-menu-item>
+        <el-menu-item v-if="auth.isTeamAdmin" index="/admin/keys">API Key</el-menu-item>
         <el-menu-item v-if="auth.isSuperAdmin" index="/admin/credentials">上游渠道</el-menu-item>
         <el-menu-item v-if="auth.isSuperAdmin" index="/admin/model-prices">模型单价</el-menu-item>
         <el-menu-item v-if="auth.isSuperAdmin" index="/admin/logs">调用日志</el-menu-item>

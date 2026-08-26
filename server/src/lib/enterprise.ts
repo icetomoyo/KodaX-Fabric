@@ -88,6 +88,8 @@ export function resolveCreatedUserFields(
   return { error: "权限不足", status: 403 };
 }
 
+const ORG_ADMIN_ASSIGNABLE_ROLES: SessionRole[] = ["employee", "team_admin"];
+
 export function resolveUpdatedUserFields(
   actor: EnterpriseActor,
   target: EmployeeMembership,
@@ -99,13 +101,16 @@ export function resolveUpdatedUserFields(
   if (actor.role !== ORG_ADMIN_ROLE || actor.enterpriseId == null) {
     return { error: "权限不足", status: 403 };
   }
-  if (input.role != null && input.role !== target.role) {
-    return { error: "权限不足", status: 403 };
-  }
   if (input.enterpriseId != null && input.enterpriseId !== actor.enterpriseId) {
     return { error: "权限不足", status: 403 };
   }
-  return { role: target.role, enterpriseId: actor.enterpriseId };
+  if (input.role == null || input.role === target.role) {
+    return { role: target.role, enterpriseId: actor.enterpriseId };
+  }
+  if (!ORG_ADMIN_ASSIGNABLE_ROLES.includes(input.role)) {
+    return { error: "权限不足", status: 403 };
+  }
+  return { role: input.role, enterpriseId: actor.enterpriseId };
 }
 
 export async function insertEnterprise(input: {

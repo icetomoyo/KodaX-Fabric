@@ -3,115 +3,80 @@
     <section class="page-card hero-card">
       <div class="page-head">
         <div>
-          <h2 class="page-title">管理概览</h2>
-          <p class="page-subtitle">今日运行概况 · 渠道与企业用量一目了然</p>
+          <h2 class="page-title">工作台</h2>
+          <p class="page-subtitle">{{ subtitle }}</p>
         </div>
         <div class="head-actions">
           <el-button :loading="loading" @click="load">刷新</el-button>
-          <el-button type="primary" @click="router.push('/admin/credentials')">
-            管理渠道
+          <el-button type="primary" @click="router.push(primaryAction.to)">
+            {{ primaryAction.label }}
           </el-button>
         </div>
       </div>
 
       <div v-loading="loading" class="kpi-grid">
-        <div class="kpi-card">
-          <span class="kpi-label">今日请求</span>
-          <strong class="kpi-value">{{ formatNumber(data?.today?.requests) }}</strong>
+        <div
+          v-for="item in kpis"
+          :key="item.label"
+          class="kpi-card"
+          :class="item.tone"
+        >
+          <span class="kpi-label">{{ item.label }}</span>
+          <strong class="kpi-value">{{ item.value }}</strong>
           <span class="kpi-foot">
-            失败
-            <b :class="{ danger: (data?.today?.errors ?? 0) > 0 }">
-              {{ formatNumber(data?.today?.errors) }}
-            </b>
+            {{ item.foot }}
+            <b v-if="item.footStrong" :class="{ danger: item.danger }">{{ item.footStrong }}</b>
           </span>
-        </div>
-        <div class="kpi-card accent">
-          <span class="kpi-label">今日 Tokens</span>
-          <strong class="kpi-value">{{ formatCompact(data?.today?.tokens) }}</strong>
-          <span class="kpi-foot">全平台合计消耗</span>
-        </div>
-        <div class="kpi-card">
-          <span class="kpi-label">企业</span>
-          <strong class="kpi-value">{{ formatNumber(data?.enterprises?.active) }}</strong>
-          <span class="kpi-foot">启用 / 共 {{ formatNumber(data?.enterprises?.total) }}</span>
-        </div>
-        <div class="kpi-card success">
-          <span class="kpi-label">启用渠道</span>
-          <strong class="kpi-value">{{ formatNumber(data?.channels?.enabled) }}</strong>
-          <span class="kpi-foot">共 {{ formatNumber(data?.channels?.total) }} 个渠道</span>
-        </div>
-        <div class="kpi-card" :class="{ danger: (data?.channels?.unavailable ?? 0) > 0 }">
-          <span class="kpi-label">异常渠道</span>
-          <strong class="kpi-value">{{ formatNumber(data?.channels?.unavailable) }}</strong>
-          <span class="kpi-foot">已启用但暂无可调度 Key</span>
-        </div>
-        <div class="kpi-card muted">
-          <span class="kpi-label">接入平台</span>
-          <strong class="kpi-value">{{ formatNumber(data?.providers) }}</strong>
-          <span class="kpi-foot">启用路由 {{ formatNumber(data?.modelRoutesEnabled) }}</span>
         </div>
       </div>
 
       <div class="quick-links">
-        <button type="button" class="quick-link" @click="router.push('/admin/credentials')">
-          <span class="quick-dot blue" />
+        <button
+          v-for="link in quickLinks"
+          :key="link.to"
+          type="button"
+          class="quick-link"
+          @click="router.push(link.to)"
+        >
+          <span class="quick-dot" :class="link.dot" />
           <span>
-            <strong>上游渠道</strong>
-            <small>凭证池 · 连通测试 · 启停</small>
-          </span>
-        </button>
-        <button type="button" class="quick-link" @click="router.push('/admin/enterprises')">
-          <span class="quick-dot violet" />
-          <span>
-            <strong>企业管理</strong>
-            <small>审核合作申请 · 启停企业</small>
-          </span>
-        </button>
-        <button type="button" class="quick-link" @click="router.push('/admin/logs')">
-          <span class="quick-dot teal" />
-          <span>
-            <strong>调用日志</strong>
-            <small>按企业 / 团队 / 渠道排障</small>
-          </span>
-        </button>
-        <button type="button" class="quick-link" @click="router.push('/admin/model-prices')">
-          <span class="quick-dot amber" />
-          <span>
-            <strong>模型单价</strong>
-            <small>对外标价 · 输入 / 输出</small>
+            <strong>{{ link.title }}</strong>
+            <small>{{ link.desc }}</small>
           </span>
         </button>
       </div>
     </section>
 
-    <div class="panels-grid">
+    <div class="panels-grid" :class="{ single: auth.isOrgAdmin }">
       <section class="page-card panel-card">
         <div class="panel-head">
           <div>
-            <h3 class="panel-title">今日消耗 Top 团队</h3>
-            <p class="panel-desc">按 Tokens 排序，记账到团队</p>
+            <h3 class="panel-title">{{ rankTitle }}</h3>
+            <p class="panel-desc">{{ rankDesc }}</p>
           </div>
-          <el-button link type="primary" @click="router.push('/admin/logs')">查看日志</el-button>
+          <el-button v-if="rankLink" link type="primary" @click="router.push(rankLink.to)">
+            {{ rankLink.label }}
+          </el-button>
         </div>
         <el-empty
-          v-if="!loading && !(data?.topTeamsToday?.length)"
+          v-if="!loading && !rankRows.length"
           description="今日暂无用量"
           :image-size="72"
         />
         <div v-else class="rank-list">
           <div
-            v-for="(row, index) in data?.topTeamsToday ?? []"
-            :key="String(row.teamId ?? index)"
+            v-for="(row, index) in rankRows"
+            :key="row.key"
             class="rank-row"
           >
             <span class="rank-index" :class="{ top: index < 3 }">{{ index + 1 }}</span>
             <div class="rank-main">
-              <div class="rank-name">{{ row.teamName || "—" }}</div>
-              <div class="rank-sub">{{ row.enterpriseName || "—" }}</div>
+              <div class="rank-name">{{ row.name }}</div>
+              <div class="rank-sub">{{ row.sub }}</div>
             </div>
             <div class="rank-metrics">
               <strong>{{ formatCompact(row.totalTokens) }}</strong>
-              <span>{{ formatNumber(row.requestCount) }} 次</span>
+              <span v-if="row.requestCount">{{ formatNumber(row.requestCount) }} 次</span>
             </div>
             <div class="rank-bar-track">
               <div class="rank-bar" :style="{ width: topUserBarWidth(row) }" />
@@ -120,13 +85,51 @@
         </div>
       </section>
 
-      <section class="page-card panel-card">
+      <section v-if="auth.isTeamAdmin" class="page-card panel-card">
+        <div class="panel-head">
+          <div>
+            <h3 class="panel-title">项目</h3>
+            <p class="panel-desc">所管团队下的项目</p>
+          </div>
+          <el-button link type="primary" @click="router.push('/admin/projects')">管理</el-button>
+        </div>
+        <el-empty
+          v-if="!loading && !(data?.projects?.length)"
+          description="还没有项目"
+          :image-size="72"
+        />
+        <div v-else class="provider-list">
+          <div v-for="row in data?.projects ?? []" :key="row.id" class="provider-row">
+            <div class="provider-identity">
+              <span class="provider-dot" style="background: #0d9488" />
+              <div>
+                <div class="provider-name">{{ row.name }}</div>
+                <div class="provider-code">{{ row.teamName || "—" }}</div>
+              </div>
+            </div>
+            <div class="provider-stats">
+              <div>
+                <span class="stat-label">成员</span>
+                <b>{{ formatNumber(row.memberCount) }}</b>
+              </div>
+              <div>
+                <span class="stat-label">状态</span>
+                <b>{{ row.status === "active" ? "正常" : "已停用" }}</b>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section v-if="auth.isSuperAdmin" class="page-card panel-card">
         <div class="panel-head">
           <div>
             <h3 class="panel-title">今日按接入平台</h3>
             <p class="panel-desc">请求量与 Tokens 分布</p>
           </div>
-          <el-button link type="primary" @click="router.push('/admin/credentials')">渠道</el-button>
+          <el-button v-if="auth.isSuperAdmin" link type="primary" @click="router.push('/admin/credentials')">
+            渠道
+          </el-button>
         </div>
         <el-empty
           v-if="!loading && !(data?.byProviderToday?.length)"
@@ -164,13 +167,15 @@
       </section>
     </div>
 
-    <section class="page-card panel-card errors-card">
+    <section v-if="auth.isSuperAdmin" class="page-card panel-card errors-card">
       <div class="panel-head">
         <div>
           <h3 class="panel-title">最近失败请求</h3>
           <p class="panel-desc">便于快速发现上游或客户端问题</p>
         </div>
-        <el-button link type="primary" @click="router.push('/admin/logs')">全部日志</el-button>
+        <el-button v-if="auth.isSuperAdmin" link type="primary" @click="router.push('/admin/logs')">
+          全部日志
+        </el-button>
       </div>
 
       <el-empty
@@ -223,17 +228,51 @@ import { useRouter } from "vue-router";
 import { ElMessage } from "element-plus";
 import { http } from "@/api/http";
 import { formatDateTime } from "@/lib/date-time";
+import { packageLabel, packageMonthlyYuan } from "@/lib/packages";
+import { formatYuan } from "@/lib/tokens";
+import { useAuthStore } from "@/stores/auth";
 
 type OverviewData = {
+  role?: "admin" | "org_admin" | "team_admin";
   enterprises?: { total: number; active: number };
   channels?: { total: number; enabled: number; unavailable: number };
   providers?: number;
   modelRoutesEnabled?: number;
+  org?: {
+    name?: string;
+    teamCount?: number;
+    employeeCount?: number;
+    packagePlan?: string | null;
+    packageYuan?: number;
+    monthUsedYuan?: string;
+  };
+  team?: {
+    teamCount?: number;
+    memberCount?: number;
+    projectCount?: number;
+    quotaYuan?: string;
+    monthUsedYuan?: string;
+    todayCostYuan?: string;
+  };
+  projects?: Array<{
+    id: number;
+    name: string;
+    teamName?: string;
+    memberCount?: number;
+    status?: string;
+  }>;
   today?: { requests: number; tokens: number; errors: number };
   topTeamsToday?: Array<{
     teamId?: number;
     teamName?: string;
     enterpriseName?: string;
+    totalTokens?: number;
+    requestCount?: number;
+  }>;
+  topMembersToday?: Array<{
+    employeeId?: number;
+    employeeName?: string;
+    sub?: string;
     totalTokens?: number;
     requestCount?: number;
   }>;
@@ -246,6 +285,7 @@ type OverviewData = {
     requestId?: string;
     enterpriseName?: string;
     teamName?: string;
+    employeeName?: string;
     clientModel?: string;
     providerCode?: string | null;
     status?: string;
@@ -263,11 +303,222 @@ const PROVIDER_META: Record<string, { label: string; color: string }> = {
 };
 
 const router = useRouter();
+const auth = useAuthStore();
 const loading = ref(false);
 const data = ref<OverviewData | null>(null);
+const role = computed(() => data.value?.role ?? auth.user?.role ?? "admin");
+
+const subtitle = computed(() => {
+  if (role.value === "org_admin") return "本企业今日用量与团队情况";
+  if (role.value === "team_admin") return "本团队今日用量与成员情况";
+  return "今日运行概况 · 渠道与企业用量一目了然";
+});
+
+const primaryAction = computed(() => {
+  if (role.value === "org_admin") return { to: "/admin/users", label: "员工管理" };
+  if (role.value === "team_admin") return { to: "/admin/members", label: "团队成员" };
+  return { to: "/admin/credentials", label: "管理渠道" };
+});
+
+type KpiCard = {
+  label: string;
+  value: string;
+  foot: string;
+  footStrong?: string;
+  danger?: boolean;
+  tone: string;
+};
+
+const kpis = computed((): KpiCard[] => {
+  const today = data.value?.today;
+  const errors = Number(today?.errors ?? 0);
+  const todayCards: KpiCard[] = [
+    {
+      label: "今日请求",
+      value: formatNumber(today?.requests),
+      foot: "失败",
+      footStrong: formatNumber(errors),
+      danger: errors > 0,
+      tone: "",
+    },
+    {
+      label: "今日 Tokens",
+      value: formatCompact(today?.tokens),
+      foot: role.value === "admin" ? "全平台合计消耗" : "范围内合计消耗",
+      tone: "accent",
+    },
+  ];
+  if (role.value === "org_admin") {
+    return [
+      {
+        label: "今日 Tokens",
+        value: formatCompact(today?.tokens),
+        foot: "本企业今日消耗",
+        tone: "accent",
+      },
+      {
+        label: "本月消耗",
+        value: formatYuan(data.value?.org?.monthUsedYuan ?? 0),
+        foot: "按模型单价折算",
+        tone: "",
+      },
+      {
+        label: "团队",
+        value: formatNumber(data.value?.org?.teamCount),
+        foot: "本企业团队数",
+        tone: "",
+      },
+      {
+        label: "员工",
+        value: formatNumber(data.value?.org?.employeeCount),
+        foot: "本企业账号",
+        tone: "success",
+      },
+      {
+        label: "套餐",
+        value: packageLabel(data.value?.org?.packagePlan),
+        foot: `每月 ${formatYuan(data.value?.org?.packageYuan ?? 0)}`,
+        tone: "",
+      },
+      {
+        label: "已分配额度",
+        value: formatYuan(data.value?.team?.quotaYuan ?? 0),
+        foot: "各团队月额度合计",
+        tone: "muted",
+      },
+    ];
+  }
+  if (role.value === "team_admin") {
+    const quota = Number(data.value?.team?.quotaYuan ?? 0);
+    const used = Number(data.value?.team?.monthUsedYuan ?? 0);
+    const remain = Math.max(0, quota - used);
+    const usedPct = quota > 0 ? Math.min(100, Math.round((used / quota) * 100)) : 0;
+    return [
+      {
+        label: "今日 Tokens",
+        value: formatCompact(today?.tokens),
+        foot: "所管团队今日消耗",
+        tone: "accent",
+      },
+      {
+        label: "今日成本",
+        value: formatYuan(data.value?.team?.todayCostYuan ?? 0),
+        foot: "按模型单价折算",
+        tone: "",
+      },
+      {
+        label: "本月消耗",
+        value: formatYuan(used),
+        foot: quota > 0 ? `额度已用 ${usedPct}%` : "团队尚未分配额度",
+        tone: usedPct >= 90 ? "danger" : "",
+      },
+      {
+        label: "额度剩余",
+        value: formatYuan(remain),
+        foot: `总额度 ${formatYuan(quota)}`,
+        tone: remain <= 0 && quota > 0 ? "danger" : "",
+      },
+      {
+        label: "成员",
+        value: formatNumber(data.value?.team?.memberCount),
+        foot: "所管团队合计",
+        tone: "",
+      },
+      {
+        label: "项目",
+        value: formatNumber(data.value?.team?.projectCount),
+        foot: "所管团队项目",
+        tone: "success",
+      },
+    ];
+  }
+  return [
+    ...todayCards,
+    {
+      label: "企业",
+      value: formatNumber(data.value?.enterprises?.active),
+      foot: `启用 / 共 ${formatNumber(data.value?.enterprises?.total)}`,
+      tone: "",
+    },
+    {
+      label: "启用渠道",
+      value: formatNumber(data.value?.channels?.enabled),
+      foot: `共 ${formatNumber(data.value?.channels?.total)} 个渠道`,
+      tone: "success",
+    },
+    {
+      label: "异常渠道",
+      value: formatNumber(data.value?.channels?.unavailable),
+      foot: "已启用但暂无可调度 Key",
+      tone: (data.value?.channels?.unavailable ?? 0) > 0 ? "danger" : "",
+    },
+    {
+      label: "接入平台",
+      value: formatNumber(data.value?.providers),
+      foot: `启用路由 ${formatNumber(data.value?.modelRoutesEnabled)}`,
+      tone: "muted",
+    },
+  ];
+});
+
+const quickLinks = computed(() => {
+  if (role.value === "org_admin") {
+    return [
+      { to: "/admin/users", title: "员工管理", desc: "审核注册 · 分配团队", dot: "blue" },
+      { to: "/admin/teams", title: "团队管理", desc: "额度与消耗", dot: "violet" },
+      { to: "/admin/tickets", title: "工单管理", desc: "企业内工单", dot: "teal" },
+      { to: "/admin/profile", title: "个人中心", desc: "账号与密码", dot: "amber" },
+    ];
+  }
+  if (role.value === "team_admin") {
+    return [
+      { to: "/admin/teams", title: "团队管理", desc: "额度与消耗", dot: "blue" },
+      { to: "/admin/members", title: "团队成员", desc: "邀请与成员角色", dot: "violet" },
+      { to: "/admin/projects", title: "项目管理", desc: "项目与项目成员", dot: "teal" },
+      { to: "/admin/keys", title: "API Key", desc: "创建员工 Key", dot: "amber" },
+    ];
+  }
+  return [
+    { to: "/admin/credentials", title: "上游渠道", desc: "凭证池 · 连通测试 · 启停", dot: "blue" },
+    { to: "/admin/enterprises", title: "企业管理", desc: "审核合作申请 · 启停企业", dot: "violet" },
+    { to: "/admin/logs", title: "调用日志", desc: "按企业 / 团队 / 渠道排障", dot: "teal" },
+    { to: "/admin/model-prices", title: "模型单价", desc: "对外标价 · 输入 / 输出", dot: "amber" },
+  ];
+});
+
+const rankTitle = computed(() =>
+  role.value === "team_admin" ? "今日消耗 Top 成员" : "今日消耗 Top 团队",
+);
+const rankDesc = computed(() =>
+  role.value === "team_admin" ? "按今日 Tokens 排序，所管团队成员" : "按 Tokens 排序，记账到团队",
+);
+const rankLink = computed(() => {
+  if (role.value === "org_admin") return { to: "/admin/teams", label: "团队" };
+  if (role.value === "team_admin") return { to: "/admin/members", label: "成员" };
+  return { to: "/admin/logs", label: "查看日志" };
+});
+
+const rankRows = computed(() => {
+  if (role.value === "team_admin") {
+    return (data.value?.topMembersToday ?? []).map((row, index) => ({
+      key: String(row.employeeId ?? index),
+      name: row.employeeName || "—",
+      sub: row.sub || "成员",
+      totalTokens: Number(row.totalTokens) || 0,
+      requestCount: Number(row.requestCount) || 0,
+    }));
+  }
+  return (data.value?.topTeamsToday ?? []).map((row, index) => ({
+    key: String(row.teamId ?? index),
+    name: row.teamName || "—",
+    sub: row.enterpriseName || "—",
+    totalTokens: Number(row.totalTokens) || 0,
+    requestCount: Number(row.requestCount) || 0,
+  }));
+});
 
 const maxTopTokens = computed(() => {
-  const list = data.value?.topTeamsToday ?? [];
+  const list = rankRows.value;
   return Math.max(1, ...list.map((row) => Number(row.totalTokens) || 0));
 });
 
@@ -322,15 +573,123 @@ function statusLabel(status: string): string {
   );
 }
 
+type TeamListRow = {
+  id: number;
+  name: string;
+  enterpriseName?: string;
+  memberCount?: number;
+  packagePlan?: string | null;
+  monthlyYuanQuota?: string | number;
+  todayTotalTokens?: number;
+  todayCostYuan?: string | number;
+  monthCostYuan?: string | number;
+};
+
+type TeamMemberRow = {
+  employeeId: number;
+  name: string;
+  role?: "member" | "team_admin";
+  todayTotalTokens?: number;
+  todayCostYuan?: string | number;
+};
+
+function sumNumber(rows: TeamListRow[], pick: (row: TeamListRow) => unknown): number {
+  return rows.reduce((total, row) => total + (Number(pick(row)) || 0), 0);
+}
+
+async function loadScopedWorkbench() {
+  const teamsRes = await http.get("/api/admin/teams");
+  const teams = (teamsRes.data.success ? teamsRes.data.data : []) as TeamListRow[];
+  let employeeCount = 0;
+  if (auth.isOrgAdmin) {
+    const usersRes = await http.get("/api/admin/users", { params: { limit: 200 } });
+    employeeCount = usersRes.data.success ? (usersRes.data.data as unknown[]).length : 0;
+  }
+  let projects: NonNullable<OverviewData["projects"]> = [];
+  let topMembers: NonNullable<OverviewData["topMembersToday"]> = [];
+  if (auth.isTeamAdmin) {
+    const [projectsRes, memberLists] = await Promise.all([
+      http.get("/api/admin/projects").catch(() => ({ data: { success: false } })),
+      Promise.all(
+        teams.map(async (team) => {
+          try {
+            const res = await http.get(`/api/admin/teams/${team.id}/members`);
+            const members = (res.data.success ? res.data.data : []) as TeamMemberRow[];
+            return members.map((member) => ({
+              employeeId: member.employeeId,
+              employeeName: member.name,
+              sub: `${team.name} · ${member.role === "team_admin" ? "团队管理员" : "成员"}`,
+              totalTokens: Number(member.todayTotalTokens) || 0,
+              requestCount: 0,
+            }));
+          } catch {
+            return [];
+          }
+        }),
+      ),
+    ]);
+    projects = projectsRes.data.success ? projectsRes.data.data : [];
+    topMembers = memberLists
+      .flat()
+      .sort((left, right) => (right.totalTokens || 0) - (left.totalTokens || 0))
+      .slice(0, 10);
+  }
+  const packagePlan = teams[0]?.packagePlan ?? null;
+  const topTeams = [...teams]
+    .sort((left, right) => (Number(right.todayTotalTokens) || 0) - (Number(left.todayTotalTokens) || 0))
+    .slice(0, 10)
+    .map((row) => ({
+      teamId: row.id,
+      teamName: row.name,
+      enterpriseName: row.enterpriseName,
+      totalTokens: Number(row.todayTotalTokens) || 0,
+      requestCount: 0,
+    }));
+  data.value = {
+    role: auth.isOrgAdmin ? "org_admin" : "team_admin",
+    org: {
+      teamCount: teams.length,
+      employeeCount,
+      packagePlan,
+      packageYuan: packageMonthlyYuan(packagePlan),
+      monthUsedYuan: String(sumNumber(teams, (row) => row.monthCostYuan)),
+    },
+    team: {
+      teamCount: teams.length,
+      memberCount: sumNumber(teams, (row) => row.memberCount),
+      projectCount: projects.length,
+      quotaYuan: String(sumNumber(teams, (row) => row.monthlyYuanQuota)),
+      monthUsedYuan: String(sumNumber(teams, (row) => row.monthCostYuan)),
+      todayCostYuan: String(sumNumber(teams, (row) => row.todayCostYuan)),
+    },
+    today: {
+      requests: 0,
+      tokens: sumNumber(teams, (row) => row.todayTotalTokens),
+      errors: 0,
+    },
+    topTeamsToday: topTeams,
+    topMembersToday: topMembers,
+    projects,
+    byProviderToday: [],
+    recentErrors: [],
+  };
+}
+
 async function load() {
   loading.value = true;
   try {
-    const res = await http.get("/api/admin/overview");
-    if (res.data.success) data.value = res.data.data;
+    if (auth.isSuperAdmin) {
+      const res = await http.get("/api/admin/overview");
+      if (res.data.success) data.value = res.data.data;
+      return;
+    }
+    await loadScopedWorkbench();
   } catch (error) {
+    const status = (error as { response?: { status?: number } }).response?.status;
+    if (status === 403) return;
     const message = (error as { response?: { data?: { message?: unknown } } })
       ?.response?.data?.message;
-    ElMessage.error(typeof message === "string" ? message : "加载概览失败");
+    ElMessage.error(typeof message === "string" ? message : "加载工作台失败");
   } finally {
     loading.value = false;
   }
@@ -514,6 +873,10 @@ onMounted(load);
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 16px;
+}
+
+.panels-grid.single {
+  grid-template-columns: 1fr;
 }
 
 .panel-card {

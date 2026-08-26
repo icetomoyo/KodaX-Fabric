@@ -165,11 +165,15 @@ test("admin shell source includes 团队管理 for org and team admins", () => {
   assert.match(layout, /v-if="auth.isTeamAdmin" index="\/admin\/members"/);
   assert.match(layout, /项目管理/);
   assert.match(layout, /v-if="auth.isTeamAdmin" index="\/admin\/projects"/);
+  assert.match(layout, /API Key/);
+  assert.match(layout, /v-if="auth.isTeamAdmin" index="\/admin\/keys"/);
+  assert.doesNotMatch(layout, /index="\/me\/keys"/);
   assert.match(home, /team_admin/);
-  assert.match(home, /\/admin\/teams/);
+  assert.match(home, /return \"\/admin\"/);
   assert.match(router, /admin-teams/);
   assert.match(router, /admin-members/);
   assert.match(router, /admin-projects/);
+  assert.match(router, /admin-keys/);
   assert.match(router, /team_admin/);
   assert.doesNotMatch(router, /admin-team-detail/);
   const teamsView = readFileSync(resolve(root, "web/src/views/admin/TeamsView.vue"), "utf8");

@@ -18,7 +18,9 @@ const { adminUserRoutes, buildAdminUserListQuery } = await import(
   "../src/routes/admin/users.js"
 );
 const { adminCredentialRoutes } = await import("../src/routes/admin/credentials.js");
-const { canAccessEmployee, resolveUserListScope } = await import("../src/lib/enterprise.js");
+const { canAccessEmployee, resolveUpdatedUserFields, resolveUserListScope } = await import(
+  "../src/lib/enterprise.js"
+);
 const { authRoutes } = await import("../src/routes/auth.js");
 
 const orgAdminSession = {
@@ -233,6 +235,26 @@ test("super-admin cannot list or mutate employees", async () => {
   }
 });
 
+test("org_admin can assign employee and team_admin but not org_admin or super-admin", () => {
+  const actor = { role: "org_admin" as const, enterpriseId: 3 };
+  const target = { role: "employee" as const, enterpriseId: 3 };
+  const keep = resolveUpdatedUserFields(actor, target, {});
+  assert.equal("error" in keep, false);
+  if ("error" in keep) return;
+  assert.equal(keep.role, "employee");
+
+  const toTeamAdmin = resolveUpdatedUserFields(actor, target, { role: "team_admin" });
+  assert.equal("error" in toTeamAdmin, false);
+  if ("error" in toTeamAdmin) return;
+  assert.equal(toTeamAdmin.role, "team_admin");
+
+  const toOrgAdmin = resolveUpdatedUserFields(actor, target, { role: "org_admin" });
+  assert.equal("error" in toOrgAdmin, true);
+
+  const toSuper = resolveUpdatedUserFields(actor, target, { role: "admin" });
+  assert.equal("error" in toSuper, true);
+});
+
 test("super-admin user list scope is forbidden and cannot access employees", () => {
   const scope = resolveUserListScope({ role: "admin", enterpriseId: 1 });
   assert.equal("forbidden" in scope, true);
@@ -245,7 +267,7 @@ test("super-admin user list scope is forbidden and cannot access employees", () 
   );
 });
 
-test("admin shell source includes 企业管理 and org_admin lands on admin users", () => {
+test("admin shell source includes 企业管理 and org_admin lands on workbench", () => {
   const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
   const layout = readFileSync(resolve(root, "web/src/layouts/AdminLayout.vue"), "utf8");
   const home = readFileSync(resolve(root, "web/src/lib/home.ts"), "utf8");
@@ -260,7 +282,7 @@ test("admin shell source includes 企业管理 and org_admin lands on admin user
   assert.doesNotMatch(layout, /v-if="!auth.isTeamAdmin" index="\/admin\/users"/);
   assert.match(layout, /v-if="!auth.isSuperAdmin" index="\/admin\/teams"/);
   assert.match(home, /org_admin/);
-  assert.match(home, /\/admin\/users/);
+  assert.match(home, /return \"\/admin\"/);
   assert.doesNotMatch(home, /org_admin.*\/me/);
   assert.match(router, /admin-enterprises/);
   assert.match(router, /org_admin/);
