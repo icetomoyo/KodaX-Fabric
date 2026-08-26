@@ -424,6 +424,23 @@ export function buildRelayUpstreamHeaders(
   return headers;
 }
 
+/** Include undici/Node syscall details from `error.cause` when present. */
+function describeFetchError(error: unknown): string {
+  if (!(error instanceof Error)) {
+    return "上游网络请求失败";
+  }
+
+  const cause = error.cause;
+  if (!(cause instanceof Error)) {
+    return error.message;
+  }
+
+  const code =
+    "code" in cause && typeof cause.code === "string" ? cause.code : undefined;
+  const detail = code ? `${code}: ${cause.message}` : cause.message;
+  return `${error.message} (${detail})`;
+}
+
 /**
  * Execute one upstream attempt. The caller owns retry ordering and response-body handling.
  * HTTP responses are deliberately left unread so JSON and SSE can be forwarded byte-for-byte.
@@ -530,9 +547,7 @@ export async function sendRelayUpstream(
       ? `上游请求超时（${timeoutMs}ms）`
       : externalCancelled
         ? "客户端已取消请求"
-        : error instanceof Error
-          ? error.message
-          : "上游网络请求失败";
+        : describeFetchError(error);
 
     try {
       if (kind !== "cancelled") {
