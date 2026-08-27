@@ -5,8 +5,10 @@
         <p class="eyebrow">员工接入</p>
         <h2 class="page-title">接入教程</h2>
         <p class="page-subtitle">
-          <strong>KodaX Fabric</strong>（Token Hub 模块）使用公网受信任的 HTTPS。员工用内部 API Key 接入；
-          <strong>Claude Code</strong> 与 <strong>Cursor</strong> 请各建一把协议匹配的 Key，不要混用。
+          <strong>KodaX Fabric</strong>（Token Hub 模块）使用公网受信任的 HTTPS。
+          员工 Key 绑定上游渠道和协议，原生转发
+          <strong>Anthropic Message</strong>、<strong>OpenAI Chat Completion</strong>、
+          <strong>OpenAI Response</strong> 三种协议。
         </p>
       </div>
       <div class="hero-actions">
@@ -29,15 +31,14 @@
 
     <el-alert
       class="security-alert"
-      title="一种客户端，一把 Key"
+      title="一种协议，一把 Key"
       type="warning"
       :closable="false"
       show-icon
     >
       <template #default>
-        Key 创建时绑定<strong>上游渠道 + 协议</strong>，创建后不可改协议。
-        Claude Code 使用 <code>Anthropic Messages</code>；Cursor 使用 <code>OpenAI Chat Completions</code>。
-        两台工具请创建两把 Key，名称可写「本机 Claude Code」「本机 Cursor」便于区分。
+        Key 创建时绑定<strong>上游渠道 + 协议</strong>，创建后不可改。
+        请求路径必须与 Key 协议一致；换协议或换渠道请另建 Key。
       </template>
     </el-alert>
 
@@ -79,19 +80,20 @@
         <span class="step-index">2</span>
         <div>
           <h3>创建并保存 API Key</h3>
-          <p>一把 Key 固定绑定一个上游渠道和一种协议，创建后不能修改协议。</p>
+          <p>一把 Key 固定绑定一个上游渠道和一种协议，创建后不能修改。</p>
         </div>
       </div>
 
       <div class="two-column">
         <ol class="instruction-list compact-list">
-          <li>进入“API Key”，选择需要使用的上游渠道。</li>
+          <li>进入「API Key」，填写名称并选择上游渠道。</li>
           <li>
-            按客户端选协议：Claude Code → <strong>Anthropic Messages</strong>；
-            Cursor → <strong>OpenAI Chat Completions</strong>。
+            选好渠道后选择协议：<strong>Anthropic Message 协议</strong>、
+            <strong>OpenAI Chat Completion 协议</strong>或
+            <strong>OpenAI Response 协议</strong>（仅显示当前渠道支持的）。
           </li>
-          <li>创建后立即复制完整 Key（<code>th_...</code>），保存到密码管理器或客户端；关闭后无法再查看明文。</li>
-          <li>若同时使用 Claude Code 与 Cursor，请创建<strong>两把</strong> Key，不要共用一把。</li>
+          <li>创建后立即复制完整 Key（<code>th_...</code>）；关闭后无法再查看明文。</li>
+          <li>换协议或换渠道时另建 Key，不要混用。</li>
         </ol>
         <div class="key-safety-card">
           <strong>Key 安全</strong>
@@ -106,114 +108,123 @@
         <span class="step-index">3</span>
         <div>
           <h3>配置调用客户端</h3>
-          <p>客户端协议必须与创建 Key 时选择的协议一致；示例中的 Key 是占位符 <code>th_...</code>。</p>
+          <p>Base URL 统一为 <code>{{ clientBaseUrl }}</code>，不要按协议改写路径。示例中的 Key 是占位符。</p>
         </div>
       </div>
 
-      <div class="protocol-matrix" aria-label="客户端与协议对照">
+      <div class="protocol-matrix" aria-label="协议对照">
         <div class="protocol-matrix-row protocol-matrix-head">
-          <span>客户端</span>
-          <span>创建 Key 时选协议</span>
-          <span>主要配置项</span>
+          <span>协议</span>
+          <span>请求路径</span>
+          <span>鉴权 / 配置</span>
         </div>
-        <div class="protocol-matrix-row">
-          <span>Claude Code</span>
-          <code>Anthropic Messages</code>
-          <span><code>ANTHROPIC_BASE_URL</code> + <code>ANTHROPIC_AUTH_TOKEN</code></span>
-        </div>
-        <div class="protocol-matrix-row">
-          <span>Cursor</span>
-          <code>OpenAI Chat Completions</code>
-          <span>OpenAI Base URL + API Key（或环境变量）</span>
-        </div>
-        <div class="protocol-matrix-row">
-          <span>其他 OpenAI 兼容工具</span>
-          <code>OpenAI Chat Completions</code>
-          <span><code>OPENAI_BASE_URL</code> + <code>OPENAI_API_KEY</code></span>
+        <div
+          v-for="row in protocolGuideRows"
+          :key="row.value"
+          class="protocol-matrix-row"
+        >
+          <span>{{ row.label }}</span>
+          <code>{{ row.endpoint }}</code>
+          <span>{{ row.config }}</span>
         </div>
       </div>
 
       <el-tabs v-model="clientTab" class="guide-tabs client-tabs">
-        <el-tab-pane label="Claude Code" name="claude">
+        <el-tab-pane label="Anthropic Message" name="anthropic">
           <el-alert
-            title="必须使用「Anthropic Messages」协议的员工 Key"
+            title="使用「Anthropic Message 协议」的员工 Key"
             type="info"
             :closable="false"
             show-icon
           />
           <ol class="instruction-list compact-list tab-steps">
-            <li>在 API Key 页创建 Key：协议选 <strong>Anthropic Message</strong>。</li>
-            <li>将下列字段<strong>合并</strong>进 <code>~/.claude/settings.json</code> 的 <code>env</code>，不要整文件覆盖。</li>
-            <li>完全退出并重新打开 Claude Code，使环境变量生效。</li>
-            <li>模型名使用下一步 <code>/ai/models</code> 返回的 ID（以渠道实际为准）。</li>
+            <li>创建 Key 时协议选 <strong>Anthropic Message 协议</strong>。</li>
+            <li>Base URL 填 <code>{{ clientBaseUrl }}</code>，客户端请求 <code>/v1/messages</code>。</li>
+            <li>Claude Code 将下列字段<strong>合并</strong>进 <code>~/.claude/settings.json</code> 的 <code>env</code>，不要整文件覆盖；改完后完全退出再打开。</li>
+            <li>模型名称请到「模型」页复制，不要手打。</li>
           </ol>
           <SnippetBlock
             :value="claudeSettingsSnippet"
             language="JSON"
-            @copy="copyValue('Claude Code 配置', claudeSettingsSnippet)"
+            @copy="copyValue('Anthropic 配置', claudeSettingsSnippet)"
           />
           <p class="inline-note">
-            鉴权也可用客户端支持的 <code>x-api-key</code>；与 Bearer 二选一即可，Key 值相同。
+            鉴权使用 <code>x-api-key</code> 或 <code>Authorization: Bearer</code>，二选一，Key 值相同。
           </p>
         </el-tab-pane>
 
-        <el-tab-pane label="Cursor" name="cursor">
+        <el-tab-pane label="OpenAI Chat Completion" name="openai-chat">
           <el-alert
-            title="必须使用「OpenAI Chat Completions」协议的员工 Key"
+            title="使用「OpenAI Chat Completion 协议」的员工 Key"
             type="info"
             :closable="false"
             show-icon
           />
           <ol class="instruction-list compact-list tab-steps">
-            <li>在 API Key 页创建 Key：协议选 <strong>OpenAI Chat Completion</strong>。</li>
-            <li>打开 Cursor Settings → Models（或 OpenAI 兼容相关设置）。</li>
+            <li>创建 Key 时协议选 <strong>OpenAI Chat Completion 协议</strong>。</li>
             <li>
-              Override OpenAI Base URL 填 <code>{{ clientBaseUrl }}</code>
-              （不要加端口号，不要漏协议）。
+              OpenAI 兼容客户端的 Base URL 填 <code>{{ clientBaseUrl }}</code>
+              （不要加端口号）；客户端会请求 <code>/chat/completions</code>。
             </li>
-            <li>OpenAI API Key 填员工 Key（<code>th_...</code>）。</li>
-            <li>模型选择与 <code>/ai/models</code> 返回一致；保存后新开对话验证。</li>
+            <li>API Key 填员工 Key（<code>th_...</code>）。</li>
+            <li>模型名称请到「模型」页复制，不要手打。</li>
           </ol>
           <div class="field-table">
             <div><span>OpenAI Base URL</span><code>{{ clientBaseUrl }}</code></div>
             <div><span>API Key</span><code>&lt;你的 KodaX Fabric API Key&gt;</code></div>
-            <div><span>Key 协议</span><code>openai_chat / OpenAI Chat Completions</code></div>
+            <div><span>请求路径</span><code>POST /ai/chat/completions</code></div>
           </div>
-          <p class="tab-intro">也可用环境变量（适用于支持 OpenAI 环境变量的启动方式）：</p>
+          <p class="tab-intro">环境变量：</p>
           <SnippetBlock
             :value="openAiSettingsSnippet"
             language="Shell"
-            @copy="copyValue('Cursor / OpenAI 环境变量', openAiSettingsSnippet)"
+            @copy="copyValue('OpenAI Chat Completion 环境变量', openAiSettingsSnippet)"
           />
         </el-tab-pane>
 
-        <el-tab-pane label="其他 OpenAI 兼容" name="openai">
+        <el-tab-pane label="OpenAI Response" name="openai-response">
           <el-alert
-            title="仅使用 OpenAI Chat Completions 协议的员工 Key"
+            title="使用「OpenAI Response 协议」的员工 Key；Chat Completion Key 不能调用 /responses"
             type="info"
             :closable="false"
             show-icon
           />
-          <p class="tab-intro">
-            任意支持自定义 OpenAI Base URL 的 SDK / CLI 均可；客户端会自动请求
-            <code>/chat/completions</code>。请单独建一把 <code>openai_chat</code> Key。
-          </p>
+          <ol class="instruction-list compact-list tab-steps">
+            <li>创建 Key 时协议选 <strong>OpenAI Response 协议</strong>（渠道需支持该协议）。</li>
+            <li>
+              Base URL 同样填 <code>{{ clientBaseUrl }}</code>；
+              客户端走 Responses API（<code>POST /responses</code>，亦接受 <code>/v1/responses</code>）。
+            </li>
+            <li>API Key 填员工 Key（<code>th_...</code>）。</li>
+            <li>模型名称请到「模型」页复制，不要手打。</li>
+          </ol>
+          <div class="field-table">
+            <div><span>OpenAI Base URL</span><code>{{ clientBaseUrl }}</code></div>
+            <div><span>API Key</span><code>&lt;你的 KodaX Fabric API Key&gt;</code></div>
+            <div><span>请求路径</span><code>POST /ai/responses</code></div>
+          </div>
+          <p class="tab-intro">环境变量与 Chat Completion 相同，区别只在客户端调用的是 Responses 而不是 Chat Completions：</p>
           <SnippetBlock
             :value="openAiSettingsSnippet"
             language="Shell"
-            @copy="copyValue('OpenAI 客户端配置', openAiSettingsSnippet)"
+            @copy="copyValue('OpenAI Response 环境变量', openAiSettingsSnippet)"
+          />
+          <SnippetBlock
+            :value="responsesCurlSnippet"
+            language="Shell"
+            @copy="copyValue('Responses 调用示例', responsesCurlSnippet)"
           />
         </el-tab-pane>
 
         <el-tab-pane label="CC Switch" name="cc-switch">
           <div class="cc-switch-flow" aria-label="CC Switch 请求链路">
-            <span>Claude Code</span><b>→</b><span>CC Switch 本地代理</span><b>→</b><span>KodaX Fabric</span>
+            <span>本地客户端</span><b>→</b><span>CC Switch 本地代理</span><b>→</b><span>KodaX Fabric</span>
           </div>
           <ol class="instruction-list">
-            <li>员工 Key 协议与 CC Switch 里配置的 API 格式必须一致（Claude 场景用 Anthropic Message）。</li>
+            <li>员工 Key 协议必须与 CC Switch 配置的 API 格式一致。</li>
             <li>上游 Base URL 填写 <code>{{ clientBaseUrl }}</code>，API Key 填写自己的 <code>th_...</code> Key。</li>
             <li>
-              若启用本地代理，Claude Code 可指向 <code>http://127.0.0.1:15721</code>；
+              若启用本地代理，客户端可指向 <code>http://127.0.0.1:15721</code>；
               CC Switch 的<strong>上游</strong>必须是 KodaX Fabric，禁止填本地地址（防循环代理）。
             </li>
           </ol>
@@ -231,10 +242,13 @@
         <span class="step-index">4</span>
         <div>
           <h3>验证模型访问</h3>
-          <p>先查询当前 Key 真实可用的模型，再把返回的模型 ID 填入客户端。</p>
+          <p>先到「模型」页复制模型名称填入客户端；也可用当前 Key 查询接口核对。</p>
         </div>
       </div>
 
+      <div class="section-actions model-list-action">
+        <el-button type="primary" @click="router.push('/me/models')">查看模型列表</el-button>
+      </div>
       <SnippetBlock
         :value="modelListCommand"
         language="Shell"
@@ -279,7 +293,11 @@ import { ElButton, ElMessage } from "element-plus";
 import { useRouter } from "vue-router";
 import { http } from "@/api/http";
 import { copyText } from "@/lib/clipboard";
-import { RELAY_BASE_PATH, relayClientBaseUrl } from "@/views/relay-protocol";
+import {
+  RELAY_BASE_PATH,
+  relayClientBaseUrl,
+  relayProtocolOptions,
+} from "@/views/relay-protocol";
 
 const SnippetBlock = defineComponent({
   name: "SnippetBlock",
@@ -304,7 +322,7 @@ const SnippetBlock = defineComponent({
 });
 
 const router = useRouter();
-const clientTab = ref("claude");
+const clientTab = ref("anthropic");
 const relayUrl = ref("");
 
 const clientBaseUrl = computed(() => relayClientBaseUrl(
@@ -321,6 +339,17 @@ const publicOrigin = computed(() => {
 
 const healthUrl = computed(() => `${publicOrigin.value}/health`);
 
+const protocolGuideRows = computed(() =>
+  relayProtocolOptions.map((option) => ({
+    value: option.value,
+    label: option.shortLabel,
+    endpoint: option.endpoint.replace(/^POST\s+/, ""),
+    config: option.value === "anthropic_messages"
+      ? "x-api-key 或 Bearer · ANTHROPIC_BASE_URL"
+      : "Authorization: Bearer · OPENAI_BASE_URL",
+  })),
+);
+
 const claudeSettingsSnippet = computed(() => JSON.stringify({
   env: {
     ANTHROPIC_BASE_URL: clientBaseUrl.value,
@@ -333,8 +362,19 @@ const openAiSettingsSnippet = computed(() => [
   'export OPENAI_API_KEY="<你的 KodaX Fabric API Key>"',
 ].join("\n"));
 
-const modelListCommand = computed(() => `curl -sS "${clientBaseUrl.value}/models" \\
-  -H "Authorization: Bearer <你的 KodaX Fabric API Key>"`);
+const responsesCurlSnippet = computed(() => `curl -sS "${clientBaseUrl.value}/responses" \\
+  -H "Authorization: Bearer <你的 KodaX Fabric API Key>" \\
+  -H "Content-Type: application/json" \\
+  -d '{"model":"<模型 ID>","input":"ping"}'`);
+
+const modelListCommand = computed(() => `# OpenAI Chat Completion / OpenAI Response
+curl -sS "${clientBaseUrl.value}/models" \\
+  -H "Authorization: Bearer <你的 KodaX Fabric API Key>"
+
+# Anthropic Message
+curl -sS "${clientBaseUrl.value}/v1/models" \\
+  -H "x-api-key: <你的 KodaX Fabric API Key>" \\
+  -H "anthropic-version: 2023-06-01"`);
 
 const troubleshootingItems = computed(() => [
   {
@@ -350,17 +390,17 @@ const troubleshootingItems = computed(() => [
   {
     title: "401 / invalid_api_key",
     cause: "Key 粘贴不完整、已经被删除，或客户端使用了错误的鉴权字段。",
-    resolution: "核对 Key，Anthropic 可用 x-api-key 或 Bearer，OpenAI 使用 Bearer；必要时创建新 Key。",
+    resolution: "核对 Key；Anthropic Message 可用 x-api-key 或 Bearer，OpenAI Chat Completion / Response 使用 Bearer。必要时创建新 Key。",
+  },
+  {
+    title: "404 / 协议不匹配 / 能列出模型但调用失败",
+    cause: "请求路径与 Key 绑定的协议不一致。Chat Completion Key 不能打 /responses，Response Key 不能打 /chat/completions，Anthropic Key 不能打 OpenAI 路径。",
+    resolution: "按实际请求路径另建对应协议的 Key；三种协议不要混用同一把 Key。",
   },
   {
     title: "能查询模型，但生成失败",
-    cause: "客户端模型 ID、Key 协议或所选渠道不匹配，也可能是当前上游暂时不可用。",
-    resolution: "使用 /ai/models 返回的模型 ID，确认协议一致，并在“我的调用”中查看具体错误。",
-  },
-  {
-    title: "Claude Code 正常但 Cursor 401 / 模型列表空（或相反）",
-    cause: "两套客户端共用了一把错误协议的 Key，或 Base URL / 鉴权字段不一致。",
-    resolution: "Claude Code 与 Cursor 各建一把 Key（Messages vs Chat Completions）；Cursor 使用 Bearer + OpenAI Base URL。",
+    cause: "客户端模型 ID 或所选渠道不匹配，也可能是当前上游暂时不可用。",
+    resolution: "使用对应协议的 models 接口返回的模型 ID，并在「我的调用」中查看具体错误。",
   },
   {
     title: "CC Switch 持续 API error / Retrying",
@@ -574,7 +614,7 @@ onMounted(loadRelayUrl);
 
 .protocol-matrix-row {
   display: grid;
-  grid-template-columns: minmax(120px, 0.7fr) minmax(160px, 1fr) minmax(0, 1.4fr);
+  grid-template-columns: minmax(180px, 0.95fr) minmax(160px, 0.85fr) minmax(0, 1.2fr);
   gap: 12px;
   padding: 11px 14px;
   border-bottom: 1px solid #e2e8f0;
@@ -679,6 +719,10 @@ onMounted(loadRelayUrl);
 
 .client-tabs :deep(.el-alert) {
   margin-bottom: 12px;
+}
+
+.client-tabs :deep(.snippet-block + .snippet-block) {
+  margin-top: 12px;
 }
 
 .cc-switch-flow {
@@ -796,6 +840,11 @@ onMounted(loadRelayUrl);
 .section-actions {
   justify-content: flex-end;
   margin-top: 16px;
+}
+
+.model-list-action {
+  justify-content: flex-start;
+  margin: 0 0 14px;
 }
 
 @media (max-width: 980px) {

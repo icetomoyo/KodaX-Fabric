@@ -95,11 +95,18 @@
             <small>创建 Key · 绑定渠道</small>
           </span>
         </button>
+        <button type="button" class="quick-link" @click="router.push('/me/models')">
+          <span class="quick-dot indigo" />
+          <span>
+            <strong>模型</strong>
+            <small>可用模型 · 调用成本</small>
+          </span>
+        </button>
         <button type="button" class="quick-link" @click="router.push('/me/guide')">
           <span class="quick-dot violet" />
           <span>
             <strong>接入教程</strong>
-            <small>Claude Code / Cursor</small>
+            <small>三种协议 · Base URL</small>
           </span>
         </button>
         <button type="button" class="quick-link" @click="router.push('/me/logs')">
@@ -176,7 +183,7 @@
       <div class="panel-head">
         <div>
           <h3 class="panel-title">接入说明</h3>
-          <p class="panel-desc">用员工 API Key 对接 Claude Code / Cursor</p>
+          <p class="panel-desc">员工 Key 绑定渠道与协议，原生转发三种协议</p>
         </div>
         <router-link class="guide-link" to="/me/guide">完整教程 →</router-link>
       </div>
@@ -184,11 +191,12 @@
         <el-descriptions-item label="Base URL">
           <code>{{ clientBaseUrl }}</code>
         </el-descriptions-item>
-        <el-descriptions-item label="Claude Code">
-          创建 Key 时选 <strong>Anthropic Message</strong>，详见接入教程「Claude Code」页签
-        </el-descriptions-item>
-        <el-descriptions-item label="Cursor">
-          创建 Key 时选 <strong>OpenAI Chat Completion</strong>，与 Claude Code 请各用一把 Key
+        <el-descriptions-item
+          v-for="option in relayProtocolOptions"
+          :key="option.value"
+          :label="option.shortLabel"
+        >
+          {{ option.endpoint }}
         </el-descriptions-item>
       </el-descriptions>
     </section>
@@ -205,6 +213,7 @@ import { useAuthStore } from "@/stores/auth";
 import {
   RELAY_BASE_PATH,
   relayClientBaseUrl,
+  relayProtocolOptions,
 } from "@/views/relay-protocol";
 
 type TeamQuota = {
@@ -420,7 +429,7 @@ onMounted(loadUsage);
 }
 .quick-links {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 10px;
   margin-top: 16px;
 }
@@ -462,6 +471,7 @@ onMounted(loadUsage);
   box-shadow: 0 0 0 4px rgba(148, 163, 184, 0.14);
 }
 .quick-dot.blue { background: #2563eb; }
+.quick-dot.indigo { background: #4f46e5; }
 .quick-dot.violet { background: #7c3aed; }
 .quick-dot.teal { background: #0d9488; }
 .quick-dot.amber { background: #d97706; }

@@ -45,6 +45,11 @@ export const router = createRouter({
           component: () => import("@/views/me/KeysView.vue"),
         },
         {
+          path: "models",
+          name: "me-models",
+          component: () => import("@/views/me/ModelsView.vue"),
+        },
+        {
           path: "guide",
           name: "me-guide",
           component: () => import("@/views/me/GuideView.vue"),

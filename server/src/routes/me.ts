@@ -7,6 +7,7 @@ import {
   employeeApiKeys,
   employees,
   enterprises,
+  modelPrices,
   opsAuditLogs,
   productLines,
   providers,
@@ -14,6 +15,7 @@ import {
   teams,
   requestAuditBodies,
   requestAudits,
+  upstreamCredentials,
   usageCountersDaily,
 } from "../db/schema/index.js";
 import { insertEnterprise } from "../lib/enterprise.js";
@@ -25,6 +27,10 @@ import {
   RELAY_BASE_PATH,
   RELAY_PROTOCOLS,
 } from "../lib/relay/protocol.js";
+import {
+  attachPricesToChannelModels,
+  groupDiscoveredModelsByChannel,
+} from "../lib/discovered-models.js";
 import {
   getEmployeeUpstreamChannel,
   getEmployeeUpstreamChannels,
@@ -179,6 +185,62 @@ export async function meRoutes(app: FastifyInstance) {
   app.get("/api/me/upstream-channels", async (req) => {
     const channels = await getEmployeeUpstreamChannels(req.employeeId!);
     return { success: true, data: channels };
+  });
+
+  app.get("/api/me/models", async (req) => {
+    const accessible = await getEmployeeUpstreamChannels(req.employeeId!);
+    if (accessible.length === 0) {
+      return { success: true, data: { channels: [] } };
+    }
+
+    const productLineIds = accessible.map((channel) => channel.productLineId);
+    const [channelRows, prices] = await Promise.all([
+      db
+        .select({
+          productLineId: productLines.id,
+          productLineName: productLines.name,
+          productLineCode: productLines.code,
+          providerName: providers.name,
+          providerCode: providers.code,
+          meta: upstreamCredentials.meta,
+        })
+        .from(productLines)
+        .innerJoin(providers, eq(productLines.providerId, providers.id))
+        .leftJoin(
+          upstreamCredentials,
+          and(
+            eq(upstreamCredentials.productLineId, productLines.id),
+            inArray(upstreamCredentials.status, ["active", "cooling"]),
+            gt(upstreamCredentials.weight, 0),
+          ),
+        )
+        .where(inArray(productLines.id, productLineIds)),
+      db
+        .select({
+          model: modelPrices.model,
+          promptPricePerMillion: modelPrices.promptPricePerMillion,
+          completionPricePerMillion: modelPrices.completionPricePerMillion,
+          cacheHitPricePerMillion: modelPrices.cacheHitPricePerMillion,
+        })
+        .from(modelPrices),
+    ]);
+
+    const groupedById = new Map(
+      groupDiscoveredModelsByChannel(channelRows).map((channel) => [channel.id, channel]),
+    );
+    const channels = attachPricesToChannelModels(
+      accessible.map((channel) => groupedById.get(channel.productLineId) ?? {
+        id: channel.productLineId,
+        name: channel.productLineName,
+        code: channel.productLineCode,
+        providerName: channel.providerName,
+        providerCode: channel.providerCode,
+        models: [],
+      }),
+      prices,
+    );
+
+    return { success: true, data: { channels } };
   });
 
   app.get("/api/me/api-keys", async (req) => {

@@ -177,20 +177,29 @@
               />
             </el-select>
           </el-form-item>
-          <el-form-item label="协议" required>
-            <el-radio-group
-              v-model="createForm.protocol"
-              :disabled="creating || !selectedChannel"
+          <el-form-item v-if="selectedChannel" label="协议" required class="protocol-form-item">
+            <div
+              v-if="compatibleProtocolOptions.length > 0"
+              class="protocol-choice-list"
+              role="radiogroup"
+              aria-label="协议"
             >
-              <el-radio
+              <button
                 v-for="option in compatibleProtocolOptions"
                 :key="option.value"
-                :value="option.value"
+                type="button"
+                role="radio"
+                class="protocol-choice"
+                :class="{ 'is-selected': createForm.protocol === option.value }"
+                :aria-checked="createForm.protocol === option.value"
+                :disabled="creating"
+                @click="createForm.protocol = option.value"
               >
-                {{ option.shortLabel }}
-              </el-radio>
-            </el-radio-group>
-            <div v-if="selectedChannel && compatibleProtocolOptions.length === 0" class="form-help">
+                <span class="protocol-choice-mark" aria-hidden="true" />
+                <strong>{{ option.shortLabel }}</strong>
+              </button>
+            </div>
+            <div v-else class="form-help">
               该渠道暂无可用协议
             </div>
           </el-form-item>
@@ -649,6 +658,90 @@ onMounted(load);
   justify-items: start;
   gap: 16px;
   padding: 12px 0;
+}
+
+.protocol-form-item :deep(.el-form-item__content) {
+  display: block;
+}
+
+.protocol-choice-list {
+  display: grid;
+  width: 100%;
+  gap: 8px;
+}
+
+.protocol-choice {
+  display: flex;
+  align-items: center;
+  box-sizing: border-box;
+  width: 100%;
+  margin: 0;
+  padding: 11px 14px;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #fff;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color 0.15s ease,
+    background-color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+.protocol-choice:hover:not(:disabled):not(.is-selected) {
+  border-color: #cbd5e1;
+  background: #f8fafc;
+}
+
+.protocol-choice:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgb(64 158 255 / 22%);
+}
+
+.protocol-choice.is-selected {
+  border-color: var(--el-color-primary);
+  background: #f0f7ff;
+  box-shadow: 0 0 0 1px var(--el-color-primary) inset;
+}
+
+.protocol-choice.is-selected:hover:not(:disabled) {
+  background: #e8f3ff;
+}
+
+.protocol-choice:disabled {
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+
+.protocol-choice-mark {
+  flex: none;
+  box-sizing: border-box;
+  width: 16px;
+  height: 16px;
+  margin-right: 10px;
+  border: 1.5px solid #cbd5e1;
+  border-radius: 50%;
+  background: #fff;
+}
+
+.protocol-choice.is-selected .protocol-choice-mark {
+  border-color: var(--el-color-primary);
+  background: var(--el-color-primary);
+  box-shadow: inset 0 0 0 3.5px #fff;
+}
+
+.protocol-choice strong {
+  min-width: 0;
+  color: #0f172a;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.protocol-choice.is-selected strong {
+  color: var(--el-color-primary);
 }
 
 .form-help {

@@ -10,10 +10,12 @@ process.env.QUOTA_TIMEZONE = "Asia/Shanghai";
 
 const { adminModelPriceRoutes } = await import("../src/routes/admin/model-prices.js");
 const {
+  attachPricesToChannelModels,
   collectDiscoveredModels,
   groupDiscoveredModelsByChannel,
   parseDiscoveredModels,
 } = await import("../src/lib/discovered-models.js");
+const { meRoutes } = await import("../src/routes/me.js");
 const { billedCacheReadTokens, extractCacheReadTokens } = await import(
   "../src/lib/usage-cache.js"
 );
@@ -129,6 +131,70 @@ test("unauthenticated team usage calls return 401", async () => {
     assert.equal(usage.statusCode, 401);
   } finally {
     await app.close();
+  }
+});
+
+test("employee model catalog attaches unit prices to discovered models only", () => {
+  const channels = attachPricesToChannelModels(
+    [
+      {
+        id: 1,
+        name: "GLM",
+        code: "api",
+        providerName: "智谱",
+        providerCode: "glm",
+        models: ["glm-4.6", "glm-5.3"],
+      },
+    ],
+    [
+      {
+        model: "glm-4.6",
+        promptPricePerMillion: "8.0000",
+        completionPricePerMillion: "28.0000",
+        cacheHitPricePerMillion: "2.0000",
+      },
+    ],
+  );
+  assert.deepEqual(channels[0]?.models, [
+    {
+      model: "glm-4.6",
+      priced: true,
+      promptPricePerMillion: "8.0000",
+      completionPricePerMillion: "28.0000",
+      cacheHitPricePerMillion: "2.0000",
+    },
+    {
+      model: "glm-5.3",
+      priced: false,
+      promptPricePerMillion: null,
+      completionPricePerMillion: null,
+      cacheHitPricePerMillion: null,
+    },
+  ]);
+});
+
+test("employee model list is unauthenticated 401 and forbidden to admin/org_admin", async () => {
+  const anonymous = Fastify();
+  await anonymous.register(meRoutes);
+  await anonymous.ready();
+  try {
+    const response = await anonymous.inject({ method: "GET", url: "/api/me/models" });
+    assert.equal(response.statusCode, 401);
+  } finally {
+    await anonymous.close();
+  }
+
+  for (const session of [adminSession, orgAdminSession]) {
+    const app = Fastify();
+    app.addHook("onRequest", attachSession(session));
+    await app.register(meRoutes);
+    await app.ready();
+    try {
+      const response = await app.inject({ method: "GET", url: "/api/me/models" });
+      assert.equal(response.statusCode, 403);
+    } finally {
+      await app.close();
+    }
   }
 });
 
