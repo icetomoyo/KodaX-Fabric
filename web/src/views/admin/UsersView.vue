@@ -1,128 +1,131 @@
 <template>
-  <div class="page-card">
+  <div class="users-page">
     <div class="head">
       <h2 class="page-title" style="margin: 0">员工管理</h2>
       <el-button v-if="auth.isOrgAdmin" type="primary" @click="openInvite">邀请已注册员工</el-button>
     </div>
 
-    <el-form inline style="margin: 12px 0">
-      <el-form-item>
-        <el-input v-model="q" placeholder="姓名/手机号" clearable @clear="search" />
-      </el-form-item>
-      <el-form-item>
-        <el-select v-model="statusFilter" placeholder="全部状态" clearable style="width: 120px" @change="search">
-          <el-option label="待审核" value="pending" />
-          <el-option label="正常" value="active" />
-          <el-option label="已停用" value="disabled" />
-        </el-select>
-      </el-form-item>
-      <el-form-item v-if="auth.isSuperAdmin">
-        <el-select
-          v-model="enterpriseFilter"
-          placeholder="全部企业"
-          clearable
-          style="width: 180px"
-          @change="search"
+    <div class="split">
+      <aside class="page-card team-pane">
+        <div class="team-pane-title">团队</div>
+        <button
+          v-for="item in teamNav"
+          :key="String(item.key)"
+          type="button"
+          class="team-item"
+          :class="{ active: selectedKey === item.key }"
+          @click="selectTeam(item.key)"
         >
-          <el-option
-            v-for="item in enterprises"
-            :key="item.id"
-            :label="item.name"
-            :value="item.id"
-          />
-        </el-select>
-      </el-form-item>
-      <el-form-item>
-        <el-button type="primary" @click="search">搜索</el-button>
-      </el-form-item>
-    </el-form>
+          <span class="team-name">{{ item.name }}</span>
+          <span class="team-meta">
+            <el-badge v-if="item.pendingCount" :value="item.pendingCount" type="warning" />
+            <span class="team-count">{{ item.count }}</span>
+          </span>
+        </button>
+      </aside>
 
-    <el-table :data="pagedRows" stripe>
-      <el-table-column prop="name" label="姓名" width="120" />
-      <el-table-column prop="phone" label="手机号" width="140" />
-      <el-table-column label="所属团队" min-width="180">
-        <template #default="{ row }">
-          {{ row.teamName || "—" }}
-        </template>
-      </el-table-column>
-      <el-table-column v-if="auth.isSuperAdmin" label="企业" min-width="140">
-        <template #default="{ row }">
-          {{ enterpriseName(row.enterpriseId) }}
-        </template>
-      </el-table-column>
-      <el-table-column label="角色" width="120">
-        <template #default="{ row }">
-          {{ formatRoleLabel(row.role) }}
-        </template>
-      </el-table-column>
-      <el-table-column label="状态" width="100">
-        <template #default="{ row }">
-          <el-tag
-            :type="row.status === 'active' ? 'success' : row.status === 'pending' ? 'warning' : 'danger'"
+      <section class="page-card people-pane">
+        <div class="people-head">
+          <div>
+            <h3 class="people-title">{{ currentGroupTitle }}</h3>
+            <p class="muted">{{ filteredRows.length }} 人</p>
+          </div>
+        </div>
+
+        <el-form inline class="filters" @submit.prevent>
+          <el-form-item>
+            <el-input v-model="q" placeholder="姓名/手机号" clearable />
+          </el-form-item>
+          <el-form-item>
+            <el-select v-model="statusFilter" placeholder="全部状态" clearable style="width: 120px">
+              <el-option label="待审核" value="pending" />
+              <el-option label="正常" value="active" />
+              <el-option label="已停用" value="disabled" />
+            </el-select>
+          </el-form-item>
+        </el-form>
+
+        <el-table :data="pagedRows" stripe :empty-text="emptyText">
+          <el-table-column prop="name" label="姓名" width="120" />
+          <el-table-column prop="phone" label="手机号" width="140" />
+          <el-table-column v-if="selectedKey === UNASSIGNED_KEY" label="所属团队" min-width="160">
+            <template #default>—</template>
+          </el-table-column>
+          <el-table-column label="角色" width="120">
+            <template #default="{ row }">
+              {{ formatRoleLabel(row.role) }}
+            </template>
+          </el-table-column>
+          <el-table-column label="状态" width="100">
+            <template #default="{ row }">
+              <el-tag
+                :type="row.status === 'active' ? 'success' : row.status === 'pending' ? 'warning' : 'danger'"
+                size="small"
+              >
+                {{ statusLabel(row.status) }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="最近登录" min-width="210">
+            <template #default="{ row }">
+              {{ formatDateTime(row.lastLoginAt) }}
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" width="300">
+            <template #default="{ row }">
+              <template v-if="row.status === 'pending'">
+                <el-button
+                  link
+                  type="success"
+                  :loading="approvingId === row.id"
+                  @click="approveRegistration(row)"
+                >
+                  审核通过
+                </el-button>
+              </template>
+              <template v-else>
+                <el-button link type="primary" @click="openDetail(row)">详情</el-button>
+                <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
+                <el-button
+                  v-if="row.id !== auth.user?.id"
+                  link
+                  type="warning"
+                  @click="openResetPassword(row)"
+                >
+                  重置密码
+                </el-button>
+                <el-button
+                  v-if="row.id !== auth.user?.id && row.status === 'active'"
+                  link
+                  type="danger"
+                  @click="setStatus(row.id, 'disabled')"
+                >
+                  停用
+                </el-button>
+                <el-button
+                  v-else-if="row.id !== auth.user?.id"
+                  link
+                  type="primary"
+                  @click="setStatus(row.id, 'active')"
+                >
+                  启用
+                </el-button>
+              </template>
+            </template>
+          </el-table-column>
+        </el-table>
+
+        <div class="pager">
+          <el-pagination
+            v-model:current-page="page"
+            background
             size="small"
-          >
-            {{ statusLabel(row.status) }}
-          </el-tag>
-        </template>
-      </el-table-column>
-      <el-table-column label="最近登录" min-width="210">
-        <template #default="{ row }">
-          {{ formatDateTime(row.lastLoginAt) }}
-        </template>
-      </el-table-column>
-      <el-table-column label="操作" width="300">
-        <template #default="{ row }">
-          <template v-if="row.status === 'pending'">
-            <el-button
-              link
-              type="success"
-              :loading="approvingId === row.id"
-              @click="approveRegistration(row)"
-            >
-              审核通过
-            </el-button>
-          </template>
-          <template v-else>
-            <el-button link type="primary" @click="openDetail(row)">详情</el-button>
-            <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
-            <el-button
-              v-if="row.id !== auth.user?.id"
-              link
-              type="warning"
-              @click="openResetPassword(row)"
-            >
-              重置密码
-            </el-button>
-            <el-button
-              v-if="row.id !== auth.user?.id && row.status === 'active'"
-              link
-              type="danger"
-              @click="setStatus(row.id, 'disabled')"
-            >
-              停用
-            </el-button>
-            <el-button
-              v-else-if="row.id !== auth.user?.id"
-              link
-              type="primary"
-              @click="setStatus(row.id, 'active')"
-            >
-              启用
-            </el-button>
-          </template>
-        </template>
-      </el-table-column>
-    </el-table>
-
-    <div class="pager">
-      <el-pagination
-        v-model:current-page="page"
-        background
-        size="small"
-        layout="total, prev, pager, next"
-        :total="rows.length"
-        :page-size="pageSize"
-      />
+            layout="total, prev, pager, next"
+            :total="filteredRows.length"
+            :page-size="pageSize"
+          />
+        </div>
+      </section>
     </div>
 
     <el-dialog v-model="showEdit" :title="`编辑用户 · ${editUser?.name || ''}`" width="480px">
@@ -241,18 +244,20 @@
         <el-button type="primary" :loading="resetting" @click="resetPassword">确认重置</el-button>
       </template>
     </el-dialog>
-
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from "vue";
+import { computed, onMounted, reactive, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { http } from "@/api/http";
 import { formatDateTime } from "@/lib/date-time";
 import { roleLabel as formatRoleLabel } from "@/lib/roles";
 import { useAuthStore } from "@/stores/auth";
+
+const UNASSIGNED_KEY = "unassigned" as const;
+type TeamNavKey = number | typeof UNASSIGNED_KEY;
 
 type UserRow = {
   id: number;
@@ -270,6 +275,12 @@ type UserRow = {
 
 type EnterpriseRow = { id: number; name: string; status: string };
 type TeamRow = { id: number; name: string };
+type TeamNavItem = {
+  key: TeamNavKey;
+  name: string;
+  count: number;
+  pendingCount: number;
+};
 
 const rows = ref<UserRow[]>([]);
 const page = ref(1);
@@ -278,9 +289,9 @@ const router = useRouter();
 const auth = useAuthStore();
 const q = ref("");
 const statusFilter = ref<"" | UserRow["status"]>("");
-const enterpriseFilter = ref<number | "">("");
 const enterprises = ref<EnterpriseRow[]>([]);
 const teams = ref<TeamRow[]>([]);
+const selectedKey = ref<TeamNavKey>(UNASSIGNED_KEY);
 const showEdit = ref(false);
 const showInvite = ref(false);
 const showResetPassword = ref(false);
@@ -312,10 +323,85 @@ const statusLabels: Record<UserRow["status"], string> = {
   disabled: "已停用",
 };
 
+const teamNav = computed<TeamNavItem[]>(() => {
+  const counts = new Map<number, { count: number; pendingCount: number }>();
+  let unassignedCount = 0;
+  let unassignedPending = 0;
+  for (const row of rows.value) {
+    if (row.teamId == null) {
+      unassignedCount += 1;
+      if (row.status === "pending") unassignedPending += 1;
+      continue;
+    }
+    const current = counts.get(row.teamId) ?? { count: 0, pendingCount: 0 };
+    current.count += 1;
+    if (row.status === "pending") current.pendingCount += 1;
+    counts.set(row.teamId, current);
+  }
+  const items: TeamNavItem[] = teams.value.map((team) => {
+    const current = counts.get(team.id) ?? { count: 0, pendingCount: 0 };
+    return {
+      key: team.id,
+      name: team.name,
+      count: current.count,
+      pendingCount: current.pendingCount,
+    };
+  });
+  items.push({
+    key: UNASSIGNED_KEY,
+    name: "未加入团队",
+    count: unassignedCount,
+    pendingCount: unassignedPending,
+  });
+  return items;
+});
+
+const groupRows = computed(() => {
+  if (selectedKey.value === UNASSIGNED_KEY) {
+    return rows.value.filter((row) => row.teamId == null);
+  }
+  return rows.value.filter((row) => row.teamId === selectedKey.value);
+});
+
+const filteredRows = computed(() => {
+  const needle = q.value.trim().toLowerCase();
+  return groupRows.value.filter((row) => {
+    if (statusFilter.value && row.status !== statusFilter.value) return false;
+    if (!needle) return true;
+    return row.name.toLowerCase().includes(needle) || row.phone.includes(needle);
+  });
+});
+
 const pagedRows = computed(() => {
   const start = (page.value - 1) * pageSize;
-  return rows.value.slice(start, start + pageSize);
+  return filteredRows.value.slice(start, start + pageSize);
 });
+
+const currentGroupTitle = computed(() => {
+  if (selectedKey.value === UNASSIGNED_KEY) return "未加入团队";
+  return teams.value.find((team) => team.id === selectedKey.value)?.name || "员工";
+});
+
+const emptyText = computed(() => {
+  if (filteredRows.value.length === 0 && (q.value.trim() || statusFilter.value)) {
+    return "没有符合筛选条件的员工";
+  }
+  return selectedKey.value === UNASSIGNED_KEY ? "没有未加入团队的员工" : "该团队暂无员工";
+});
+
+watch([selectedKey, q, statusFilter], () => {
+  page.value = 1;
+});
+
+function selectTeam(key: TeamNavKey) {
+  selectedKey.value = key;
+}
+
+function ensureSelection() {
+  const valid = new Set(teamNav.value.map((item) => item.key));
+  if (valid.has(selectedKey.value)) return;
+  selectedKey.value = teams.value[0]?.id ?? UNASSIGNED_KEY;
+}
 
 async function loadEnterprises() {
   if (!auth.isSuperAdmin) return;
@@ -332,7 +418,7 @@ async function loadTeams() {
 function openInvite() {
   invitePhone.value = "";
   inviteRole.value = "member";
-  inviteTeamId.value = teams.value[0]?.id;
+  inviteTeamId.value = typeof selectedKey.value === "number" ? selectedKey.value : undefined;
   showInvite.value = true;
 }
 
@@ -343,7 +429,7 @@ async function inviteMember() {
     return;
   }
   if (!inviteTeamId.value) {
-    ElMessage.warning("请先创建团队，再邀请员工入团");
+    ElMessage.warning(teams.value.length ? "请选择要加入的团队" : "请先创建团队，再邀请员工入团");
     return;
   }
   inviting.value = true;
@@ -355,6 +441,7 @@ async function inviteMember() {
     if (!data.success) throw new Error(data.message);
     ElMessage.success("已邀请入团");
     showInvite.value = false;
+    selectedKey.value = inviteTeamId.value;
     await load();
   } catch (e: unknown) {
     const message = (e as { response?: { data?: { message?: string } }; message?: string })
@@ -363,11 +450,6 @@ async function inviteMember() {
   } finally {
     inviting.value = false;
   }
-}
-
-function enterpriseName(id: number | null | undefined) {
-  if (id == null) return "未加入企业";
-  return enterprises.value.find((item) => item.id === id)?.name || String(id);
 }
 
 async function loadTeamNameMap() {
@@ -392,16 +474,11 @@ async function loadTeamNameMap() {
 
 async function load() {
   const { data } = await http.get("/api/admin/users", {
-    params: {
-      q: q.value || undefined,
-      status: statusFilter.value || undefined,
-      enterpriseId: enterpriseFilter.value || undefined,
-      limit: 200,
-    },
+    params: { limit: 200 },
   });
   if (!data.success) return;
   const list = data.data as UserRow[];
-  const hasTeamFromApi = list.some((row) => row.teamName != null);
+  const hasTeamFromApi = list.some((row) => row.teamName != null || row.teamId != null);
   if (hasTeamFromApi) {
     rows.value = list;
   } else {
@@ -415,13 +492,9 @@ async function load() {
       };
     });
   }
-  const maxPage = Math.max(1, Math.ceil(rows.value.length / pageSize));
+  ensureSelection();
+  const maxPage = Math.max(1, Math.ceil(filteredRows.value.length / pageSize));
   if (page.value > maxPage) page.value = maxPage;
-}
-
-function search() {
-  page.value = 1;
-  void load();
 }
 
 function openDetail(row: UserRow) {
@@ -541,6 +614,11 @@ async function updateUser() {
     if (editUser.value.id === auth.user?.id) await auth.fetchMe();
     ElMessage.success("用户信息已更新");
     showEdit.value = false;
+    if (editForm.role === "org_admin" || editForm.role === "admin" || !editForm.teamId) {
+      selectedKey.value = UNASSIGNED_KEY;
+    } else {
+      selectedKey.value = editForm.teamId;
+    }
     await load();
   } catch (e: unknown) {
     const message = (e as { response?: { data?: { message?: string } } })
@@ -594,15 +672,124 @@ async function setStatus(id: number, status: "active" | "disabled") {
 
 onMounted(async () => {
   await Promise.all([loadEnterprises(), loadTeams()]);
+  selectedKey.value = teams.value[0]?.id ?? UNASSIGNED_KEY;
   await load();
 });
 </script>
 
 <style scoped>
+.users-page {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-height: calc(100vh - 100px);
+}
+
 .head {
   display: flex;
   align-items: center;
   justify-content: space-between;
+}
+
+.split {
+  display: flex;
+  flex: 1;
+  gap: 16px;
+  min-height: 480px;
+  align-items: stretch;
+}
+
+.team-pane,
+.people-pane {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.team-pane {
+  width: 260px;
+  flex-shrink: 0;
+  padding: 16px 12px;
+}
+
+.people-pane {
+  flex: 1;
+  min-width: 0;
+}
+
+.team-pane-title {
+  margin: 0 8px 10px;
+  color: #6b7280;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+.team-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  margin: 0;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.team-item:hover {
+  background: #f3f4f6;
+}
+
+.team-item.active {
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.team-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+}
+
+.team-meta {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 8px;
+}
+
+.team-count {
+  color: #6b7280;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.team-item.active .team-count {
+  color: #2563eb;
+}
+
+.people-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.people-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.filters {
+  margin: 8px 0 4px;
 }
 
 .pager {
@@ -615,9 +802,16 @@ onMounted(async () => {
   margin: -8px 0 0 90px;
 }
 
-.muted {
-  color: #94a3b8;
-  font-size: 13px;
-}
+@media (max-width: 900px) {
+  .split {
+    flex-direction: column;
+    min-height: 0;
+  }
 
+  .team-pane {
+    width: 100%;
+    max-height: 240px;
+    overflow: auto;
+  }
+}
 </style>
