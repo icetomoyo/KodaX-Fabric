@@ -9,9 +9,11 @@ process.env.CREDENTIAL_ENCRYPT_KEY ??= "unit-test-credential-secret";
 process.env.QUOTA_TIMEZONE = "Asia/Shanghai";
 
 const { adminModelPriceRoutes } = await import("../src/routes/admin/model-prices.js");
-const { collectDiscoveredModels, parseDiscoveredModels } = await import(
-  "../src/lib/discovered-models.js"
-);
+const {
+  collectDiscoveredModels,
+  groupDiscoveredModelsByChannel,
+  parseDiscoveredModels,
+} = await import("../src/lib/discovered-models.js");
 const { billedCacheReadTokens, extractCacheReadTokens } = await import(
   "../src/lib/usage-cache.js"
 );
@@ -128,6 +130,42 @@ test("unauthenticated team usage calls return 401", async () => {
   } finally {
     await app.close();
   }
+});
+
+test("channel model groups use only that channel's discovered Key list", () => {
+  const grouped = groupDiscoveredModelsByChannel([
+    {
+      productLineId: 1,
+      productLineName: "GLM",
+      productLineCode: "api",
+      providerName: "智谱",
+      providerCode: "glm",
+      meta: { discoveredModels: ["glm-4.6", "glm-5.3"] },
+    },
+    {
+      productLineId: 1,
+      productLineName: "GLM",
+      productLineCode: "api",
+      providerName: "智谱",
+      providerCode: "glm",
+      meta: { lastTest: { models: ["glm-5.3", "glm-5.3-flash"] } },
+    },
+    {
+      productLineId: 2,
+      productLineName: "GLM（国际版）",
+      productLineCode: "api_intl",
+      providerName: "智谱",
+      providerCode: "glm",
+      meta: null,
+    },
+  ]);
+  assert.deepEqual(
+    grouped.map((channel) => ({ id: channel.id, name: channel.name, models: channel.models })),
+    [
+      { id: 1, name: "GLM", models: ["glm-4.6", "glm-5.3", "glm-5.3-flash"] },
+      { id: 2, name: "GLM（国际版）", models: [] },
+    ],
+  );
 });
 
 test("discovered models come from Key test metadata, not a typed catalog", () => {

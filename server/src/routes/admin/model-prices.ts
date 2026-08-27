@@ -3,8 +3,17 @@ import { and, asc, eq, gte, sql } from "drizzle-orm";
 import { z } from "zod";
 import { env } from "../../config.js";
 import { db } from "../../db/client.js";
-import { modelPrices, requestAudits, upstreamCredentials } from "../../db/schema/index.js";
-import { collectDiscoveredModels } from "../../lib/discovered-models.js";
+import {
+  modelPrices,
+  productLines,
+  providers,
+  requestAudits,
+  upstreamCredentials,
+} from "../../db/schema/index.js";
+import {
+  collectDiscoveredModels,
+  groupDiscoveredModelsByChannel,
+} from "../../lib/discovered-models.js";
 import { writeOpsAudit } from "../../lib/ops-audit.js";
 import { addCalendarDays, quotaDayAt, zonedDayStart } from "../../lib/quota-time.js";
 import {
@@ -94,7 +103,7 @@ export async function adminModelPriceRoutes(app: FastifyInstance) {
     const since = zonedDayStart(addCalendarDays(today, -29), env.QUOTA_TIMEZONE);
     const lastUsedAt = sql<Date | null>`max(${requestAudits.createdAt})`;
 
-    const [prices, usedModels, credentialMetas] = await Promise.all([
+    const [prices, usedModels, channelRows] = await Promise.all([
       db
         .select({
           ...priceReturning,
@@ -128,30 +137,37 @@ export async function adminModelPriceRoutes(app: FastifyInstance) {
         .where(gte(requestAudits.createdAt, since))
         .groupBy(requestAudits.clientModel)
         .orderBy(asc(requestAudits.clientModel)),
-      db.select({ meta: upstreamCredentials.meta }).from(upstreamCredentials),
+      db
+        .select({
+          productLineId: productLines.id,
+          productLineName: productLines.name,
+          productLineCode: productLines.code,
+          providerName: providers.name,
+          providerCode: providers.code,
+          meta: upstreamCredentials.meta,
+        })
+        .from(productLines)
+        .innerJoin(providers, eq(productLines.providerId, providers.id))
+        .leftJoin(upstreamCredentials, eq(upstreamCredentials.productLineId, productLines.id)),
     ]);
 
     const pricedNames = new Set(prices.map((row) => row.model));
-    const discoveredModels = collectDiscoveredModels(credentialMetas.map((row) => row.meta));
     const usedByName = new Map(usedModels.map((row) => [row.model, row.lastUsedAt]));
-    const unpricedNames = new Set([
-      ...discoveredModels.filter((model) => !pricedNames.has(model)),
-      ...usedModels.map((row) => row.model).filter((model) => !pricedNames.has(model)),
-    ]);
+    const channels = groupDiscoveredModelsByChannel(channelRows).map((channel) => ({
+      ...channel,
+      unpricedCount: channel.models.filter((model) => !pricedNames.has(model)).length,
+      models: channel.models.map((model) => ({
+        model,
+        lastUsedAt: usedByName.get(model) ?? null,
+        seenInLast30Days: usedByName.has(model),
+      })),
+    }));
 
     return {
       success: true,
       data: {
         prices: prices.map((row) => serializePrice(row)),
-        discoveredModels,
-        unpricedModels: [...unpricedNames]
-          .sort((left, right) => left.localeCompare(right))
-          .map((model) => ({
-            model,
-            lastUsedAt: usedByName.get(model) ?? null,
-            seenInLast30Days: usedByName.has(model),
-            discovered: discoveredModels.includes(model),
-          })),
+        channels,
       },
     };
   });
@@ -160,6 +176,11 @@ export async function adminModelPriceRoutes(app: FastifyInstance) {
     const body = createPriceSchema.safeParse(req.body);
     if (!body.success) {
       return reply.code(400).send({ success: false, message: "参数无效" });
+    }
+    const credentialMetas = await db.select({ meta: upstreamCredentials.meta }).from(upstreamCredentials);
+    const discoveredModels = collectDiscoveredModels(credentialMetas.map((row) => row.meta));
+    if (!discoveredModels.includes(body.data.model)) {
+      return reply.code(400).send({ success: false, message: "只能为渠道已发现的模型定价" });
     }
     try {
       const [row] = await db

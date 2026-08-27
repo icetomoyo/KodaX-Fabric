@@ -26,3 +26,51 @@ export function parseDiscoveredModels(meta: unknown): string[] {
 export function collectDiscoveredModels(metas: readonly unknown[]): string[] {
   return uniqueSorted(metas.flatMap((meta) => parseDiscoveredModels(meta)));
 }
+
+export type ChannelModelSource = {
+  productLineId: number;
+  productLineName: string;
+  productLineCode: string;
+  providerName: string;
+  providerCode: string;
+  meta: unknown;
+};
+
+export type ChannelModelGroup = {
+  id: number;
+  name: string;
+  code: string;
+  providerName: string;
+  providerCode: string;
+  models: string[];
+};
+
+export function groupDiscoveredModelsByChannel(rows: ChannelModelSource[]): ChannelModelGroup[] {
+  type Acc = Omit<ChannelModelGroup, "models"> & { metas: unknown[] };
+  const byId = new Map<number, Acc>();
+  for (const row of rows) {
+    let group = byId.get(row.productLineId);
+    if (!group) {
+      group = {
+        id: row.productLineId,
+        name: row.productLineName.trim() || row.productLineCode,
+        code: row.productLineCode,
+        providerName: row.providerName,
+        providerCode: row.providerCode,
+        metas: [],
+      };
+      byId.set(row.productLineId, group);
+    }
+    if (row.meta != null) group.metas.push(row.meta);
+  }
+  return [...byId.values()]
+    .map((group) => ({
+      id: group.id,
+      name: group.name,
+      code: group.code,
+      providerName: group.providerName,
+      providerCode: group.providerCode,
+      models: collectDiscoveredModels(group.metas),
+    }))
+    .sort((left, right) => left.name.localeCompare(right.name, "zh-CN"));
+}

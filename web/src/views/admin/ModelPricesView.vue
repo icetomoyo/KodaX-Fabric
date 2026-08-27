@@ -1,98 +1,102 @@
 <template>
-  <div class="page-card">
+  <div class="prices-page">
     <div class="head">
       <div>
         <h2 class="page-title" style="margin: 0">模型单价</h2>
-        <p class="page-subtitle">
-          按上游 Key 测试发现的模型设置输入、输出、缓存命中、缓存存储单价，用于折算团队成本
-        </p>
+        <p class="page-subtitle">按渠道查看上游 Key 返回的模型，并为这些模型设置单价</p>
       </div>
-      <el-button type="primary" @click="openCreate()">新增单价</el-button>
     </div>
 
-    <el-alert
-      v-if="!loading && !discoveredModels.length"
-      class="unpriced-alert"
-      type="info"
-      :closable="false"
-      show-icon
-      title="还没有从上游 Key 发现模型。请先到上游渠道测试 Key，连通成功后会带回模型列表。"
-    />
-
-    <el-alert
-      v-else-if="unpricedDiscovered.length"
-      class="unpriced-alert"
-      type="warning"
-      :closable="false"
-      show-icon
-    >
-      <template #title>
-        有 {{ unpricedDiscovered.length }} 个上游已发现模型尚未定价，调用成本将记为 ¥0.00
-      </template>
-      <div class="unpriced-list">
-        <div v-for="item in unpricedDiscovered" :key="item.model" class="unpriced-item">
-          <strong>{{ item.model }}</strong>
-          <el-button size="small" type="primary" plain @click="openCreate(item.model)">
-            去定价
-          </el-button>
-        </div>
-      </div>
-    </el-alert>
-
-    <el-table v-loading="loading" :data="catalog" stripe empty-text="暂无模型">
-      <el-table-column prop="model" label="模型" min-width="200" show-overflow-tooltip />
-      <el-table-column label="来源" min-width="180">
-        <template #default="{ row }">
-          <div class="source-tags">
-            <el-tag v-if="row.discovered" size="small" type="success" effect="plain">上游已发现</el-tag>
-            <el-tag v-if="row.seenInLast30Days" size="small" effect="plain">近 30 天有调用</el-tag>
-            <el-tag v-else-if="row.price && !row.discovered" size="small" type="info" effect="plain">
-              手工录入
-            </el-tag>
-          </div>
-        </template>
-      </el-table-column>
-      <el-table-column label="输入单价" min-width="120">
-        <template #default="{ row }">
-          <span v-if="row.price" class="mono-num">{{ formatYuan(row.price.promptPricePerMillion, 4) }}</span>
-          <span v-else class="muted">未定价</span>
-        </template>
-      </el-table-column>
-      <el-table-column label="输出单价" min-width="120">
-        <template #default="{ row }">
-          <span v-if="row.price" class="mono-num">{{ formatYuan(row.price.completionPricePerMillion, 4) }}</span>
-          <span v-else class="muted">未定价</span>
-        </template>
-      </el-table-column>
-      <el-table-column label="缓存命中" min-width="120">
-        <template #default="{ row }">
-          <span v-if="row.price" class="mono-num">{{ formatYuan(row.price.cacheHitPricePerMillion, 4) }}</span>
-          <span v-else class="muted">未定价</span>
-        </template>
-      </el-table-column>
-      <el-table-column label="缓存存储/小时" min-width="140">
-        <template #default="{ row }">
-          <span v-if="row.price" class="mono-num">
-            {{ formatYuan(row.price.cacheStoragePricePerMillionPerHour, 4) }}
+    <div class="split">
+      <aside class="page-card channel-pane">
+        <div class="pane-title">渠道</div>
+        <el-empty v-if="!loading && !channels.length" description="暂无渠道" :image-size="64" />
+        <button
+          v-for="channel in channels"
+          :key="channel.id"
+          type="button"
+          class="channel-item"
+          :class="{ active: selectedChannelId === channel.id }"
+          @click="selectedChannelId = channel.id"
+        >
+          <span class="channel-name">{{ channel.name }}</span>
+          <span class="channel-meta">
+            <el-badge v-if="channel.unpricedCount" :value="channel.unpricedCount" type="warning" />
+            <span class="channel-count">{{ channel.models.length }}</span>
           </span>
-          <span v-else class="muted">未定价</span>
-        </template>
-      </el-table-column>
-      <el-table-column label="最近使用" min-width="170">
-        <template #default="{ row }">
-          {{ formatDateTime(row.lastUsedAt) }}
-        </template>
-      </el-table-column>
-      <el-table-column label="操作" width="140">
-        <template #default="{ row }">
-          <template v-if="row.price">
-            <el-button link type="primary" @click="openEdit(row.price)">编辑</el-button>
-            <el-button link type="danger" @click="removeOne(row.price)">删除</el-button>
-          </template>
-          <el-button v-else link type="primary" @click="openCreate(row.model)">定价</el-button>
-        </template>
-      </el-table-column>
-    </el-table>
+        </button>
+      </aside>
+
+      <section class="page-card models-pane" v-loading="loading">
+        <div class="models-head">
+          <div>
+            <h3 class="models-title">{{ currentChannel?.name || "模型" }}</h3>
+            <p class="muted">{{ catalog.length }} 个模型，以上游返回列表为准</p>
+          </div>
+        </div>
+
+        <el-alert
+          v-if="!loading && currentChannel && !currentChannel.models.length"
+          class="hint-alert"
+          type="info"
+          :closable="false"
+          show-icon
+          title="该渠道还没有从 Key 测试带回模型。请先到上游渠道测试 Key。"
+        />
+        <el-alert
+          v-else-if="unpricedCount"
+          class="hint-alert"
+          type="warning"
+          :closable="false"
+          show-icon
+          :title="`有 ${unpricedCount} 个模型尚未定价，调用成本将记为 ¥0.00`"
+        />
+
+        <el-table :data="catalog" stripe empty-text="该渠道暂无已发现模型">
+          <el-table-column prop="model" label="模型" min-width="180" show-overflow-tooltip />
+          <el-table-column label="输入单价" min-width="120">
+            <template #default="{ row }">
+              <span v-if="row.price" class="mono-num">{{ formatYuan(row.price.promptPricePerMillion, 4) }}</span>
+              <span v-else class="muted">未定价</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="输出单价" min-width="120">
+            <template #default="{ row }">
+              <span v-if="row.price" class="mono-num">{{ formatYuan(row.price.completionPricePerMillion, 4) }}</span>
+              <span v-else class="muted">未定价</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="缓存命中" min-width="120">
+            <template #default="{ row }">
+              <span v-if="row.price" class="mono-num">{{ formatYuan(row.price.cacheHitPricePerMillion, 4) }}</span>
+              <span v-else class="muted">未定价</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="缓存存储/小时" min-width="140">
+            <template #default="{ row }">
+              <span v-if="row.price" class="mono-num">
+                {{ formatYuan(row.price.cacheStoragePricePerMillionPerHour, 4) }}
+              </span>
+              <span v-else class="muted">未定价</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="最近使用" min-width="170">
+            <template #default="{ row }">
+              {{ formatDateTime(row.lastUsedAt) }}
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" width="140">
+            <template #default="{ row }">
+              <template v-if="row.price">
+                <el-button link type="primary" @click="openEdit(row.price)">编辑</el-button>
+                <el-button link type="danger" @click="removeOne(row.price)">删除</el-button>
+              </template>
+              <el-button v-else link type="primary" @click="openCreate(row.model)">定价</el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+      </section>
+    </div>
   </div>
 
   <el-dialog v-model="showForm" :title="formTitle" width="560px">
@@ -101,18 +105,11 @@
         <el-select
           v-model="formModel"
           filterable
-          allow-create
-          default-first-option
           :disabled="Boolean(editing)"
-          placeholder="从已发现模型中选择，也可手动输入"
+          placeholder="从当前渠道已发现模型中选择"
           style="width: 100%"
         >
-          <el-option
-            v-for="model in modelOptions"
-            :key="model"
-            :label="model"
-            :value="model"
-          />
+          <el-option v-for="model in modelOptions" :key="model" :label="model" :value="model" />
         </el-select>
       </el-form-item>
       <el-form-item label="输入单价" required>
@@ -161,17 +158,24 @@ type ModelPrice = {
   seenInLast30Days: boolean;
 };
 
-type UnpricedModel = {
+type ChannelModel = {
   model: string;
   lastUsedAt: string | null;
   seenInLast30Days: boolean;
-  discovered?: boolean;
+};
+
+type ChannelGroup = {
+  id: number;
+  name: string;
+  code: string;
+  providerName: string;
+  providerCode: string;
+  unpricedCount: number;
+  models: ChannelModel[];
 };
 
 type CatalogRow = {
   model: string;
-  discovered: boolean;
-  seenInLast30Days: boolean;
   lastUsedAt: string | null;
   price: ModelPrice | null;
 };
@@ -181,8 +185,8 @@ const PRICE_PATTERN = /^(?:0|[1-9]\d{0,7})(?:\.\d{1,4})?$/;
 const loading = ref(false);
 const saving = ref(false);
 const prices = ref<ModelPrice[]>([]);
-const discoveredModels = ref<string[]>([]);
-const unpricedModels = ref<UnpricedModel[]>([]);
+const channels = ref<ChannelGroup[]>([]);
+const selectedChannelId = ref<number | null>(null);
 const showForm = ref(false);
 const editing = ref<ModelPrice | null>(null);
 const formModel = ref("");
@@ -193,67 +197,51 @@ const formCacheStorage = ref("");
 
 const formTitle = computed(() => (editing.value ? `编辑单价 · ${editing.value.model}` : "新增单价"));
 
-const unpricedDiscovered = computed(() => unpricedModels.value.filter((item) => item.discovered));
+const currentChannel = computed(() =>
+  channels.value.find((channel) => channel.id === selectedChannelId.value) ?? null,
+);
+
+const priceByModel = computed(() => new Map(prices.value.map((row) => [row.model, row])));
 
 const catalog = computed<CatalogRow[]>(() => {
-  const byModel = new Map<string, CatalogRow>();
-  const remember = (model: string, patch: Partial<CatalogRow>) => {
-    const current = byModel.get(model) ?? {
-      model,
-      discovered: false,
-      seenInLast30Days: false,
-      lastUsedAt: null,
-      price: null,
-    };
-    byModel.set(model, { ...current, ...patch, model });
-  };
-  for (const model of discoveredModels.value) {
-    remember(model, { discovered: true });
-  }
-  for (const item of unpricedModels.value) {
-    remember(item.model, {
-      discovered: Boolean(item.discovered) || byModel.get(item.model)?.discovered,
-      seenInLast30Days: item.seenInLast30Days,
-      lastUsedAt: item.lastUsedAt,
-    });
-  }
-  for (const price of prices.value) {
-    remember(price.model, {
+  const channel = currentChannel.value;
+  if (!channel) return [];
+  return channel.models.map((item) => {
+    const price = priceByModel.value.get(item.model) ?? null;
+    return {
+      model: item.model,
+      lastUsedAt: price?.lastUsedAt ?? item.lastUsedAt,
       price,
-      seenInLast30Days: price.seenInLast30Days,
-      lastUsedAt: price.lastUsedAt ?? byModel.get(price.model)?.lastUsedAt ?? null,
-    });
-  }
-  return [...byModel.values()].sort((left, right) => left.model.localeCompare(right.model));
+    };
+  });
 });
+
+const unpricedCount = computed(() => catalog.value.filter((row) => !row.price).length);
 
 const modelOptions = computed(() => {
   if (editing.value) return [editing.value.model];
-  const priced = new Set(prices.value.map((row) => row.model));
-  const discovered = discoveredModels.value.filter((model) => !priced.has(model));
-  const extra = formModel.value.trim() && !discovered.includes(formModel.value.trim())
-    ? [formModel.value.trim()]
-    : [];
-  return [...discovered, ...extra];
+  return catalog.value.filter((row) => !row.price).map((row) => row.model);
 });
+
+function ensureSelection() {
+  if (selectedChannelId.value && channels.value.some((channel) => channel.id === selectedChannelId.value)) {
+    return;
+  }
+  selectedChannelId.value = channels.value[0]?.id ?? null;
+}
 
 async function load() {
   loading.value = true;
   try {
     const { data } = await http.get<{
       success: boolean;
-      data: {
-        prices: ModelPrice[];
-        unpricedModels: UnpricedModel[];
-        discoveredModels?: string[];
-      };
+      data: { prices: ModelPrice[]; channels: ChannelGroup[] };
       message?: string;
     }>("/api/admin/model-prices");
-    if (data.success) {
-      prices.value = data.data.prices;
-      unpricedModels.value = data.data.unpricedModels;
-      discoveredModels.value = data.data.discoveredModels ?? [];
-    }
+    if (!data.success) throw new Error(data.message);
+    prices.value = data.data.prices ?? [];
+    channels.value = data.data.channels ?? [];
+    ensureSelection();
   } catch (error: unknown) {
     ElMessage.error(requestMessage(error, "加载单价失败"));
   } finally {
@@ -291,7 +279,11 @@ function validatePrice(value: string, label: string): string | null {
 async function saveOne() {
   const model = formModel.value.trim();
   if (!model) {
-    ElMessage.warning("请选择或填写模型名");
+    ElMessage.warning("请选择模型");
+    return;
+  }
+  if (!editing.value && !catalog.value.some((row) => row.model === model)) {
+    ElMessage.warning("只能为当前渠道已发现的模型定价");
     return;
   }
   const promptError = validatePrice(formPrompt.value, "输入单价");
@@ -366,48 +358,145 @@ onMounted(load);
 </script>
 
 <style scoped>
+.prices-page {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-height: calc(100vh - 100px);
+}
+
 .head {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
-  margin-bottom: 16px;
 }
+
 .page-subtitle {
   margin: 6px 0 0;
   color: #94a3b8;
   font-size: 13px;
 }
-.unpriced-alert {
-  margin-bottom: 16px;
+
+.split {
+  display: flex;
+  flex: 1;
+  gap: 16px;
+  min-height: 480px;
+  align-items: stretch;
 }
-.unpriced-list {
+
+.channel-pane,
+.models-pane {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  margin-top: 8px;
+  min-height: 0;
 }
-.unpriced-item {
+
+.channel-pane {
+  width: 260px;
+  flex-shrink: 0;
+  padding: 16px 12px;
+}
+
+.models-pane {
+  flex: 1;
+  min-width: 0;
+}
+
+.pane-title {
+  margin: 0 8px 10px;
+  color: #6b7280;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+.channel-item {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 8px;
+  width: 100%;
+  margin: 0;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
 }
-.source-tags {
+
+.channel-item:hover {
+  background: #f3f4f6;
+}
+
+.channel-item.active {
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.channel-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+}
+
+.channel-meta {
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 8px;
 }
+
+.channel-count {
+  color: #6b7280;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.channel-item.active .channel-count {
+  color: #2563eb;
+}
+
+.models-head {
+  margin-bottom: 8px;
+}
+
+.models-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.hint-alert {
+  margin-bottom: 12px;
+}
+
 .mono-num {
   font-variant-numeric: tabular-nums;
 }
-.muted {
-  color: #94a3b8;
-}
+
 .form-help {
   margin-top: 6px;
   color: #94a3b8;
   font-size: 12px;
   line-height: 1.5;
+}
+
+@media (max-width: 900px) {
+  .split {
+    flex-direction: column;
+    min-height: 0;
+  }
+
+  .channel-pane {
+    width: 100%;
+    max-height: 240px;
+    overflow: auto;
+  }
 }
 </style>
