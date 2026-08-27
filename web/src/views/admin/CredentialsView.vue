@@ -136,45 +136,54 @@
                       v-for="row in column.keys"
                       :key="row.id"
                       class="key-card"
-                      :class="{ dragging: draggingId === row.id }"
+                      :class="[`is-${healthChipClass(row)}`, { dragging: draggingId === row.id }]"
                       :draggable="canWrite"
                       @dragstart="onCardDragStart(row, $event)"
                       @dragend="onCardDragEnd"
                       @click="openKeyDetails(row)"
                     >
-                      <div class="key-card-top">
-                        <strong class="key-card-label">{{ row.label }}</strong>
+                      <div class="key-card-main">
+                        <div class="key-card-id">
+                          <strong class="key-card-label">{{ row.label }}</strong>
+                          <span class="key-suffix">•••• {{ row.secretSuffix }}</span>
+                          <span
+                            v-if="statusPill(row)"
+                            class="status-pill"
+                            :class="statusPill(row)?.tone"
+                          >
+                            {{ statusPill(row)?.text }}
+                          </span>
+                        </div>
                         <span
-                          v-if="statusPill(row)"
-                          class="status-pill"
-                          :class="statusPill(row)?.tone"
+                          class="latency"
+                          :class="isTesting(row.id) ? 'testing' : healthChipClass(row)"
+                          :title="isTesting(row.id) ? '正在测试连接' : healthDetail(row)"
                         >
-                          {{ statusPill(row)?.text }}
-                        </span>
-                      </div>
-                      <div class="key-card-meta">
-                        <span class="secret-mask">•••• {{ row.secretSuffix }}</span>
-                        <span
-                          class="health-chip"
-                          :class="healthChipClass(row)"
-                          :title="healthDetail(row)"
-                        >
-                          {{ healthSummary(row) }}
+                          <span v-if="isTesting(row.id)" class="latency-spinner" aria-hidden="true" />
+                          <template v-else>{{ healthSummary(row) }}</template>
                         </span>
                       </div>
                       <div class="key-card-foot">
-                        <span class="request-counts">
-                          <span class="ok">{{ row.recentSuccessCount ?? 0 }}</span>
-                          <span class="slash">/</span>
-                          <span class="bad">{{ row.recentErrorCount ?? 0 }}</span>
-                          <span class="meta-label">24h</span>
+                        <span
+                          class="traffic"
+                          :class="{ idle: keyTraffic(row).idle, hot: keyTraffic(row).error > 0 }"
+                        >
+                          <template v-if="keyTraffic(row).idle">近24小时无调用</template>
+                          <template v-else>
+                            近24小时
+                            <b class="ok">{{ keyTraffic(row).success }}</b> 成功
+                            <b class="bad" :class="{ on: keyTraffic(row).error > 0 }">
+                              {{ keyTraffic(row).error }}
+                            </b>
+                            失败
+                          </template>
                         </span>
                         <span v-if="canWrite" class="key-card-actions" @click.stop>
                           <el-button
                             link
                             type="primary"
                             size="small"
-                            :loading="isTesting(row.id)"
+                            :disabled="isTesting(row.id)"
                             @click="testCredential(row)"
                           >
                             测试
@@ -1444,6 +1453,12 @@ function healthChipClass(row: CredentialRow): string {
   return test.ok ? "ok" : "bad";
 }
 
+function keyTraffic(row: CredentialRow): { idle: boolean; success: number; error: number } {
+  const success = row.recentSuccessCount ?? 0;
+  const error = row.recentErrorCount ?? 0;
+  return { idle: success + error === 0, success, error };
+}
+
 function setTesting(id: number, testing: boolean) {
   const next = new Set(testingIds.value);
   if (testing) next.add(id);
@@ -2287,10 +2302,10 @@ onMounted(refreshAll);
 .channel-detail-pane {
   display: flex;
   flex-direction: column;
+  min-height: 0;
   padding: 18px 20px;
   background: #fff;
-  overflow-x: hidden;
-  overflow-y: auto;
+  overflow: hidden;
 }
 
 .detail-header,
@@ -2302,6 +2317,7 @@ onMounted(refreshAll);
 }
 
 .detail-header {
+  flex-shrink: 0;
   margin-bottom: 14px;
 }
 
@@ -2438,7 +2454,11 @@ onMounted(refreshAll);
 .overview-card.danger strong { color: #b91c1c; }
 
 .key-pool-section {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
   min-width: 0;
+  min-height: 0;
   border: 1px solid #e5e7eb;
   border-radius: 10px;
   overflow: hidden;
@@ -2446,6 +2466,7 @@ onMounted(refreshAll);
 
 .key-pool-head {
   display: flex;
+  flex-shrink: 0;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
@@ -2506,8 +2527,10 @@ onMounted(refreshAll);
 
 .kanban-board {
   display: grid;
+  flex: 1;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
+  min-height: 0;
   padding: 12px;
   background: #fff;
 }
@@ -2516,10 +2539,12 @@ onMounted(refreshAll);
   display: flex;
   flex-direction: column;
   min-width: 0;
-  min-height: 220px;
+  min-height: 0;
+  height: 100%;
   border: 1px dashed transparent;
   border-radius: 10px;
   background: #f8fafc;
+  overflow: hidden;
   transition: border-color 0.15s ease, background 0.15s ease;
 }
 
@@ -2565,8 +2590,8 @@ onMounted(refreshAll);
   flex-direction: column;
   gap: 8px;
   min-height: 0;
-  max-height: 520px;
-  padding: 10px;
+  padding: 10px 10px 24px;
+  overflow-x: hidden;
   overflow-y: auto;
 }
 
@@ -2579,52 +2604,112 @@ onMounted(refreshAll);
 .key-card {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 10px 12px;
-  border: 1px solid #e2e8f0;
-  border-radius: 9px;
+  gap: 8px;
+  padding: 12px 14px 10px;
+  border: 1px solid #e8eef5;
+  border-left: 3px solid #dbe4ee;
+  border-radius: 12px;
   background: #fff;
   cursor: grab;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease;
+  transition: border-color 0.16s ease, box-shadow 0.16s ease, transform 0.16s ease, opacity 0.16s ease;
 }
 
+.key-card.is-ok { border-left-color: #34d399; }
+.key-card.is-warning { border-left-color: #f59e0b; }
+.key-card.is-bad { border-left-color: #f43f5e; }
+.key-card.is-muted { border-left-color: #cbd5e1; }
+
 .key-card:hover {
-  border-color: #93c5fd;
-  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.06);
+  border-color: #bfd2ea;
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.07);
+  transform: translateY(-1px);
 }
 
 .key-card.dragging {
   border-color: #3b82f6;
   opacity: 0.5;
+  transform: none;
 }
 
-.key-card-top {
+.key-card-main {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
-  gap: 8px;
+  gap: 10px;
+  min-width: 0;
+}
+
+.key-card-id {
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
   min-width: 0;
 }
 
 .key-card-label {
   overflow: hidden;
+  min-width: 0;
   color: #0f172a;
-  font-size: 13px;
+  font-size: 13.5px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.key-card-meta {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+.key-suffix {
+  flex: 0 0 auto;
+  padding: 1px 7px;
+  border-radius: 6px;
+  background: #f1f5f9;
+  color: #64748b;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
+  letter-spacing: 0.04em;
 }
 
-.key-card-meta .meta-label {
-  margin-left: 4px;
-  color: #94a3b8;
+.latency {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  min-width: 58px;
+  max-width: 42%;
+  overflow: hidden;
+  padding: 3px 8px;
+  border-radius: 999px;
   font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.01em;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.latency.ok { background: #ecfdf3; color: #15803d; }
+.latency.warning { background: #fffbeb; color: #b45309; }
+.latency.bad { background: #fff1f2; color: #be123c; }
+.latency.muted { background: #f8fafc; color: #94a3b8; }
+.latency.testing {
+  min-height: 22px;
+  background: #eff6ff;
+  color: #2563eb;
+}
+
+.latency-spinner {
+  width: 12px;
+  height: 12px;
+  border: 1.5px solid #bfdbfe;
+  border-top-color: #2563eb;
+  border-radius: 50%;
+  animation: latency-spin 0.7s linear infinite;
+}
+
+@keyframes latency-spin {
+  to { transform: rotate(360deg); }
 }
 
 .status-pill {
@@ -2643,8 +2728,8 @@ onMounted(refreshAll);
 }
 
 .status-pill.danger {
-  background: #fef2f2;
-  color: #b91c1c;
+  background: #fff1f2;
+  color: #be123c;
 }
 
 .status-pill.muted {
@@ -2655,17 +2740,47 @@ onMounted(refreshAll);
 .key-card-foot {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 8px;
+  min-width: 0;
+  padding-top: 8px;
+  border-top: 1px solid #f1f5f9;
 }
+
+.traffic {
+  flex: 1;
+  min-width: 0;
+  color: #64748b;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.traffic.idle { color: #94a3b8; }
+
+.traffic b {
+  margin: 0 2px 0 6px;
+  font-weight: 650;
+}
+
+.traffic .ok { color: #94a3b8; }
+.traffic:not(.idle) .ok { color: #15803d; }
+.traffic .bad { color: #94a3b8; }
+.traffic .bad.on { color: #be123c; }
 
 .key-card-actions {
   display: inline-flex;
   align-items: center;
   gap: 2px;
+  opacity: 0.55;
+  transition: opacity 0.15s ease;
+}
+
+.key-card:hover .key-card-actions,
+.key-card:focus-within .key-card-actions {
+  opacity: 1;
 }
 
 .secret-mask {
+  flex: 0 0 auto;
   color: #94a3b8;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 12px;
