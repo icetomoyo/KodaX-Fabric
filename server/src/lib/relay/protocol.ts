@@ -1,6 +1,7 @@
 export const RELAY_PROTOCOLS = [
   "openai_chat",
   "anthropic_messages",
+  "openai_responses",
 ] as const;
 
 export type RelayProtocol = (typeof RELAY_PROTOCOLS)[number];
@@ -14,6 +15,8 @@ export const RELAY_ENDPOINTS = {
   models: `${RELAY_BASE_PATH}/models`,
   anthropicModels: `${RELAY_BASE_PATH}/v1/models`,
   chatCompletions: `${RELAY_BASE_PATH}/chat/completions`,
+  responses: `${RELAY_BASE_PATH}/responses`,
+  responsesV1: `${RELAY_BASE_PATH}/v1/responses`,
   messages: `${RELAY_BASE_PATH}/v1/messages`,
   messagesCountTokens: `${RELAY_BASE_PATH}/v1/messages/count_tokens`,
 } as const;

@@ -301,6 +301,11 @@ test("protocol operation URLs preserve base paths and avoid duplicate Anthropic 
   assert.throws(() =>
     buildRelayUpstreamUrl("https://example.test/v1", "openai_chat", "responses")
   );
+  assert.equal(
+    buildRelayUpstreamUrl("https://open.bigmodel.cn/api/v1", "openai_responses", "responses")
+      .toString(),
+    "https://open.bigmodel.cn/api/v1/responses",
+  );
 });
 
 test("upstream protocol headers use credential auth and forward only safe metadata", () => {

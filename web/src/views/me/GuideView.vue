@@ -142,7 +142,7 @@
             show-icon
           />
           <ol class="instruction-list compact-list tab-steps">
-            <li>在 API Key 页创建 Key：协议选 <strong>Anthropic Messages（Claude）</strong>。</li>
+            <li>在 API Key 页创建 Key：协议选 <strong>Anthropic Message</strong>。</li>
             <li>将下列字段<strong>合并</strong>进 <code>~/.claude/settings.json</code> 的 <code>env</code>，不要整文件覆盖。</li>
             <li>完全退出并重新打开 Claude Code，使环境变量生效。</li>
             <li>模型名使用下一步 <code>/ai/models</code> 返回的 ID（以渠道实际为准）。</li>
@@ -165,7 +165,7 @@
             show-icon
           />
           <ol class="instruction-list compact-list tab-steps">
-            <li>在 API Key 页创建 Key：协议选 <strong>OpenAI 对话（Chat Completions）</strong>。</li>
+            <li>在 API Key 页创建 Key：协议选 <strong>OpenAI Chat Completion</strong>。</li>
             <li>打开 Cursor Settings → Models（或 OpenAI 兼容相关设置）。</li>
             <li>
               Override OpenAI Base URL 填 <code>{{ clientBaseUrl }}</code>
@@ -210,7 +210,7 @@
             <span>Claude Code</span><b>→</b><span>CC Switch 本地代理</span><b>→</b><span>KodaX Fabric</span>
           </div>
           <ol class="instruction-list">
-            <li>员工 Key 协议与 CC Switch 里配置的 API 格式必须一致（Claude 场景用 Anthropic Messages）。</li>
+            <li>员工 Key 协议与 CC Switch 里配置的 API 格式必须一致（Claude 场景用 Anthropic Message）。</li>
             <li>上游 Base URL 填写 <code>{{ clientBaseUrl }}</code>，API Key 填写自己的 <code>th_...</code> Key。</li>
             <li>
               若启用本地代理，Claude Code 可指向 <code>http://127.0.0.1:15721</code>；

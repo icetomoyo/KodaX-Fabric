@@ -24,6 +24,7 @@ export const apiKeyStatusEnum = pgEnum("api_key_status", ["active", "revoked"]);
 export const relayProtocolEnum = pgEnum("relay_protocol", [
   "openai_chat",
   "anthropic_messages",
+  "openai_responses",
 ]);
 export const productTypeEnum = pgEnum("product_type", ["api", "coding_plan"]);
 export const shareModeEnum = pgEnum("share_mode", ["public_pool", "grant_only", "disabled"]);

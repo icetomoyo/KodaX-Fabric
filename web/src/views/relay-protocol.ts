@@ -1,6 +1,7 @@
 export const RELAY_PROTOCOLS = [
   "openai_chat",
   "anthropic_messages",
+  "openai_responses",
 ] as const;
 
 export type RelayProtocol = (typeof RELAY_PROTOCOLS)[number];
@@ -29,25 +30,34 @@ export type RelayProtocolOption = {
 
 export const relayProtocolOptions: readonly RelayProtocolOption[] = [
   {
-    value: "openai_chat",
-    label: "OpenAI 对话（Chat Completions）",
-    shortLabel: "OpenAI 对话",
-    description: "按 OpenAI Chat Completions 原生格式转发，不做协议转换",
-    endpoint: `POST ${RELAY_BASE_PATH}/chat/completions`,
-    authHeaders: ["Authorization: Bearer <你的 API Key>"],
-    recommendedClients: ["Cursor", "其他 OpenAI 兼容 SDK / CLI"],
-  },
-  {
     value: "anthropic_messages",
-    label: "Anthropic 消息（Claude）",
-    shortLabel: "Claude Messages",
-    description: "按 Anthropic Messages 原生格式转发，不做协议转换",
+    label: "Anthropic Message 协议",
+    shortLabel: "Anthropic Message 协议",
+    description: "Anthropic Messages 原生转发",
     endpoint: `POST ${RELAY_BASE_PATH}/v1/messages`,
     authHeaders: [
       "x-api-key: <你的 API Key>",
       "anthropic-version: 2023-06-01",
     ],
-    recommendedClients: ["Claude Code", "CC Switch（上游协议选 Anthropic）"],
+    recommendedClients: ["Claude Code", "CC Switch"],
+  },
+  {
+    value: "openai_chat",
+    label: "OpenAI Chat Completion 协议",
+    shortLabel: "OpenAI Chat Completion 协议",
+    description: "OpenAI Chat Completions 原生转发",
+    endpoint: `POST ${RELAY_BASE_PATH}/chat/completions`,
+    authHeaders: ["Authorization: Bearer <你的 API Key>"],
+    recommendedClients: ["Cursor", "OpenAI 兼容客户端"],
+  },
+  {
+    value: "openai_responses",
+    label: "OpenAI Response 协议",
+    shortLabel: "OpenAI Response 协议",
+    description: "OpenAI Responses 原生转发",
+    endpoint: `POST ${RELAY_BASE_PATH}/responses`,
+    authHeaders: ["Authorization: Bearer <你的 API Key>"],
+    recommendedClients: ["OpenAI Responses 客户端"],
   },
 ];
 

@@ -495,12 +495,12 @@ async function runAssertions(baseUrl: string): Promise<void> {
   await assertModels(baseUrl, messages);
   await assertAnthropicModelsAuthErrors(baseUrl, messages);
 
-  const removedResponses = await fetch(`${baseUrl}/ai/responses`, {
+  const responsesWithoutKey = await fetch(`${baseUrl}/ai/responses`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ model: messages.clientModel, input: "not supported" }),
   });
-  assert.equal(removedResponses.status, 404);
+  assert.equal(responsesWithoutKey.status, 401);
 
   const missingVersion = await call(
     baseUrl,

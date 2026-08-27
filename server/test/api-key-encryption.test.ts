@@ -24,9 +24,9 @@ const {
 
 test("relay protocol runtime values stay aligned with the database enum", () => {
   assert.deepEqual(relayProtocolEnum.enumValues, [...RELAY_PROTOCOLS]);
-  assert.deepEqual(RELAY_PROTOCOLS, ["openai_chat", "anthropic_messages"]);
+  assert.deepEqual(RELAY_PROTOCOLS, ["openai_chat", "anthropic_messages", "openai_responses"]);
   assert.equal(DEFAULT_RELAY_PROTOCOL, "openai_chat");
-  assert.equal(isRelayProtocol("openai_responses"), false);
+  assert.equal(isRelayProtocol("openai_responses"), true);
   assert.equal(isRelayProtocol("anthropic_messages"), true);
   assert.equal(isRelayProtocol("unknown"), false);
 });

@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { Readable } from "node:stream";
 import type { ReadableStream as NodeWebReadableStream } from "node:stream/web";
-import type { FastifyInstance, FastifyRequest } from "fastify";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { env } from "../../config.js";
 import {
@@ -18,6 +18,7 @@ import {
   type RelayQuotaLease,
 } from "../../lib/relay/quota.js";
 import { RELAY_ENDPOINTS } from "../../lib/relay/protocol.js";
+import type { RelayProtocol } from "../../lib/relay/protocol.js";
 import {
   resolveAccessibleRelayModels,
   resolveRelayCandidates,
@@ -28,11 +29,12 @@ import type {
   RelayRetryTraceItem,
 } from "../../lib/relay/types.js";
 import {
-  sendRelayUpstreamChat,
+  sendRelayUpstream,
   type RelayUpstreamAttemptKind,
   type RelayUpstreamAttemptResult,
 } from "../../lib/relay/upstream.js";
 import {
+  createRequireRelayApiKey,
   requireAnyRelayApiKey,
   requireRelayApiKey,
 } from "../../middleware/api-key.js";
@@ -45,7 +47,13 @@ const chatCompletionSchema = z
   })
   .passthrough();
 
-type ChatCompletionBody = z.infer<typeof chatCompletionSchema>;
+const responsesSchema = z
+  .object({
+    model: z.string().trim().min(1).max(128),
+    stream: z.boolean().optional().default(false),
+  })
+  .passthrough();
+
 type JsonObject = Record<string, unknown>;
 
 export class RelayResponseTooLargeError extends Error {
@@ -277,6 +285,21 @@ function originalModel(body: unknown): string {
   return body.model.slice(0, 128) || "(invalid)";
 }
 
+function parseOpenAiCompatibleBody(protocol: RelayProtocol, requestBody: unknown) {
+  if (protocol === "openai_responses") {
+    return {
+      parsed: responsesSchema.safeParse(requestBody),
+      invalidMessage: "请求参数无效：model 为必填项",
+      operation: "responses" as const,
+    };
+  }
+  return {
+    parsed: chatCompletionSchema.safeParse(requestBody),
+    invalidMessage: "请求参数无效：model 和 messages 为必填项",
+    operation: "chat_completions" as const,
+  };
+}
+
 function noRouteError(message = "当前账户没有可用于该模型的渠道") {
   return openAiError(
     message,
@@ -346,16 +369,16 @@ export async function chatCompletionRoutes(app: FastifyInstance) {
     );
   }
 
-  app.post(
-    RELAY_ENDPOINTS.chatCompletions,
-    { onRequest: requireRelayApiKey },
-    async (req, reply) => {
+  const handleOpenAiCompatibleRelay = async (req: FastifyRequest, reply: FastifyReply) => {
       const startedAt = Date.now();
       const requestId = `threq_${randomUUID().replaceAll("-", "")}`;
       const principal = req.relayPrincipal!;
       const requestHeaders = sanitizeRelayRequestHeaders(req);
       const requestBody = req.body;
-      const parsed = chatCompletionSchema.safeParse(requestBody);
+      const { parsed, invalidMessage, operation } = parseOpenAiCompatibleBody(
+        principal.protocol,
+        requestBody,
+      );
       const clientModel = parsed.success ? parsed.data.model : originalModel(requestBody);
       const isStream = parsed.success ? parsed.data.stream : false;
       const retryTrace: RelayRetryTraceItem[] = [];
@@ -410,7 +433,7 @@ export async function chatCompletionRoutes(app: FastifyInstance) {
       try {
         if (!parsed.success) {
           const payload = openAiError(
-            "请求参数无效：model 和 messages 为必填项",
+            invalidMessage,
             "invalid_request_error",
             "invalid_request",
           );
@@ -427,7 +450,7 @@ export async function chatCompletionRoutes(app: FastifyInstance) {
           return reply.code(400).send(payload);
         }
 
-        const body: ChatCompletionBody = parsed.data;
+        const body = parsed.data;
 
         try {
           lease = await acquireRelayQuota(principal.employeeId, principal.teamId);
@@ -516,8 +539,10 @@ export async function chatCompletionRoutes(app: FastifyInstance) {
           currentCandidate = candidate;
           lastCandidate = candidate;
           const hasNext = index + 1 < attempts.length;
-          const result = await sendRelayUpstreamChat({
+          const result = await sendRelayUpstream({
             candidate,
+            protocol: principal.protocol,
+            operation,
             body,
             requestId,
             signal: req.signal,
@@ -951,6 +976,18 @@ export async function chatCompletionRoutes(app: FastifyInstance) {
           await releaseQuota(app, requestId, lease);
         }
       }
-    },
+  };
+
+  app.post(
+    RELAY_ENDPOINTS.chatCompletions,
+    { onRequest: requireRelayApiKey },
+    handleOpenAiCompatibleRelay,
   );
+  for (const path of [RELAY_ENDPOINTS.responses, RELAY_ENDPOINTS.responsesV1]) {
+    app.post(
+      path,
+      { onRequest: createRequireRelayApiKey("openai_responses") },
+      handleOpenAiCompatibleRelay,
+    );
+  }
 }

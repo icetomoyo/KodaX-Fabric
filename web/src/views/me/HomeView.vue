@@ -29,14 +29,6 @@
       </el-form>
     </el-alert>
     <el-alert
-      v-else-if="hasTeam"
-      class="join-alert"
-      :title="`已加入 ${membershipName}（编号 ${membershipCode}）`"
-      type="success"
-      show-icon
-      :closable="false"
-    />
-    <el-alert
       v-else-if="hasEnterprise && !hasTeam"
       class="join-alert"
       title="尚未加入团队，仍是普通注册用户。被邀请进团队后才有员工权限（API Key / 调用）。"
@@ -193,10 +185,10 @@
           <code>{{ clientBaseUrl }}</code>
         </el-descriptions-item>
         <el-descriptions-item label="Claude Code">
-          创建 Key 时选 <strong>Anthropic Messages</strong>，详见接入教程「Claude Code」页签
+          创建 Key 时选 <strong>Anthropic Message</strong>，详见接入教程「Claude Code」页签
         </el-descriptions-item>
         <el-descriptions-item label="Cursor">
-          创建 Key 时选 <strong>OpenAI Chat Completions</strong>，与 Claude Code 请各用一把 Key
+          创建 Key 时选 <strong>OpenAI Chat Completion</strong>，与 Claude Code 请各用一把 Key
         </el-descriptions-item>
       </el-descriptions>
     </section>
@@ -266,9 +258,6 @@ const hasEnterprise = computed(() => orgEnterprise.value?.status === "active");
 const hasTeam = computed(() => teamQuotas.value.length > 0 || orgTeams.value.length > 0);
 const membershipName = computed(
   () => orgEnterprise.value?.name || usage.value?.membership?.enterpriseName || auth.user?.enterprise?.name || "",
-);
-const membershipCode = computed(
-  () => orgEnterprise.value?.code || usage.value?.membership?.enterpriseCode || auth.user?.enterprise?.code || "",
 );
 
 const relayBaseUrl = computed(

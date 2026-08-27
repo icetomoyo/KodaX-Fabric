@@ -18,18 +18,22 @@ test("GLM template derives protocol-specific endpoint and authentication", () =>
   const resolution = resolveTemplateProtocolConfigs(
     glm,
     "api",
-    ["openai_chat", "anthropic_messages"],
+    ["anthropic_messages", "openai_chat", "openai_responses"],
   );
   assert.deepEqual(resolution, {
     ok: true,
     configs: {
+      anthropic_messages: {
+        baseUrl: "https://open.bigmodel.cn/api/anthropic",
+        authStyle: "x-api-key",
+      },
       openai_chat: {
         baseUrl: "https://open.bigmodel.cn/api/coding/paas/v4",
         authStyle: "bearer",
       },
-      anthropic_messages: {
-        baseUrl: "https://open.bigmodel.cn/api/anthropic",
-        authStyle: "x-api-key",
+      openai_responses: {
+        baseUrl: "https://open.bigmodel.cn/api/v1",
+        authStyle: "bearer",
       },
     },
   });
@@ -47,18 +51,22 @@ test("GLM international template uses Z.ai coding and anthropic endpoints", () =
   const resolution = resolveTemplateProtocolConfigs(
     glm,
     "api_intl",
-    ["openai_chat", "anthropic_messages"],
+    ["anthropic_messages", "openai_chat", "openai_responses"],
   );
   assert.deepEqual(resolution, {
     ok: true,
     configs: {
+      anthropic_messages: {
+        baseUrl: "https://api.z.ai/api/anthropic",
+        authStyle: "x-api-key",
+      },
       openai_chat: {
         baseUrl: "https://api.z.ai/api/coding/paas/v4",
         authStyle: "bearer",
       },
-      anthropic_messages: {
-        baseUrl: "https://api.z.ai/api/anthropic",
-        authStyle: "x-api-key",
+      openai_responses: {
+        baseUrl: "https://api.z.ai/api/v1",
+        authStyle: "bearer",
       },
     },
   });

@@ -4,7 +4,7 @@
       <div class="page-head">
         <div>
           <h2 class="page-title">API Key</h2>
-          <p class="page-subtitle">每把 Key 固定使用一个上游渠道，明文仅在创建完成时展示一次</p>
+          <p class="page-subtitle">明文仅在创建完成时显示一次</p>
         </div>
         <el-button type="primary" :disabled="!canIssueKey" @click="openCreate">创建 Key</el-button>
       </div>
@@ -83,7 +83,7 @@
     <el-dialog
       v-model="showCreate"
       :title="createdResult ? '复制新 API Key' : '创建 API Key'"
-      width="560px"
+      width="480px"
       destroy-on-close
       :close-on-click-modal="!creating"
       :close-on-press-escape="!creating"
@@ -130,9 +130,7 @@
             复制 API Key
           </el-button>
         </div>
-        <p class="result-tip">
-          请立即复制并保存到密码管理器或客户端配置中；关闭后无法再次查看。
-        </p>
+        <p class="result-tip">关闭后无法再次查看，请先复制。</p>
       </div>
 
       <div v-else class="create-form-state">
@@ -155,25 +153,18 @@
         />
 
         <el-form v-else label-position="top" @submit.prevent>
-          <el-form-item label="1. 所属团队" required>
-            <el-select
-              v-model="createForm.teamId"
-              placeholder="请选择团队"
-              style="width: 100%"
+          <el-form-item label="名称" required>
+            <el-input
+              v-model="createForm.name"
+              maxlength="100"
+              placeholder="例如 Cursor"
               :disabled="creating"
-            >
-              <el-option
-                v-for="team in teams"
-                :key="team.id"
-                :label="team.name"
-                :value="team.id"
-              />
-            </el-select>
+            />
           </el-form-item>
-          <el-form-item label="2. 上游渠道" required>
+          <el-form-item label="上游渠道" required>
             <el-select
               v-model="createForm.productLineId"
-              placeholder="请选择上游渠道"
+              placeholder="选择渠道"
               style="width: 100%"
               :disabled="creating"
               @change="onChannelChange"
@@ -185,89 +176,23 @@
                 :value="channel.productLineId"
               />
             </el-select>
-            <div v-if="selectedChannel" class="channel-hint">
-              {{ selectedChannel.productType === "coding_plan" ? "Coding Plan" : "标准 API" }}
-              · {{ selectedChannel.credentialCount }} 个可用凭证
-            </div>
           </el-form-item>
-
-          <el-form-item label="3. 兼容协议" required class="protocol-form-item">
+          <el-form-item label="协议" required>
             <el-radio-group
               v-model="createForm.protocol"
-              class="protocol-radio-group"
               :disabled="creating || !selectedChannel"
             >
               <el-radio
-                v-for="option in protocolChoiceOptions"
+                v-for="option in compatibleProtocolOptions"
                 :key="option.value"
                 :value="option.value"
-                :disabled="!option.available"
-                border
-                class="protocol-radio-option"
               >
-                <span class="protocol-option-copy">
-                  <strong>{{ option.displayLabel }}</strong>
-                  <small>{{ option.description }}</small>
-                  <code>{{ option.endpoint }}</code>
-                </span>
+                {{ option.shortLabel }}
               </el-radio>
             </el-radio-group>
-
-            <div v-if="!selectedChannel" class="form-help">
-              请先选择上游渠道；协议决定客户端请求接口与鉴权方式。
+            <div v-if="selectedChannel && compatibleProtocolOptions.length === 0" class="form-help">
+              该渠道暂无可用协议
             </div>
-            <div v-else-if="compatibleProtocolOptions.length === 0" class="form-help">
-              该渠道暂无兼容协议，请联系管理员检查渠道 Key 的协议声明。
-            </div>
-            <div v-else class="form-help">
-              一把 Key 只能绑定一种协议；请按客户端实际协议选择，创建后不可修改。
-            </div>
-
-            <el-alert
-              v-if="selectedChannel && compatibleProtocolOptions.length === 0"
-              class="protocol-empty"
-              title="该渠道暂无兼容协议，请联系管理员检查渠道 Key 的协议声明"
-              type="warning"
-              :closable="false"
-            />
-
-            <div v-if="selectedProtocolGuide" class="protocol-guide">
-              <div class="protocol-guide-head">
-                <strong>{{ selectedProtocolGuide.shortLabel }}</strong>
-                <el-tag size="small" effect="plain">已选协议</el-tag>
-              </div>
-              <div class="protocol-guide-row">
-                <span>适用客户端</span>
-                <span>{{ selectedProtocolGuide.recommendedClients.join("、") }}</span>
-              </div>
-              <div class="protocol-guide-row">
-                <span>请求接口</span>
-                <code>{{ selectedProtocolGuide.endpoint }}</code>
-              </div>
-              <div class="protocol-guide-row">
-                <span>鉴权 Header</span>
-                <div class="protocol-guide-lines">
-                  <code
-                    v-for="line in selectedProtocolGuide.authHeaders"
-                    :key="line"
-                  >{{ line }}</code>
-                </div>
-              </div>
-              <p class="protocol-guide-hint">
-                一种客户端建议一把 Key。完整步骤见
-                <router-link to="/me/guide">接入教程</router-link>。
-              </p>
-            </div>
-          </el-form-item>
-
-          <el-form-item label="4. 名称" required>
-            <el-input
-              v-model="createForm.name"
-              maxlength="100"
-              show-word-limit
-              placeholder="例如：本机 Cursor"
-              :disabled="creating"
-            />
           </el-form-item>
 
           <div v-if="submitError" class="submit-error">
@@ -310,7 +235,6 @@ import { useAuthStore } from "@/stores/auth";
 import { copyText } from "@/lib/clipboard";
 import {
   relayProtocolLabel,
-  relayProtocolOption,
   relayProtocolOptions,
   type RelayProtocol,
 } from "@/views/relay-protocol";
@@ -394,35 +318,6 @@ const compatibleProtocolOptions = computed(() => {
   return relayProtocolOptions.filter((option) => protocols.includes(option.value));
 });
 
-/** Card choices mirror admin channel protocol picker; unavailable ones stay visible but disabled. */
-const protocolChoiceOptions = computed(() => {
-  const available = new Set(
-    (selectedChannel.value?.compatibleProtocols ?? []) as RelayProtocol[],
-  );
-  return relayProtocolOptions.map((option) => {
-    const isAvailable = selectedChannel.value
-      ? available.has(option.value)
-      : false;
-    return {
-      ...option,
-      available: isAvailable,
-      displayLabel: isAvailable
-        ? option.label
-        : selectedChannel.value
-          ? `${option.label}（当前渠道不支持）`
-          : option.label,
-    };
-  });
-});
-
-const selectedProtocolGuide = computed(() => {
-  if (!createForm.protocol) return null;
-  if (!compatibleProtocolOptions.value.some((option) => option.value === createForm.protocol)) {
-    return null;
-  }
-  return relayProtocolOption(createForm.protocol);
-});
-
 const canCreate = computed(() =>
   !channelsLoading.value
   && !channelsError.value
@@ -482,7 +377,7 @@ function onCreateClosed() {
 function resetCreateState() {
   channelRequestSequence += 1;
   createForm.name = "";
-  createForm.teamId = teams.value.length === 1 ? teams.value[0].id : null;
+  createForm.teamId = teams.value[0]?.id ?? null;
   createForm.productLineId = null;
   createForm.protocol = null;
   upstreamChannels.value = [];
@@ -507,12 +402,12 @@ function keyChannelLabel(row: KeyRow): string {
   return channelLabel(row);
 }
 
-function onChannelChange(productLineId: number | null) {
+function onChannelChange() {
   submitError.value = "";
-  const channel = upstreamChannels.value.find(
-    (item) => item.productLineId === productLineId,
-  );
-  createForm.protocol = channel?.compatibleProtocols[0] ?? null;
+  const available = selectedChannel.value?.compatibleProtocols ?? [];
+  if (!createForm.protocol || !available.includes(createForm.protocol)) {
+    createForm.protocol = null;
+  }
 }
 
 async function loadChannels() {
@@ -563,7 +458,7 @@ async function createKey() {
       (option) => option.value === createForm.protocol,
     )
   ) {
-    ElMessage.warning("请选择该渠道支持的兼容协议");
+    ElMessage.warning("请选择协议");
     return;
   }
   if (!createForm.name.trim()) {
@@ -571,7 +466,7 @@ async function createKey() {
     return;
   }
   if (!createForm.teamId) {
-    ElMessage.warning("请选择团队");
+    ElMessage.warning("尚未加入团队");
     return;
   }
 
@@ -756,152 +651,11 @@ onMounted(load);
   padding: 12px 0;
 }
 
-.channel-hint {
-  width: 100%;
-  margin-top: 6px;
-  color: #64748b;
-  font-size: 12px;
-  line-height: 1.5;
-}
-
-.protocol-form-item :deep(.el-form-item__content) {
-  display: block;
-}
-
-.protocol-radio-group {
-  display: grid;
-  grid-template-columns: 1fr;
-  width: 100%;
-  gap: 10px;
-}
-
-.protocol-radio-option.el-radio.is-bordered {
-  width: 100%;
-  height: auto;
-  min-height: 72px;
-  margin: 0;
-  padding: 12px 14px;
-  border-radius: 8px;
-  align-items: flex-start;
-}
-
-.protocol-radio-option :deep(.el-radio__input) {
-  margin-top: 2px;
-}
-
-.protocol-radio-option :deep(.el-radio__label) {
-  min-width: 0;
-  width: 100%;
-  padding-left: 10px;
-  white-space: normal;
-}
-
-.protocol-option-copy {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  line-height: 1.4;
-}
-
-.protocol-option-copy strong {
-  color: #334155;
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.protocol-option-copy small {
-  color: #64748b;
-  font-size: 12px;
-}
-
-.protocol-option-copy code {
-  color: #475569;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 12px;
-}
-
-.protocol-radio-option.is-checked .protocol-option-copy strong {
-  color: var(--el-color-primary);
-}
-
-.protocol-radio-option.is-disabled .protocol-option-copy strong,
-.protocol-radio-option.is-disabled .protocol-option-copy small,
-.protocol-radio-option.is-disabled .protocol-option-copy code {
-  color: #94a3b8;
-}
-
 .form-help {
   margin-top: 8px;
   color: #64748b;
   font-size: 12px;
   line-height: 1.5;
-}
-
-.protocol-empty {
-  margin-top: 8px;
-}
-
-.protocol-guide {
-  margin-top: 12px;
-  padding: 12px 14px;
-  border: 1px solid #e2e8f0;
-  border-radius: 8px;
-  background: #f8fafc;
-}
-
-.protocol-guide-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  margin-bottom: 10px;
-}
-
-.protocol-guide-head strong {
-  color: #0f172a;
-  font-size: 13px;
-}
-
-.protocol-guide-row {
-  display: grid;
-  grid-template-columns: 84px minmax(0, 1fr);
-  gap: 10px;
-  margin-top: 8px;
-  align-items: start;
-}
-
-.protocol-guide-row > span {
-  color: #64748b;
-  font-size: 12px;
-  line-height: 1.6;
-}
-
-.protocol-guide-row > code,
-.protocol-guide-lines code {
-  display: block;
-  overflow-wrap: anywhere;
-  color: #334155;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 12px;
-  line-height: 1.55;
-}
-
-.protocol-guide-hint {
-  margin: 10px 0 0;
-  color: #64748b;
-  font-size: 12px;
-  line-height: 1.6;
-}
-
-.protocol-guide-hint a {
-  color: #2563eb;
-  font-weight: 600;
-}
-
-.protocol-guide-lines {
-  display: grid;
-  gap: 4px;
-  min-width: 0;
 }
 
 .submit-error {

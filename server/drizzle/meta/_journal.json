@@ -113,6 +113,20 @@
       "when": 1787669035756,
       "tag": "0015_cache_model_prices",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1787784000000,
+      "tag": "0016_openai_responses",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1787784000001,
+      "tag": "0017_glm_openai_responses",
+      "breakpoints": true
     }
   ]
 }

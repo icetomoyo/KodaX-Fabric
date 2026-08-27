@@ -1479,8 +1479,9 @@ async function refreshAll() {
 
 function defaultCustomProtocolConfigs(): RelayProtocolConfigs {
   return {
-    openai_chat: { baseUrl: "", authStyle: "bearer" },
     anthropic_messages: { baseUrl: "", authStyle: "x-api-key" },
+    openai_chat: { baseUrl: "", authStyle: "bearer" },
+    openai_responses: { baseUrl: "", authStyle: "bearer" },
   };
 }
 

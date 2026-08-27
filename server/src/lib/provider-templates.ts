@@ -56,9 +56,9 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
     name: "智谱",
     modelName: "GLM",
     shortName: "GLM",
-    description: "GLM Coding Plan 国内版与国际版，支持 OpenAI Chat 与 Anthropic Messages。",
+    description: "GLM Coding Plan 国内版与国际版，支持 Anthropic Message、OpenAI Chat Completion 与 OpenAI Response。",
     authStyle: "bearer",
-    defaultProtocols: ["openai_chat", "anthropic_messages"],
+    defaultProtocols: ["anthropic_messages", "openai_chat", "openai_responses"],
     baseUrls: [
       {
         label: "国内版",
@@ -68,13 +68,17 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
         productLineName: "GLM（国内版）",
         productType: "coding_plan",
         protocolConfigs: {
+          anthropic_messages: {
+            baseUrl: "https://open.bigmodel.cn/api/anthropic",
+            authStyle: "x-api-key",
+          },
           openai_chat: {
             baseUrl: "https://open.bigmodel.cn/api/coding/paas/v4",
             authStyle: "bearer",
           },
-          anthropic_messages: {
-            baseUrl: "https://open.bigmodel.cn/api/anthropic",
-            authStyle: "x-api-key",
+          openai_responses: {
+            baseUrl: "https://open.bigmodel.cn/api/v1",
+            authStyle: "bearer",
           },
         },
       },
@@ -86,13 +90,17 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
         productLineName: "GLM（国际版）",
         productType: "coding_plan",
         protocolConfigs: {
+          anthropic_messages: {
+            baseUrl: "https://api.z.ai/api/anthropic",
+            authStyle: "x-api-key",
+          },
           openai_chat: {
             baseUrl: "https://api.z.ai/api/coding/paas/v4",
             authStyle: "bearer",
           },
-          anthropic_messages: {
-            baseUrl: "https://api.z.ai/api/anthropic",
-            authStyle: "x-api-key",
+          openai_responses: {
+            baseUrl: "https://api.z.ai/api/v1",
+            authStyle: "bearer",
           },
         },
       },

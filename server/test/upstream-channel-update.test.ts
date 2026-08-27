@@ -63,7 +63,7 @@ test("channel update validation rejects empty, duplicate, and unknown protocol s
   assert.equal(
     upstreamChannelUpdateSchema.safeParse({
       expectedConfigVersion: 1,
-      supportedProtocols: ["openai_responses"],
+      supportedProtocols: ["not_a_protocol"],
     }).success,
     false,
   );
