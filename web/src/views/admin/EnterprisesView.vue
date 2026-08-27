@@ -5,16 +5,19 @@
       <el-button type="primary" @click="openCreate">新建企业</el-button>
     </div>
 
-    <el-table :data="rows" stripe>
-      <el-table-column prop="name" label="企业名称" min-width="160" />
-      <el-table-column prop="code" label="企业编号" width="140" />
-      <el-table-column label="申请人 / 企业管理员" min-width="180">
+    <el-table :data="rows" class="enterprises-table" stripe>
+      <el-table-column prop="name" label="企业名称" min-width="120" show-overflow-tooltip />
+      <el-table-column prop="code" label="企业编号" width="118" />
+      <el-table-column label="企业管理员" min-width="128">
         <template #default="{ row }">
-          <span v-if="row.contact">{{ row.contact.name }} · {{ row.contact.phone }}</span>
+          <div v-if="row.contact" class="contact">
+            <span class="contact-name">{{ row.contact.name }}</span>
+            <span class="contact-phone">{{ row.contact.phone }}</span>
+          </div>
           <span v-else class="muted">—</span>
         </template>
       </el-table-column>
-      <el-table-column label="状态" width="120">
+      <el-table-column label="状态" width="80">
         <template #default="{ row }">
           <el-tag
             :type="row.status === 'active' ? 'success' : row.status === 'pending' ? 'warning' : 'danger'"
@@ -24,49 +27,51 @@
           </el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="套餐" min-width="120">
+      <el-table-column label="套餐" width="80">
         <template #default="{ row }">
           <el-tag v-if="!row.packagePlan" type="danger" size="small">未发放</el-tag>
           <span v-else>{{ packageLabel(row.packagePlan) }}</span>
         </template>
       </el-table-column>
-      <el-table-column label="每月额度" min-width="140">
+      <el-table-column label="每月额度" width="112" align="right" header-align="right">
         <template #default="{ row }">
           <span class="mono-num">{{ formatYuan(row.monthlyYuan) }}</span>
         </template>
       </el-table-column>
-      <el-table-column label="已分给团队" min-width="140">
+      <el-table-column label="已分给团队" width="112" align="right" header-align="right">
         <template #default="{ row }">
           <span class="mono-num">{{ formatYuan(row.assignedTeamQuota) }}</span>
         </template>
       </el-table-column>
-      <el-table-column label="创建时间" min-width="180">
+      <el-table-column label="创建时间" width="168">
         <template #default="{ row }">
-          {{ formatDateTime(row.createdAt) }}
+          <span class="created-at">{{ formatDateTime(row.createdAt) }}</span>
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="280">
+      <el-table-column label="操作" width="212" fixed="right">
         <template #default="{ row }">
-          <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
-          <el-button link type="primary" @click="openQuota(row)">分配套餐</el-button>
-          <el-button
-            v-if="row.status === 'pending'"
-            link
-            type="success"
-            :loading="approvingId === row.id"
-            @click="approve(row)"
-          >
-            审核通过
-          </el-button>
-          <el-button
-            v-else-if="row.status === 'active'"
-            link
-            type="danger"
-            @click="setStatus(row, 'disabled')"
-          >
-            停用
-          </el-button>
-          <el-button v-else link type="primary" @click="setStatus(row, 'active')">启用</el-button>
+          <div class="row-actions">
+            <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
+            <el-button link type="primary" @click="openQuota(row)">分配套餐</el-button>
+            <el-button
+              v-if="row.status === 'pending'"
+              link
+              type="success"
+              :loading="approvingId === row.id"
+              @click="approve(row)"
+            >
+              审核通过
+            </el-button>
+            <el-button
+              v-else-if="row.status === 'active'"
+              link
+              type="danger"
+              @click="setStatus(row, 'disabled')"
+            >
+              停用
+            </el-button>
+            <el-button v-else link type="primary" @click="setStatus(row, 'active')">启用</el-button>
+          </div>
         </template>
       </el-table-column>
     </el-table>
@@ -297,8 +302,40 @@ onMounted(load);
 .muted {
   color: #94a3b8;
 }
-.mono-num {
+.mono-num,
+.created-at,
+.contact-phone {
   font-variant-numeric: tabular-nums;
+}
+.contact {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  line-height: 1.35;
+}
+.contact-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.contact-phone {
+  color: #64748b;
+  font-size: 12px;
+}
+.created-at {
+  white-space: nowrap;
+}
+.row-actions {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  white-space: nowrap;
+}
+.enterprises-table {
+  width: 100%;
+}
+.enterprises-table :deep(.el-table__header th.el-table__cell) {
+  white-space: nowrap;
 }
 .form-help {
   margin-top: 6px;

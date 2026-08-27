@@ -47,12 +47,12 @@
                 <div class="channel-card-copy">
                   <strong class="channel-card-title">{{ channelDisplayName(channel) }}</strong>
                 </div>
-                <el-tag :type="channelStatusType(channel)" size="small" effect="light">
-                  {{ channelStatusText(channel) }}
-                </el-tag>
               </div>
               <div class="channel-card-bottom">
                 <span>{{ channel.totalCount }} 个 Key</span>
+                <el-tag :type="channelStatusType(channel)" size="small" effect="light">
+                  {{ channelStatusText(channel) }}
+                </el-tag>
               </div>
             </button>
           </div>
@@ -80,8 +80,18 @@
               <div class="key-pool-head">
                 <div>
                   <h4>Key 看板（{{ selectedChannel.totalCount }}）</h4>
+                  <div class="board-stats">
+                    <span class="board-stat">可用 <strong>{{ boardStats.active }}</strong></span>
+                    <span class="board-stat" :class="{ warning: boardStats.cooling > 0 }">
+                      冷却 <strong>{{ boardStats.cooling }}</strong>
+                    </span>
+                    <span class="board-stat" :class="{ danger: boardStats.autoDisabled > 0 }">
+                      自动停用 <strong>{{ boardStats.autoDisabled }}</strong>
+                    </span>
+                    <span class="board-stat">已停用 <strong>{{ boardStats.disabled }}</strong></span>
+                  </div>
                   <p v-if="canWrite" class="board-hint">
-                    拖拽卡片到「可用」或「已停用」即可切换状态；冷却中与自动停用由系统判定，只能拖出、不能拖入
+                    拖到「使用中」启用，拖到「停用」关闭。冷却与自动停用由系统判定。
                   </p>
                 </div>
                 <div v-if="canWrite" class="batch-actions">
@@ -107,17 +117,17 @@
               <div v-else class="kanban-board">
                 <div
                   v-for="column in boardColumns"
-                  :key="column.status"
+                  :key="column.lane"
                   class="kanban-column"
                   :class="{
                     droppable: canWrite && column.droppable && draggingId != null,
-                    'drag-over': dragOverStatus === column.status,
+                    'drag-over': dragOverLane === column.lane,
                   }"
                   @dragover="onColumnDragOver(column, $event)"
                   @dragleave="onColumnDragLeave(column)"
                   @drop.prevent="onColumnDrop(column)"
                 >
-                  <header class="kanban-column-head" :class="`is-${column.status}`">
+                  <header class="kanban-column-head" :class="`is-${column.lane}`">
                     <span class="kanban-column-title">{{ column.title }}</span>
                     <span class="kanban-count">{{ column.keys.length }}</span>
                   </header>
@@ -134,15 +144,16 @@
                     >
                       <div class="key-card-top">
                         <strong class="key-card-label">{{ row.label }}</strong>
-                        <span class="secret-mask">•••• {{ row.secretSuffix }}</span>
+                        <span
+                          v-if="statusPill(row)"
+                          class="status-pill"
+                          :class="statusPill(row)?.tone"
+                        >
+                          {{ statusPill(row)?.text }}
+                        </span>
                       </div>
                       <div class="key-card-meta">
-                        <span class="request-counts">
-                          <span class="ok">{{ row.recentSuccessCount ?? 0 }}</span>
-                          <span class="slash">/</span>
-                          <span class="bad">{{ row.recentErrorCount ?? 0 }}</span>
-                          <span class="meta-label">近 24h</span>
-                        </span>
+                        <span class="secret-mask">•••• {{ row.secretSuffix }}</span>
                         <span
                           class="health-chip"
                           :class="healthChipClass(row)"
@@ -151,14 +162,13 @@
                           {{ healthSummary(row) }}
                         </span>
                       </div>
-                      <div
-                        v-if="visibleStatus(row) === 'cooling' && row.coolUntil"
-                        class="key-card-cooling"
-                      >
-                        冷却至 {{ formatDateTime(row.coolUntil) }}
-                      </div>
                       <div class="key-card-foot">
-                        <span class="time-text">{{ formatDateTime(row.lastUsedAt) }}</span>
+                        <span class="request-counts">
+                          <span class="ok">{{ row.recentSuccessCount ?? 0 }}</span>
+                          <span class="slash">/</span>
+                          <span class="bad">{{ row.recentErrorCount ?? 0 }}</span>
+                          <span class="meta-label">24h</span>
+                        </span>
                         <span v-if="canWrite" class="key-card-actions" @click.stop>
                           <el-button
                             link
@@ -803,10 +813,11 @@ type ParsedKey = {
   hasCustomLabel: boolean;
 };
 
+type BoardLane = "in_use" | "stopped";
+
 type BoardColumn = {
-  status: CredentialStatus;
+  lane: BoardLane;
   title: string;
-  /** Only manual states accept drops; cooling/auto_disabled are system-set. */
   droppable: boolean;
   keys: CredentialRow[];
 };
@@ -823,7 +834,7 @@ const loading = ref(false);
 const selectedProductLineId = ref<number | null>(null);
 const syncingQuery = ref(false);
 const draggingId = ref<number | null>(null);
-const dragOverStatus = ref<CredentialStatus | null>(null);
+const dragOverLane = ref<BoardLane | null>(null);
 
 const showBulkForm = ref(false);
 const bulkSaving = ref(false);
@@ -917,19 +928,33 @@ const selectedChannel = computed(
   () => channels.value.find((channel) => channel.id === selectedProductLineId.value) ?? null,
 );
 
-const BOARD_COLUMN_DEFS: ReadonlyArray<Pick<BoardColumn, "status" | "title" | "droppable">> = [
-  { status: "active", title: "可用", droppable: true },
-  { status: "cooling", title: "冷却中", droppable: false },
-  { status: "auto_disabled", title: "自动停用", droppable: false },
-  { status: "disabled", title: "已停用", droppable: true },
+const BOARD_COLUMN_DEFS: ReadonlyArray<Pick<BoardColumn, "lane" | "title" | "droppable">> = [
+  { lane: "in_use", title: "使用中", droppable: true },
+  { lane: "stopped", title: "停用", droppable: true },
 ];
+
+function boardLaneOf(status: CredentialStatus): BoardLane {
+  return status === "active" || status === "cooling" ? "in_use" : "stopped";
+}
 
 const boardColumns = computed<BoardColumn[]>(() => {
   const keys = selectedChannel.value?.keys ?? [];
   return BOARD_COLUMN_DEFS.map((column) => ({
     ...column,
-    keys: keys.filter((row) => visibleStatus(row) === column.status),
+    keys: keys.filter((row) => boardLaneOf(visibleStatus(row)) === column.lane),
   }));
+});
+
+const boardStats = computed(() => {
+  const keys = selectedChannel.value?.keys ?? [];
+  const count = (status: CredentialStatus) =>
+    keys.filter((row) => visibleStatus(row) === status).length;
+  return {
+    active: count("active"),
+    cooling: count("cooling"),
+    autoDisabled: count("auto_disabled"),
+    disabled: count("disabled"),
+  };
 });
 
 const selectedChannelSummary = computed(
@@ -1088,29 +1113,29 @@ function onCardDragStart(row: CredentialRow, event: DragEvent) {
 
 function onCardDragEnd() {
   draggingId.value = null;
-  dragOverStatus.value = null;
+  dragOverLane.value = null;
 }
 
 function onColumnDragOver(column: BoardColumn, event: DragEvent) {
   if (!canWrite.value || draggingId.value == null || !column.droppable) return;
   event.preventDefault();
   if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
-  dragOverStatus.value = column.status;
+  dragOverLane.value = column.lane;
 }
 
 function onColumnDragLeave(column: BoardColumn) {
-  if (dragOverStatus.value === column.status) dragOverStatus.value = null;
+  if (dragOverLane.value === column.lane) dragOverLane.value = null;
 }
 
 async function onColumnDrop(column: BoardColumn) {
   const id = draggingId.value;
   draggingId.value = null;
-  dragOverStatus.value = null;
+  dragOverLane.value = null;
   if (id == null || !canWrite.value || !column.droppable) return;
-  if (column.status !== "active" && column.status !== "disabled") return;
   const row = rows.value.find((item) => item.id === id);
-  if (!row || visibleStatus(row) === column.status) return;
-  await setStatus(row, column.status);
+  if (!row) return;
+  if (boardLaneOf(visibleStatus(row)) === column.lane) return;
+  await setStatus(row, column.lane === "in_use" ? "active" : "disabled");
 }
 
 function getErrorMessage(error: unknown, fallback: string): string {
@@ -1293,6 +1318,14 @@ function visibleStatus(row: CredentialRow): CredentialStatus {
   return row.status;
 }
 
+function statusPill(row: CredentialRow): { text: string; tone: string } | null {
+  const status = visibleStatus(row);
+  if (status === "cooling") return { text: "冷却", tone: "warning" };
+  if (status === "auto_disabled") return { text: "自动停用", tone: "danger" };
+  if (status === "disabled") return { text: "已停用", tone: "muted" };
+  return null;
+}
+
 function providerColor(code: string): string {
   if (code === CUSTOM_PROVIDER_CODE) return CUSTOM_PROVIDER_COLOR;
   return templates.value.find((item) => item.code === code)?.color ?? "#64748b";
@@ -1378,8 +1411,13 @@ function channelStatusType(channel: ChannelGroup): "success" | "danger" {
 
 function healthSummary(row: CredentialRow): string {
   const currentStatus = visibleStatus(row);
-  if (currentStatus === "cooling") return "冷却中";
-  if (currentStatus === "auto_disabled") return "自动停用";
+  if (currentStatus === "cooling") {
+    return row.coolUntil ? `至 ${formatDateTime(row.coolUntil)}` : "冷却中";
+  }
+  if (currentStatus === "auto_disabled") {
+    const detail = row.lastError?.trim();
+    return detail ? detail.slice(0, 18) : "需重新启用";
+  }
   if (row.lastError) return "最近异常";
   const test = lastTest(row);
   if (!test) return "未测试";
@@ -2094,7 +2132,7 @@ onMounted(refreshAll);
 
 .split-layout {
   display: grid;
-  grid-template-columns: minmax(260px, 310px) minmax(0, 1fr);
+  grid-template-columns: minmax(260px, 340px) minmax(0, 1fr);
   gap: 16px;
   flex: 1;
   min-height: 0;
@@ -2212,12 +2250,15 @@ onMounted(refreshAll);
 }
 
 .channel-card-title {
+  display: -webkit-box;
   overflow: hidden;
   color: #0f172a;
   font-size: 14px;
   font-weight: 650;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.35;
+  white-space: normal;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .channel-card-meta {
@@ -2439,9 +2480,33 @@ onMounted(refreshAll);
   font-size: 12px;
 }
 
+.board-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+  margin-top: 8px;
+}
+
+.board-stat {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.board-stat strong {
+  margin-left: 4px;
+  color: #0f172a;
+  font-variant-numeric: tabular-nums;
+}
+
+.board-stat.warning,
+.board-stat.warning strong { color: #d97706; }
+
+.board-stat.danger,
+.board-stat.danger strong { color: #b91c1c; }
+
 .kanban-board {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
   padding: 12px;
   background: #fff;
@@ -2478,10 +2543,8 @@ onMounted(refreshAll);
   font-weight: 650;
 }
 
-.kanban-column-head.is-active { color: #15803d; }
-.kanban-column-head.is-cooling { color: #d97706; }
-.kanban-column-head.is-auto_disabled { color: #b91c1c; }
-.kanban-column-head.is-disabled { color: #64748b; }
+.kanban-column-head.is-in_use { color: #15803d; }
+.kanban-column-head.is-stopped { color: #64748b; }
 
 .kanban-count {
   display: inline-flex;
@@ -2564,10 +2627,29 @@ onMounted(refreshAll);
   font-size: 11px;
 }
 
-.key-card-cooling {
+.status-pill {
+  flex: 0 0 auto;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+.status-pill.warning {
+  background: #fffbeb;
   color: #d97706;
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
+}
+
+.status-pill.danger {
+  background: #fef2f2;
+  color: #b91c1c;
+}
+
+.status-pill.muted {
+  background: #f1f5f9;
+  color: #64748b;
 }
 
 .key-card-foot {
@@ -2612,9 +2694,13 @@ onMounted(refreshAll);
 .request-counts .slash { margin: 0 5px; color: #cbd5e1; }
 
 .health-chip {
+  overflow: hidden;
+  max-width: 58%;
   color: #64748b;
   font-size: 12px;
   font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .health-chip.ok { color: #15803d; }
@@ -2975,9 +3061,6 @@ onMounted(refreshAll);
     justify-content: flex-start;
   }
 
-  .kanban-board {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
 }
 
 @media (max-width: 900px) {
