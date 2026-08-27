@@ -1,5 +1,5 @@
 <template>
-  <VChart class="usage-chart" :option="option" autoresize />
+  <VChart class="usage-chart" :option="option" autoresize :style="{ height }" />
 </template>
 
 <script setup lang="ts">
@@ -25,12 +25,14 @@ use([
   TooltipComponent,
 ]);
 
-defineProps<{ option: EChartsCoreOption }>();
+withDefaults(
+  defineProps<{ option: EChartsCoreOption; height?: string }>(),
+  { height: "320px" },
+);
 </script>
 
 <style scoped>
 .usage-chart {
   width: 100%;
-  height: 320px;
 }
 </style>

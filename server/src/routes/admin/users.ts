@@ -6,11 +6,13 @@ import { db } from "../../db/client.js";
 import {
   employeeApiKeys,
   employees,
+  modelPrices,
   requestAudits,
   teamMembers,
   teams,
   usageCountersDaily,
 } from "../../db/schema/index.js";
+import { formatYuan, requestCostYuanExpr } from "../../lib/model-cost.js";
 import { listEmployeeTeamQuotaViews } from "../../lib/team-quota.js";
 import {
   canAccessEmployee,
@@ -97,6 +99,43 @@ export function buildAdminUserListQuery(query: AdminUserListQuery) {
     .orderBy(desc(employees.id))
     .limit(query.limit)
     .offset(query.offset);
+}
+
+export function buildEmployeeLogsQuery(input: {
+  employeeId: number;
+  start: Date;
+  endExclusive: Date;
+  limit: number;
+  offset: number;
+}) {
+  return db
+    .select({
+      requestId: requestAudits.requestId,
+      protocol: requestAudits.protocol,
+      clientModel: requestAudits.clientModel,
+      providerCode: requestAudits.providerCode,
+      status: requestAudits.status,
+      promptTokens: requestAudits.promptTokens,
+      completionTokens: requestAudits.completionTokens,
+      totalTokens: requestAudits.totalTokens,
+      latencyMs: requestAudits.latencyMs,
+      errorCode: requestAudits.errorCode,
+      errorMessage: requestAudits.errorMessage,
+      createdAt: requestAudits.createdAt,
+      costYuan: requestCostYuanExpr,
+    })
+    .from(requestAudits)
+    .leftJoin(modelPrices, eq(modelPrices.model, requestAudits.clientModel))
+    .where(
+      and(
+        eq(requestAudits.employeeId, input.employeeId),
+        gte(requestAudits.createdAt, input.start),
+        lt(requestAudits.createdAt, input.endExclusive),
+      ),
+    )
+    .orderBy(desc(requestAudits.createdAt), desc(requestAudits.id))
+    .limit(input.limit)
+    .offset(input.offset);
 }
 
 function actorFrom(req: { session?: { role: SessionRole; enterpriseId: number | null } }) {
@@ -295,6 +334,78 @@ export async function adminUserRoutes(app: FastifyInstance) {
           resetAt: nextQuotaResetAt(now, env.QUOTA_TIMEZONE),
           teams: teamQuotas,
         },
+      },
+    };
+  });
+
+  app.get("/api/admin/users/:id/logs", async (req, reply) => {
+    const params = z.object({ id: z.coerce.number().int().positive() }).safeParse(req.params);
+    const query = z
+      .object({
+        from: z.string(),
+        to: z.string(),
+        limit: z.coerce.number().min(1).max(100).default(20),
+        offset: z.coerce.number().min(0).default(0),
+      })
+      .strict()
+      .safeParse(req.query);
+    if (!params.success || !query.success) {
+      return reply.code(400).send({ success: false, message: "参数无效" });
+    }
+
+    const dayCount = inclusiveDayCount(query.data.from, query.data.to);
+    if (dayCount === null || dayCount < 1 || dayCount > 366) {
+      return reply.code(400).send({
+        success: false,
+        message: dayCount !== null && dayCount > 366 ? "日期范围最多 366 天" : "日期范围无效",
+      });
+    }
+
+    const [employee] = await db
+      .select({
+        id: employees.id,
+        role: employees.role,
+        enterpriseId: employees.enterpriseId,
+      })
+      .from(employees)
+      .where(eq(employees.id, params.data.id))
+      .limit(1);
+    if (!employee) {
+      return reply.code(404).send({ success: false, message: "用户不存在" });
+    }
+    if (!canAccessEmployee(actorFrom(req), employee)) {
+      return reply.code(403).send({ success: false, message: "权限不足" });
+    }
+
+    const { start, endExclusive } = zonedDateRange(
+      query.data.from,
+      query.data.to,
+      env.QUOTA_TIMEZONE,
+    );
+    const whereExpr = and(
+      eq(requestAudits.employeeId, employee.id),
+      gte(requestAudits.createdAt, start),
+      lt(requestAudits.createdAt, endExclusive),
+    );
+    const [[countRow], items] = await Promise.all([
+      db.select({ total: sql<number>`count(*)::int` }).from(requestAudits).where(whereExpr),
+      buildEmployeeLogsQuery({
+        employeeId: employee.id,
+        start,
+        endExclusive,
+        limit: query.data.limit,
+        offset: query.data.offset,
+      }),
+    ]);
+
+    return {
+      success: true,
+      data: {
+        total: countRow?.total ?? 0,
+        items: items.map((row) => ({
+          ...row,
+          costYuan: formatYuan(row.costYuan),
+        })),
       },
     };
   });

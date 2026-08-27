@@ -223,12 +223,17 @@ test("super-admin cannot list or mutate employees", async () => {
   await app.ready();
   try {
     const list = await app.inject({ method: "GET", url: "/api/admin/users" });
+    const logs = await app.inject({
+      method: "GET",
+      url: "/api/admin/users/12/logs?from=2026-08-01&to=2026-08-01",
+    });
     const create = await app.inject({
       method: "POST",
       url: "/api/admin/users",
       payload: { name: "A", phone: "13800001111", password: "ChangeMe@123" },
     });
     assert.equal(list.statusCode, 403);
+    assert.equal(logs.statusCode, 403);
     assert.equal(create.statusCode, 403);
   } finally {
     await app.close();

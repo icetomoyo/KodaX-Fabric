@@ -215,6 +215,8 @@
       </template>
     </el-dialog>
 
+    <EmployeeUsageDrawer v-model="showDetail" :employee="detailEmployee" />
+
     <el-dialog
       v-model="showResetPassword"
       :title="`重置密码 · ${resetUser?.name || ''}`"
@@ -249,12 +251,12 @@
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from "vue";
-import { useRouter } from "vue-router";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { http } from "@/api/http";
 import { formatDateTime } from "@/lib/date-time";
 import { roleLabel as formatRoleLabel } from "@/lib/roles";
 import { useAuthStore } from "@/stores/auth";
+import EmployeeUsageDrawer from "./EmployeeUsageDrawer.vue";
 
 const UNASSIGNED_KEY = "unassigned" as const;
 type TeamNavKey = number | typeof UNASSIGNED_KEY;
@@ -285,7 +287,6 @@ type TeamNavItem = {
 const rows = ref<UserRow[]>([]);
 const page = ref(1);
 const pageSize = 10;
-const router = useRouter();
 const auth = useAuthStore();
 const q = ref("");
 const statusFilter = ref<"" | UserRow["status"]>("");
@@ -295,6 +296,8 @@ const selectedKey = ref<TeamNavKey>(UNASSIGNED_KEY);
 const showEdit = ref(false);
 const showInvite = ref(false);
 const showResetPassword = ref(false);
+const showDetail = ref(false);
+const detailEmployee = ref<UserRow | null>(null);
 const updating = ref(false);
 const inviting = ref(false);
 const resetting = ref(false);
@@ -498,7 +501,8 @@ async function load() {
 }
 
 function openDetail(row: UserRow) {
-  router.push(`/admin/users/${row.id}`);
+  detailEmployee.value = row;
+  showDetail.value = true;
 }
 
 async function approveRegistration(row: UserRow) {
