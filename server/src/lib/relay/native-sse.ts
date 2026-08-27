@@ -111,6 +111,7 @@ function emptyUsage(): RelayUsage {
     promptTokens: null,
     completionTokens: null,
     totalTokens: null,
+    cacheReadTokens: null,
     raw: null,
   };
 }
@@ -136,7 +137,7 @@ function mergeNativeUsage(current: RelayUsage, value: unknown): RelayUsage {
       ? promptTokens + completionTokens
       : current.totalTokens);
 
-  return { promptTokens, completionTokens, totalTokens, raw };
+  return { promptTokens, completionTokens, totalTokens, cacheReadTokens, raw };
 }
 
 function normalizedLimit(value: number | undefined, fallback: number, allowZero = false): number {
@@ -241,12 +242,7 @@ export class NativeSseAuditInspector {
       jsonEventCount: this.parsedJsonEventCount,
       malformedEventCount: this.malformedJsonEventCount,
       oversizedEventCount: this.droppedOversizedEventCount,
-      usage: {
-        promptTokens: this.lastUsage.promptTokens,
-        completionTokens: this.lastUsage.completionTokens,
-        totalTokens: this.lastUsage.totalTokens,
-        raw: this.lastUsage.raw,
-      },
+      usage: this.lastUsage,
       assembled: this.snapshotAnthropic(),
       upstreamError: this.lastUpstreamError,
       firstTokenAt: this.firstTokenAt,

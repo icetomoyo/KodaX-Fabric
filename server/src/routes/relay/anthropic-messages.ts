@@ -9,7 +9,6 @@ import { env } from "../../config.js";
 import {
   emptyRelayUsage,
   parseRelayUsage,
-  sanitizeRelayRequestHeaders,
   writeRelayAudit,
   type RelayAuditInput,
 } from "../../lib/relay/audit.js";
@@ -305,23 +304,11 @@ async function persistAudit(app: FastifyInstance, input: RelayAuditInput): Promi
   }
 }
 
-type FinalizeAuditInput = Omit<
-  RelayAuditInput,
-  | "requestId"
-  | "principal"
-  | "protocol"
-  | "clientModel"
-  | "isStream"
-  | "latencyMs"
-  | "retryTrace"
-  | "requestHeaders"
-  | "requestBody"
-  | "clientIp"
-  | "userAgent"
-  | "requestPath"
-  | "ttftMs"
-  | "generationMs"
->;
+type FinalizeAuditInput = {
+  candidate?: RelayCandidate | null;
+  status: RelayAuditInput["status"];
+  usage?: RelayAuditInput["usage"];
+} & Record<string, unknown>;
 
 async function handleNativeRequest(
   app: FastifyInstance,
@@ -332,7 +319,6 @@ async function handleNativeRequest(
   const startedAt = Date.now();
   const requestId = `threq_${randomUUID().replaceAll("-", "")}`;
   const principal = req.relayPrincipal!;
-  const requestHeaders = sanitizeRelayRequestHeaders(req);
   const requestBody = req.body;
   const parsed = config.schema.safeParse(requestBody);
   const clientModel = parsed.success ? originalModel(parsed.data) : originalModel(requestBody);
@@ -348,28 +334,21 @@ async function handleNativeRequest(
   reply.header("x-tokenhub-request-id", requestId);
   reply.header("request-id", requestId);
 
-  const finalizeAudit = async (
-    input: FinalizeAuditInput,
-    timing?: { ttftMs?: number | null; generationMs?: number | null },
-  ) => {
+  const finalizeAudit = async (input: FinalizeAuditInput) => {
     if (auditWritten) return;
     auditWritten = true;
     await persistAudit(app, {
-      ...input,
       requestId,
       principal,
-      protocol: config.protocol,
       clientModel,
-      isStream,
-      latencyMs: Date.now() - startedAt,
-      ttftMs: timing?.ttftMs,
-      generationMs: timing?.generationMs,
-      retryTrace,
-      requestHeaders,
-      requestBody,
-      clientIp: req.ip,
-      userAgent: requestUserAgent(req),
-      requestPath: req.url,
+      candidate: input.candidate as RelayCandidate | null | undefined,
+      status: input.status,
+      usage: input.usage as RelayAuditInput["usage"],
+      httpStatus: typeof input.httpStatus === "number" ? input.httpStatus : null,
+      upstreamStatus: typeof input.upstreamStatus === "number" ? input.upstreamStatus : null,
+      errorCode: typeof input.errorCode === "string" ? input.errorCode : null,
+      errorMessage: typeof input.errorMessage === "string" ? input.errorMessage : null,
+      upstreamPayload: input.responseBody,
     });
   };
 
@@ -768,50 +747,11 @@ async function handleNativeRequest(
                   ? "upstream_stream_missing_terminal"
                   : "upstream_stream_error";
         }
-        const firstTokenAt = completion.audit.firstTokenAt;
-        const streamEndAt = Date.now();
-        const ttftMs = firstTokenAt !== null ? firstTokenAt - startedAt : null;
-        const generationMs = firstTokenAt !== null ? streamEndAt - firstTokenAt : null;
-        await finalizeAudit(
-          {
-            candidate,
-            status,
-            httpStatus: handoffFailed ? 500 : cancelled ? 499 : response.status,
-            upstreamStatus: response.status,
-            errorCode: cancelled
-              ? "request_cancelled"
-              : handoffFailed
-                ? "downstream_stream_handoff_error"
-                : streamFailed
-                  ? "upstream_stream_error"
-                  : null,
-            errorMessage: cancelled
-              ? "客户端取消了流式请求"
-              : handoffFailed
-                ? "网关无法向客户端发送流式响应"
-                : streamFailed
-                  ? "上游流式响应中断或返回错误事件"
-                  : null,
-            usage: completion.audit.usage,
-            responseBody: {
-              stream: true,
-              protocol: config.protocol,
-              state: completion.state,
-              bytesSeen: completion.audit.bytesSeen,
-              auditBytesCaptured: completion.audit.auditBytesCaptured,
-              truncated: completion.audit.truncated,
-              terminalSeen: completion.audit.terminalSeen,
-              terminalEvent: completion.audit.terminalEvent,
-              terminalKind: completion.audit.terminalKind,
-              eventCount: completion.audit.eventCount,
-              malformedEventCount: completion.audit.malformedEventCount,
-              oversizedEventCount: completion.audit.oversizedEventCount,
-              assembled: completion.audit.assembled,
-              upstreamError: completion.audit.upstreamError,
-            },
-          },
-          { ttftMs, generationMs },
-        );
+        await finalizeAudit({
+          candidate,
+          status,
+          usage: completion.audit.usage,
+        });
       }).catch((error) => {
         app.log.error({ err: error, requestId }, "failed to finalize native relay stream");
       });
@@ -839,12 +779,8 @@ async function handleNativeRequest(
     const failure = lastFailure;
     const candidate = lastCandidate;
     let terminalResponseConsumed = false;
-    if (
-      failure?.response &&
-      (failure.kind === "client_error" ||
-        failure.kind === "rate_limited" ||
-        failure.kind === "upstream_error")
-    ) {
+    let upstreamPayload: unknown = null;
+    if (failure?.response) {
       const upstreamResponse = failure.response;
       let raw: Buffer = Buffer.alloc(0);
       try {
@@ -859,18 +795,18 @@ async function handleNativeRequest(
         activeAttempt = null;
         terminalResponseConsumed = true;
       }
-      const responseJson = parseJson(raw);
+      upstreamPayload = parseJson(raw) ?? (raw.length ? raw.toString("utf8") : null);
       const status = failure.status ?? (failure.kind === "client_error" ? 400 : 502);
-      if (isNativeErrorPayload(responseJson)) {
+      if (isNativeErrorPayload(upstreamPayload)) {
         await finalizeAudit({
           candidate,
           status: failure.kind === "client_error" ? "client_error" : "upstream_error",
-          httpStatus: status,
+          httpStatus: failure.status ?? status,
           upstreamStatus: failure.status,
-          errorCode: failure.errorCode,
-          errorMessage: failure.errorMessage,
+          errorCode: null,
+          errorMessage: null,
           usage: emptyRelayUsage(),
-          responseBody: responseJson,
+          responseBody: upstreamPayload,
         });
         copyUpstreamResponseHeaders(reply, upstreamResponse);
         reply.type(safeContentType(upstreamResponse));
@@ -887,12 +823,12 @@ async function handleNativeRequest(
         await finalizeAudit({
           candidate,
           status: "client_error",
-          httpStatus: status,
+          httpStatus: failure.status ?? status,
           upstreamStatus: failure.status,
-          errorCode: failure.errorCode,
-          errorMessage: failure.errorMessage,
+          errorCode: null,
+          errorMessage: null,
           usage: emptyRelayUsage(),
-          responseBody: payload,
+          responseBody: upstreamPayload,
         });
         copyUpstreamResponseHeaders(reply, upstreamResponse);
         return reply.code(status).send(payload);
@@ -910,12 +846,12 @@ async function handleNativeRequest(
     await finalizeAudit({
       candidate,
       status: failure?.kind === "cancelled" ? "cancelled" : "upstream_error",
-      httpStatus: mapped.status,
+      httpStatus: failure?.status ?? mapped.status,
       upstreamStatus: failure?.status ?? null,
-      errorCode: failure?.errorCode ?? mapped.code,
-      errorMessage: failure?.errorMessage ?? mapped.message,
+      errorCode: upstreamPayload ? null : (failure?.errorCode ?? mapped.code),
+      errorMessage: upstreamPayload ? null : (failure?.errorMessage ?? mapped.message),
       usage: emptyRelayUsage(),
-      responseBody: payload,
+      responseBody: upstreamPayload,
     });
     return reply.code(mapped.status).send(payload);
   } catch (error) {
@@ -1006,24 +942,13 @@ async function handleNativeParsingError(
     await persistAudit(app, {
       requestId,
       principal: req.relayPrincipal,
-      protocol,
       clientModel: originalModel(req.body),
       candidate: null,
-      isStream: false,
       status: clientError ? "client_error" : "upstream_error",
-      httpStatus: status,
-      upstreamStatus: null,
-      errorCode: code,
-      errorMessage: error instanceof Error ? error.message : String(error),
       usage: emptyRelayUsage(),
-      latencyMs: 0,
-      retryTrace: [],
-      requestHeaders: sanitizeRelayRequestHeaders(req),
-      requestBody: req.body ?? null,
-      responseBody: payload,
-      clientIp: req.ip,
-      userAgent: requestUserAgent(req),
-      requestPath: req.url,
+      httpStatus: status,
+      errorCode: code,
+      errorMessage: message,
     });
   }
   if (!clientError) {

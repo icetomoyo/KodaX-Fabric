@@ -40,6 +40,7 @@ export type RelayUsage = {
   promptTokens: number | null;
   completionTokens: number | null;
   totalTokens: number | null;
+  cacheReadTokens: number | null;
   raw: Record<string, unknown> | null;
 };
 

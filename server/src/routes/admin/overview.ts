@@ -72,8 +72,6 @@ async function recentErrors(whereClause: ReturnType<typeof and> | undefined) {
       clientModel: requestAudits.clientModel,
       providerCode: requestAudits.providerCode,
       status: requestAudits.status,
-      errorCode: requestAudits.errorCode,
-      errorMessage: requestAudits.errorMessage,
       createdAt: requestAudits.createdAt,
     })
     .from(requestAudits)
@@ -202,8 +200,6 @@ async function enterpriseOverview(enterpriseId: number) {
         clientModel: requestAudits.clientModel,
         providerCode: requestAudits.providerCode,
         status: requestAudits.status,
-        errorCode: requestAudits.errorCode,
-        errorMessage: requestAudits.errorMessage,
         createdAt: requestAudits.createdAt,
       })
       .from(requestAudits)

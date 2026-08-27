@@ -26,6 +26,7 @@ test("org-admin employee logs select call records without bodies or API keys", (
   assert.match(compiledSql, /"employee_id"/);
   assert.match(compiledSql, /"client_model"/);
   assert.match(compiledSql, /"total_tokens"/);
+  assert.match(compiledSql, /"cache_read_tokens"/);
   assert.doesNotMatch(compiledSql, /request_audit_bodies/);
   assert.doesNotMatch(compiledSql, /employee_api_keys/);
   assert.doesNotMatch(compiledSql, /key_encrypted/);

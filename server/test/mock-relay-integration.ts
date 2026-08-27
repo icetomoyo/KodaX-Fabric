@@ -49,7 +49,6 @@ const {
   modelRoutes,
   productLines,
   providers,
-  requestAuditBodies,
   requestAudits,
   upstreamCredentials,
   usageCountersDaily,
@@ -106,18 +105,10 @@ type RelayCallResult = {
 type PersistedAudit = {
   requestId: string;
   credentialId: number | null;
-  isStream: boolean;
   status: "success" | "upstream_error" | "client_error" | "cancelled";
-  httpStatus: number | null;
-  upstreamStatus: number | null;
   promptTokens: number | null;
   completionTokens: number | null;
   totalTokens: number | null;
-  usageSource: "upstream" | "estimated" | "none" | null;
-  retryCount: number;
-  retryTrace: unknown;
-  requestHeaders: unknown;
-  responseBody: unknown;
 };
 
 const runToken = randomUUID().replaceAll("-", "");
@@ -560,21 +551,12 @@ async function selectPersistedAudit(requestId: string): Promise<PersistedAudit |
     .select({
       requestId: requestAudits.requestId,
       credentialId: requestAudits.credentialId,
-      isStream: requestAudits.isStream,
       status: requestAudits.status,
-      httpStatus: requestAudits.httpStatus,
-      upstreamStatus: requestAudits.upstreamStatus,
       promptTokens: requestAudits.promptTokens,
       completionTokens: requestAudits.completionTokens,
       totalTokens: requestAudits.totalTokens,
-      usageSource: requestAudits.usageSource,
-      retryCount: requestAudits.retryCount,
-      retryTrace: requestAudits.retryTrace,
-      requestHeaders: requestAuditBodies.requestHeaders,
-      responseBody: requestAuditBodies.responseBody,
     })
     .from(requestAudits)
-    .innerJoin(requestAuditBodies, eq(requestAuditBodies.requestId, requestAudits.requestId))
     .where(eq(requestAudits.requestId, requestId))
     .limit(1);
   return row ?? null;
@@ -603,33 +585,6 @@ async function waitForTrackedAuditsForCleanup(): Promise<void> {
     await new Promise<void>((resolve) => setTimeout(resolve, 50));
   }
   throw new Error("tracked relay audits were not persisted before cleanup timeout");
-}
-
-function assertAuditHeaders(audit: PersistedAudit, fixture: ScenarioFixture): void {
-  assert(isRecord(audit.requestHeaders), "audit request headers are missing");
-  const serialized = JSON.stringify(audit.requestHeaders);
-  assert.equal(
-    serialized.toLowerCase().includes("authorization"),
-    false,
-    "audit request headers retained Authorization",
-  );
-  assert.equal(
-    audit.requestHeaders["x-request-id"],
-    fixture.clientRequestHeader,
-    "audit omitted the allowlisted client request header",
-  );
-  for (const sensitive of sensitiveValues) {
-    assert.equal(serialized.includes(sensitive), false, "audit headers retained secret material");
-  }
-}
-
-function assertRetryTrace(audit: PersistedAudit, expectedStatuses: number[]): void {
-  assert(Array.isArray(audit.retryTrace), "audit retryTrace is not an array");
-  assert.equal(audit.retryTrace.length, expectedStatuses.length);
-  assert.deepEqual(
-    audit.retryTrace.map((item) => (isRecord(item) ? item.status : undefined)),
-    expectedStatuses,
-  );
 }
 
 async function assertCredentialHealth(): Promise<void> {
@@ -717,46 +672,24 @@ async function runAssertions(tokenHubBaseUrl: string): Promise<void> {
   ]);
 
   assert.equal(authAudit.status, "success");
-  assert.equal(authAudit.retryCount, 1);
   assert.equal(authAudit.totalTokens, auth.usage.total_tokens);
-  assert.equal(authAudit.usageSource, "upstream");
   assert.equal(authAudit.credentialId, auth.secondCredentialId);
-  assertRetryTrace(authAudit, [401, 200]);
 
   assert.equal(badRequestAudit.status, "client_error");
-  assert.equal(badRequestAudit.retryCount, 0);
   assert.equal(badRequestAudit.totalTokens, null);
-  assert.equal(badRequestAudit.usageSource, "none");
   assert.equal(badRequestAudit.credentialId, badRequest.firstCredentialId);
-  assertRetryTrace(badRequestAudit, [400]);
 
   assert.equal(rateLimitAudit.status, "success");
-  assert.equal(rateLimitAudit.retryCount, 1);
   assert.equal(rateLimitAudit.promptTokens, rateLimit.usage.prompt_tokens);
   assert.equal(rateLimitAudit.completionTokens, rateLimit.usage.completion_tokens);
   assert.equal(rateLimitAudit.totalTokens, rateLimit.usage.total_tokens);
-  assert.equal(rateLimitAudit.usageSource, "upstream");
   assert.equal(rateLimitAudit.credentialId, rateLimit.secondCredentialId);
-  assertRetryTrace(rateLimitAudit, [429, 200]);
 
   assert.equal(streamAudit.status, "success");
-  assert.equal(streamAudit.isStream, true);
-  assert.equal(streamAudit.retryCount, 1);
   assert.equal(streamAudit.promptTokens, stream.usage.prompt_tokens);
   assert.equal(streamAudit.completionTokens, stream.usage.completion_tokens);
   assert.equal(streamAudit.totalTokens, stream.usage.total_tokens);
-  assert.equal(streamAudit.usageSource, "upstream");
   assert.equal(streamAudit.credentialId, stream.secondCredentialId);
-  assertRetryTrace(streamAudit, [500, 200]);
-
-  for (const [audit, fixture] of [
-    [authAudit, auth],
-    [badRequestAudit, badRequest],
-    [rateLimitAudit, rateLimit],
-    [streamAudit, stream],
-  ] as const) {
-    assertAuditHeaders(audit, fixture);
-  }
 
   const persisted = JSON.stringify([
     authAudit,
@@ -820,11 +753,6 @@ async function cleanupFixtures(): Promise<void> {
     for (const row of auditRows) trackedRequestIds.add(row.requestId);
   }
 
-  if (trackedRequestIds.size > 0) {
-    await db
-      .delete(requestAuditBodies)
-      .where(inArray(requestAuditBodies.requestId, [...trackedRequestIds]));
-  }
   if (created.employeeId !== null) {
     await db.delete(requestAudits).where(eq(requestAudits.employeeId, created.employeeId));
     await db

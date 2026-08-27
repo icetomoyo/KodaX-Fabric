@@ -38,22 +38,6 @@
             {{ keyChannelLabel(row) }}
           </template>
         </el-table-column>
-        <el-table-column label="首Token延迟" min-width="120">
-          <template #default="{ row }">
-            <span v-if="row.metrics?.requestCount" class="metric-value">
-              {{ row.metrics.avgTtftMs }} ms
-            </span>
-            <span v-else class="metric-empty">—</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="生成速度" min-width="120">
-          <template #default="{ row }">
-            <span v-if="row.metrics?.requestCount" class="metric-value">
-              {{ row.metrics.avgTokensPerSecond }} tok/s
-            </span>
-            <span v-else class="metric-empty">—</span>
-          </template>
-        </el-table-column>
         <el-table-column label="状态" width="100">
           <template #default="{ row }">
             <el-tag
@@ -267,11 +251,6 @@ type KeyRow = {
   status: string;
   createdAt: string;
   lastUsedAt?: string | null;
-  metrics?: {
-    requestCount: number;
-    avgTtftMs: number;
-    avgTokensPerSecond: number;
-  } | null;
 };
 
 type UpstreamChannel = {
@@ -635,18 +614,6 @@ onMounted(load);
 .key-name {
   color: #0f172a;
   font-weight: 600;
-}
-
-.metric-value {
-  color: #0f172a;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.metric-empty {
-  color: #94a3b8;
-  font-size: 12px;
 }
 
 .create-form-state {

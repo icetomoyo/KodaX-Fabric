@@ -43,10 +43,6 @@ const envSchema = z.object({
     .int()
     .min(1_024)
     .default(1 * 1024 * 1024),
-  // 0 disables pruning and keeps every JSON body. Metadata rows are never pruned.
-  AUDIT_BODY_KEEP_LAST: z.coerce.number().int().min(0).default(200),
-  // 0 runs the startup prune only. Default 10 minutes.
-  AUDIT_BODY_PRUNE_INTERVAL_MS: z.coerce.number().int().min(0).default(600_000),
   SEED_ADMIN_NAME: z.string().default("管理员"),
   SEED_ADMIN_PHONE: z.string().default("13800000000"),
   SEED_ADMIN_PASSWORD: z.string().min(8).default("ChangeMe@123"),

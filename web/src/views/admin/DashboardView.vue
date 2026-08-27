@@ -167,14 +167,14 @@
       </section>
     </div>
 
-    <section v-if="auth.isSuperAdmin" class="page-card panel-card errors-card">
+    <section class="page-card panel-card errors-card">
       <div class="panel-head">
         <div>
           <h3 class="panel-title">最近失败请求</h3>
-          <p class="panel-desc">便于快速发现上游或客户端问题</p>
+          <p class="panel-desc">上游返回的业务错误码、HTTP 状态码和错误信息原文</p>
         </div>
-        <el-button v-if="auth.isSuperAdmin" link type="primary" @click="router.push('/admin/logs')">
-          全部日志
+        <el-button link type="primary" @click="router.push('/admin/error-logs')">
+          报错日志
         </el-button>
       </div>
 
@@ -215,8 +215,6 @@
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="errorCode" label="错误码" min-width="110" show-overflow-tooltip />
-        <el-table-column prop="errorMessage" label="错误信息" min-width="220" show-overflow-tooltip />
       </el-table>
     </section>
   </div>
@@ -289,8 +287,6 @@ type OverviewData = {
     clientModel?: string;
     providerCode?: string | null;
     status?: string;
-    errorCode?: string | null;
-    errorMessage?: string | null;
     createdAt?: string;
   }>;
 };

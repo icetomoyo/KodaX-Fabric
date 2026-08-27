@@ -40,8 +40,6 @@ export const auditStatusEnum = pgEnum("audit_status", [
   "client_error",
   "cancelled",
 ]);
-export const usageSourceEnum = pgEnum("usage_source", ["upstream", "estimated", "none"]);
-export const bodyStorageEnum = pgEnum("body_storage", ["db", "object"]);
 
 export const enterprises = pgTable(
   "enterprises",
@@ -384,33 +382,16 @@ export const requestAudits = pgTable(
       onDelete: "restrict",
       onUpdate: "no action",
     }),
-    protocol: relayProtocolEnum("protocol").notNull().default("openai_chat"),
     clientModel: varchar("client_model", { length: 128 }).notNull(),
-    upstreamModel: varchar("upstream_model", { length: 128 }),
     providerCode: varchar("provider_code", { length: 64 }),
     productLineId: bigint("product_line_id", { mode: "number" }),
     productType: productTypeEnum("product_type"),
     credentialId: bigint("credential_id", { mode: "number" }),
-    credentialSuffix: varchar("credential_suffix", { length: 8 }),
-    isStream: boolean("is_stream").notNull().default(false),
     status: auditStatusEnum("status").notNull(),
-    httpStatus: integer("http_status"),
-    upstreamStatus: integer("upstream_status"),
-    errorCode: varchar("error_code", { length: 64 }),
-    errorMessage: text("error_message"),
     promptTokens: integer("prompt_tokens"),
     completionTokens: integer("completion_tokens"),
     totalTokens: integer("total_tokens"),
-    usageSource: usageSourceEnum("usage_source").default("none"),
-    usageRaw: jsonb("usage_raw"),
-    latencyMs: integer("latency_ms"),
-    retryCount: integer("retry_count").notNull().default(0),
-    retryTrace: jsonb("retry_trace"),
-    ttftMs: integer("ttft_ms"),
-    generationMs: integer("generation_ms"),
-    clientIp: varchar("client_ip", { length: 64 }),
-    userAgent: text("user_agent"),
-    requestPath: varchar("request_path", { length: 256 }),
+    cacheReadTokens: integer("cache_read_tokens"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
@@ -421,18 +402,37 @@ export const requestAudits = pgTable(
   ],
 );
 
-export const requestAuditBodies = pgTable("request_audit_bodies", {
-  requestId: varchar("request_id", { length: 64 }).primaryKey(),
-  requestHeaders: jsonb("request_headers"),
-  requestBody: jsonb("request_body"),
-  responseBody: jsonb("response_body"),
-  requestBodySize: integer("request_body_size"),
-  responseBodySize: integer("response_body_size"),
-  storage: bodyStorageEnum("storage").notNull().default("db"),
-  objectKey: text("object_key"),
-  truncated: boolean("truncated").notNull().default(false),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
+export const requestErrorLogs = pgTable(
+  "request_error_logs",
+  {
+    id: bigint("id", { mode: "number" }).generatedAlwaysAsIdentity().primaryKey(),
+    requestId: varchar("request_id", { length: 64 }).notNull(),
+    employeeId: bigint("employee_id", { mode: "number" })
+      .notNull()
+      .references(() => employees.id),
+    teamId: bigint("team_id", { mode: "number" }).references(() => teams.id, {
+      onDelete: "restrict",
+      onUpdate: "no action",
+    }),
+    clientModel: varchar("client_model", { length: 128 }).notNull(),
+    providerCode: varchar("provider_code", { length: 64 }),
+    productLineId: bigint("product_line_id", { mode: "number" }),
+    productType: productTypeEnum("product_type"),
+    credentialId: bigint("credential_id", { mode: "number" }),
+    status: auditStatusEnum("status").notNull(),
+    httpStatus: integer("http_status"),
+    upstreamStatus: integer("upstream_status"),
+    errorCode: varchar("error_code", { length: 64 }),
+    errorMessage: text("error_message"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("request_error_logs_request_id_uidx").on(t.requestId),
+    index("request_error_logs_created_idx").on(t.createdAt),
+    index("request_error_logs_team_created_idx").on(t.teamId, t.createdAt),
+    index("request_error_logs_code_created_idx").on(t.errorCode, t.createdAt),
+  ],
+);
 
 export const opsAuditLogs = pgTable(
   "ops_audit_logs",

@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { FastifyReply, FastifyRequest } from "fastify";
 
 process.env.DATABASE_URL ??= "postgresql://test:test@127.0.0.1:5432/test";
 process.env.REDIS_URL ??= "redis://127.0.0.1:6379/15";
@@ -20,11 +19,7 @@ const {
   fillDailyUsage,
   summarizeDailyUsage,
 } = await import("../src/lib/user-usage.js");
-const { extractBusinessAuditBodies, normalizeAuditContext } = await import("../src/lib/audit-context.js");
 const { generateEnterpriseCode, ENTERPRISE_CODE_PATTERN } = await import("../src/lib/enterprise.js");
-const { contextAuditDedupSince, requireAdminLogContext } = await import(
-  "../src/routes/admin/logs.js"
-);
 
 test("quota day changes exactly at QUOTA_TIMEZONE midnight", () => {
   assert.equal(quotaDayAt(new Date("2026-08-05T15:59:59.999Z"), "Asia/Shanghai"), "2026-08-05");
@@ -93,150 +88,4 @@ test("usage breakdown keeps Top N shape and folds the remainder into other", () 
       { key: "other", totalTokens: 20, requestCount: 2 },
     ],
   );
-});
-
-test("business audit bodies keep conversation turns and drop system prompts, tools, and media", () => {
-  const extracted = extractBusinessAuditBodies({
-    requestBody: {
-      model: "glm-4",
-      stream: true,
-      system: "you are a long product prompt",
-      tools: [{ type: "function", function: { name: "lookup", parameters: { type: "object" } } }],
-      mcp_servers: [{ url: "https://mcp.example.test", authorization_token: "mcp-secret" }],
-      messages: [
-        { role: "system", content: "hidden system prompt" },
-        { role: "developer", content: "hidden developer prompt" },
-        {
-          role: "user",
-          content: [
-            { type: "text", text: "看这张图" },
-            { type: "image_url", image_url: { url: "data:image/png;base64,AAAA" } },
-          ],
-        },
-        {
-          role: "assistant",
-          content: "调用工具",
-          tool_calls: [{ id: "call-1", type: "function", function: { name: "lookup", arguments: "{\"q\":\"hi\"}" } }],
-        },
-      ],
-    },
-    responseBody: {
-      choices: [{
-        index: 0,
-        finish_reason: "stop",
-        message: { role: "assistant", content: "done", reasoning_content: "long hidden chain" },
-      }],
-      usage: { prompt_tokens: 9, completion_tokens: 1 },
-    },
-  });
-
-  const serialized = JSON.stringify(extracted);
-  assert.equal(serialized.includes("hidden system prompt"), false);
-  assert.equal(serialized.includes("hidden developer prompt"), false);
-  assert.equal(serialized.includes("long product prompt"), false);
-  assert.equal(serialized.includes("mcp-secret"), false);
-  assert.equal(serialized.includes("AAAA"), false);
-  assert.equal(serialized.includes("lookup"), true);
-  assert.equal(serialized.includes("看这张图"), true);
-  assert.equal(serialized.includes("done"), true);
-  assert.deepEqual(extracted.requestBody, {
-    messages: [
-      {
-        role: "user",
-        content: [
-          { type: "text", text: "看这张图" },
-          { type: "image_url", omitted: true },
-        ],
-      },
-      {
-        role: "assistant",
-        content: "调用工具",
-        tool_calls: [{ id: "call-1", type: "function", name: "lookup", arguments: "{\"q\":\"hi\"}" }],
-      },
-    ],
-  });
-});
-
-test("context normalization handles Chat and Anthropic without headers or secrets", () => {
-  const chat = normalizeAuditContext({
-    requestId: "req-chat",
-    protocol: "openai_chat",
-    clientModel: "client",
-    upstreamModel: "upstream",
-    requestBody: {
-      messages: [{ role: "user", content: [{ type: "text", text: "hello" }] }],
-      tools: [{ type: "function", function: { name: "lookup" } }],
-      headers: { Authorization: "Bearer hidden" },
-      api_key: "hidden-key",
-    },
-    responseBody: {
-      choices: [{ index: 0, message: { role: "assistant", content: "hi", tool_calls: [{ id: "call-1" }] } }],
-    },
-    requestBodySize: 100,
-    responseBodySize: 80,
-    truncated: false,
-  });
-  assert.equal(chat.tabs.userPrompt.messages.length, 1);
-  assert.equal(chat.tabs.skills.tools.length, 1);
-  assert.equal(chat.tabs.skills.toolCalls.length, 1);
-  assert.equal(JSON.stringify(chat).includes("hidden"), false);
-  assert.equal(JSON.stringify(chat).toLowerCase().includes("authorization"), false);
-  assert.equal(JSON.stringify(chat).toLowerCase().includes("headers"), false);
-
-  const anthropic = normalizeAuditContext({
-    requestId: "req-anthropic",
-    protocol: "anthropic_messages",
-    clientModel: "claude",
-    upstreamModel: "claude-upstream",
-    requestBody: { messages: [{ role: "user", content: [{ type: "text", text: "hello" }] }] },
-    responseBody: { content: [{ type: "text", text: "hi" }] },
-    requestBodySize: 12,
-    responseBodySize: 14,
-    truncated: true,
-  });
-  assert.equal(anthropic.truncated, true);
-  assert.equal(anthropic.tabs.response.content.length, 1);
-
-  const truncated = normalizeAuditContext({
-    requestId: "req-truncated",
-    protocol: "openai_chat",
-    clientModel: "model",
-    upstreamModel: null,
-    requestBody: {
-      truncated: true,
-      originalBytes: 999999,
-      preview: '{"headers":{"Authorization":"[REDACTED]"',
-    },
-    responseBody: null,
-    requestBodySize: 999999,
-    responseBodySize: 0,
-    truncated: true,
-  });
-  const truncatedSerialized = JSON.stringify(truncated).toLowerCase();
-  assert.equal(truncatedSerialized.includes("authorization"), false);
-  assert.equal(truncatedSerialized.includes("headers"), false);
-});
-
-test("admin log context guard rejects employees and uses a five-minute audit window", async () => {
-  let statusCode = 200;
-  let payload: unknown;
-  const reply = {
-    code(code: number) {
-      statusCode = code;
-      return this;
-    },
-    send(value: unknown) {
-      payload = value;
-      return value;
-    },
-  } as unknown as FastifyReply;
-  await requireAdminLogContext(
-    { session: { role: "employee" } } as unknown as FastifyRequest,
-    reply,
-  );
-  assert.equal(statusCode, 403);
-  assert.deepEqual(payload, { success: false, message: "权限不足" });
-
-  const now = new Date("2026-08-06T12:00:00.000Z");
-  assert.equal(contextAuditDedupSince(now).toISOString(), "2026-08-06T11:55:00.000Z");
 });

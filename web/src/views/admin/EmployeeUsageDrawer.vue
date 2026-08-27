@@ -85,14 +85,9 @@
         <el-table-column label="成本" width="100" align="right">
           <template #default="{ row }">{{ formatYuan(row.costYuan) }}</template>
         </el-table-column>
-        <el-table-column label="耗时" width="90" align="right">
-          <template #default="{ row }">{{ formatLatency(row.latencyMs) }}</template>
-        </el-table-column>
         <el-table-column label="状态" width="100">
           <template #default="{ row }">
-            <el-tooltip :disabled="!row.errorMessage && !row.errorCode" :content="errorText(row)">
-              <el-tag :type="statusTagType(row.status)" size="small">{{ statusText(row.status) }}</el-tag>
-            </el-tooltip>
+            <el-tag :type="statusTagType(row.status)" size="small">{{ statusText(row.status) }}</el-tag>
           </template>
         </el-table-column>
       </el-table>
@@ -151,9 +146,6 @@ type LogRow = {
   clientModel: string | null;
   status: LogStatus;
   totalTokens: number | null;
-  latencyMs: number | null;
-  errorCode: string | null;
-  errorMessage: string | null;
   createdAt: string;
   costYuan: string;
 };
@@ -226,13 +218,6 @@ function formatPercent(value: number | null): string {
   return value === null ? "—" : `${(value * 100).toFixed(1)}%`;
 }
 
-function formatLatency(value: number | null | undefined): string {
-  if (value == null) return "—";
-  if (value < 1000) return `${value} ms`;
-  const seconds = value / 1000;
-  return `${Number(seconds.toFixed(seconds < 10 ? 2 : 1))} s`;
-}
-
 function statusText(status: LogStatus): string {
   return {
     success: "成功",
@@ -250,10 +235,6 @@ function statusTagType(status: LogStatus): "success" | "danger" | "warning" | "i
     cancelled: "info",
   } as const;
   return tags[status];
-}
-
-function errorText(row: LogRow): string {
-  return [row.errorCode, row.errorMessage].filter(Boolean).join(" · ");
 }
 
 async function loadUsage() {

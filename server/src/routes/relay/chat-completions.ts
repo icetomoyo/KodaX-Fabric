@@ -7,7 +7,6 @@ import { env } from "../../config.js";
 import {
   emptyRelayUsage,
   parseRelayUsage,
-  sanitizeRelayRequestHeaders,
   writeRelayAudit,
   type RelayAuditInput,
 } from "../../lib/relay/audit.js";
@@ -373,7 +372,6 @@ export async function chatCompletionRoutes(app: FastifyInstance) {
       const startedAt = Date.now();
       const requestId = `threq_${randomUUID().replaceAll("-", "")}`;
       const principal = req.relayPrincipal!;
-      const requestHeaders = sanitizeRelayRequestHeaders(req);
       const requestBody = req.body;
       const { parsed, invalidMessage, operation } = parseOpenAiCompatibleBody(
         principal.protocol,
@@ -392,41 +390,26 @@ export async function chatCompletionRoutes(app: FastifyInstance) {
       reply.header("x-request-id", requestId);
 
       const finalizeAudit = async (
-        input: Omit<
-          RelayAuditInput,
-          | "requestId"
-          | "principal"
-          | "clientModel"
-          | "isStream"
-          | "latencyMs"
-          | "retryTrace"
-          | "requestHeaders"
-          | "requestBody"
-          | "clientIp"
-          | "userAgent"
-          | "requestPath"
-          | "ttftMs"
-          | "generationMs"
-        >,
-        timing?: { ttftMs?: number | null; generationMs?: number | null },
+        input: {
+          candidate?: RelayCandidate | null;
+          status: RelayAuditInput["status"];
+          usage?: RelayAuditInput["usage"];
+        } & Record<string, unknown>,
       ) => {
         if (auditWritten) return;
         auditWritten = true;
         await persistAudit(app, {
-          ...input,
           requestId,
           principal,
           clientModel,
-          isStream,
-          latencyMs: Date.now() - startedAt,
-          ttftMs: timing?.ttftMs,
-          generationMs: timing?.generationMs,
-          retryTrace,
-          requestHeaders,
-          requestBody,
-          clientIp: req.ip,
-          userAgent: requestUserAgent(req),
-          requestPath: req.url,
+          candidate: input.candidate as RelayCandidate | null | undefined,
+          status: input.status,
+          usage: input.usage as RelayAuditInput["usage"],
+          httpStatus: typeof input.httpStatus === "number" ? input.httpStatus : null,
+          upstreamStatus: typeof input.upstreamStatus === "number" ? input.upstreamStatus : null,
+          errorCode: typeof input.errorCode === "string" ? input.errorCode : null,
+          errorMessage: typeof input.errorMessage === "string" ? input.errorMessage : null,
+          upstreamPayload: input.responseBody,
         });
       };
 
@@ -811,47 +794,11 @@ export async function chatCompletionRoutes(app: FastifyInstance) {
                       ? "upstream_stream_missing_done"
                       : "upstream_stream_error";
             }
-            const firstTokenAt = completion.audit.firstTokenAt;
-            const streamEndAt = Date.now();
-            const ttftMs = firstTokenAt !== null ? firstTokenAt - startedAt : null;
-            const generationMs = firstTokenAt !== null ? streamEndAt - firstTokenAt : null;
-            await finalizeAudit(
-              {
-                candidate,
-                status,
-                httpStatus: handoffFailed ? 500 : cancelled ? 499 : response.status,
-                upstreamStatus: response.status,
-                errorCode: cancelled
-                  ? "request_cancelled"
-                  : handoffFailed
-                    ? "downstream_stream_handoff_error"
-                    : streamFailed
-                      ? "upstream_stream_error"
-                      : null,
-                errorMessage: cancelled
-                  ? "客户端取消了流式请求"
-                  : handoffFailed
-                    ? "网关无法向客户端发送流式响应"
-                    : streamFailed
-                      ? "上游流式响应中断"
-                      : null,
-                usage: completion.audit.usage,
-                responseBody: {
-                  stream: true,
-                  state: completion.state,
-                  bytesSeen: completion.audit.bytesSeen,
-                  auditBytesCaptured: completion.audit.auditBytesCaptured,
-                  truncated: completion.audit.truncated,
-                  doneSeen: completion.audit.doneSeen,
-                  eventCount: completion.audit.eventCount,
-                  malformedEventCount: completion.audit.malformedEventCount,
-                  oversizedEventCount: completion.audit.oversizedEventCount,
-                  assembled: completion.audit.assembled,
-                  upstreamError: completion.audit.upstreamError,
-                },
-              },
-              { ttftMs, generationMs },
-            );
+            await finalizeAudit({
+              candidate,
+              status,
+              usage: completion.audit.usage,
+            });
           }).catch((error) => {
             app.log.error({ err: error, requestId }, "failed to finalize relay stream");
           });
@@ -879,7 +826,8 @@ export async function chatCompletionRoutes(app: FastifyInstance) {
 
         const failure = lastFailure;
         const candidate = lastCandidate;
-        if (failure?.kind === "client_error" && failure.response) {
+        let upstreamPayload: unknown = null;
+        if (failure?.response) {
           let raw: Buffer<ArrayBufferLike> = Buffer.alloc(0);
           try {
             raw = await readBoundedBody(
@@ -892,34 +840,30 @@ export async function chatCompletionRoutes(app: FastifyInstance) {
             failure.cleanup();
             activeAttempt = null;
           }
-          const responseJson = parseJson(raw);
-          const payload = isOpenAiErrorPayload(responseJson)
-            ? responseJson
-            : openAiError(
-                failure.errorMessage ?? "上游拒绝了请求参数",
-                "invalid_request_error",
-                failure.errorCode ?? "upstream_client_error",
-              );
-          const status = failure.status && failure.status >= 400 && failure.status < 500
-            ? failure.status
-            : 400;
-          await finalizeAudit({
-            candidate,
-            status: "client_error",
-            httpStatus: status,
-            upstreamStatus: failure.status,
-            errorCode: failure.errorCode,
-            errorMessage: failure.errorMessage,
-            usage: emptyRelayUsage(),
-            responseBody: payload,
-          });
-          return reply.code(status).send(payload);
-        }
-
-        if (failure?.response) {
-          await discardResponse(failure.response);
-          failure.cleanup();
-          activeAttempt = null;
+          upstreamPayload = parseJson(raw) ?? (raw.length ? raw.toString("utf8") : null);
+          if (failure.kind === "client_error") {
+            const payload = isOpenAiErrorPayload(upstreamPayload)
+              ? upstreamPayload
+              : openAiError(
+                  failure.errorMessage ?? "上游拒绝了请求参数",
+                  "invalid_request_error",
+                  failure.errorCode ?? "upstream_client_error",
+                );
+            const status = failure.status && failure.status >= 400 && failure.status < 500
+              ? failure.status
+              : 400;
+            await finalizeAudit({
+              candidate,
+              status: "client_error",
+              httpStatus: failure.status ?? status,
+              upstreamStatus: failure.status,
+              errorCode: null,
+              errorMessage: null,
+              usage: emptyRelayUsage(),
+              responseBody: upstreamPayload,
+            });
+            return reply.code(status).send(payload);
+          }
         }
         const mapped = downstreamFailure(failure?.kind ?? "upstream_error");
         const payload = openAiError(mapped.message, mapped.type, mapped.code);
@@ -929,12 +873,12 @@ export async function chatCompletionRoutes(app: FastifyInstance) {
         await finalizeAudit({
           candidate,
           status: failure?.kind === "cancelled" ? "cancelled" : "upstream_error",
-          httpStatus: mapped.status,
+          httpStatus: failure?.status ?? mapped.status,
           upstreamStatus: failure?.status ?? null,
-          errorCode: failure?.errorCode ?? mapped.code,
-          errorMessage: failure?.errorMessage ?? mapped.message,
+          errorCode: upstreamPayload ? null : (failure?.errorCode ?? mapped.code),
+          errorMessage: upstreamPayload ? null : (failure?.errorMessage ?? mapped.message),
           usage: emptyRelayUsage(),
-          responseBody: payload,
+          responseBody: upstreamPayload,
         });
         return reply.code(mapped.status).send(payload);
       } catch (error) {

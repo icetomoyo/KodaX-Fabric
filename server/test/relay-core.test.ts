@@ -8,9 +8,7 @@ process.env.REDIS_URL ??= "redis://127.0.0.1:6379/15";
 process.env.JWT_SECRET ??= "unit-test-jwt-secret";
 process.env.CREDENTIAL_ENCRYPT_KEY ??= "unit-test-credential-secret";
 
-const { parseRelayUsage, sanitizeRelayAuditBody, sanitizeRelayHeaderRecord } = await import(
-  "../src/lib/relay/audit.js"
-);
+const { parseRelayUsage } = await import("../src/lib/relay/audit.js");
 const { credentialSupportsProtocol, orderRelayCandidates } = await import(
   "../src/lib/relay/routing.js"
 );
@@ -201,51 +199,12 @@ test("zero-weight candidates are excluded", () => {
   assert.deepEqual(result.map((item) => item.credentialId), [3]);
 });
 
-test("audit headers are allowlisted case-insensitively", () => {
-  assert.deepEqual(
-    sanitizeRelayHeaderRecord({
-      Authorization: "Bearer th_secret",
-      "X-Api-Key": "upstream-secret",
-      "Content-Type": "application/json",
-      "X-Request-ID": "request-1",
-      Cookie: "session=secret",
-    }),
-    {
-      "content-type": "application/json",
-      "x-request-id": "request-1",
-    },
-  );
-});
-
-test("audit bodies redact embedded MCP credentials without changing token fields", () => {
-  const source = {
-    max_tokens: 128,
-    tools: [
-      {
-        type: "mcp",
-        headers: { Authorization: "Bearer third-party", "x-safe": "not persisted" },
-      },
-    ],
-    mcp_servers: [
-      { url: "https://mcp.example.test", authorization_token: "mcp-secret" },
-    ],
-    nested: { client_secret: "oauth-secret", content: "keep me" },
-  };
-  const sanitized = sanitizeRelayAuditBody(source) as Record<string, unknown>;
-  const serialized = JSON.stringify(sanitized);
-  assert.equal(serialized.includes("third-party"), false);
-  assert.equal(serialized.includes("mcp-secret"), false);
-  assert.equal(serialized.includes("oauth-secret"), false);
-  assert.equal(sanitized.max_tokens, 128);
-  assert.match(serialized, /keep me/);
-  assert.equal(source.mcp_servers[0].authorization_token, "mcp-secret");
-});
-
 test("usage parsing accepts totals and derives a missing total", () => {
   assert.deepEqual(parseRelayUsage({ prompt_tokens: 2, completion_tokens: 3 }), {
     promptTokens: 2,
     completionTokens: 3,
     totalTokens: 5,
+    cacheReadTokens: null,
     raw: { prompt_tokens: 2, completion_tokens: 3 },
   });
   assert.equal(parseRelayUsage({ total_tokens: 9 }).totalTokens, 9);
@@ -253,6 +212,7 @@ test("usage parsing accepts totals and derives a missing total", () => {
     promptTokens: 4,
     completionTokens: 6,
     totalTokens: 10,
+    cacheReadTokens: null,
     raw: { input_tokens: 4, output_tokens: 6 },
   });
   assert.deepEqual(
@@ -266,6 +226,7 @@ test("usage parsing accepts totals and derives a missing total", () => {
       promptTokens: 12,
       completionTokens: 6,
       totalTokens: 18,
+      cacheReadTokens: 5,
       raw: {
         input_tokens: 4,
         cache_creation_input_tokens: 3,

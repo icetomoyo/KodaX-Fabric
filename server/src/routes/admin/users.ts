@@ -111,16 +111,13 @@ export function buildEmployeeLogsQuery(input: {
   return db
     .select({
       requestId: requestAudits.requestId,
-      protocol: requestAudits.protocol,
       clientModel: requestAudits.clientModel,
       providerCode: requestAudits.providerCode,
       status: requestAudits.status,
       promptTokens: requestAudits.promptTokens,
       completionTokens: requestAudits.completionTokens,
       totalTokens: requestAudits.totalTokens,
-      latencyMs: requestAudits.latencyMs,
-      errorCode: requestAudits.errorCode,
-      errorMessage: requestAudits.errorMessage,
+      cacheReadTokens: requestAudits.cacheReadTokens,
       createdAt: requestAudits.createdAt,
       costYuan: requestCostYuanExpr,
     })

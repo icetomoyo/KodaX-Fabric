@@ -332,8 +332,7 @@ test("team list SQL folds request_audits cost with coalesce-0 for missing prices
   assert.match(compiledSql, /coalesce\("model_prices"\."prompt_price_per_million", 0\)/);
   assert.match(compiledSql, /coalesce\("model_prices"\."completion_price_per_million", 0\)/);
   assert.match(compiledSql, /coalesce\("model_prices"\."cache_hit_price_per_million", 0\)/);
-  assert.match(compiledSql, /cache_read_input_tokens/);
-  assert.match(compiledSql, /prompt_tokens_details/);
+  assert.match(compiledSql, /cache_read_tokens/);
   assert.equal(
     compiled.params.some((value) => value instanceof Date),
     false,
@@ -383,6 +382,6 @@ test("cost SQL fragment zeros missing prices before summing", () => {
   assert.match(compiledSql, /coalesce\("model_prices"\."prompt_price_per_million", 0\)/);
   assert.match(compiledSql, /coalesce\("model_prices"\."cache_hit_price_per_million", 0\)/);
   assert.match(compiledSql, /coalesce\("request_audits"\."prompt_tokens", 0\)/);
-  assert.match(compiledSql, /cache_read_input_tokens/);
+  assert.match(compiledSql, /cache_read_tokens/);
   assert.match(compiledSql, /coalesce\(sum\(/);
 });

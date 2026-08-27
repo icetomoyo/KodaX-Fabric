@@ -30,15 +30,11 @@ export function billedCacheReadTokens(promptTokens: number, usageRaw: unknown): 
 }
 
 /** Null when upstream usage did not report a cache-hit field. */
-export const cacheReadTokensNullableSql = sql<number | null>`coalesce(
-  (${requestAudits.usageRaw}->>'cache_read_input_tokens')::int,
-  (${requestAudits.usageRaw}->'prompt_tokens_details'->>'cached_tokens')::int,
-  (${requestAudits.usageRaw}->'input_tokens_details'->>'cached_tokens')::int
-)`;
+export const cacheReadTokensNullableSql = sql<number | null>`${requestAudits.cacheReadTokens}`;
 
 export const billedCacheReadTokensSql = sql<number>`least(
   coalesce(${requestAudits.promptTokens}, 0),
-  coalesce(${cacheReadTokensNullableSql}, 0)
+  coalesce(${requestAudits.cacheReadTokens}, 0)
 )`;
 
 export const billedUncachedPromptTokensSql = sql<number>`greatest(

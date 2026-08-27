@@ -1,4 +1,5 @@
 import { Buffer } from "node:buffer";
+import { extractCacheReadTokens } from "../usage-cache.js";
 import type { RelayUsage } from "./types.js";
 
 export const DEFAULT_SSE_AUDIT_MAX_BYTES = 20 * 1024 * 1024;
@@ -110,6 +111,7 @@ function emptyUsage(): RelayUsage {
     promptTokens: null,
     completionTokens: null,
     totalTokens: null,
+    cacheReadTokens: null,
     raw: null,
   };
 }
@@ -130,6 +132,7 @@ function parseUsage(value: unknown): RelayUsage | null {
     promptTokens,
     completionTokens,
     totalTokens,
+    cacheReadTokens: extractCacheReadTokens(raw),
     raw,
   };
 }
@@ -312,12 +315,7 @@ export class SseAuditInspector {
       jsonEventCount: this.parsedJsonEventCount,
       malformedEventCount: this.malformedJsonEventCount,
       oversizedEventCount: this.droppedOversizedEventCount,
-      usage: {
-        promptTokens: this.lastUsage.promptTokens,
-        completionTokens: this.lastUsage.completionTokens,
-        totalTokens: this.lastUsage.totalTokens,
-        raw: this.lastUsage.raw,
-      },
+      usage: this.lastUsage,
       assembled,
       upstreamError: this.lastUpstreamError,
       firstTokenAt: this.firstTokenAt,

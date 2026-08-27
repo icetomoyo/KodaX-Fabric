@@ -45,7 +45,6 @@ const {
   modelRoutes,
   productLines,
   providers,
-  requestAuditBodies,
   requestAudits,
   upstreamCredentials,
   usageCountersDaily,
@@ -407,15 +406,11 @@ async function waitForAudit(requestId: string) {
   while (Date.now() < deadline) {
     const [row] = await db
       .select({
-        protocol: requestAudits.protocol,
-        isStream: requestAudits.isStream,
         status: requestAudits.status,
         totalTokens: requestAudits.totalTokens,
-        requestHeaders: requestAuditBodies.requestHeaders,
-        responseBody: requestAuditBodies.responseBody,
+        cacheReadTokens: requestAudits.cacheReadTokens,
       })
       .from(requestAudits)
-      .innerJoin(requestAuditBodies, eq(requestAuditBodies.requestId, requestAudits.requestId))
       .where(eq(requestAudits.requestId, requestId))
       .limit(1);
     if (row) return row;
@@ -635,21 +630,8 @@ async function runAssertions(baseUrl: string): Promise<void> {
     waitForAudit(messageOverload.requestId),
   ]);
   assert.deepEqual(
-    audited.map((item) => item.protocol),
-    [
-      "anthropic_messages",
-      "anthropic_messages",
-      "anthropic_messages",
-      "anthropic_messages",
-    ],
-  );
-  assert.deepEqual(
     audited.map((item) => item.totalTokens),
     [14, 19, null, null],
-  );
-  assert.deepEqual(
-    audited.map((item) => item.isStream),
-    [false, true, false, false],
   );
   assert.deepEqual(
     audited.map((item) => item.status),
@@ -660,13 +642,6 @@ async function runAssertions(baseUrl: string): Promise<void> {
       "upstream_error",
     ],
   );
-  for (const item of audited) {
-    const serialized = JSON.stringify(item.requestHeaders);
-    assert.equal(serialized.toLowerCase().includes("authorization"), false);
-    assert.equal(serialized.toLowerCase().includes("x-api-key"), false);
-  }
-  assert(isRecord(audited[1].responseBody));
-  assert.equal(audited[1].responseBody.terminalSeen, true);
   assert.deepEqual(mockFailures, []);
 
   console.log(JSON.stringify({
@@ -698,9 +673,6 @@ async function cleanup(): Promise<void> {
       .from(requestAudits)
       .where(eq(requestAudits.employeeId, created.employeeId));
     for (const row of rows) trackedRequestIds.add(row.requestId);
-  }
-  if (trackedRequestIds.size > 0) {
-    await db.delete(requestAuditBodies).where(inArray(requestAuditBodies.requestId, [...trackedRequestIds]));
   }
   if (created.employeeId !== null) {
     await db.delete(requestAudits).where(eq(requestAudits.employeeId, created.employeeId));

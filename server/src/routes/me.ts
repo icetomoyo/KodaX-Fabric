@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import { and, desc, eq, gt, gte, inArray, lt, sql, type SQL } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, lt, sql, type SQL } from "drizzle-orm";
 import { z } from "zod";
 import { env } from "../config.js";
 import { db } from "../db/client.js";
@@ -13,7 +13,6 @@ import {
   providers,
   teamMembers,
   teams,
-  requestAuditBodies,
   requestAudits,
   upstreamCredentials,
   usageCountersDaily,
@@ -21,7 +20,6 @@ import {
 import { insertEnterprise } from "../lib/enterprise.js";
 import { quotaDayAt, zonedMonthRange } from "../lib/quota-time.js";
 import { listEmployeeTeamQuotaViews } from "../lib/team-quota.js";
-import { cacheReadTokensNullableSql } from "../lib/usage-cache.js";
 import { encryptEmployeeApiKey, generateApiKey } from "../lib/api-key.js";
 import {
   RELAY_BASE_PATH,
@@ -271,51 +269,7 @@ export async function meRoutes(app: FastifyInstance) {
       return { success: true, data: [] };
     }
 
-    const keyIds = rows.map((row) => row.id);
-    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-
-    const metrics = await db
-      .select({
-        keyId: requestAudits.employeeApiKeyId,
-        requestCount: sql<number>`count(*)::int`,
-        avgTtftMs: sql<number>`coalesce(round(avg(${requestAudits.ttftMs})), 0)::int`,
-        avgTokensPerSecond: sql<number>`coalesce(
-          round(
-            avg(
-              ${requestAudits.completionTokens} * 1000.0 /
-              nullif(${requestAudits.generationMs}, 0)
-            )
-          ),
-          0
-        )::int`,
-      })
-      .from(requestAudits)
-      .where(
-        and(
-          inArray(requestAudits.employeeApiKeyId, keyIds),
-          eq(requestAudits.status, "success"),
-          eq(requestAudits.isStream, true),
-          gte(requestAudits.createdAt, sevenDaysAgo),
-        ),
-      )
-      .groupBy(requestAudits.employeeApiKeyId);
-
-    const metricsByKey = new Map(metrics.map((m) => [m.keyId, m]));
-    const data = rows.map((row) => {
-      const m = metricsByKey.get(row.id);
-      return {
-        ...row,
-        metrics: m
-          ? {
-              requestCount: m.requestCount,
-              avgTtftMs: m.avgTtftMs,
-              avgTokensPerSecond: m.avgTokensPerSecond,
-            }
-          : { requestCount: 0, avgTtftMs: 0, avgTokensPerSecond: 0 },
-      };
-    });
-
-    return { success: true, data };
+    return { success: true, data: rows };
   });
 
   app.post("/api/me/api-keys", async (req, reply) => {
@@ -640,10 +594,6 @@ export async function meRoutes(app: FastifyInstance) {
         offset: z.coerce.number().min(0).default(0),
         tokensOp: compareOp.optional(),
         tokens: optionalNonNegInt,
-        latencyOp: compareOp.optional(),
-        latencyMs: optionalNonNegInt,
-        ttftOp: compareOp.optional(),
-        ttftMs: optionalNonNegInt,
       })
       .parse(req.query);
 
@@ -655,20 +605,6 @@ export async function meRoutes(app: FastifyInstance) {
           : lt(requestAudits.totalTokens, query.tokens),
       );
     }
-    if (query.latencyOp && query.latencyMs != null) {
-      conditions.push(
-        query.latencyOp === "gt"
-          ? gt(requestAudits.latencyMs, query.latencyMs)
-          : lt(requestAudits.latencyMs, query.latencyMs),
-      );
-    }
-    if (query.ttftOp && query.ttftMs != null) {
-      conditions.push(
-        query.ttftOp === "gt"
-          ? gt(requestAudits.ttftMs, query.ttftMs)
-          : lt(requestAudits.ttftMs, query.ttftMs),
-      );
-    }
     const whereExpr = and(...conditions);
     const [[countRow], items] = await Promise.all([
       db.select({ total: sql<number>`count(*)::int` }).from(requestAudits).where(whereExpr),
@@ -676,24 +612,14 @@ export async function meRoutes(app: FastifyInstance) {
         .select({
           id: requestAudits.id,
           requestId: requestAudits.requestId,
-          protocol: requestAudits.protocol,
           clientModel: requestAudits.clientModel,
-          upstreamModel: requestAudits.upstreamModel,
           providerCode: requestAudits.providerCode,
           productType: requestAudits.productType,
-          credentialSuffix: requestAudits.credentialSuffix,
-          isStream: requestAudits.isStream,
           status: requestAudits.status,
-          httpStatus: requestAudits.httpStatus,
           promptTokens: requestAudits.promptTokens,
           completionTokens: requestAudits.completionTokens,
           totalTokens: requestAudits.totalTokens,
-          latencyMs: requestAudits.latencyMs,
-          ttftMs: requestAudits.ttftMs,
-          cacheReadTokens: cacheReadTokensNullableSql,
-          retryCount: requestAudits.retryCount,
-          errorCode: requestAudits.errorCode,
-          errorMessage: requestAudits.errorMessage,
+          cacheReadTokens: requestAudits.cacheReadTokens,
           createdAt: requestAudits.createdAt,
         })
         .from(requestAudits)
@@ -706,42 +632,6 @@ export async function meRoutes(app: FastifyInstance) {
     return {
       success: true,
       data: { total: countRow?.total ?? 0, items },
-    };
-  });
-
-  app.get("/api/me/logs/:requestId", async (req, reply) => {
-    const params = z.object({ requestId: z.string().min(1) }).safeParse(req.params);
-    if (!params.success) {
-      return reply.code(400).send({ success: false, message: "参数无效" });
-    }
-
-    const [meta] = await db
-      .select()
-      .from(requestAudits)
-      .where(
-        and(
-          eq(requestAudits.requestId, params.data.requestId),
-          eq(requestAudits.employeeId, req.employeeId!),
-        ),
-      )
-      .limit(1);
-
-    if (!meta) {
-      return reply.code(404).send({ success: false, message: "记录不存在" });
-    }
-
-    const [body] = await db
-      .select()
-      .from(requestAuditBodies)
-      .where(eq(requestAuditBodies.requestId, params.data.requestId))
-      .limit(1);
-
-    return {
-      success: true,
-      data: {
-        meta,
-        body: body ?? null,
-      },
     };
   });
 }

@@ -120,6 +120,20 @@
       "when": 1787784000000,
       "tag": "0016_openai_responses",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1787820000000,
+      "tag": "0017_consumption_only_audits",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1787900000000,
+      "tag": "0018_request_error_logs",
+      "breakpoints": true
     }
   ]
 }

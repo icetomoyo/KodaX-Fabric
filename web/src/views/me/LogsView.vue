@@ -4,20 +4,11 @@
       <div class="page-head">
         <div>
           <h2 class="page-title">我的调用</h2>
-          <p class="page-subtitle">查看自己的调用记录、耗时与用量</p>
+          <p class="page-subtitle">查看自己的调用用量</p>
         </div>
       </div>
 
       <el-form inline class="filters" @keyup.enter="search">
-        <el-form-item label="耗时">
-          <div class="filter-pair">
-            <el-select v-model="filters.latencyOp" style="width: 96px">
-              <el-option label="大于" value="gt" />
-              <el-option label="小于" value="lt" />
-            </el-select>
-            <el-input v-model="filters.latencyMs" clearable placeholder="ms" style="width: 120px" />
-          </div>
-        </el-form-item>
         <el-form-item label="Tokens">
           <div class="filter-pair">
             <el-select v-model="filters.tokensOp" style="width: 96px">
@@ -25,15 +16,6 @@
               <el-option label="小于" value="lt" />
             </el-select>
             <el-input v-model="filters.tokens" clearable placeholder="数值" style="width: 120px" />
-          </div>
-        </el-form-item>
-        <el-form-item label="TTFT">
-          <div class="filter-pair">
-            <el-select v-model="filters.ttftOp" style="width: 96px">
-              <el-option label="大于" value="gt" />
-              <el-option label="小于" value="lt" />
-            </el-select>
-            <el-input v-model="filters.ttftMs" clearable placeholder="ms" style="width: 120px" />
           </div>
         </el-form-item>
         <el-form-item>
@@ -50,14 +32,12 @@
             </el-button>
           </template>
         </el-table-column>
-        <el-table-column label="耗时" width="100">
-          <template #default="{ row }">{{ formatLatency(row.latencyMs) }}</template>
-        </el-table-column>
         <el-table-column label="Tokens" width="110">
-          <template #default="{ row }">{{ formatNumber(row.totalTokens) }}</template>
-        </el-table-column>
-        <el-table-column label="TTFT" width="100">
-          <template #default="{ row }">{{ formatLatency(row.ttftMs) }}</template>
+          <template #default="{ row }">
+            <el-tooltip :content="tokenTooltip(row)" placement="top">
+              <span>{{ formatNumber(row.totalTokens) }}</span>
+            </el-tooltip>
+          </template>
         </el-table-column>
         <el-table-column label="缓存命中" width="120">
           <template #default="{ row }">
@@ -72,38 +52,24 @@
         </el-table-column>
         <el-table-column label="渠道" min-width="160">
           <template #default="{ row }">
-            <el-tooltip :content="channelTooltip(row)" placement="top">
-              <span>
-                {{ providerText(row.providerCode) }}
-                <el-tag v-if="row.productType === 'coding_plan'" size="small" effect="plain">套餐</el-tag>
-              </span>
-            </el-tooltip>
+            <span>
+              {{ providerText(row.providerCode) }}
+              <el-tag v-if="row.productType === 'coding_plan'" size="small" effect="plain">套餐</el-tag>
+            </span>
           </template>
         </el-table-column>
         <el-table-column label="模型" min-width="140" show-overflow-tooltip>
           <template #default="{ row }">{{ row.clientModel }}</template>
         </el-table-column>
-        <el-table-column label="协议" width="150">
-          <template #default="{ row }">
-            {{ relayProtocolLabel(row.protocol, true) }}
-          </template>
-        </el-table-column>
         <el-table-column label="状态" width="120">
           <template #default="{ row }">
-            <el-tooltip :disabled="!hasErrorDetail(row)" :content="errorTooltip(row)" placement="top">
-              <el-tag :type="statusTagType(row.status)" size="small">
-                {{ statusText(row.status) }}
-              </el-tag>
-            </el-tooltip>
+            <el-tag :type="statusTagType(row.status)" size="small">
+              {{ statusText(row.status) }}
+            </el-tag>
           </template>
         </el-table-column>
         <el-table-column label="时间" width="180">
           <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
-        </el-table-column>
-        <el-table-column label="操作" width="90" fixed="right">
-          <template #default="{ row }">
-            <el-button link type="primary" @click="openDetail(row.requestId)">查看</el-button>
-          </template>
         </el-table-column>
       </el-table>
 
@@ -119,55 +85,6 @@
         />
       </div>
     </section>
-
-    <el-drawer v-model="drawer" title="调用详情" size="min(720px, 96vw)">
-      <div v-loading="detailLoading" class="detail-body">
-        <template v-if="detail">
-          <el-descriptions :column="1" border>
-            <el-descriptions-item label="Request ID">
-              <code class="request-id">{{ detail.meta.requestId }}</code>
-              <el-button link type="primary" @click="copyRequestId(detail.meta.requestId)">复制</el-button>
-            </el-descriptions-item>
-            <el-descriptions-item label="时间">{{ formatDateTime(detail.meta.createdAt) }}</el-descriptions-item>
-            <el-descriptions-item label="协议">{{ relayProtocolLabel(detail.meta.protocol) }}</el-descriptions-item>
-            <el-descriptions-item label="模型">{{ modelTooltip(detail.meta) }}</el-descriptions-item>
-            <el-descriptions-item label="渠道">
-              {{ providerText(detail.meta.providerCode) }} · {{ productTypeText(detail.meta.productType) }} · Key {{ detail.meta.credentialSuffix || "—" }}
-            </el-descriptions-item>
-            <el-descriptions-item label="状态">
-              <el-tag :type="statusTagType(detail.meta.status)" size="small">
-                {{ statusText(detail.meta.status) }}
-              </el-tag>
-              <span v-if="detail.meta.httpStatus" class="muted"> HTTP {{ detail.meta.httpStatus }}</span>
-            </el-descriptions-item>
-            <el-descriptions-item label="Tokens">
-              {{ formatNumber(detail.meta.promptTokens) }} + {{ formatNumber(detail.meta.completionTokens) }} = {{ formatNumber(detail.meta.totalTokens) }}
-            </el-descriptions-item>
-            <el-descriptions-item label="缓存命中">
-              {{ cacheHitText(cacheReadTokensOf(detail.meta.usageRaw), detail.meta.promptTokens) }}
-            </el-descriptions-item>
-            <el-descriptions-item label="耗时">
-              {{ formatLatency(detail.meta.latencyMs) }} · {{ detail.meta.isStream ? "流式" : "非流式" }}
-            </el-descriptions-item>
-            <el-descriptions-item label="TTFT">{{ formatLatency(detail.meta.ttftMs) }}</el-descriptions-item>
-            <el-descriptions-item v-if="detail.meta.errorCode || detail.meta.errorMessage" label="错误">
-              {{ detail.meta.errorCode }} {{ detail.meta.errorMessage }}
-            </el-descriptions-item>
-          </el-descriptions>
-          <template v-if="detail.body">
-            <div class="content-section">
-              <div class="content-label">请求</div>
-              <StructuredJson :value="detail.body.requestBody" empty-text="无请求正文" />
-            </div>
-            <div class="content-section">
-              <div class="content-label">响应</div>
-              <StructuredJson :value="detail.body.responseBody" empty-text="无响应正文" />
-            </div>
-          </template>
-          <p v-else class="muted">请求/响应正文已按保留策略清理，列表里的用量和耗时仍在。</p>
-        </template>
-      </div>
-    </el-drawer>
   </div>
 </template>
 
@@ -175,10 +92,8 @@
 import { computed, onMounted, reactive, ref } from "vue";
 import { ElMessage } from "element-plus";
 import { http } from "@/api/http";
-import StructuredJson from "@/components/StructuredJson.vue";
 import { copyText } from "@/lib/clipboard";
 import { formatDateTime } from "@/lib/date-time";
-import { relayProtocolLabel, type RelayProtocol } from "@/views/relay-protocol";
 
 type LogStatus = "success" | "upstream_error" | "client_error" | "cancelled";
 type ProductType = "api" | "coding_plan";
@@ -187,29 +102,15 @@ type CompareOp = "gt" | "lt";
 interface MeLogRow {
   id: number;
   requestId: string;
-  protocol: RelayProtocol;
   clientModel: string;
-  upstreamModel: string | null;
   providerCode: string | null;
   productType: ProductType | null;
-  credentialSuffix: string | null;
-  isStream: boolean;
   status: LogStatus;
-  httpStatus: number | null;
   promptTokens: number | null;
   completionTokens: number | null;
   totalTokens: number | null;
-  latencyMs: number | null;
-  ttftMs: number | null;
   cacheReadTokens: number | null;
-  errorCode: string | null;
-  errorMessage: string | null;
   createdAt: string;
-}
-
-interface MeLogDetail {
-  meta: MeLogRow & { usageRaw: Record<string, unknown> | null };
-  body: { requestBody: unknown; responseBody: unknown } | null;
 }
 
 const providerNames: Record<string, string> = {
@@ -223,24 +124,14 @@ const numberFormatter = new Intl.NumberFormat("zh-CN");
 const filters = reactive({
   tokensOp: "gt" as CompareOp,
   tokens: "",
-  latencyOp: "gt" as CompareOp,
-  latencyMs: "",
-  ttftOp: "gt" as CompareOp,
-  ttftMs: "",
 });
 const items = ref<MeLogRow[]>([]);
 const total = ref(0);
 const page = ref(1);
 const limit = 10;
 const loading = ref(false);
-const drawer = ref(false);
-const detail = ref<MeLogDetail | null>(null);
-const detailLoading = ref(false);
-let detailSequence = 0;
 
-const hasFilters = computed(() => Boolean(
-  filters.tokens.trim() || filters.latencyMs.trim() || filters.ttftMs.trim(),
-));
+const hasFilters = computed(() => Boolean(filters.tokens.trim()));
 
 function parseFilterNumber(raw: string): number | undefined {
   const value = raw.trim();
@@ -273,38 +164,12 @@ function providerText(code: string | null): string {
   return providerNames[code.toLowerCase()] ?? code;
 }
 
-function productTypeText(type: ProductType | null): string {
-  if (!type) return "—";
-  return type === "coding_plan" ? "Coding Plan" : "API";
-}
-
 function formatNumber(value: number | null | undefined): string {
   return value == null ? "—" : numberFormatter.format(value);
 }
 
-function formatLatency(value: number | null | undefined): string {
-  if (value == null) return "—";
-  if (value < 1000) return `${value} ms`;
-  const seconds = value / 1000;
-  return `${Number(seconds.toFixed(seconds < 10 ? 2 : 1))} s`;
-}
-
-function asTokenCount(value: unknown): number | null {
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
-}
-
-function cacheReadTokensOf(usageRaw: Record<string, unknown> | null): number | null {
-  if (!usageRaw) return null;
-  const anthropic = asTokenCount(usageRaw.cache_read_input_tokens);
-  if (anthropic != null) return anthropic;
-  for (const key of ["prompt_tokens_details", "input_tokens_details"] as const) {
-    const details = usageRaw[key];
-    if (details && typeof details === "object" && !Array.isArray(details)) {
-      const cached = asTokenCount((details as Record<string, unknown>).cached_tokens);
-      if (cached != null) return cached;
-    }
-  }
-  return null;
+function tokenTooltip(row: MeLogRow): string {
+  return `${formatNumber(row.promptTokens)} + ${formatNumber(row.completionTokens)} = ${formatNumber(row.totalTokens)}`;
 }
 
 function cacheHitText(cacheRead: number | null, promptTokens: number | null): string {
@@ -312,27 +177,6 @@ function cacheHitText(cacheRead: number | null, promptTokens: number | null): st
   if (!promptTokens || cacheRead <= 0) return formatNumber(cacheRead);
   const percent = Math.min(100, (cacheRead / promptTokens) * 100);
   return `${formatNumber(cacheRead)} (${percent.toFixed(1)}%)`;
-}
-
-function modelTooltip(row: Pick<MeLogRow, "clientModel" | "upstreamModel">): string {
-  if (row.upstreamModel && row.upstreamModel !== row.clientModel) {
-    return `${row.clientModel} → ${row.upstreamModel}`;
-  }
-  return row.clientModel || "—";
-}
-
-function channelTooltip(row: MeLogRow): string {
-  const parts = [providerText(row.providerCode), productTypeText(row.productType)];
-  if (row.credentialSuffix) parts.push(`Key ····${row.credentialSuffix}`);
-  return parts.join(" · ");
-}
-
-function hasErrorDetail(row: MeLogRow): boolean {
-  return Boolean(row.errorCode || row.errorMessage);
-}
-
-function errorTooltip(row: MeLogRow): string {
-  return [row.errorCode, row.errorMessage].filter(Boolean).join(" · ");
 }
 
 async function copyRequestId(requestId: string) {
@@ -343,14 +187,8 @@ async function copyRequestId(requestId: string) {
 
 async function load() {
   const tokens = parseFilterNumber(filters.tokens);
-  const latencyMs = parseFilterNumber(filters.latencyMs);
-  const ttftMs = parseFilterNumber(filters.ttftMs);
-  if (
-    (filters.tokens.trim() && tokens == null)
-    || (filters.latencyMs.trim() && latencyMs == null)
-    || (filters.ttftMs.trim() && ttftMs == null)
-  ) {
-    ElMessage.warning("Tokens / 耗时 / TTFT 请输入非负整数");
+  if (filters.tokens.trim() && tokens == null) {
+    ElMessage.warning("Tokens 请输入非负整数");
     return;
   }
 
@@ -361,8 +199,6 @@ async function load() {
         limit,
         offset: (page.value - 1) * limit,
         ...(tokens != null ? { tokensOp: filters.tokensOp, tokens } : {}),
-        ...(latencyMs != null ? { latencyOp: filters.latencyOp, latencyMs } : {}),
-        ...(ttftMs != null ? { ttftOp: filters.ttftOp, ttftMs } : {}),
       },
     });
     if (data.success) {
@@ -387,33 +223,8 @@ function search() {
 function resetFilters() {
   filters.tokensOp = "gt";
   filters.tokens = "";
-  filters.latencyOp = "gt";
-  filters.latencyMs = "";
-  filters.ttftOp = "gt";
-  filters.ttftMs = "";
   page.value = 1;
   load();
-}
-
-async function openDetail(requestId: string) {
-  const sequence = ++detailSequence;
-  detail.value = null;
-  drawer.value = true;
-  detailLoading.value = true;
-  try {
-    const { data } = await http.get(`/api/me/logs/${requestId}`);
-    if (sequence !== detailSequence) return;
-    if (data.success) detail.value = data.data;
-  } catch (error) {
-    if (sequence === detailSequence) {
-      ElMessage.error(
-        (error as { response?: { data?: { message?: string } } }).response?.data?.message
-          ?? "调用详情加载失败",
-      );
-    }
-  } finally {
-    if (sequence === detailSequence) detailLoading.value = false;
-  }
 }
 
 onMounted(load);
@@ -464,21 +275,6 @@ onMounted(load);
   display: flex;
   justify-content: flex-end;
   margin-top: 16px;
-}
-
-.detail-body {
-  min-height: 160px;
-}
-
-.content-section {
-  margin-top: 18px;
-}
-
-.content-label {
-  margin-bottom: 8px;
-  color: #475569;
-  font-size: 13px;
-  font-weight: 600;
 }
 
 @media (max-width: 640px) {

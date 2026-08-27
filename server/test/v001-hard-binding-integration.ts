@@ -54,7 +54,7 @@ const {
   modelRoutes,
   productLines,
   providers,
-  requestAuditBodies,
+
   requestAudits,
   upstreamCredentials,
   usageCountersDaily,
@@ -79,13 +79,9 @@ type ApiResult = {
 
 type AuditRow = {
   requestId: string;
-  protocol: Protocol;
   productLineId: number | null;
   credentialId: number | null;
   status: "success" | "upstream_error" | "client_error" | "cancelled";
-  httpStatus: number | null;
-  errorCode: string | null;
-  retryCount: number;
 };
 
 const runId = randomUUID().replaceAll("-", "");
@@ -541,13 +537,9 @@ async function waitForAudit(requestId: string): Promise<AuditRow> {
     const [row] = await db
       .select({
         requestId: requestAudits.requestId,
-        protocol: requestAudits.protocol,
         productLineId: requestAudits.productLineId,
         credentialId: requestAudits.credentialId,
         status: requestAudits.status,
-        httpStatus: requestAudits.httpStatus,
-        errorCode: requestAudits.errorCode,
-        retryCount: requestAudits.retryCount,
       })
       .from(requestAudits)
       .where(eq(requestAudits.requestId, requestId))
@@ -611,10 +603,8 @@ async function assertProtocolEntrypoints(baseUrl: string): Promise<ApiResult[]> 
   );
   for (const audit of audits) {
     assert.equal(audit.status, "success");
-    assert.equal(audit.httpStatus, 200);
     assert.equal(audit.productLineId, requireProductLine("A"));
     assert.equal(audit.credentialId, requireCredential("A-second"));
-    assert.equal(audit.retryCount, 1);
   }
 
   return [chat, messages, countTokens];
@@ -660,10 +650,8 @@ async function assertRetryFailureClassesStayBound(baseUrl: string): Promise<void
 
     const audit = await waitForAudit(result.requestId);
     assert.equal(audit.status, "success");
-    assert.equal(audit.httpStatus, 200);
     assert.equal(audit.productLineId, requireProductLine("A"));
     assert.equal(audit.credentialId, requireCredential("A-second"));
-    assert.equal(audit.retryCount, 1);
   }
 
   await restoreFirstCredential();
@@ -712,10 +700,7 @@ async function assertDisabledBoundChannel(baseUrl: string): Promise<void> {
   for (const audit of audits) {
     assert.equal(audit.productLineId, productLineA);
     assert.equal(audit.credentialId, null);
-    assert.equal(audit.errorCode, "bound_channel_unavailable");
-    assert.equal(audit.httpStatus, 503);
     assert.equal(audit.status, "upstream_error");
-    assert.equal(audit.retryCount, 0);
   }
 }
 
@@ -758,11 +743,6 @@ async function cleanup(): Promise<void> {
       .from(requestAudits)
       .where(eq(requestAudits.employeeId, created.employeeId));
     for (const row of rows) trackedRequestIds.add(row.requestId);
-  }
-  if (trackedRequestIds.size > 0) {
-    await db
-      .delete(requestAuditBodies)
-      .where(inArray(requestAuditBodies.requestId, [...trackedRequestIds]));
   }
   if (created.employeeId !== null) {
     await db.delete(requestAudits).where(eq(requestAudits.employeeId, created.employeeId));

@@ -6,7 +6,7 @@
  */
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { and, eq, inArray, sql as dsql } from "drizzle-orm";
+import { inArray } from "drizzle-orm";
 import Fastify, { type LightMyRequestResponse } from "fastify";
 
 const [
@@ -34,7 +34,6 @@ const [
 const {
   employees,
   opsAuditLogs,
-  requestAuditBodies,
   requestAudits,
   usageCountersDaily,
 } = schema;
@@ -127,43 +126,23 @@ async function createFixtures() {
     {
       requestId: requestIds[0],
       employeeId: employee.id,
-      protocol: "openai_chat",
       clientModel: "v003-model-a",
-      upstreamModel: "v003-upstream-a",
       providerCode: "v003-provider",
       status: "success",
       promptTokens: 7,
       completionTokens: 3,
       totalTokens: 10,
-      usageSource: "upstream",
+      cacheReadTokens: 2,
     },
     {
       requestId: requestIds[1],
       employeeId: employee.id,
-      protocol: "anthropic_messages",
       clientModel: "v003-model-b",
       providerCode: "v003-provider",
       status: "upstream_error",
       totalTokens: null,
-      usageSource: "none",
     },
   ]);
-  await db.insert(requestAuditBodies).values({
-    requestId: requestIds[0],
-    requestHeaders: { authorization: "should-not-be-returned" },
-    requestBody: {
-      messages: [{ role: "user", content: "integration prompt" }],
-      headers: { Authorization: "nested-secret" },
-      api_key: "nested-api-key",
-      tools: [{ type: "function", function: { name: "lookup" } }],
-    },
-    responseBody: {
-      choices: [{ message: { role: "assistant", content: "integration response" } }],
-    },
-    requestBodySize: 128,
-    responseBodySize: 96,
-    truncated: false,
-  });
   return day;
 }
 
@@ -171,7 +150,6 @@ async function cleanup() {
   if (employeeIds.length) {
     await db.delete(opsAuditLogs).where(inArray(opsAuditLogs.actorEmployeeId, employeeIds));
   }
-  await db.delete(requestAuditBodies).where(inArray(requestAuditBodies.requestId, requestIds));
   await db.delete(requestAudits).where(inArray(requestAudits.requestId, requestIds));
   if (employeeIds.length) {
     await db.delete(usageCountersDaily).where(inArray(usageCountersDaily.employeeId, employeeIds));
@@ -209,45 +187,25 @@ async function main() {
     assert.equal(usage.unknownUsageCount, 1);
     assertNoSensitiveEmployeeUsage(usage);
 
-    const deniedContext = await app.inject({
+    const logsResponse = await app.inject({
       method: "GET",
-      url: `/api/admin/logs/${requestIds[0]}/context`,
-      headers: auth("employee"),
-    });
-    assert.equal(deniedContext.statusCode, 403);
-
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-      const contextResponse = await app.inject({
-        method: "GET",
-        url: `/api/admin/logs/${requestIds[0]}/context`,
-        headers: auth("admin"),
-      });
-      assert.equal(contextResponse.statusCode, 200);
-      const serialized = JSON.stringify(json(contextResponse));
-      assert.equal(serialized.includes("nested-secret"), false);
-      assert.equal(serialized.includes("nested-api-key"), false);
-      assert.equal(serialized.toLowerCase().includes("authorization"), false);
-    }
-
-    const [dedupCount] = await db
-      .select({ count: dsql<number>`count(*)::int` })
-      .from(opsAuditLogs)
-      .where(and(
-        eq(opsAuditLogs.actorEmployeeId, users.get("admin")!.id),
-        eq(opsAuditLogs.action, "log.read_context"),
-        eq(opsAuditLogs.targetId, requestIds[0]),
-      ));
-    assert.equal(dedupCount.count, 1);
-
-    const metadataResponse = await app.inject({
-      method: "GET",
-      url: `/api/admin/logs/${requestIds[0]}`,
+      url: `/api/admin/logs?requestId=${requestIds[0]}`,
       headers: auth("admin"),
     });
-    assert.equal(metadataResponse.statusCode, 200);
-    const metadataPayload = json<{ data: { meta: unknown } }>(metadataResponse);
-    assert(metadataPayload.data.meta);
-    assert.equal("body" in metadataPayload.data, false);
+    assert.equal(logsResponse.statusCode, 200);
+    const logs = json<{ data: { items: Array<Record<string, unknown>> } }>(logsResponse).data;
+    assert.equal(logs.items.length, 1);
+    assert.equal(logs.items[0].totalTokens, 10);
+    assert.equal(logs.items[0].cacheReadTokens, 2);
+    assert.equal("requestBody" in logs.items[0], false);
+    assert.equal("responseBody" in logs.items[0], false);
+
+    const missingContext = await app.inject({
+      method: "GET",
+      url: `/api/admin/logs/${requestIds[0]}/context`,
+      headers: auth("admin"),
+    });
+    assert.equal(missingContext.statusCode, 404);
 
     console.log("v0.0.3 integration checks passed");
   } finally {

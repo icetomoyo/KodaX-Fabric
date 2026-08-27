@@ -47,7 +47,6 @@ async function waitForAudits(expected: number) {
             providerCode: requestAudits.providerCode,
             status: requestAudits.status,
             totalTokens: requestAudits.totalTokens,
-            retryCount: requestAudits.retryCount,
           })
           .from(requestAudits)
           .where(inArray(requestAudits.requestId, requestIds))
