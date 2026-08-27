@@ -7,7 +7,7 @@ import { billedCacheReadTokensSql, billedUncachedPromptTokensSql } from "./usage
 /** CNY cost for one audit row. Missing prices contribute 0.
  *  Cache hits are billed at cache-hit price, not full input price.
  *  Cache storage is hourly and is not included (audits have no TTL). */
-export const requestCostYuanExpr = sql`(
+export const requestCostYuanExpr = sql<string>`(
   ${billedUncachedPromptTokensSql}::numeric / 1000000
     * coalesce(${modelPrices.promptPricePerMillion}, 0)
   + ${billedCacheReadTokensSql}::numeric / 1000000
