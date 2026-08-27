@@ -5,6 +5,7 @@ import {
   employees,
   enterprises,
   modelRoutes,
+  productLines,
   projects,
   providers,
   requestAudits,
@@ -49,17 +50,27 @@ async function todayStats(whereClause: ReturnType<typeof and> | undefined) {
   };
 }
 
-async function byProviderToday(whereClause: ReturnType<typeof and> | undefined) {
+/** Prefer the stored provider; if the call failed before a credential was chosen, use the Key's channel. */
+export const resolvedProviderCodeSql = sql<string | null>`coalesce(${requestAudits.providerCode}, ${providers.code})`;
+
+export function buildByProviderTodayQuery(whereClause: ReturnType<typeof and> | undefined) {
   return db
     .select({
-      providerCode: requestAudits.providerCode,
+      providerCode: resolvedProviderCodeSql,
       requests: sql<number>`count(*)::int`,
       tokens: sql<number>`coalesce(sum(${requestAudits.totalTokens}), 0)`,
     })
     .from(requestAudits)
+    .leftJoin(productLines, eq(requestAudits.productLineId, productLines.id))
+    .leftJoin(providers, eq(productLines.providerId, providers.id))
+    .innerJoin(employees, eq(requestAudits.employeeId, employees.id))
     .where(whereClause)
-    .groupBy(requestAudits.providerCode)
+    .groupBy(resolvedProviderCodeSql)
     .orderBy(sql`count(*) desc`);
+}
+
+async function byProviderToday(whereClause: ReturnType<typeof and> | undefined) {
+  return buildByProviderTodayQuery(whereClause);
 }
 
 async function recentErrors(whereClause: ReturnType<typeof and> | undefined) {
@@ -180,17 +191,7 @@ async function enterpriseOverview(enterpriseId: number) {
       .groupBy(usageCountersTeamDaily.teamId, teams.name, enterprises.name)
       .orderBy(sql`sum(${usageCountersTeamDaily.totalTokens}) desc`)
       .limit(10),
-    db
-      .select({
-        providerCode: requestAudits.providerCode,
-        requests: sql<number>`count(*)::int`,
-        tokens: sql<number>`coalesce(sum(${requestAudits.totalTokens}), 0)`,
-      })
-      .from(requestAudits)
-      .innerJoin(employees, eq(requestAudits.employeeId, employees.id))
-      .where(todayWhere)
-      .groupBy(requestAudits.providerCode)
-      .orderBy(sql`count(*) desc`),
+    byProviderToday(todayWhere),
     db
       .select({
         requestId: requestAudits.requestId,
