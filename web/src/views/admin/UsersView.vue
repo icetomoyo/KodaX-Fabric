@@ -480,7 +480,9 @@ async function load() {
     params: { limit: 200 },
   });
   if (!data.success) return;
-  const list = data.data as UserRow[];
+  const list = (data.data as UserRow[]).filter(
+    (row) => row.role !== "org_admin" && row.role !== "admin",
+  );
   const hasTeamFromApi = list.some((row) => row.teamName != null || row.teamId != null);
   if (hasTeamFromApi) {
     rows.value = list;

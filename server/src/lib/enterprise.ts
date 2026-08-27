@@ -60,7 +60,7 @@ export function resolveUserListScope(
   if (requestedEnterpriseId != null && requestedEnterpriseId !== actor.enterpriseId) {
     return { forbidden: true };
   }
-  return { enterpriseId: actor.enterpriseId, excludeRoles: [SUPER_ADMIN_ROLE] };
+  return { enterpriseId: actor.enterpriseId, excludeRoles: [SUPER_ADMIN_ROLE, ORG_ADMIN_ROLE] };
 }
 
 export function canAccessEmployee(actor: EnterpriseActor, target: EmployeeMembership): boolean {

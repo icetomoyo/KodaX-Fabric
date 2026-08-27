@@ -140,6 +140,7 @@ test("org_admin user-list SQL constrains to that enterprise and does not scan un
   const scope = resolveUserListScope({ role: "org_admin", enterpriseId: 7 });
   assert.equal("forbidden" in scope, false);
   if ("forbidden" in scope) return;
+  assert.deepEqual(scope.excludeRoles, ["admin", "org_admin"]);
 
   const compiled = buildAdminUserListQuery({
     limit: 50,
@@ -152,6 +153,8 @@ test("org_admin user-list SQL constrains to that enterprise and does not scan un
   assert.match(compiledSql, /from "employees"/);
   assert.match(compiledSql, /"employees"\."enterprise_id" = \$/);
   assert.equal(compiled.params.includes(7), true);
+  assert.equal(compiled.params.includes("admin"), true);
+  assert.equal(compiled.params.includes("org_admin"), true);
   assert.doesNotMatch(compiledSql, /employee_api_keys/);
   assert.match(compiledSql, /left join "team_members"/);
   assert.match(compiledSql, /not in/i);

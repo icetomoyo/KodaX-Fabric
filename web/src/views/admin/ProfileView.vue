@@ -31,7 +31,7 @@
             />
           </el-form-item>
           <el-form-item label="部门">
-            <el-input v-model="profileForm.dept" :maxlength="100" />
+            <el-input :model-value="profileForm.dept || '—'" disabled />
           </el-form-item>
           <el-form-item label="角色">
             <el-input :model-value="roleLabel" disabled />
@@ -128,11 +128,7 @@ const roleLabel = computed(() => formatRoleLabel(auth.user?.role));
 const profileDirty = computed(() => {
   const user = auth.user;
   if (!user) return false;
-  return (
-    profileForm.name.trim() !== user.name ||
-    profileForm.phone.trim() !== user.phone ||
-    profileForm.dept.trim() !== (user.dept ?? "")
-  );
+  return profileForm.name.trim() !== user.name || profileForm.phone.trim() !== user.phone;
 });
 
 watch(
@@ -161,7 +157,6 @@ async function submitProfile() {
 
   const name = profileForm.name.trim();
   const phone = profileForm.phone.trim();
-  const dept = profileForm.dept.trim();
   if (!name || !phone) {
     ElMessage.warning("请填写姓名和手机号");
     return;
@@ -176,7 +171,6 @@ async function submitProfile() {
     const { data } = await http.patch(`/api/admin/users/${user.id}`, {
       name,
       phone,
-      dept: dept || null,
     });
     if (!data.success) throw new Error(data.message || "保存失败");
     await auth.fetchMe();
