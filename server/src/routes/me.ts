@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import { and, desc, eq, gt, inArray, lt, sql, type SQL } from "drizzle-orm";
+import { and, desc, eq, gt, gte, inArray, lt, sql, type SQL } from "drizzle-orm";
 import { z } from "zod";
 import { env } from "../config.js";
 import { db } from "../db/client.js";
@@ -18,8 +18,9 @@ import {
   usageCountersDaily,
 } from "../db/schema/index.js";
 import { insertEnterprise } from "../lib/enterprise.js";
-import { quotaDayAt, zonedMonthRange } from "../lib/quota-time.js";
+import { parseDateOnly, quotaDayAt, zonedDateRange, zonedMonthRange } from "../lib/quota-time.js";
 import { listEmployeeTeamQuotaViews } from "../lib/team-quota.js";
+import { formatYuan, requestCostYuanExpr } from "../lib/model-cost.js";
 import { encryptEmployeeApiKey, generateApiKey } from "../lib/api-key.js";
 import {
   RELAY_BASE_PATH,
@@ -585,25 +586,41 @@ export async function meRoutes(app: FastifyInstance) {
     };
   });
 
-  app.get("/api/me/logs", async (req) => {
-    const compareOp = z.enum(["gt", "lt"]);
-    const optionalNonNegInt = z.coerce.number().int().min(0).optional();
+  app.get("/api/me/logs", async (req, reply) => {
+    const dateOnly = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
     const query = z
       .object({
         limit: z.coerce.number().min(1).max(100).default(20),
         offset: z.coerce.number().min(0).default(0),
-        tokensOp: compareOp.optional(),
-        tokens: optionalNonNegInt,
+        productLineId: z.coerce.number().int().positive().optional(),
+        model: z.string().trim().min(1).max(128).optional(),
+        status: z.enum(["success", "upstream_error", "client_error", "cancelled"]).optional(),
+        from: dateOnly.optional(),
+        to: dateOnly.optional(),
       })
-      .parse(req.query);
+      .safeParse(req.query);
+    if (!query.success) {
+      return reply.code(400).send({ success: false, message: "参数无效" });
+    }
+
+    const filters = query.data;
+    if ((filters.from && !parseDateOnly(filters.from)) || (filters.to && !parseDateOnly(filters.to))) {
+      return reply.code(400).send({ success: false, message: "参数无效" });
+    }
+    if (filters.from && filters.to && filters.from > filters.to) {
+      return reply.code(400).send({ success: false, message: "参数无效" });
+    }
 
     const conditions: SQL[] = [eq(requestAudits.employeeId, req.employeeId!)];
-    if (query.tokensOp && query.tokens != null) {
-      conditions.push(
-        query.tokensOp === "gt"
-          ? gt(requestAudits.totalTokens, query.tokens)
-          : lt(requestAudits.totalTokens, query.tokens),
-      );
+    if (filters.productLineId) conditions.push(eq(requestAudits.productLineId, filters.productLineId));
+    if (filters.model) conditions.push(eq(requestAudits.clientModel, filters.model));
+    if (filters.status) conditions.push(eq(requestAudits.status, filters.status));
+    if (filters.from || filters.to) {
+      const from = filters.from ?? filters.to!;
+      const to = filters.to ?? filters.from!;
+      const range = zonedDateRange(from, to, env.QUOTA_TIMEZONE);
+      conditions.push(gte(requestAudits.createdAt, range.start));
+      conditions.push(lt(requestAudits.createdAt, range.endExclusive));
     }
     const whereExpr = and(...conditions);
     const [[countRow], items] = await Promise.all([
@@ -621,17 +638,25 @@ export async function meRoutes(app: FastifyInstance) {
           totalTokens: requestAudits.totalTokens,
           cacheReadTokens: requestAudits.cacheReadTokens,
           createdAt: requestAudits.createdAt,
+          costYuan: requestCostYuanExpr,
         })
         .from(requestAudits)
+        .leftJoin(modelPrices, eq(modelPrices.model, requestAudits.clientModel))
         .where(whereExpr)
         .orderBy(desc(requestAudits.createdAt), desc(requestAudits.id))
-        .limit(query.limit)
-        .offset(query.offset),
+        .limit(filters.limit)
+        .offset(filters.offset),
     ]);
 
     return {
       success: true,
-      data: { total: countRow?.total ?? 0, items },
+      data: {
+        total: countRow?.total ?? 0,
+        items: items.map((row) => ({
+          ...row,
+          costYuan: formatYuan(row.costYuan),
+        })),
+      },
     };
   });
 }

@@ -9,14 +9,53 @@
       </div>
 
       <el-form inline class="filters" @keyup.enter="search">
-        <el-form-item label="Tokens">
-          <div class="filter-pair">
-            <el-select v-model="filters.tokensOp" style="width: 96px">
-              <el-option label="大于" value="gt" />
-              <el-option label="小于" value="lt" />
-            </el-select>
-            <el-input v-model="filters.tokens" clearable placeholder="数值" style="width: 120px" />
-          </div>
+        <el-form-item>
+          <el-select
+            v-model="filters.productLineId"
+            clearable
+            filterable
+            placeholder="全部渠道"
+            style="width: 200px"
+            @change="onChannelChange"
+          >
+            <el-option
+              v-for="channel in channels"
+              :key="channel.id"
+              :label="channelLabel(channel)"
+              :value="channel.id"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item>
+          <el-select
+            v-model="filters.model"
+            clearable
+            filterable
+            placeholder="全部模型"
+            style="width: 200px"
+          >
+            <el-option v-for="model in modelOptions" :key="model" :label="model" :value="model" />
+          </el-select>
+        </el-form-item>
+        <el-form-item>
+          <el-select v-model="filters.status" clearable placeholder="全部状态" style="width: 140px">
+            <el-option label="成功" value="success" />
+            <el-option label="上游错误" value="upstream_error" />
+            <el-option label="请求错误" value="client_error" />
+            <el-option label="已取消" value="cancelled" />
+          </el-select>
+        </el-form-item>
+        <el-form-item>
+          <el-date-picker
+            v-model="filters.range"
+            type="daterange"
+            value-format="YYYY-MM-DD"
+            range-separator="至"
+            start-placeholder="开始日期"
+            end-placeholder="结束日期"
+            :disabled-date="disableFutureDate"
+            style="width: 260px"
+          />
         </el-form-item>
         <el-form-item>
           <el-button type="primary" @click="search">查询</el-button>
@@ -31,6 +70,17 @@
               <code class="request-id">{{ row.requestId }}</code>
             </el-button>
           </template>
+        </el-table-column>
+        <el-table-column label="渠道" min-width="160">
+          <template #default="{ row }">
+            <span>
+              {{ providerText(row.providerCode) }}
+              <el-tag v-if="row.productType === 'coding_plan'" size="small" effect="plain">套餐</el-tag>
+            </span>
+          </template>
+        </el-table-column>
+        <el-table-column label="模型" min-width="140" show-overflow-tooltip>
+          <template #default="{ row }">{{ row.clientModel }}</template>
         </el-table-column>
         <el-table-column label="Tokens" width="110">
           <template #default="{ row }">
@@ -50,16 +100,8 @@
             </el-tooltip>
           </template>
         </el-table-column>
-        <el-table-column label="渠道" min-width="160">
-          <template #default="{ row }">
-            <span>
-              {{ providerText(row.providerCode) }}
-              <el-tag v-if="row.productType === 'coding_plan'" size="small" effect="plain">套餐</el-tag>
-            </span>
-          </template>
-        </el-table-column>
-        <el-table-column label="模型" min-width="140" show-overflow-tooltip>
-          <template #default="{ row }">{{ row.clientModel }}</template>
+        <el-table-column label="花销" width="110" align="right">
+          <template #default="{ row }">{{ formatYuan(row.costYuan) }}</template>
         </el-table-column>
         <el-table-column label="状态" width="120">
           <template #default="{ row }">
@@ -94,10 +136,10 @@ import { ElMessage } from "element-plus";
 import { http } from "@/api/http";
 import { copyText } from "@/lib/clipboard";
 import { formatDateTime } from "@/lib/date-time";
+import { formatYuan } from "@/lib/tokens";
 
 type LogStatus = "success" | "upstream_error" | "client_error" | "cancelled";
 type ProductType = "api" | "coding_plan";
-type CompareOp = "gt" | "lt";
 
 interface MeLogRow {
   id: number;
@@ -111,7 +153,15 @@ interface MeLogRow {
   totalTokens: number | null;
   cacheReadTokens: number | null;
   createdAt: string;
+  costYuan: string;
 }
+
+type CatalogChannel = {
+  id: number;
+  name: string;
+  providerName: string;
+  models: Array<{ model: string }>;
+};
 
 const providerNames: Record<string, string> = {
   glm: "智谱/GLM",
@@ -122,22 +172,51 @@ const providerNames: Record<string, string> = {
 
 const numberFormatter = new Intl.NumberFormat("zh-CN");
 const filters = reactive({
-  tokensOp: "gt" as CompareOp,
-  tokens: "",
+  productLineId: undefined as number | undefined,
+  model: "" as string,
+  status: "" as "" | LogStatus,
+  range: null as [string, string] | null,
 });
+const channels = ref<CatalogChannel[]>([]);
 const items = ref<MeLogRow[]>([]);
 const total = ref(0);
 const page = ref(1);
 const limit = 10;
 const loading = ref(false);
 
-const hasFilters = computed(() => Boolean(filters.tokens.trim()));
+const hasFilters = computed(() => Boolean(
+  filters.productLineId
+  || filters.model
+  || filters.status
+  || filters.range,
+));
 
-function parseFilterNumber(raw: string): number | undefined {
-  const value = raw.trim();
-  if (!value) return undefined;
-  const parsed = Number(value);
-  return Number.isInteger(parsed) && parsed >= 0 ? parsed : undefined;
+const modelOptions = computed(() => {
+  const source = filters.productLineId
+    ? channels.value.filter((channel) => channel.id === filters.productLineId)
+    : channels.value;
+  return [...new Set(source.flatMap((channel) => channel.models.map((item) => item.model)))];
+});
+
+function channelLabel(channel: Pick<CatalogChannel, "providerName" | "name">): string {
+  const company = channel.providerName.trim();
+  const model = channel.name.trim();
+  if (!company) return model;
+  if (!model) return company;
+  if (company === model || model.startsWith(`${company}/`)) return model;
+  return `${company}/${model}`;
+}
+
+function onChannelChange() {
+  if (filters.model && !modelOptions.value.includes(filters.model)) {
+    filters.model = "";
+  }
+}
+
+function disableFutureDate(date: Date) {
+  const today = new Date();
+  today.setHours(23, 59, 59, 999);
+  return date.getTime() > today.getTime();
 }
 
 function statusText(status: LogStatus): string {
@@ -185,20 +264,32 @@ async function copyRequestId(requestId: string) {
   else ElMessage.error("复制失败");
 }
 
-async function load() {
-  const tokens = parseFilterNumber(filters.tokens);
-  if (filters.tokens.trim() && tokens == null) {
-    ElMessage.warning("Tokens 请输入非负整数");
-    return;
+async function loadChannels() {
+  try {
+    const { data } = await http.get("/api/me/models");
+    if (data.success) {
+      channels.value = Array.isArray(data.data?.channels) ? data.data.channels : [];
+    }
+  } catch (error) {
+    ElMessage.error(
+      (error as { response?: { data?: { message?: string } } }).response?.data?.message
+        ?? "渠道列表加载失败",
+    );
   }
+}
 
+async function load() {
   loading.value = true;
   try {
     const { data } = await http.get("/api/me/logs", {
       params: {
         limit,
         offset: (page.value - 1) * limit,
-        ...(tokens != null ? { tokensOp: filters.tokensOp, tokens } : {}),
+        productLineId: filters.productLineId,
+        model: filters.model || undefined,
+        status: filters.status || undefined,
+        from: filters.range?.[0],
+        to: filters.range?.[1],
       },
     });
     if (data.success) {
@@ -221,13 +312,18 @@ function search() {
 }
 
 function resetFilters() {
-  filters.tokensOp = "gt";
-  filters.tokens = "";
+  filters.productLineId = undefined;
+  filters.model = "";
+  filters.status = "";
+  filters.range = null;
   page.value = 1;
   load();
 }
 
-onMounted(load);
+onMounted(() => {
+  void loadChannels();
+  load();
+});
 </script>
 
 <style scoped>
@@ -258,11 +354,6 @@ onMounted(load);
 
 .filters {
   margin-bottom: 8px;
-}
-
-.filter-pair {
-  display: flex;
-  gap: 8px;
 }
 
 .request-id {
