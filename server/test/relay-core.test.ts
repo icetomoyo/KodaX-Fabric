@@ -22,6 +22,8 @@ const {
   buildRelayUpstreamChatUrl,
   buildRelayUpstreamHeaders,
   buildRelayUpstreamUrl,
+  collectRateLimitHeaders,
+  resolveRelayRateLimitCooldown,
   sanitizeRelayUpstreamForwardHeaders,
 } = await import("../src/lib/relay/upstream.js");
 const { extractAnyRelayApiKey, extractRelayApiKey } = await import(
@@ -269,6 +271,47 @@ test("protocol operation URLs preserve base paths and avoid duplicate Anthropic 
   );
 });
 
+test("429 with GLM 1113 body uses a long quota cooldown", () => {
+  const stringCode = resolveRelayRateLimitCooldown(
+    JSON.stringify({
+      error: { code: "1113", message: "余额不足或无可用资源包,请充值" },
+    }),
+    60,
+    1800,
+  );
+  assert.equal(stringCode.quotaExhausted, true);
+  assert.equal(stringCode.cooldownSeconds, 1800);
+  assert.equal(stringCode.lastError, "HTTP 429：上游余额不足，凭证已长时间冷却");
+
+  const numericCode = resolveRelayRateLimitCooldown(
+    JSON.stringify({ error: { code: 1113, message: "账户欠费" } }),
+    60,
+    1800,
+  );
+  assert.equal(numericCode.quotaExhausted, true);
+  assert.equal(numericCode.cooldownSeconds, 1800);
+});
+
+test("429 with ordinary rate-limit body keeps the short cooldown", () => {
+  const decision = resolveRelayRateLimitCooldown(
+    JSON.stringify({
+      error: { code: "1302", message: "您的账户已达到速率限制，请您控制请求频率" },
+    }),
+    60,
+    1800,
+  );
+  assert.equal(decision.quotaExhausted, false);
+  assert.equal(decision.cooldownSeconds, 60);
+  assert.equal(decision.lastError, "HTTP 429：上游限流，凭证已进入冷却");
+});
+
+test("429 with non-JSON body keeps the short cooldown", () => {
+  const decision = resolveRelayRateLimitCooldown("rate limited, retry later", 60, 1800);
+  assert.equal(decision.quotaExhausted, false);
+  assert.equal(decision.cooldownSeconds, 60);
+  assert.equal(decision.lastError, "HTTP 429：上游限流，凭证已进入冷却");
+});
+
 test("upstream protocol headers use credential auth and forward only safe metadata", () => {
   assert.deepEqual(
     sanitizeRelayUpstreamForwardHeaders("anthropic_messages", {
@@ -391,5 +434,27 @@ test("SSE passthrough is byte-transparent and reports completion", async () => {
   assert.deepEqual(
     received.map((item) => [...item]),
     chunks.map((item) => [...item]),
+  );
+});
+
+test("collectRateLimitHeaders keeps Retry-After and X-RateLimit-* only", () => {
+  const headers = new Headers({
+    "Retry-After": "2",
+    "X-RateLimit-Remaining": "0",
+    "X-RateLimit-Reset": "1770000000",
+    "Content-Type": "application/json",
+    "x-request-id": "req-1",
+  });
+  assert.deepEqual(collectRateLimitHeaders(headers), {
+    "retry-after": "2",
+    "x-ratelimit-remaining": "0",
+    "x-ratelimit-reset": "1770000000",
+  });
+});
+
+test("collectRateLimitHeaders returns empty when upstream omits rate-limit headers", () => {
+  assert.deepEqual(
+    collectRateLimitHeaders(new Headers({ "content-type": "application/json" })),
+    {},
   );
 });

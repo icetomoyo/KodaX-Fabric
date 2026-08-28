@@ -75,6 +75,19 @@ function asMessage(value: unknown): string | null {
   return trimmed ? trimmed.slice(0, 4000) : null;
 }
 
+const QUOTA_EXHAUSTED_CODE = "1113";
+const QUOTA_EXHAUSTED_MESSAGE_MARKERS = ["余额不足", "资源包"] as const;
+
+/** True when an upstream JSON envelope reports quota/balance exhaustion. */
+export function isQuotaExhaustedError(payload: unknown): boolean {
+  const extracted = extractUpstreamBusinessError(payload);
+  if (!extracted) return false;
+  if (extracted.code === QUOTA_EXHAUSTED_CODE) return true;
+  const message = extracted.message;
+  if (!message) return false;
+  return QUOTA_EXHAUSTED_MESSAGE_MARKERS.some((marker) => message.includes(marker));
+}
+
 /** 从上游响应信封取出原文业务码和错误信息，不改写。 */
 export function extractUpstreamBusinessError(payload: unknown): { code: string | null; message: string | null } | null {
   let value = payload;

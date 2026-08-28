@@ -3,6 +3,7 @@ import { env } from "../../config.js";
 import { db } from "../../db/client.js";
 import { upstreamCredentials } from "../../db/schema/index.js";
 import { decryptSecret } from "../crypto-secret.js";
+import { isQuotaExhaustedError } from "../glm-error-codes.js";
 import { beginCredentialUse } from "./credential-load.js";
 import {
   DEFAULT_RELAY_PROTOCOL,
@@ -255,9 +256,80 @@ async function autoDisableCredential(
     .where(selectedCredential(candidate));
 }
 
+const RATE_LIMIT_LAST_ERROR = "HTTP 429：上游限流，凭证已进入冷却";
+const QUOTA_EXHAUSTED_LAST_ERROR = "HTTP 429：上游余额不足，凭证已长时间冷却";
+
+export type RelayRateLimitCooldownDecision = {
+  cooldownSeconds: number;
+  lastError: string;
+  quotaExhausted: boolean;
+};
+
+function parseJsonValue(text: string): unknown | undefined {
+  try {
+    const value: unknown = JSON.parse(text);
+    return value;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Decide 429 cooldown from a peeked body; unread/non-JSON bodies stay on the short cooldown. */
+export function resolveRelayRateLimitCooldown(
+  bodyText: string | null,
+  defaultCooldownSeconds: number,
+  quotaCooldownSeconds: number,
+): RelayRateLimitCooldownDecision {
+  if (bodyText) {
+    const parsed = parseJsonValue(bodyText);
+    if (parsed !== undefined && isQuotaExhaustedError(parsed)) {
+      return {
+        cooldownSeconds: quotaCooldownSeconds,
+        lastError: QUOTA_EXHAUSTED_LAST_ERROR,
+        quotaExhausted: true,
+      };
+    }
+  }
+  return {
+    cooldownSeconds: defaultCooldownSeconds,
+    lastError: RATE_LIMIT_LAST_ERROR,
+    quotaExhausted: false,
+  };
+}
+
+async function peekResponseText(response: Response): Promise<string | null> {
+  try {
+    return await response.clone().text();
+  } catch {
+    return null;
+  }
+}
+
+/** Collect Retry-After / X-RateLimit-* headers for forensic cooldown logging. */
+export function collectRateLimitHeaders(headers: Headers): Record<string, string> {
+  const collected: Record<string, string> = {};
+  headers.forEach((value, name) => {
+    const lower = name.toLowerCase();
+    if (lower === "retry-after" || lower.startsWith("x-ratelimit")) {
+      collected[lower] = value;
+    }
+  });
+  return collected;
+}
+
+function logUpstreamRateLimitHeaders(candidate: RelayCandidate, headers: Headers): void {
+  // This module has no Fastify logger; keep the observation on stderr without changing behavior.
+  console.warn("upstream 429 rate-limit headers", {
+    credentialId: candidate.credentialId,
+    credentialSuffix: candidate.credentialSuffix,
+    rateLimitHeaders: collectRateLimitHeaders(headers),
+  });
+}
+
 async function coolCredential(
   candidate: RelayCandidate,
   cooldownSeconds: number,
+  lastError: string,
 ): Promise<void> {
   const now = new Date();
   const coolUntil = new Date(now.getTime() + cooldownSeconds * 1_000);
@@ -279,7 +351,7 @@ async function coolCredential(
         else ${upstreamCredentials.coolUntil}
       end`,
       errorCount: sql`${upstreamCredentials.errorCount} + 1`,
-      lastError: "HTTP 429：上游限流，凭证已进入冷却",
+      lastError: lastError.slice(0, 1_000),
       lastErrorAt: now,
       lastUsedAt: now,
       updatedAt: now,
@@ -582,7 +654,13 @@ export async function sendRelayUpstream(
     } else if (classification.kind === "auth_error") {
       await autoDisableCredential(input.candidate, response.status);
     } else if (classification.kind === "rate_limited") {
-      await coolCredential(input.candidate, cooldownSeconds);
+      logUpstreamRateLimitHeaders(input.candidate, response.headers);
+      const decision = resolveRelayRateLimitCooldown(
+        await peekResponseText(response),
+        cooldownSeconds,
+        env.RELAY_QUOTA_COOLDOWN_SECONDS,
+      );
+      await coolCredential(input.candidate, decision.cooldownSeconds, decision.lastError);
     } else if (response.status >= 500 && response.status <= 599) {
       await markCredentialFailure(
         input.candidate,
