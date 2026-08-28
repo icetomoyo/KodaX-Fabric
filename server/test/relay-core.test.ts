@@ -22,7 +22,6 @@ const {
   buildRelayUpstreamChatUrl,
   buildRelayUpstreamHeaders,
   buildRelayUpstreamUrl,
-  collectRateLimitHeaders,
   resolveRelayRateLimitCooldown,
   sanitizeRelayUpstreamForwardHeaders,
 } = await import("../src/lib/relay/upstream.js");
@@ -434,27 +433,5 @@ test("SSE passthrough is byte-transparent and reports completion", async () => {
   assert.deepEqual(
     received.map((item) => [...item]),
     chunks.map((item) => [...item]),
-  );
-});
-
-test("collectRateLimitHeaders keeps Retry-After and X-RateLimit-* only", () => {
-  const headers = new Headers({
-    "Retry-After": "2",
-    "X-RateLimit-Remaining": "0",
-    "X-RateLimit-Reset": "1770000000",
-    "Content-Type": "application/json",
-    "x-request-id": "req-1",
-  });
-  assert.deepEqual(collectRateLimitHeaders(headers), {
-    "retry-after": "2",
-    "x-ratelimit-remaining": "0",
-    "x-ratelimit-reset": "1770000000",
-  });
-});
-
-test("collectRateLimitHeaders returns empty when upstream omits rate-limit headers", () => {
-  assert.deepEqual(
-    collectRateLimitHeaders(new Headers({ "content-type": "application/json" })),
-    {},
   );
 });

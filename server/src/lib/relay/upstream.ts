@@ -305,27 +305,6 @@ async function peekResponseText(response: Response): Promise<string | null> {
   }
 }
 
-/** Collect Retry-After / X-RateLimit-* headers for forensic cooldown logging. */
-export function collectRateLimitHeaders(headers: Headers): Record<string, string> {
-  const collected: Record<string, string> = {};
-  headers.forEach((value, name) => {
-    const lower = name.toLowerCase();
-    if (lower === "retry-after" || lower.startsWith("x-ratelimit")) {
-      collected[lower] = value;
-    }
-  });
-  return collected;
-}
-
-function logUpstreamRateLimitHeaders(candidate: RelayCandidate, headers: Headers): void {
-  // This module has no Fastify logger; keep the observation on stderr without changing behavior.
-  console.warn("upstream 429 rate-limit headers", {
-    credentialId: candidate.credentialId,
-    credentialSuffix: candidate.credentialSuffix,
-    rateLimitHeaders: collectRateLimitHeaders(headers),
-  });
-}
-
 async function coolCredential(
   candidate: RelayCandidate,
   cooldownSeconds: number,
@@ -654,7 +633,6 @@ export async function sendRelayUpstream(
     } else if (classification.kind === "auth_error") {
       await autoDisableCredential(input.candidate, response.status);
     } else if (classification.kind === "rate_limited") {
-      logUpstreamRateLimitHeaders(input.candidate, response.headers);
       const decision = resolveRelayRateLimitCooldown(
         await peekResponseText(response),
         cooldownSeconds,
