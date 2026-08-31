@@ -1,3 +1,4 @@
+import { resolveBindingScope } from "./relay/binding.js";
 import { credentialSupportsProtocol } from "./relay/routing.js";
 import type { CreditCoolingKind } from "./relay/credential-quota.js";
 import type { RelayProtocol } from "./relay/protocol.js";
@@ -269,24 +270,23 @@ function employeeMatchesBinding(
   employee: KeyBindingEmployeeInput,
   binding: KeyBindingBindingInput,
 ): boolean {
-  switch (binding.scopeType) {
-    case "employee":
-      return employee.id === binding.scopeId;
-    case "team":
-      return employee.teamId === binding.scopeId;
-    case "enterprise":
-      return employee.enterpriseId === binding.scopeId;
-  }
+  const scope = resolveBindingScope({
+    employeeId: employee.id,
+    usageTier: employee.usageTier ?? classifyUsageTier(null),
+    teamId: employee.teamId,
+    enterpriseId: employee.enterpriseId,
+  });
+  return scope?.scopeType === binding.scopeType && scope.scopeId === binding.scopeId;
 }
 
 /**
  * Build the super-admin graph:
  * enterprise → team → employee → virtual Key → upstream credential.
  *
- * Virtual Key → credential edges follow credential_bindings:
- * employee scope → that employee's keys (`dedicated`);
- * team scope → every member's keys (`team_shared`);
- * enterprise scope → that enterprise's employee keys (`enterprise_shared`).
+ * Virtual Key → credential edges follow credential_bindings, but only for
+ * employees whose current usage tier would actually use that scope:
+ * heavy → employee (`dedicated`); standard → team (`team_shared`), else
+ * enterprise; light → enterprise (`enterprise_shared`).
  * Unbound credentials stay in the graph with `bound: false`.
  */
 export function buildKeyBindingGraph(input: GraphInput): KeyBindingGraph {

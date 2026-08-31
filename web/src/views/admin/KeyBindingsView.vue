@@ -2,174 +2,52 @@
   <div class="bindings-page">
     <section class="page-card toolbar-card">
       <div class="page-head">
-        <div>
-          <h2 class="page-title">Key 绑定</h2>
-          <p class="page-subtitle">
-            企业 → 团队 → 员工 → 虚拟 Key → 智谱 Key（绑定）→ 待绑定 → 5小时冷却 → 周冷却 → 停用
-          </p>
-        </div>
+        <h2 class="page-title">调度画布</h2>
         <el-button :loading="loading" @click="load">刷新</el-button>
-      </div>
-
-      <div class="filters">
-        <el-select v-model="productLineId" clearable placeholder="全部渠道" class="filter-item">
-          <el-option
-            v-for="channel in channels"
-            :key="channel.id"
-            :label="channel.name"
-            :value="channel.id"
-          />
-        </el-select>
-        <el-select v-model="enterpriseId" clearable placeholder="全部企业" class="filter-item">
-          <el-option
-            v-for="enterprise in enterprises"
-            :key="enterprise.id"
-            :label="enterprise.name"
-            :value="enterprise.id"
-          />
-        </el-select>
-        <el-select v-model="bindingKind" class="filter-item">
-          <el-option label="全部绑定" value="all" />
-          <el-option label="仅独占绑定" value="dedicated" />
-          <el-option label="仅团队共享" value="team_shared" />
-          <el-option label="仅企业共享" value="enterprise_shared" />
-        </el-select>
-        <el-input
-          v-model="keyword"
-          clearable
-          placeholder="搜索企业 / 团队 / 员工 / Key"
-          class="filter-search"
-        />
-      </div>
-
-      <div class="legend">
-        <span class="legend-item"><i class="swatch enterprise" />企业</span>
-        <span class="legend-item"><i class="swatch team" />团队</span>
-        <span class="legend-item"><i class="swatch employee" />员工</span>
-        <span class="legend-item"><i class="tier-dot light" />轻度</span>
-        <span class="legend-item"><i class="tier-dot standard" />标准</span>
-        <span class="legend-item"><i class="tier-dot heavy" />重度</span>
-        <span class="legend-item"><i class="swatch virtual" />虚拟 Key</span>
-        <span class="legend-item"><i class="swatch bound" />绑定</span>
-        <span class="legend-item"><i class="swatch pending" />待绑定</span>
-        <span class="legend-item"><i class="swatch cooling_5h" />5小时冷却</span>
-        <span class="legend-item"><i class="swatch cooling_weekly" />周冷却</span>
-        <span class="legend-item"><i class="swatch disabled" />停用</span>
-        <span class="legend-item"><i class="line dedicated" />独占绑定</span>
-        <span class="legend-item"><i class="line team_shared" />团队共享</span>
-        <span class="legend-item"><i class="line enterprise_shared" />企业共享</span>
-        <span class="legend-count">
-          {{ displayedEnterprises }} 家企业 ·
-          {{ displayed?.teams.length ?? 0 }} 个团队 ·
-          {{ displayed?.employees.length ?? 0 }} 人 ·
-          {{ displayed?.virtualKeys.length ?? 0 }} 把虚拟 Key ·
-          绑定 {{ credentialLaneCounts.bound }} ·
-          待绑定 {{ credentialLaneCounts.pending }} ·
-          5小时冷却 {{ credentialLaneCounts.cooling_5h }} ·
-          周冷却 {{ credentialLaneCounts.cooling_weekly }} ·
-          停用 {{ credentialLaneCounts.disabled }}
-        </span>
       </div>
     </section>
 
-    <section class="page-card canvas-card" v-loading="loading">
+    <section class="page-card canvas-shell" v-loading="loading">
       <el-empty
-        v-if="!loading && !nodes.length"
+        v-if="!loading && !boards.length"
         description="没有可展示的绑定关系"
         :image-size="88"
       />
-      <VueFlow
+      <el-tabs
         v-else
-        v-model:nodes="nodes"
-        v-model:edges="edges"
-        :min-zoom="0.15"
-        :max-zoom="1.6"
-        :default-viewport="{ zoom: 0.45 }"
-        :nodes-connectable="false"
-        :edges-updatable="false"
-        :elements-selectable="true"
-        fit-view-on-init
-        @node-click="onNodeClick"
-        @pane-click="clearHighlight"
-        @init="onFlowInit"
+        v-model="activeBoardKey"
+        class="board-tabs"
+        @tab-change="onTabChange"
       >
-        <template #node-enterprise="{ data }">
-          <div class="graph-node enterprise" :class="{ dimmed: data.dimmed, active: data.active }">
-            <Handle type="source" :position="Position.Right" :connectable="false" />
-            <strong>{{ data.name }}</strong>
-            <span>企业</span>
-          </div>
-        </template>
-        <template #node-team="{ data }">
-          <div class="graph-node team" :class="{ dimmed: data.dimmed, active: data.active }">
-            <Handle type="target" :position="Position.Left" :connectable="false" />
-            <Handle type="source" :position="Position.Right" :connectable="false" />
-            <strong>{{ data.name }}</strong>
-            <span>团队</span>
-          </div>
-        </template>
-        <template #node-employee="{ data }">
-          <div class="graph-node employee" :class="{ dimmed: data.dimmed, active: data.active }">
-            <Handle type="target" :position="Position.Left" :connectable="false" />
-            <Handle type="source" :position="Position.Right" :connectable="false" />
-            <strong>{{ data.name }}</strong>
-            <span class="tier" :class="data.usageTier">{{ usageTierLabel(data.usageTier) }}</span>
-          </div>
-        </template>
-        <template #node-virtual_key="{ data }">
-          <div class="graph-node virtual" :class="{ dimmed: data.dimmed, active: data.active }">
-            <Handle type="target" :position="Position.Left" :connectable="false" />
-            <Handle type="source" :position="Position.Right" :connectable="false" />
-            <strong>{{ data.name }}</strong>
-            <span class="mono">{{ data.keyPrefix }}…</span>
-            <span>{{ protocolLabel(data.protocol) }} · {{ data.productLineName }}</span>
-          </div>
-        </template>
-        <template #node-lane_header="{ data }">
-          <div class="lane-header">{{ data.label }}</div>
-        </template>
-        <template #node-credential="{ data }">
-          <div
-            class="graph-node credential"
-            :class="[data.lane, { dimmed: data.dimmed, active: data.active }]"
-          >
-            <Handle type="target" :position="Position.Left" :connectable="false" />
-            <strong>{{ data.label }}</strong>
-            <span class="mono">…{{ data.secretSuffix }}</span>
-            <span>{{ credentialNodeCaption(data) }}</span>
-          </div>
-        </template>
-        <Background :gap="18" pattern-color="#e5e7eb" />
-        <Controls />
-      </VueFlow>
+        <el-tab-pane
+          v-for="board in boards"
+          :key="board.key"
+          :name="board.key"
+          :label="board.title"
+          lazy
+        >
+          <KeyBindingCanvas
+            v-model:nodes="board.nodes"
+            v-model:edges="board.edges"
+            :active="activeBoardKey === board.key"
+            @node-click="(event) => onNodeClick(board.key, event)"
+            @pane-click="() => onPaneClick(board.key)"
+          />
+        </el-tab-pane>
+      </el-tabs>
     </section>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from "vue";
-import {
-  VueFlow,
-  Handle,
-  Position,
-  MarkerType,
-  type Edge,
-  type Node,
-  type NodeMouseEvent,
-  type VueFlowStore,
-} from "@vue-flow/core";
-import { Background } from "@vue-flow/background";
-import { Controls } from "@vue-flow/controls";
+import { onMounted, onUnmounted, ref } from "vue";
+import KeyBindingCanvas from "@/components/KeyBindingCanvas.vue";
+import { MarkerType, type Edge, type Node, type NodeMouseEvent } from "@vue-flow/core";
 import { ElMessage } from "element-plus";
 import { http } from "@/api/http";
-import { relayProtocolLabel } from "@/views/relay-protocol";
-import "@vue-flow/core/dist/style.css";
-import "@vue-flow/core/dist/theme-default.css";
-import "@vue-flow/controls/dist/style.css";
 
 type BindingKind = "org" | "owns" | "dedicated" | "team_shared" | "enterprise_shared";
 type UseBindingKind = "dedicated" | "team_shared" | "enterprise_shared";
-type KindFilter = "all" | UseBindingKind;
 type NodeKind = "enterprise" | "team" | "employee" | "virtual_key" | "credential" | "lane_header";
 type CoolingKind = "five_hour" | "weekly" | "other";
 type CredentialLane = "bound" | "pending" | "cooling_5h" | "cooling_weekly" | "disabled";
@@ -239,6 +117,33 @@ type KeyBindingGraph = {
   enterprises: Array<{ id: number; name: string }>;
 };
 
+type RelayLiveNode = {
+  id: number;
+  inFlight: number;
+  afterglow: boolean;
+};
+
+type RelayLiveHop = {
+  virtualKeyId: number;
+  credentialId: number;
+  inFlight: number;
+  afterglow: boolean;
+};
+
+type RelayLiveLoad = {
+  keys: RelayLiveNode[];
+  credentials: RelayLiveNode[];
+  hops: RelayLiveHop[];
+};
+
+type CanvasBoard = {
+  key: string;
+  title: string;
+  mode: "enterprise" | "pool";
+  nodes: any[];
+  edges: any[];
+};
+
 const COL_X = {
   enterprise: 0,
   team: 360,
@@ -263,83 +168,18 @@ const STATUS_HEADERS: Array<{
 const NODE_H = 92;
 const NODE_GAP = 40;
 const GROUP_GAP = 72;
+const LIVE_POLL_MS = 2000;
 
 const loading = ref(false);
 const graph = ref<KeyBindingGraph | null>(null);
-const productLineId = ref<number | undefined>();
-const enterpriseId = ref<number | undefined>();
-const bindingKind = ref<KindFilter>("all");
-const keyword = ref("");
 const selectedNodeId = ref<string | null>(null);
-const nodes = ref<Node[]>([]);
-const edges = ref<Edge[]>([]);
-
-const channels = computed(() => graph.value?.channels ?? []);
-const enterprises = computed(() => graph.value?.enterprises ?? []);
-const displayed = computed(() =>
-  graph.value ? visibleGraph(graph.value, bindingKind.value) : null,
-);
-const displayedEnterprises = computed(() => {
-  const ids = new Set(
-    (displayed.value?.employees ?? [])
-      .map((row) => row.enterpriseId)
-      .filter((id): id is number => id != null),
-  );
-  return ids.size;
-});
-const credentialLaneCounts = computed(() => {
-  const source = displayed.value;
-  const empty = { bound: 0, pending: 0, cooling_5h: 0, cooling_weekly: 0, disabled: 0 };
-  if (!source) return empty;
-  const boundIds = boundCredentialIds(source);
-  for (const credential of source.credentials) {
-    empty[credentialLane(credential, boundIds)] += 1;
-  }
-  return empty;
-});
+const selectedBoardKey = ref<string | null>(null);
+const activeBoardKey = ref("");
+const boards = ref<CanvasBoard[]>([]);
+const lastLive = ref<RelayLiveLoad | null>(null);
 
 function nodeId(type: NodeKind, id: number): string {
   return `${type}:${id}`;
-}
-
-function protocolLabel(protocol: string): string {
-  return relayProtocolLabel(protocol, true);
-}
-
-function usageTierLabel(tier: UsageTier | undefined): string {
-  if (tier === "light") return "轻度用户";
-  if (tier === "heavy") return "重度用户";
-  return "标准用户";
-}
-
-function credentialLaneLabel(lane: CredentialLane | undefined, coolingKind?: CoolingKind | null): string {
-  if (lane === "pending") return "待绑定";
-  if (lane === "cooling_weekly") return "周冷却";
-  if (lane === "cooling_5h") return coolingKind === "other" ? "冷却中" : "5小时冷却";
-  if (lane === "disabled") return "停用";
-  return "绑定";
-}
-
-function formatCoolUntil(value: string | null | undefined): string {
-  if (!value) return "";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "";
-  const pad = (part: number) => String(part).padStart(2, "0");
-  return `${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
-}
-
-function credentialNodeCaption(data: {
-  productLineName?: string;
-  lane?: CredentialLane;
-  coolingKind?: CoolingKind | null;
-  coolUntil?: string | null;
-}): string {
-  const lane = credentialLaneLabel(data.lane, data.coolingKind);
-  if (data.lane === "cooling_5h" || data.lane === "cooling_weekly") {
-    const until = formatCoolUntil(data.coolUntil);
-    return until ? `${lane} · 至 ${until}` : lane;
-  }
-  return `${data.productLineName ?? ""} · ${lane}`;
 }
 
 function useEdgeStyle(kind: BindingKind): Record<string, string | number | undefined> {
@@ -382,40 +222,101 @@ function credentialLane(
   return "pending";
 }
 
-function visibleGraph(source: KeyBindingGraph, kind: KindFilter): KeyBindingGraph {
-  if (kind === "all") return source;
-  const useEdges = source.edges.filter((edge) => edge.kind === kind);
-  const keyIds = new Set(useEdges.map((edge) => edge.sourceId));
-  const credentialIds = new Set(useEdges.map((edge) => edge.targetId));
-  const virtualKeys = source.virtualKeys.filter((row) => keyIds.has(row.id));
-  const employeeIds = new Set(virtualKeys.map((row) => row.employeeId));
-  const employees = source.employees.filter((row) => employeeIds.has(row.id));
+function subgraphForEmployees(source: KeyBindingGraph, employees: GraphEmployee[]): KeyBindingGraph {
+  const employeeIds = new Set(employees.map((row) => row.id));
+  const virtualKeys = source.virtualKeys.filter((row) => employeeIds.has(row.employeeId));
+  const keyIds = new Set(virtualKeys.map((row) => row.id));
   const teamIds = new Set(
     employees.map((row) => row.teamId).filter((id): id is number => id != null),
   );
-  const teams = source.teams.filter((row) => teamIds.has(row.id));
-  const kept = {
-    enterprise: new Set(
-      employees.map((row) => row.enterpriseId).filter((id): id is number => id != null),
-    ),
-    team: teamIds,
-    employee: employeeIds,
-    virtual_key: keyIds,
-    credential: new Set(source.credentials.map((row) => row.id)),
-    lane_header: new Set<number>(),
-  };
+  const enterpriseIds = new Set(
+    employees.map((row) => row.enterpriseId).filter((id): id is number => id != null),
+  );
+  const useTargets = new Set<number>();
+  const edges = source.edges.filter((edge) => {
+    if (edge.kind === "owns") return employeeIds.has(edge.sourceId) && keyIds.has(edge.targetId);
+    if (isUseEdgeKind(edge.kind)) {
+      if (!keyIds.has(edge.sourceId)) return false;
+      useTargets.add(edge.targetId);
+      return true;
+    }
+    if (edge.sourceType === "enterprise" && edge.targetType === "team") {
+      return enterpriseIds.has(edge.sourceId) && teamIds.has(edge.targetId);
+    }
+    if (edge.sourceType === "team" && edge.targetType === "employee") {
+      return teamIds.has(edge.sourceId) && employeeIds.has(edge.targetId);
+    }
+    if (edge.sourceType === "enterprise" && edge.targetType === "employee") {
+      return enterpriseIds.has(edge.sourceId) && employeeIds.has(edge.targetId);
+    }
+    return false;
+  });
   return {
     ...source,
     employees,
-    teams,
+    teams: source.teams.filter((row) => teamIds.has(row.id)),
     virtualKeys,
-    credentials: source.credentials,
-    edges: source.edges.filter((edge) => {
-      if (isUseEdgeKind(edge.kind)) return useEdges.includes(edge);
-      if (edge.kind === "owns") return keyIds.has(edge.targetId);
-      return kept[edge.sourceType].has(edge.sourceId) && kept[edge.targetType].has(edge.targetId);
-    }),
+    credentials: source.credentials.filter((row) => useTargets.has(row.id)),
+    edges,
+    enterprises: source.enterprises.filter((row) => enterpriseIds.has(row.id)),
   };
+}
+
+function splitIntoBoards(source: KeyBindingGraph): Array<{
+  key: string;
+  title: string;
+  mode: "enterprise" | "pool";
+  graph: KeyBindingGraph;
+}> {
+  const byEnterprise = new Map<number | "none", GraphEmployee[]>();
+  for (const employee of source.employees) {
+    const key = employee.enterpriseId ?? "none";
+    const list = byEnterprise.get(key) ?? [];
+    list.push(employee);
+    byEnterprise.set(key, list);
+  }
+  const named = [...byEnterprise.entries()].sort((a, b) => {
+    const nameA = a[1][0]?.enterpriseName || "未加入企业";
+    const nameB = b[1][0]?.enterpriseName || "未加入企业";
+    if (a[0] === "none") return 1;
+    if (b[0] === "none") return -1;
+    return nameA.localeCompare(nameB, "zh");
+  });
+  const boards: Array<{
+    key: string;
+    title: string;
+    mode: "enterprise" | "pool";
+    graph: KeyBindingGraph;
+  }> = named.map(([key, employees]) => {
+    const graph = subgraphForEmployees(source, employees);
+    return {
+      key: key === "none" ? "none" : `ent:${key}`,
+      title: employees[0]?.enterpriseName || "未加入企业",
+      mode: "enterprise",
+      graph,
+    };
+  });
+  const boundIds = boundCredentialIds(source);
+  const poolCredentials = source.credentials.filter(
+    (row) => credentialLane(row, boundIds) !== "bound",
+  );
+  if (poolCredentials.length) {
+    boards.push({
+      key: "pool",
+      title: "未绑定 Key 池",
+      mode: "pool",
+      graph: {
+        ...source,
+        employees: [],
+        teams: [],
+        virtualKeys: [],
+        credentials: poolCredentials,
+        edges: [],
+        enterprises: [],
+      },
+    });
+  }
+  return boards;
 }
 
 function makeNode(type: NodeKind, id: number, x: number, y: number, data: Record<string, unknown>): Node {
@@ -429,7 +330,10 @@ function makeNode(type: NodeKind, id: number, x: number, y: number, data: Record
   };
 }
 
-function layoutGraph(source: KeyBindingGraph): { nodes: Node[]; edges: Edge[] } {
+function layoutGraph(
+  source: KeyBindingGraph,
+  mode: "enterprise" | "pool" = "enterprise",
+): { nodes: Node[]; edges: Edge[] } {
   const keysByEmployee = new Map<number, GraphVirtualKey[]>();
   for (const key of source.virtualKeys) {
     const list = keysByEmployee.get(key.employeeId) ?? [];
@@ -507,20 +411,9 @@ function layoutGraph(source: KeyBindingGraph): { nodes: Node[]; edges: Edge[] } 
   }
 
   const laidNodes: Node[] = [];
-  for (const header of STATUS_HEADERS) {
-    laidNodes.push({
-      id: `header:${header.key}`,
-      type: "lane_header",
-      position: { x: COL_X[header.key], y: -72 },
-      data: { label: header.label, dimmed: false, active: false },
-      draggable: false,
-      selectable: false,
-      connectable: false,
-    });
-  }
   const virtualKeyY = new Map<number, number>();
   let cursor = 0;
-  for (const ent of entBlocks) {
+  if (mode === "enterprise") for (const ent of entBlocks) {
     if (ent.enterpriseId != null) {
       laidNodes.push(
         makeNode(
@@ -599,44 +492,66 @@ function layoutGraph(source: KeyBindingGraph): { nodes: Node[]; edges: Edge[] } 
     })
     .sort((a, b) => a.desiredY - b.desiredY || a.credential.id - b.credential.id);
 
-  let boundCursor = Number.NEGATIVE_INFINITY;
-  for (const item of boundPlacements) {
-    const y = Number.isFinite(boundCursor)
-      ? Math.max(item.desiredY, boundCursor)
-      : item.desiredY;
-    laidNodes.push(
-      makeNode("credential", item.credential.id, COL_X.bound, y, {
-        ...item.credential,
-        lane: "bound",
-      }),
-    );
-    boundCursor = y + NODE_H + NODE_GAP;
-  }
-
-  for (const lane of ["pending", "cooling_5h", "cooling_weekly", "disabled"] as const) {
-    let laneCursor = 0;
-    for (const credential of credentialsByLane[lane]) {
+  if (mode === "enterprise") {
+    let boundCursor = Number.NEGATIVE_INFINITY;
+    for (const item of boundPlacements) {
+      const y = Number.isFinite(boundCursor)
+        ? Math.max(item.desiredY, boundCursor)
+        : item.desiredY;
       laidNodes.push(
-        makeNode("credential", credential.id, COL_X[lane], laneCursor, {
-          ...credential,
-          lane,
+        makeNode("credential", item.credential.id, COL_X.bound, y, {
+          ...item.credential,
+          lane: "bound",
         }),
       );
-      laneCursor += NODE_H + NODE_GAP;
+      boundCursor = y + NODE_H + NODE_GAP;
+    }
+  }
+
+  if (mode === "pool") {
+    for (const header of STATUS_HEADERS) {
+      laidNodes.push({
+        id: `header:${header.key}`,
+        type: "lane_header",
+        position: { x: COL_X[header.key] - COL_X.pending, y: -72 },
+        data: { label: header.label, dimmed: false, active: false },
+        draggable: false,
+        selectable: false,
+        connectable: false,
+      });
+    }
+    for (const lane of ["pending", "cooling_5h", "cooling_weekly", "disabled"] as const) {
+      let laneCursor = 0;
+      for (const credential of credentialsByLane[lane]) {
+        laidNodes.push(
+          makeNode("credential", credential.id, COL_X[lane] - COL_X.pending, laneCursor, {
+            ...credential,
+            lane,
+          }),
+        );
+        laneCursor += NODE_H + NODE_GAP;
+      }
     }
   }
 
   const laidEdges: Edge[] = source.edges.map((edge) => {
+    const useEdge = isUseEdgeKind(edge.kind);
     return {
       id: edge.id,
       source: nodeId(edge.sourceType, edge.sourceId),
       target: nodeId(edge.targetType, edge.targetId),
-      type: "step",
+      type: useEdge ? "traffic" : "step",
       animated: false,
       markerEnd: MarkerType.ArrowClosed,
       pathOptions: { offset: 28, borderRadius: 8 },
       style: useEdgeStyle(edge.kind),
-      data: { kind: edge.kind },
+      data: {
+        kind: edge.kind,
+        working: false,
+        afterglow: false,
+        inFlight: 0,
+        dimmed: false,
+      },
     };
   });
 
@@ -675,71 +590,174 @@ function relatedIds(
 }
 
 function applyHighlight() {
-  const selected = selectedNodeId.value;
-  const related = selected ? relatedIds(selected, edges.value) : null;
-  for (const node of nodes.value) {
-    if (node.type === "lane_header") continue;
-    node.data.active = node.id === selected;
-    node.data.dimmed = related != null && !related.has(node.id);
+  for (const board of boards.value) {
+    const selected =
+      selectedBoardKey.value === board.key ? selectedNodeId.value : null;
+    const related = selected ? relatedIds(selected, board.edges) : null;
+    for (const node of board.nodes) {
+      if (node.type === "lane_header") continue;
+      node.data.active = node.id === selected;
+      node.data.dimmed = related != null && !related.has(node.id);
+    }
+    for (const edge of board.edges) {
+      const keep = related == null || (related.has(edge.source) && related.has(edge.target));
+      edge.style = {
+        ...(edge.style ?? {}),
+        opacity: keep ? 1 : 0.12,
+      };
+      if (edge.data) edge.data.dimmed = !keep;
+    }
   }
-  for (const edge of edges.value) {
-    const keep = related == null || (related.has(edge.source) && related.has(edge.target));
-    edge.style = {
-      ...(edge.style ?? {}),
-      opacity: keep ? 1 : 0.12,
-    };
+}
+
+function parseNodeNumericId(id: string): number | null {
+  const value = Number(id.slice(id.indexOf(":") + 1));
+  return Number.isSafeInteger(value) ? value : null;
+}
+
+function patchGraphData(
+  target: { data?: any },
+  patch: { working: boolean; afterglow: boolean; inFlight: number },
+) {
+  const current = target.data ?? {};
+  if (
+    current.working === patch.working &&
+    current.afterglow === patch.afterglow &&
+    current.inFlight === patch.inFlight
+  ) {
+    return;
+  }
+  target.data = { ...current, ...patch };
+}
+
+function applyLiveLoad() {
+  const live = lastLive.value;
+  const keyLoad = new Map((live?.keys ?? []).map((row) => [row.id, row]));
+  const credLoad = new Map((live?.credentials ?? []).map((row) => [row.id, row]));
+  const hopLoad = new Map(
+    (live?.hops ?? []).map((row) => [`${row.virtualKeyId}:${row.credentialId}`, row]),
+  );
+  const workingEmployees = new Set<number>();
+  const allNodes: any[] = [];
+  const allEdges: any[] = [];
+  for (const board of boards.value) {
+    for (const node of board.nodes) allNodes.push(node);
+    for (const edge of board.edges) allEdges.push(edge);
+  }
+
+  for (const node of allNodes) {
+    if (node.type === "lane_header") continue;
+    if (node.type === "virtual_key") {
+      const load = keyLoad.get(Number(node.data.id));
+      const working = Boolean(load && (load.inFlight > 0 || load.afterglow));
+      patchGraphData(node, {
+        working,
+        afterglow: Boolean(working && load && load.inFlight <= 0),
+        inFlight: load?.inFlight ?? 0,
+      });
+      if (working && typeof node.data.employeeId === "number") {
+        workingEmployees.add(node.data.employeeId);
+      }
+      continue;
+    }
+    if (node.type === "credential") {
+      const load = credLoad.get(Number(node.data.id));
+      const working = Boolean(load && (load.inFlight > 0 || load.afterglow));
+      patchGraphData(node, {
+        working,
+        afterglow: Boolean(working && load && load.inFlight <= 0),
+        inFlight: load?.inFlight ?? 0,
+      });
+      continue;
+    }
+    patchGraphData(node, { working: false, afterglow: false, inFlight: 0 });
+  }
+  for (const node of allNodes) {
+    if (node.type !== "employee") continue;
+    patchGraphData(node, {
+      working: workingEmployees.has(Number(node.data.id)),
+      afterglow: false,
+      inFlight: 0,
+    });
+  }
+
+  for (const edge of allEdges) {
+    const kind = edge.data?.kind as BindingKind | undefined;
+    if (!kind || !isUseEdgeKind(kind) || !edge.data) {
+      if (edge.data) patchGraphData(edge, { working: false, afterglow: false, inFlight: 0 });
+      continue;
+    }
+    const sourceId = parseNodeNumericId(String(edge.source));
+    const targetId = parseNodeNumericId(String(edge.target));
+    const hop =
+      sourceId != null && targetId != null ? hopLoad.get(`${sourceId}:${targetId}`) : undefined;
+    const working = Boolean(hop && (hop.inFlight > 0 || hop.afterglow));
+    patchGraphData(edge, {
+      working,
+      afterglow: Boolean(working && hop && hop.inFlight <= 0),
+      inFlight: hop?.inFlight ?? 0,
+    });
   }
 }
 
 function renderGraph() {
   if (!graph.value) {
-    nodes.value = [];
-    edges.value = [];
+    boards.value = [];
+    activeBoardKey.value = "";
     return;
   }
-  const laid = layoutGraph(visibleGraph(graph.value, bindingKind.value));
-  nodes.value = laid.nodes;
-  edges.value = laid.edges;
+  const nextBoards = splitIntoBoards(graph.value).map((item) => {
+    const laid = layoutGraph(item.graph, item.mode);
+    return {
+      key: item.key,
+      title: item.title,
+      mode: item.mode,
+      nodes: laid.nodes,
+      edges: laid.edges,
+    };
+  });
+  boards.value = nextBoards;
+  if (!nextBoards.some((board) => board.key === activeBoardKey.value)) {
+    activeBoardKey.value = nextBoards[0]?.key ?? "";
+  }
   applyHighlight();
-  void nextTick(() => fitGraph());
+  applyLiveLoad();
 }
 
-function onNodeClick(event: NodeMouseEvent) {
-  selectedNodeId.value = event.node.id === selectedNodeId.value ? null : event.node.id;
+function onTabChange() {
+  selectedNodeId.value = null;
+  selectedBoardKey.value = null;
   applyHighlight();
 }
 
-function clearHighlight() {
+function onNodeClick(boardKey: string, event: NodeMouseEvent) {
+  if (selectedBoardKey.value === boardKey && selectedNodeId.value === event.node.id) {
+    selectedBoardKey.value = null;
+    selectedNodeId.value = null;
+  } else {
+    selectedBoardKey.value = boardKey;
+    selectedNodeId.value = event.node.id;
+  }
+  applyHighlight();
+}
+
+function onPaneClick(boardKey: string) {
+  if (selectedBoardKey.value !== boardKey) return;
+  selectedBoardKey.value = null;
   selectedNodeId.value = null;
   applyHighlight();
-}
-
-let flowStore: VueFlowStore | null = null;
-
-function onFlowInit(store: VueFlowStore) {
-  flowStore = store;
-  fitGraph();
-}
-
-function fitGraph() {
-  flowStore?.fitView({ padding: 0.18 });
 }
 
 async function load() {
   loading.value = true;
   try {
-    const { data } = await http.get("/api/admin/key-bindings", {
-      params: {
-        productLineId: productLineId.value || undefined,
-        enterpriseId: enterpriseId.value || undefined,
-        q: keyword.value.trim() || undefined,
-      },
-    });
+    const { data } = await http.get("/api/admin/key-bindings");
     if (!data.success) {
       throw new Error(data.message || "加载失败");
     }
     graph.value = data.data;
     selectedNodeId.value = null;
+    selectedBoardKey.value = null;
     renderGraph();
   } catch (error) {
     const err = error as { response?: { data?: { message?: string } }; message?: string };
@@ -749,22 +767,49 @@ async function load() {
   }
 }
 
-let searchTimer: ReturnType<typeof setTimeout> | null = null;
-watch([productLineId, enterpriseId], () => {
-  load();
-});
-watch(bindingKind, () => {
-  selectedNodeId.value = null;
-  renderGraph();
-});
-watch(keyword, () => {
-  if (searchTimer) clearTimeout(searchTimer);
-  searchTimer = setTimeout(() => {
-    load();
-  }, 300);
+let liveTimer: ReturnType<typeof setInterval> | null = null;
+
+async function pollLive() {
+  if (typeof document !== "undefined" && document.hidden) return;
+  try {
+    const { data } = await http.get("/api/admin/key-bindings/live");
+    if (!data.success) return;
+    lastLive.value = data.data;
+    applyLiveLoad();
+  } catch {
+    // Keep the last snapshot; a missed poll should not toast.
+  }
+}
+
+function startLivePolling() {
+  stopLivePolling();
+  void pollLive();
+  liveTimer = setInterval(() => {
+    void pollLive();
+  }, LIVE_POLL_MS);
+}
+
+function stopLivePolling() {
+  if (!liveTimer) return;
+  clearInterval(liveTimer);
+  liveTimer = null;
+}
+
+function onVisibilityChange() {
+  if (document.hidden) return;
+  void pollLive();
+}
+
+onMounted(() => {
+  void load();
+  startLivePolling();
+  document.addEventListener("visibilitychange", onVisibilityChange);
 });
 
-onMounted(load);
+onUnmounted(() => {
+  stopLivePolling();
+  document.removeEventListener("visibilitychange", onVisibilityChange);
+});
 </script>
 
 <style scoped>
@@ -783,15 +828,9 @@ onMounted(load);
   margin: 0;
 }
 
-.page-subtitle {
-  margin: 6px 0 0;
-  color: #94a3b8;
-  font-size: 13px;
-}
-
 .page-head {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 12px;
 }
@@ -800,279 +839,39 @@ onMounted(load);
   flex-shrink: 0;
 }
 
-.filters {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  margin-top: 16px;
-}
-
-.filter-item {
-  width: 200px;
-}
-
-.filter-search {
-  width: min(320px, 100%);
-}
-
-.legend {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 14px;
-  margin-top: 14px;
-  color: #64748b;
-  font-size: 12px;
-}
-
-.legend-item {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.legend-count {
-  margin-left: auto;
-}
-
-.swatch,
-.line {
-  display: inline-block;
-  border-radius: 999px;
-}
-
-.swatch {
-  width: 10px;
-  height: 10px;
-}
-
-.swatch.enterprise {
-  background: #4338ca;
-}
-
-.swatch.team {
-  background: #0891b2;
-}
-
-.swatch.employee {
-  background: #0f766e;
-}
-
-.tier-dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 999px;
-}
-
-.tier-dot.light {
-  background: #64748b;
-}
-
-.tier-dot.standard {
-  background: #2563eb;
-}
-
-.tier-dot.heavy {
-  background: #dc2626;
-}
-
-.swatch.virtual {
-  background: #2563eb;
-}
-
-.swatch.bound {
-  background: #c2410c;
-}
-
-.swatch.pending {
-  background: #ca8a04;
-}
-
-.swatch.cooling_5h {
-  background: #d97706;
-}
-
-.swatch.cooling_weekly {
-  background: #b91c1c;
-}
-
-.swatch.disabled {
-  background: #94a3b8;
-}
-
-.line {
-  width: 18px;
-  height: 2px;
-}
-
-.line.dedicated {
-  background: #2563eb;
-}
-
-.line.team_shared {
-  background: repeating-linear-gradient(90deg, #0891b2 0 6px, transparent 6px 10px);
-}
-
-.line.enterprise_shared {
-  background: repeating-linear-gradient(90deg, #4338ca 0 3px, transparent 3px 7px);
-}
-
-.canvas-card {
+.canvas-shell {
   display: flex;
   flex: 1;
+  flex-direction: column;
   min-height: 0;
   padding: 0;
   overflow: hidden;
 }
 
-.canvas-card :deep(.el-empty) {
+.canvas-shell :deep(.el-empty) {
   margin: auto;
 }
 
-.canvas-card :deep(.vue-flow) {
-  width: 100%;
-  height: 100%;
-  background: #f8fafc;
-}
-
-.canvas-card :deep(.vue-flow__node) {
-  width: 250px;
-  height: 92px;
-  padding: 0;
-  border: none;
-  background: transparent;
-  box-shadow: none;
-  text-align: left;
-}
-
-.canvas-card :deep(.vue-flow__handle) {
-  top: 46px;
-  transform: translate(-50%, -50%);
-}
-
-.canvas-card :deep(.vue-flow__handle-right) {
-  transform: translate(50%, -50%);
-}
-
-.graph-node {
-  box-sizing: border-box;
+.board-tabs {
   display: flex;
+  flex: 1;
   flex-direction: column;
-  justify-content: center;
-  gap: 4px;
-  width: 250px;
-  height: 92px;
-  padding: 10px 14px;
-  border: 1px solid #e2e8f0;
-  border-radius: 12px;
-  background: #fff;
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+  min-height: 0;
 }
 
-.graph-node strong {
-  font-size: 13px;
-  font-weight: 650;
-  color: #0f172a;
+.board-tabs :deep(.el-tabs__header) {
+  flex-shrink: 0;
+  margin: 0;
+  padding: 8px 16px 0;
 }
 
-.graph-node span {
-  color: #64748b;
-  font-size: 12px;
-  line-height: 1.35;
+.board-tabs :deep(.el-tabs__content) {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
 }
 
-.graph-node .mono {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  color: #334155;
-}
-
-.graph-node.enterprise {
-  border-left: 3px solid #4338ca;
-}
-
-.graph-node.team {
-  border-left: 3px solid #0891b2;
-}
-
-.graph-node.employee {
-  border-left: 3px solid #0f766e;
-}
-
-.graph-node .tier {
-  align-self: flex-start;
-  padding: 1px 6px;
-  border-radius: 999px;
-  font-size: 11px;
-  font-weight: 600;
-  font-style: normal;
-}
-
-.graph-node .tier.light {
-  color: #475569;
-  background: #f1f5f9;
-}
-
-.graph-node .tier.standard {
-  color: #1d4ed8;
-  background: #dbeafe;
-}
-
-.graph-node .tier.heavy {
-  color: #b91c1c;
-  background: #fee2e2;
-}
-
-.graph-node.virtual {
-  border-left: 3px solid #2563eb;
-}
-
-.lane-header {
-  width: 250px;
-  padding: 8px 12px;
-  border-radius: 8px;
-  background: #0f172a;
-  color: #f8fafc;
-  font-size: 12px;
-  font-weight: 650;
-  letter-spacing: 0.02em;
-  text-align: center;
-}
-
-.graph-node.credential.bound {
-  border-left: 3px solid #c2410c;
-}
-
-.graph-node.credential.pending {
-  border-left: 3px solid #ca8a04;
-}
-
-.graph-node.credential.cooling_5h {
-  border-left: 3px solid #d97706;
-}
-
-.graph-node.credential.cooling_weekly {
-  border-left: 3px solid #b91c1c;
-}
-
-.graph-node.credential.disabled {
-  border-left: 3px solid #94a3b8;
-  opacity: 0.78;
-}
-
-.graph-node.active {
-  border-color: #2563eb;
-  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.16);
-}
-
-.graph-node.dimmed {
-  opacity: 0.22;
-}
-
-.canvas-card :deep(.vue-flow__handle) {
-  width: 8px;
-  height: 8px;
-  border: 0;
-  background: #94a3b8;
-  opacity: 0.9;
+.board-tabs :deep(.el-tab-pane) {
+  height: 100%;
 }
 </style>

@@ -37,6 +37,8 @@ const [
   { redis },
   { getDefaultEnterpriseId },
   { hourStartOf },
+  { env },
+  { quotaDayAt },
 ] = await Promise.all([
   import("../src/app.js"),
   import("../src/db/client.js"),
@@ -46,6 +48,8 @@ const [
   import("../src/redis.js"),
   import("../src/lib/enterprise.js"),
   import("../src/lib/relay/credential-quota.js"),
+  import("../src/config.js"),
+  import("../src/lib/quota-time.js"),
 ]);
 
 const {
@@ -67,6 +71,12 @@ const {
 } = schema;
 
 type UsageTier = "light" | "standard" | "heavy";
+
+const PEAK_TOKENS_BY_TIER: Record<UsageTier, number> = {
+  light: 100_000,
+  standard: 12_000_000,
+  heavy: 80_000_000,
+};
 
 type CreatedEmployee = {
   id: number;
@@ -217,6 +227,12 @@ async function insertEmployee(input: {
     teamId: input.teamId,
     employeeId: employee.id,
     role: "member",
+  });
+  await db.insert(usageCountersDaily).values({
+    day: quotaDayAt(new Date(), env.QUOTA_TIMEZONE),
+    employeeId: employee.id,
+    totalTokens: PEAK_TOKENS_BY_TIER[input.usageTier],
+    requestCount: 1,
   });
   return { id: employee.id, phone, apiKeyRaw: "" };
 }

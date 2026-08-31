@@ -74,7 +74,7 @@ export const employees = pgTable(
     mustChangePassword: boolean("must_change_password").notNull().default(true),
     passwordChangedAt: timestamp("password_changed_at", { withTimezone: true }),
     lastLoginAt: timestamp("last_login_at", { withTimezone: true }),
-    usageTier: usageTierEnum("usage_tier").notNull().default("standard"),
+    usageTier: usageTierEnum("usage_tier").notNull().default("heavy"),
     createdBy: bigint("created_by", { mode: "number" }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),

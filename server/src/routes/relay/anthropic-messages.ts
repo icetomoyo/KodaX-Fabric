@@ -502,6 +502,7 @@ async function handleNativeRequest(
         forwardHeaders: req.headers,
         requestId,
         signal: req.signal,
+        virtualKeyId: principal.employeeApiKeyId,
       });
       activeAttempt = result;
 

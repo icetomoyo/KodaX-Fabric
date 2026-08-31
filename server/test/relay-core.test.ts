@@ -12,9 +12,12 @@ const { parseRelayUsage } = await import("../src/lib/relay/audit.js");
 const { credentialSupportsProtocol, orderRelayCandidates } = await import(
   "../src/lib/relay/routing.js"
 );
-const { beginCredentialUse, getCredentialLoad, recordCredentialTokens } = await import(
-  "../src/lib/relay/credential-load.js"
-);
+const {
+  beginCredentialUse,
+  getCredentialLoad,
+  recordCredentialTokens,
+  snapshotRelayLiveLoad,
+} = await import("../src/lib/relay/credential-load.js");
 const { SseAuditInspector, createSsePassthrough } = await import(
   "../src/lib/relay/sse.js"
 );
@@ -176,6 +179,81 @@ test("credential load counts in-flight uses and releases idempotently", () => {
   assert.deepEqual(getCredentialLoad(credentialId), { inFlight: 1, totalUses: 2, totalTokens: 0 });
   releaseSecond();
   assert.deepEqual(getCredentialLoad(credentialId), { inFlight: 0, totalUses: 2, totalTokens: 0 });
+});
+
+test("live load snapshot attributes in-flight hops to the virtual key", () => {
+  const credentialId = 990_101;
+  const virtualKeyA = 880_101;
+  const virtualKeyB = 880_102;
+  const releaseA = beginCredentialUse(credentialId, virtualKeyA);
+  const releaseB = beginCredentialUse(credentialId, virtualKeyB);
+  assert.equal(getCredentialLoad(credentialId).inFlight, 2);
+  const live = snapshotRelayLiveLoad(Date.now(), 4_000);
+  assert.deepEqual(
+    live.keys.filter((row) => row.id === virtualKeyA || row.id === virtualKeyB),
+    [
+      { id: virtualKeyA, inFlight: 1, afterglow: false },
+      { id: virtualKeyB, inFlight: 1, afterglow: false },
+    ],
+  );
+  assert.deepEqual(
+    live.credentials.find((row) => row.id === credentialId),
+    { id: credentialId, inFlight: 2, afterglow: false },
+  );
+  assert.deepEqual(
+    live.hops.filter((hop) => hop.credentialId === credentialId),
+    [
+      { virtualKeyId: virtualKeyA, credentialId, inFlight: 1, afterglow: false },
+      { virtualKeyId: virtualKeyB, credentialId, inFlight: 1, afterglow: false },
+    ],
+  );
+  releaseA();
+  const afterOne = snapshotRelayLiveLoad(Date.now(), 4_000);
+  assert.equal(getCredentialLoad(credentialId).inFlight, 1);
+  assert.deepEqual(
+    afterOne.hops.find((hop) => hop.virtualKeyId === virtualKeyA),
+    { virtualKeyId: virtualKeyA, credentialId, inFlight: 0, afterglow: true },
+  );
+  assert.deepEqual(
+    afterOne.hops.find((hop) => hop.virtualKeyId === virtualKeyB),
+    { virtualKeyId: virtualKeyB, credentialId, inFlight: 1, afterglow: false },
+  );
+  releaseB();
+});
+
+test("live load afterglow expires without changing scheduling counters", () => {
+  const credentialId = 990_103;
+  const virtualKeyId = 880_103;
+  const startedAt = Date.now();
+  const release = beginCredentialUse(credentialId, virtualKeyId);
+  release();
+  assert.equal(getCredentialLoad(credentialId).inFlight, 0);
+  const glowing = snapshotRelayLiveLoad(startedAt + 1_000, 4_000);
+  assert.deepEqual(
+    glowing.hops.filter((hop) => hop.virtualKeyId === virtualKeyId),
+    [{ virtualKeyId, credentialId, inFlight: 0, afterglow: true }],
+  );
+  assert.deepEqual(
+    glowing.keys.filter((row) => row.id === virtualKeyId),
+    [{ id: virtualKeyId, inFlight: 0, afterglow: true }],
+  );
+  const expired = snapshotRelayLiveLoad(startedAt + 5_000, 4_000);
+  assert.equal(expired.hops.some((hop) => hop.virtualKeyId === virtualKeyId), false);
+  assert.equal(expired.keys.some((row) => row.id === virtualKeyId), false);
+  assert.equal(expired.credentials.some((row) => row.id === credentialId), false);
+});
+
+test("credential-only uses do not invent a virtual-key hop", () => {
+  const credentialId = 990_104;
+  const release = beginCredentialUse(credentialId);
+  const live = snapshotRelayLiveLoad(Date.now(), 4_000);
+  assert.equal(getCredentialLoad(credentialId).inFlight, 1);
+  assert.deepEqual(
+    live.credentials.find((row) => row.id === credentialId),
+    { id: credentialId, inFlight: 1, afterglow: false },
+  );
+  assert.equal(live.hops.some((hop) => hop.credentialId === credentialId), false);
+  release();
 });
 
 test("credential load accumulates observed tokens for later scheduling", () => {

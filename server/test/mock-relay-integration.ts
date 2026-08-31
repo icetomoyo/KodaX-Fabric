@@ -32,6 +32,8 @@ const [
   { encryptSecret, secretSuffix },
   { redis },
   { getDefaultEnterpriseId },
+  { env },
+  { quotaDayAt },
 ] = await Promise.all([
   import("../src/app.js"),
   import("../src/db/client.js"),
@@ -40,6 +42,8 @@ const [
   import("../src/lib/crypto-secret.js"),
   import("../src/redis.js"),
   import("../src/lib/enterprise.js"),
+  import("../src/config.js"),
+  import("../src/lib/quota-time.js"),
 ]);
 
 const {
@@ -369,6 +373,12 @@ async function insertFixtures(upstreamBaseUrl: string): Promise<void> {
     })
     .returning({ id: employees.id });
   created.employeeId = employee.id;
+  await db.insert(usageCountersDaily).values({
+    day: quotaDayAt(new Date(), env.QUOTA_TIMEZONE),
+    employeeId: employee.id,
+    totalTokens: 80_000_000,
+    requestCount: 1,
+  });
 
   const [team] = await db
     .insert(teams)

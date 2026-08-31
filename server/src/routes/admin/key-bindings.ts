@@ -16,6 +16,7 @@ import {
   usageCountersDaily,
 } from "../../db/schema/index.js";
 import { effectiveCredentialStatus } from "../../lib/credential-status.js";
+import { snapshotRelayLiveLoad } from "../../lib/relay/credential-load.js";
 import { buildKeyBindingGraph } from "../../lib/key-binding-graph.js";
 import { addCalendarDays, quotaDayAt } from "../../lib/quota-time.js";
 import {
@@ -23,7 +24,7 @@ import {
   getCredentialQuotaUsage,
   resolveGraphCoolingKind,
 } from "../../lib/relay/credential-quota.js";
-import { classifyUsageTier } from "../../lib/usage-tier.js";
+import { effectiveUsageTier } from "../../lib/usage-tier.js";
 import {
   requirePasswordChanged,
   requireRoles,
@@ -64,6 +65,7 @@ export async function adminKeyBindingRoutes(app: FastifyInstance) {
           teamName: teams.name,
           status: employeeApiKeys.status,
           employeeName: employees.name,
+          usageTier: employees.usageTier,
           enterpriseId: employees.enterpriseId,
           enterpriseName: enterprises.name,
         })
@@ -135,7 +137,7 @@ export async function adminKeyBindingRoutes(app: FastifyInstance) {
         enterpriseName: string | null;
         teamId: number | null;
         teamName: string | null;
-        usageTier: ReturnType<typeof classifyUsageTier>;
+        usageTier: ReturnType<typeof effectiveUsageTier>;
       }
     >();
     for (const row of keyRows) {
@@ -148,7 +150,10 @@ export async function adminKeyBindingRoutes(app: FastifyInstance) {
         enterpriseName: row.enterpriseName,
         teamId: membership?.teamId ?? row.teamId,
         teamName: membership?.teamName ?? row.teamName,
-        usageTier: classifyUsageTier(peakByEmployee.get(row.employeeId) ?? null),
+        usageTier: effectiveUsageTier(
+          row.usageTier,
+          peakByEmployee.get(row.employeeId) ?? null,
+        ),
       });
     }
 
@@ -206,6 +211,10 @@ export async function adminKeyBindingRoutes(app: FastifyInstance) {
     });
 
     return { success: true, data: graph };
+  });
+
+  app.get("/api/admin/key-bindings/live", async () => {
+    return { success: true, data: snapshotRelayLiveLoad() };
   });
 }
 

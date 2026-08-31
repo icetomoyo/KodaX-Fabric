@@ -3,13 +3,29 @@ import test from "node:test";
 import {
   classifyUsageTier,
   classifyUsageTierFromDays,
+  effectiveUsageTier,
+  stepUsageTier,
 } from "../src/lib/usage-tier.js";
 
-test("new or unused users default to standard", () => {
-  assert.equal(classifyUsageTier(null), "standard");
-  assert.equal(classifyUsageTier(undefined), "standard");
-  assert.equal(classifyUsageTier(0), "standard");
-  assert.equal(classifyUsageTierFromDays([]), "standard");
+test("new or unused users default to heavy", () => {
+  assert.equal(classifyUsageTier(null), "heavy");
+  assert.equal(classifyUsageTier(undefined), "heavy");
+  assert.equal(classifyUsageTier(0), "heavy");
+  assert.equal(classifyUsageTierFromDays([]), "heavy");
+});
+
+test("tier changes move one rung at a time", () => {
+  assert.equal(stepUsageTier("heavy", "light"), "standard");
+  assert.equal(stepUsageTier("standard", "light"), "light");
+  assert.equal(stepUsageTier("light", "heavy"), "standard");
+  assert.equal(stepUsageTier("standard", "heavy"), "heavy");
+  assert.equal(stepUsageTier("heavy", "heavy"), "heavy");
+});
+
+test("a new heavy user with a quiet first window steps down to standard, not light", () => {
+  assert.equal(effectiveUsageTier("heavy", 699_847), "standard");
+  assert.equal(effectiveUsageTier("standard", 699_847), "light");
+  assert.equal(effectiveUsageTier("heavy", null), "heavy");
 });
 
 test("daily usage below 3 million is light", () => {

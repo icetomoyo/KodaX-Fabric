@@ -546,6 +546,7 @@ export async function chatCompletionRoutes(app: FastifyInstance) {
             body,
             requestId,
             signal: req.signal,
+            virtualKeyId: principal.employeeApiKeyId,
           });
           activeAttempt = result;
 

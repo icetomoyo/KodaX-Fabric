@@ -3,10 +3,9 @@
  *
  * Recalculates `employees.usageTier` from the last 7 calendar days' peak
  * `usage_counters_daily.totalTokens` (same window as the admin key-bindings
- * view). A tier change does not rewrite existing binding rows: request-time
- * scope resolution naturally lands on the new exclusive / team / enterprise
- * scope and creates bindings on demand. `releaseOrphanBindings` then drops
- * bindings whose scope subject no longer applies.
+ * view and request-time binding). After a tier change, rebound each employee
+ * onto the Key their new scope needs, one rung at a time (heavy exclusive →
+ * standard team → light enterprise) and drop bindings nobody still needs.
  */
 import { and, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import type { FastifyBaseLogger } from "fastify";
@@ -14,12 +13,16 @@ import { env } from "../config.js";
 import { db } from "../db/client.js";
 import { employees, usageCountersDaily } from "../db/schema/index.js";
 import { addCalendarDays, quotaDayAt } from "./quota-time.js";
-import { releaseOrphanBindings } from "./relay/binding.js";
-import { classifyUsageTier, USAGE_TIERS, type UsageTier } from "./usage-tier.js";
+import {
+  rebindEmployeesToCurrentScope,
+  releaseOrphanBindings,
+} from "./relay/binding.js";
+import { effectiveUsageTier, USAGE_TIERS, type UsageTier } from "./usage-tier.js";
 
 export type TierRebindResult = {
   employeeCount: number;
   changedCount: number;
+  reboundCount: number;
   orphanReleased: number;
 };
 
@@ -61,24 +64,28 @@ export async function runTierRebindOnce(
 
   const idsByNextTier = emptyIdsByTier();
   for (const row of activeRows) {
-    const next = classifyUsageTier(peakByEmployee.get(row.id) ?? null);
+    const next = effectiveUsageTier(row.usageTier, peakByEmployee.get(row.id) ?? null);
     if (next !== row.usageTier) {
       idsByNextTier[next].push(row.id);
     }
   }
 
   let changedCount = 0;
+  const changedIds: number[] = [];
   for (const tier of USAGE_TIERS) {
     const ids = idsByNextTier[tier];
     if (ids.length === 0) continue;
-    await db.update(employees).set({ usageTier: tier }).where(inArray(employees.id, ids));
+    await db.update(employees).set({ usageTier: tier, updatedAt: now }).where(inArray(employees.id, ids));
     changedCount += ids.length;
+    changedIds.push(...ids);
   }
 
+  const reboundCount = await rebindEmployeesToCurrentScope(changedIds, now);
   const orphanReleased = await releaseOrphanBindings(now);
   const result: TierRebindResult = {
     employeeCount: activeRows.length,
     changedCount,
+    reboundCount,
     orphanReleased,
   };
   logger.info(result, "tier rebind completed");

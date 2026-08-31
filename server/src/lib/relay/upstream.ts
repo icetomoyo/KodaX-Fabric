@@ -43,6 +43,7 @@ export type SendRelayUpstreamChatInput = {
   signal?: AbortSignal;
   timeoutMs?: number;
   cooldownSeconds?: number;
+  virtualKeyId?: number;
 };
 
 export type RelayUpstreamOperation =
@@ -66,6 +67,7 @@ export type SendRelayUpstreamInput = {
   timeoutMs?: number;
   cooldownSeconds?: number;
   method?: "GET" | "POST";
+  virtualKeyId?: number;
 };
 
 type RequestLifetime = {
@@ -513,7 +515,10 @@ export async function sendRelayUpstream(
   const baseLifetime = createRequestLifetime(timeoutMs, input.signal);
   // Load tracking must span the whole attempt, including streamed bodies, so
   // release is tied to the same cleanup/abort pair that owns the lifetime.
-  const releaseLoad = beginCredentialUse(input.candidate.credentialId);
+  const releaseLoad = beginCredentialUse(
+    input.candidate.credentialId,
+    input.virtualKeyId,
+  );
   const lifetime: RequestLifetime = {
     signal: baseLifetime.signal,
     didTimeout: baseLifetime.didTimeout,

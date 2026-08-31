@@ -6,7 +6,13 @@ process.env.REDIS_URL ??= "redis://127.0.0.1:6379/15";
 process.env.JWT_SECRET ??= "unit-test-jwt-secret";
 process.env.CREDENTIAL_ENCRYPT_KEY ??= "unit-test-credential-secret";
 
-const { resolveBindingScope } = await import("../src/lib/relay/binding.js");
+const { classifyUsageTier } = await import("../src/lib/usage-tier.js");
+const {
+  bindingStillNeeded,
+  resolveBindingScope,
+  resolveBindingScopeFromPeak,
+  unusedBindingIds,
+} = await import("../src/lib/relay/binding.js");
 
 test("heavy always binds to the employee, ignoring team and enterprise", () => {
   assert.deepEqual(
@@ -62,6 +68,131 @@ test("standard without a team or enterprise cannot resolve a scope", () => {
       enterpriseId: null,
     }),
     null,
+  );
+});
+
+test("unused peak classifies as heavy exclusive, quiet usage as light enterprise", () => {
+  assert.deepEqual(
+    resolveBindingScopeFromPeak({
+      employeeId: 29,
+      peakTokens: null,
+      teamId: 4,
+      enterpriseId: 2,
+    }),
+    { scopeType: "employee", scopeId: 29 },
+  );
+  assert.equal(classifyUsageTier(0), "heavy");
+  for (const peak of [1, 699_847]) {
+    assert.deepEqual(
+      resolveBindingScopeFromPeak({
+        employeeId: 29,
+        peakTokens: peak,
+        teamId: 4,
+        enterpriseId: 2,
+      }),
+      { scopeType: "enterprise", scopeId: 2 },
+      `peak=${String(peak)} classified as ${classifyUsageTier(peak)}`,
+    );
+  }
+});
+
+test("stored standard tier does not keep a low-usage employee on the team Key", () => {
+  assert.deepEqual(
+    resolveBindingScopeFromPeak({
+      employeeId: 29,
+      peakTokens: 66_797,
+      teamId: 4,
+      enterpriseId: 2,
+    }),
+    { scopeType: "enterprise", scopeId: 2 },
+  );
+  assert.deepEqual(
+    resolveBindingScope({
+      employeeId: 29,
+      usageTier: "standard",
+      teamId: 4,
+      enterpriseId: 2,
+    }),
+    { scopeType: "team", scopeId: 4 },
+  );
+});
+
+test("enterprise binding is unused after light users upgrade to standard", () => {
+  const people = [
+    {
+      id: 1,
+      usageTier: "standard" as const,
+      teamId: 10,
+      enterpriseId: 2,
+    },
+    {
+      id: 2,
+      usageTier: "heavy" as const,
+      teamId: 10,
+      enterpriseId: 2,
+    },
+  ];
+  assert.equal(
+    bindingStillNeeded({ scopeType: "enterprise", scopeId: 2 }, people),
+    false,
+  );
+  assert.deepEqual(
+    unusedBindingIds([{ id: 78, scopeType: "enterprise", scopeId: 2 }], people),
+    [78],
+  );
+});
+
+test("team binding is unused after the last standard member becomes heavy", () => {
+  const people = [
+    {
+      id: 1,
+      usageTier: "heavy" as const,
+      teamId: 10,
+      enterpriseId: 2,
+    },
+    {
+      id: 2,
+      usageTier: "light" as const,
+      teamId: 10,
+      enterpriseId: 2,
+    },
+  ];
+  assert.equal(bindingStillNeeded({ scopeType: "team", scopeId: 10 }, people), false);
+  assert.equal(
+    bindingStillNeeded({ scopeType: "employee", scopeId: 1 }, people),
+    true,
+  );
+});
+
+test("shared bindings stay when someone still resolves onto them", () => {
+  const people = [
+    {
+      id: 1,
+      usageTier: "light" as const,
+      teamId: 10,
+      enterpriseId: 2,
+    },
+    {
+      id: 2,
+      usageTier: "standard" as const,
+      teamId: 10,
+      enterpriseId: 2,
+    },
+  ];
+  assert.equal(
+    bindingStillNeeded({ scopeType: "enterprise", scopeId: 2 }, people),
+    true,
+  );
+  assert.equal(bindingStillNeeded({ scopeType: "team", scopeId: 10 }, people), true);
+  assert.deepEqual(
+    unusedBindingIds(
+      [
+        { id: 1, scopeType: "enterprise", scopeId: 2 },
+        { id: 2, scopeType: "team", scopeId: 10 },
+      ],
+      people,
+    ),
+    [],
   );
 });
 

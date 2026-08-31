@@ -4,23 +4,28 @@ import {
   desc,
   eq,
   gt,
+  gte,
+  inArray,
   isNull,
   lte,
   notInArray,
   or,
   sql,
 } from "drizzle-orm";
+import { env } from "../../config.js";
 import { db } from "../../db/client.js";
 import {
   credentialBindings,
+  employeeApiKeys,
   employees,
-  enterprises,
   productLines,
   providers,
   teamMembers,
-  teams,
   upstreamCredentials,
+  usageCountersDaily,
 } from "../../db/schema/index.js";
+import { addCalendarDays, quotaDayAt } from "../quota-time.js";
+import { classifyUsageTier, effectiveUsageTier } from "../usage-tier.js";
 import {
   effectiveCredentialStatus,
   type CredentialStatus,
@@ -33,7 +38,7 @@ import {
   quotaExhaustedLastError,
   type CredentialQuotaStatus,
 } from "./credential-quota.js";
-import type { RelayProtocol } from "./protocol.js";
+import { isRelayProtocol, type RelayProtocol } from "./protocol.js";
 
 export type BindingScopeType = "employee" | "team" | "enterprise";
 
@@ -84,6 +89,13 @@ const MAX_POOL_ATTEMPTS = 3;
 
 type EmployeeScopeRow = {
   usageTier: UsageTier;
+  enterpriseId: number | null;
+};
+
+export type BindingEligibilityPerson = {
+  id: number;
+  usageTier: UsageTier;
+  teamId: number | null;
   enterpriseId: number | null;
 };
 
@@ -148,6 +160,9 @@ const credentialSnapshotSelect = {
  *
  * heavy → exclusive employee Key; standard → team share, else enterprise;
  * light → enterprise share. Returns null when the required subject is missing.
+ *
+ * Request-time binding steps `employees.usageTier` one rung toward the latest
+ * 7-day peak (new users start 重度 and degrade 标准 → 轻度).
  */
 export function resolveBindingScope(input: ResolveBindingScopeInput): BindingScope | null {
   if (input.usageTier === "heavy") {
@@ -172,13 +187,90 @@ export function resolveBindingScope(input: ResolveBindingScopeInput): BindingSco
 }
 
 /**
- * Load the employee's usage tier / org membership and resolve the binding scope.
- * Missing employees return null.
+ * Resolve scope from observed peak tokens only (no one-step clamp).
+ * Request-time binding uses `effectiveUsageTier` so a new 重度 user does not
+ * jump to 轻度 after the first quiet request.
+ */
+export function resolveBindingScopeFromPeak(
+  input: Omit<ResolveBindingScopeInput, "usageTier"> & {
+    peakTokens: number | null | undefined;
+  },
+): BindingScope | null {
+  return resolveBindingScope({
+    employeeId: input.employeeId,
+    usageTier: classifyUsageTier(input.peakTokens),
+    teamId: input.teamId,
+    enterpriseId: input.enterpriseId,
+  });
+}
+
+/** True when at least one active employee would currently resolve onto this scope. */
+export function bindingStillNeeded(
+  binding: BindingScope,
+  people: readonly BindingEligibilityPerson[],
+): boolean {
+  return people.some((person) => {
+    const scope = resolveBindingScope({
+      employeeId: person.id,
+      usageTier: person.usageTier,
+      teamId: person.teamId,
+      enterpriseId: person.enterpriseId,
+    });
+    return scope?.scopeType === binding.scopeType && scope.scopeId === binding.scopeId;
+  });
+}
+
+export function unusedBindingIds(
+  bindings: readonly { id: number; scopeType: BindingScopeType; scopeId: number }[],
+  people: readonly BindingEligibilityPerson[],
+): number[] {
+  return bindings
+    .filter((row) => !bindingStillNeeded(row, people))
+    .map((row) => row.id);
+}
+
+async function loadPeakDailyTokens(employeeId: number, now: Date): Promise<number | null> {
+  const today = quotaDayAt(now, env.QUOTA_TIMEZONE);
+  const usageFrom = addCalendarDays(today, -6);
+  const [row] = await db
+    .select({
+      peakTokens: sql<number>`max(${usageCountersDaily.totalTokens})`,
+    })
+    .from(usageCountersDaily)
+    .where(
+      and(
+        eq(usageCountersDaily.employeeId, employeeId),
+        gte(usageCountersDaily.day, usageFrom),
+        lte(usageCountersDaily.day, today),
+      ),
+    );
+  const peak = Number(row?.peakTokens);
+  return Number.isFinite(peak) && peak > 0 ? peak : null;
+}
+
+type ResolvedEmployeeBinding = {
+  scope: BindingScope | null;
+  liveTier: UsageTier;
+  storedTier: UsageTier;
+};
+
+/**
+ * Load the employee's live usage tier / org membership and resolve the binding
+ * scope. Missing employees return null.
  */
 export async function resolveEmployeeBindingScope(
   employeeId: number,
+  now: Date = new Date(),
 ): Promise<BindingScope | null> {
-  const [employee, membership] = await Promise.all([
+  const resolved = await resolveEmployeeBinding(employeeId, now);
+  return resolved?.scope ?? null;
+}
+
+async function resolveEmployeeBinding(
+  employeeId: number,
+  now: Date,
+): Promise<ResolvedEmployeeBinding | null> {
+  const [employee, membership, peakTokens] = await Promise.all([
     db
       .select({
         usageTier: employees.usageTier,
@@ -194,14 +286,20 @@ export async function resolveEmployeeBindingScope(
       .where(eq(teamMembers.employeeId, employeeId))
       .limit(1)
       .then((rows): TeamMembershipRow | undefined => rows[0]),
+    loadPeakDailyTokens(employeeId, now),
   ]);
   if (!employee) return null;
-  return resolveBindingScope({
-    employeeId,
-    usageTier: employee.usageTier,
-    teamId: membership?.teamId ?? null,
-    enterpriseId: employee.enterpriseId,
-  });
+  const liveTier = effectiveUsageTier(employee.usageTier, peakTokens);
+  return {
+    liveTier,
+    storedTier: employee.usageTier,
+    scope: resolveBindingScope({
+      employeeId,
+      usageTier: liveTier,
+      teamId: membership?.teamId ?? null,
+      enterpriseId: employee.enterpriseId,
+    }),
+  };
 }
 
 /**
@@ -219,13 +317,22 @@ export async function acquireBoundCredential(
   params: AcquireBindingParams,
 ): Promise<AcquireBindingResult> {
   const now = params.now ?? new Date();
-  const scope = await resolveEmployeeBindingScope(params.employeeId);
-  if (!scope) {
+  const resolved = await resolveEmployeeBinding(params.employeeId, now);
+  if (!resolved?.scope) {
     return { ok: false, reason: "no_scope", retryAt: null };
+  }
+  const scope = resolved.scope;
+  const tierChanged = resolved.liveTier !== resolved.storedTier;
+  if (tierChanged) {
+    await db
+      .update(employees)
+      .set({ usageTier: resolved.liveTier, updatedAt: now })
+      .where(eq(employees.id, params.employeeId));
   }
 
   await restoreExpiredCooling(params.productLineId, now);
 
+  let result: AcquireBindingResult;
   const existing = await loadScopeBinding(params.productLineId, scope);
   if (existing) {
     const verdict = await inspectSnapshot(
@@ -235,72 +342,112 @@ export async function acquireBoundCredential(
       params.excludeCredentialIds,
     );
     if (verdict.kind === "usable") {
-      return {
+      result = {
         ok: true,
         credential: verdict.credential,
         bindingScope: scope,
         replaced: false,
       };
+    } else {
+      if (verdict.kind === "exhausted") {
+        await coolCredentialForQuota(existing.snapshot.credentialId, verdict.status, now);
+      }
+      await deleteBinding(existing.bindingId);
+      result = await bindFromPool(params, scope, now, true);
     }
-    if (verdict.kind === "exhausted") {
-      await coolCredentialForQuota(existing.snapshot.credentialId, verdict.status, now);
-    }
-    await deleteBinding(existing.bindingId);
-    return bindFromPool(params, scope, now, true);
+  } else {
+    result = await bindFromPool(params, scope, now, false);
   }
 
-  return bindFromPool(params, scope, now, false);
+  if (result.ok && tierChanged) {
+    await releaseOrphanBindings(now);
+  }
+  return result;
 }
 
 /**
- * Delete bindings whose scope subject no longer exists (or is disabled /
- * memberless). Credential deletes are already handled by ON DELETE CASCADE.
- * Intended for a later scheduled job.
+ * Bind each employee to the Key their current usage tier requires, one
+ * product line at a time. Used when the daily job moves people across tiers.
  */
-export async function releaseOrphanBindings(_now: Date = new Date()): Promise<number> {
+export async function rebindEmployeesToCurrentScope(
+  employeeIds: readonly number[],
+  now: Date = new Date(),
+): Promise<number> {
+  if (employeeIds.length === 0) return 0;
+  const keys = await db
+    .select({
+      employeeId: employeeApiKeys.employeeId,
+      productLineId: employeeApiKeys.productLineId,
+      protocol: employeeApiKeys.protocol,
+    })
+    .from(employeeApiKeys)
+    .where(
+      and(
+        inArray(employeeApiKeys.employeeId, [...employeeIds]),
+        eq(employeeApiKeys.status, "active"),
+      ),
+    );
+  const seen = new Set<string>();
+  let bound = 0;
+  for (const key of keys) {
+    const stamp = `${key.employeeId}:${key.productLineId}`;
+    if (seen.has(stamp)) continue;
+    seen.add(stamp);
+    if (!isRelayProtocol(key.protocol)) continue;
+    const result = await acquireBoundCredential({
+      employeeId: key.employeeId,
+      productLineId: key.productLineId,
+      protocol: key.protocol,
+      now,
+    });
+    if (result.ok) bound += 1;
+  }
+  return bound;
+}
+
+/**
+ * Drop bindings that nobody would currently resolve onto: missing/disabled
+ * subjects, or scopes left empty after a usage-tier upgrade/downgrade.
+ */
+export async function releaseOrphanBindings(now: Date = new Date()): Promise<number> {
+  const [rows, people] = await Promise.all([
+    db
+      .select({
+        id: credentialBindings.id,
+        scopeType: credentialBindings.scopeType,
+        scopeId: credentialBindings.scopeId,
+      })
+      .from(credentialBindings),
+    loadEmployeesForEligibility(now),
+  ]);
+  const ids = unusedBindingIds(rows, people);
+  if (ids.length === 0) return 0;
   const deleted = await db
     .delete(credentialBindings)
-    .where(
-      sql`(
-        (
-          ${credentialBindings.scopeType} = 'employee'
-          and not exists (
-            select 1 from ${employees}
-            where ${employees.id} = ${credentialBindings.scopeId}
-              and ${employees.status} = 'active'
-          )
-        )
-        or (
-          ${credentialBindings.scopeType} = 'team'
-          and (
-            not exists (
-              select 1 from ${teams}
-              where ${teams.id} = ${credentialBindings.scopeId}
-            )
-            or not exists (
-              select 1 from ${teamMembers}
-              where ${teamMembers.teamId} = ${credentialBindings.scopeId}
-            )
-          )
-        )
-        or (
-          ${credentialBindings.scopeType} = 'enterprise'
-          and (
-            not exists (
-              select 1 from ${enterprises}
-              where ${enterprises.id} = ${credentialBindings.scopeId}
-            )
-            or not exists (
-              select 1 from ${employees}
-              where ${employees.enterpriseId} = ${credentialBindings.scopeId}
-                and ${employees.status} = 'active'
-            )
-          )
-        )
-      )`,
-    )
+    .where(inArray(credentialBindings.id, ids))
     .returning({ id: credentialBindings.id });
   return deleted.length;
+}
+
+async function loadEmployeesForEligibility(_now: Date): Promise<BindingEligibilityPerson[]> {
+  const [people, memberships] = await Promise.all([
+    db
+      .select({
+        id: employees.id,
+        usageTier: employees.usageTier,
+        enterpriseId: employees.enterpriseId,
+      })
+      .from(employees)
+      .where(eq(employees.status, "active")),
+    db.select({ employeeId: teamMembers.employeeId, teamId: teamMembers.teamId }).from(teamMembers),
+  ]);
+  const teamByEmployee = new Map(memberships.map((row) => [row.employeeId, row.teamId]));
+  return people.map((row) => ({
+    id: row.id,
+    usageTier: row.usageTier,
+    enterpriseId: row.enterpriseId,
+    teamId: teamByEmployee.get(row.id) ?? null,
+  }));
 }
 
 type SnapshotVerdict =
