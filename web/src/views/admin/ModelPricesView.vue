@@ -3,7 +3,9 @@
     <div class="head">
       <div>
         <h2 class="page-title" style="margin: 0">模型列表</h2>
-        <p class="page-subtitle">按渠道查看上游 Key 返回的可用模型。智谱只展示 glm-5.3 与 glm-5.3-flash</p>
+        <p class="page-subtitle">
+          按渠道查看可用模型与积分消耗。智谱按官方系数计量，高峰工作日 14:00–18:00（UTC+8）×1，其余时段 ×0.5
+        </p>
       </div>
     </div>
 
@@ -29,9 +31,9 @@
           <div>
             <h3 class="models-title">{{ currentChannel?.name || "模型" }}</h3>
             <p class="muted" v-if="currentChannel?.providerCode === 'glm'">
-              {{ catalog.length }} 个模型。智谱文本模型归到 glm-5.3，多模态归到 glm-5.3-flash
+              {{ catalog.length }} 个模型。积分按每 1 万 Token 计；文本归到 glm-5.3，多模态归到 glm-5.3-flash
             </p>
-            <p class="muted" v-else>{{ catalog.length }} 个模型，以上游返回列表为准</p>
+            <p class="muted" v-else>{{ catalog.length }} 个模型。自定义渠道不按智谱积分计量</p>
           </div>
         </div>
 
@@ -45,10 +47,39 @@
         />
 
         <el-table :data="catalog" stripe empty-text="该渠道暂无已发现模型">
-          <el-table-column label="模型" min-width="240">
+          <el-table-column label="模型" min-width="200">
             <template #default="{ row }">
               <span class="model-name" :title="row.model">{{ row.model }}</span>
             </template>
+          </el-table-column>
+          <el-table-column label="积分消耗（每 1 万 Token）" align="center">
+            <el-table-column label="Input" min-width="110" align="right">
+              <template #default="{ row }">
+                <span v-if="row.creditRate" class="credit-cell">
+                  <b>{{ row.creditRate.promptCreditsPer10k }}</b>
+                  <small>非高峰 {{ formatOffPeak(row.creditRate.promptCreditsPer10k) }}</small>
+                </span>
+                <span v-else class="credit-empty">—</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="Cached Input" min-width="130" align="right">
+              <template #default="{ row }">
+                <span v-if="row.creditRate" class="credit-cell">
+                  <b>{{ row.creditRate.cacheHitCreditsPer10k }}</b>
+                  <small>非高峰 {{ formatOffPeak(row.creditRate.cacheHitCreditsPer10k) }}</small>
+                </span>
+                <span v-else class="credit-empty">—</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="Output" min-width="110" align="right">
+              <template #default="{ row }">
+                <span v-if="row.creditRate" class="credit-cell">
+                  <b>{{ row.creditRate.completionCreditsPer10k }}</b>
+                  <small>非高峰 {{ formatOffPeak(row.creditRate.completionCreditsPer10k) }}</small>
+                </span>
+                <span v-else class="credit-empty">—</span>
+              </template>
+            </el-table-column>
           </el-table-column>
           <el-table-column label="最近使用" min-width="180">
             <template #default="{ row }">
@@ -67,11 +98,25 @@ import { ElMessage } from "element-plus";
 import { http } from "@/api/http";
 import { formatDateTime } from "@/lib/date-time";
 
+type CreditRate = {
+  promptCreditsPer10k: string;
+  cacheHitCreditsPer10k: string;
+  completionCreditsPer10k: string;
+};
+
 type ChannelModel = {
   model: string;
   lastUsedAt: string | null;
   seenInLast30Days: boolean;
+  creditRate: CreditRate | null;
 };
+
+function formatOffPeak(value: string): string {
+  const half = Number(value) / 2;
+  if (!Number.isFinite(half)) return "—";
+  if (Number.isInteger(half)) return String(half);
+  return half.toFixed(2).replace(/0+$/, "").replace(/\.$/, "");
+}
 
 type ChannelGroup = {
   id: number;
@@ -250,6 +295,30 @@ onMounted(load);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 13px;
   font-weight: 600;
+}
+
+.credit-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  font-variant-numeric: tabular-nums;
+}
+
+.credit-cell b {
+  color: #0f172a;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.credit-cell small {
+  color: #94a3b8;
+  font-size: 11px;
+  font-weight: 400;
+}
+
+.credit-empty {
+  color: #94a3b8;
 }
 
 @media (max-width: 900px) {

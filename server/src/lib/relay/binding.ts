@@ -208,8 +208,9 @@ export async function resolveEmployeeBindingScope(
  * Return a usable Key for the employee's scope on this product line.
  *
  * Reuses the current binding when the Key is active, in-protocol, not excluded,
- * and under quota. Exhausted Keys are cooled until the quota window resets
- * (this may lengthen an existing coolUntil) and the binding is released.
+ * and under quota. Keys at 85% of the 5-hour or 95% of the weekly credit
+ * limit are cooled until that window resets (this may lengthen an existing
+ * coolUntil) and the binding is released.
  * Cooling / disabled / excluded Keys only release the row. Replacement picks
  * the highest priority unbound Key; insert uses ON CONFLICT DO NOTHING and
  * a reread so a concurrent winner for the same scope is adopted when usable.

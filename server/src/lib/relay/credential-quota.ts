@@ -77,8 +77,12 @@ export function weeklyResetAt(now: Date): Date {
   return new Date(weekStartOf(now).getTime() + WEEK_MS);
 }
 
-function windowReached(used: number, limit: number | null): boolean {
-  return limit != null && used >= limit;
+/** Cool a Key before Zhipu 429: 5h is short and concurrent, weekly cooling lasts days. */
+export const FIVE_HOUR_COOL_RATIO = 0.85;
+export const WEEKLY_COOL_RATIO = 0.95;
+
+function windowReached(used: number, limit: number | null, ratio: number): boolean {
+  return limit != null && used >= limit * ratio;
 }
 
 export function evaluateCredentialQuota(
@@ -86,8 +90,16 @@ export function evaluateCredentialQuota(
   limits: CredentialQuotaLimits,
   now: Date,
 ): CredentialQuotaStatus {
-  const fiveHourExhausted = windowReached(usage.fiveHourCredits, limits.fiveHourLimit);
-  const weeklyExhausted = windowReached(usage.weeklyCredits, limits.weeklyLimit);
+  const fiveHourExhausted = windowReached(
+    usage.fiveHourCredits,
+    limits.fiveHourLimit,
+    FIVE_HOUR_COOL_RATIO,
+  );
+  const weeklyExhausted = windowReached(
+    usage.weeklyCredits,
+    limits.weeklyLimit,
+    WEEKLY_COOL_RATIO,
+  );
   const resetCandidates: Date[] = [];
   if (fiveHourExhausted) resetCandidates.push(fiveHourResetAt(now));
   if (weeklyExhausted) resetCandidates.push(weeklyResetAt(now));
@@ -126,9 +138,9 @@ export function resolveGraphCoolingKind(
 export function quotaExhaustedLastError(
   quota: Pick<CredentialQuotaStatus, "fiveHourExhausted" | "weeklyExhausted">,
 ): string {
-  if (quota.weeklyExhausted) return "周积分额度耗尽，冷却至窗口重置";
-  if (quota.fiveHourExhausted) return "5 小时积分额度耗尽，冷却至窗口重置";
-  return "5 小时/周积分额度耗尽，冷却至窗口重置";
+  if (quota.weeklyExhausted) return "周积分达到 95%，冷却至窗口重置";
+  if (quota.fiveHourExhausted) return "5 小时积分达到 85%，冷却至窗口重置";
+  return "5 小时/周积分达到冷却阈值，冷却至窗口重置";
 }
 
 export async function getCredentialQuotaUsage(

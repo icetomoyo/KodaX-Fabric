@@ -87,8 +87,13 @@ export function resolveEffectiveCreditRate(
 }
 
 const UTC_PLUS_8_MS = 8 * 60 * 60 * 1_000;
+const MINUTE_MS = 60_000;
+const HOUR_MS = 3_600_000;
+const DAY_MS = 24 * HOUR_MS;
 const PEAK_START_HOUR = 14;
 const PEAK_END_HOUR = 18;
+const PEAK_MULTIPLIER = 1;
+const OFF_PEAK_MULTIPLIER = 0.5;
 
 export type RequestCreditUsage = {
   promptTokens: number;
@@ -117,29 +122,87 @@ export function isPeakHour(at: Date): boolean {
   return hour >= PEAK_START_HOUR && hour < PEAK_END_HOUR;
 }
 
+export function peakMultiplierAt(at: Date): number {
+  return isPeakHour(at) ? PEAK_MULTIPLIER : OFF_PEAK_MULTIPLIER;
+}
+
+function utc8DayStartMs(atMs: number): number {
+  const utc8 = new Date(atMs + UTC_PLUS_8_MS);
+  return Date.UTC(utc8.getUTCFullYear(), utc8.getUTCMonth(), utc8.getUTCDate()) - UTC_PLUS_8_MS;
+}
+
+function floorToMinute(ms: number): number {
+  return Math.floor(ms / MINUTE_MS) * MINUTE_MS;
+}
+
+/** Whole minutes of `[start, end)` that fall in weekday 14:00–18:00 UTC+8. Seconds are ignored. */
+export function peakOverlapMs(start: Date, end: Date): number {
+  const first = floorToMinute(Math.min(start.getTime(), end.getTime()));
+  const last = floorToMinute(Math.max(start.getTime(), end.getTime()));
+  if (last <= first) return 0;
+
+  let peakMs = 0;
+  let dayStart = utc8DayStartMs(first);
+  let guard = 0;
+  while (dayStart < last && guard < 40) {
+    guard += 1;
+    const weekday = new Date(dayStart + UTC_PLUS_8_MS).getUTCDay();
+    if (weekday !== 0 && weekday !== 6) {
+      const windowStart = dayStart + PEAK_START_HOUR * HOUR_MS;
+      const windowEnd = dayStart + PEAK_END_HOUR * HOUR_MS;
+      const overlapStart = Math.max(first, windowStart);
+      const overlapEnd = Math.min(last, windowEnd);
+      if (overlapEnd > overlapStart) peakMs += overlapEnd - overlapStart;
+    }
+    dayStart += DAY_MS;
+  }
+  return peakMs;
+}
+
+/**
+ * Time-weighted multiplier over `[start, end]`: peak ×1, off-peak ×0.5.
+ * A zero-length interval uses the instant at `start`.
+ */
+export function intervalPeakMultiplier(start: Date, end: Date): number {
+  const first = floorToMinute(Math.min(start.getTime(), end.getTime()));
+  const last = floorToMinute(Math.max(start.getTime(), end.getTime()));
+  const duration = last - first;
+  if (duration === 0) return peakMultiplierAt(start);
+  const fraction = Math.min(1, Math.max(0, peakOverlapMs(start, end) / duration));
+  return OFF_PEAK_MULTIPLIER + (PEAK_MULTIPLIER - OFF_PEAK_MULTIPLIER) * fraction;
+}
+
 /**
  * Zhipu coding-plan credits:
- * ((uncached prompt × Input + cache hit × Cached Input + output × Output) / 10000)
- * × (1.0 peak / 0.5 off-peak).
- * Cache hits are clamped to prompt tokens before the uncached remainder is billed.
+ * ((uncached prompt × Input + cache hit × Cached Input) / 10000) × start multiplier
+ * + (output × Output / 10000) × time-weighted multiplier over `[startedAt, endedAt]`.
+ * Prefill is billed at the request start; streamed output follows wall-clock
+ * overlap with Mon–Fri 14:00–18:00 UTC+8. Omit `endedAt` to bill the whole
+ * request at `startedAt`.
  */
 export function computeRequestCredits(
   usage: RequestCreditUsage,
   rate: ModelCreditRate | null,
-  at: Date,
+  startedAt: Date,
+  endedAt: Date = startedAt,
 ): number {
   if (!rate) return 0;
   const prompt = toSafeTokens(usage.promptTokens);
   const completion = toSafeTokens(usage.completionTokens);
   const cacheRead = Math.min(prompt, toSafeTokens(usage.cacheReadTokens));
   const uncached = prompt - cacheRead;
-  const base =
+  const inputCredits =
     (uncached * toRate(rate.promptCreditsPer10k)
-      + cacheRead * toRate(rate.cacheHitCreditsPer10k)
-      + completion * toRate(rate.completionCreditsPer10k))
-    / 10_000;
-  const credits = base * (isPeakHour(at) ? 1 : 0.5);
-  return Number.isFinite(credits) && credits > 0 ? credits : 0;
+      + cacheRead * toRate(rate.cacheHitCreditsPer10k))
+    / 10_000
+    * peakMultiplierAt(startedAt);
+  const outputCredits =
+    (completion * toRate(rate.completionCreditsPer10k))
+    / 10_000
+    * intervalPeakMultiplier(startedAt, endedAt);
+  const credits = inputCredits + outputCredits;
+  if (!Number.isFinite(credits) || credits <= 0) return 0;
+  return Math.round(credits * 10_000) / 10_000;
 }
 
 /** Metering lookup uses the built-in coding-plan table. */

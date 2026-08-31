@@ -8,7 +8,9 @@ process.env.JWT_SECRET ??= "unit-test-jwt-secret";
 process.env.CREDENTIAL_ENCRYPT_KEY ??= "unit-test-credential-secret";
 process.env.QUOTA_TIMEZONE = "Asia/Shanghai";
 
-const { adminModelPriceRoutes } = await import("../src/routes/admin/model-prices.js");
+const { adminModelPriceRoutes, toCatalogModelEntry } = await import(
+  "../src/routes/admin/model-prices.js"
+);
 const {
   collectCatalogModels,
   collectDiscoveredModels,
@@ -200,6 +202,27 @@ test("Zhipu relay whitelist accepts only glm-5.3 and glm-5.3-flash", () => {
   assert.equal(isGlmClientModelAllowed("glm-5.2"), false);
   assert.equal(isGlmClientModelAllowed("glm-4.7-flash"), false);
   assert.equal(isGlmClientModelAllowed("qwen38-27b"), false);
+});
+
+test("catalog rows attach built-in GLM credit rates and leave custom models unmetered", () => {
+  const glm = toCatalogModelEntry("glm-5.3", new Date("2026-08-30T00:00:00.000Z"));
+  assert.equal(glm.seenInLast30Days, true);
+  assert.deepEqual(glm.creditRate, {
+    promptCreditsPer10k: "6.9",
+    cacheHitCreditsPer10k: "1.7",
+    completionCreditsPer10k: "24",
+  });
+
+  const flash = toCatalogModelEntry("glm-5.3-flash", null);
+  assert.equal(flash.seenInLast30Days, false);
+  assert.deepEqual(flash.creditRate, {
+    promptCreditsPer10k: "2.3",
+    cacheHitCreditsPer10k: "0.56",
+    completionCreditsPer10k: "8",
+  });
+
+  const custom = toCatalogModelEntry("qwen38-27b", null);
+  assert.equal(custom.creditRate, null);
 });
 
 test("pricing catalog only keeps current Zhipu coding-plan models", () => {

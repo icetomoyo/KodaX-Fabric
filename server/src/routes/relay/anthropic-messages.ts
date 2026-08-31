@@ -344,6 +344,7 @@ async function handleNativeRequest(
       candidate: input.candidate as RelayCandidate | null | undefined,
       status: input.status,
       usage: input.usage as RelayAuditInput["usage"],
+      startedAt: new Date(startedAt),
       httpStatus: typeof input.httpStatus === "number" ? input.httpStatus : null,
       upstreamStatus: typeof input.upstreamStatus === "number" ? input.upstreamStatus : null,
       errorCode: typeof input.errorCode === "string" ? input.errorCode : null,

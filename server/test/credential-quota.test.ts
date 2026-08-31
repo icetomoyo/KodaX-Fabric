@@ -96,7 +96,26 @@ test("evaluateCredentialQuota exhausts a single five-hour window", () => {
   assert.equal(status.weeklyExhausted, false);
   assert.equal(status.exhaustedUntil?.toISOString(), fiveHourResetAt(now).toISOString());
   assert.equal(creditCoolingKind(status), "five_hour");
-  assert.equal(quotaExhaustedLastError(status), "5 小时积分额度耗尽，冷却至窗口重置");
+  assert.equal(quotaExhaustedLastError(status), "5 小时积分达到 85%，冷却至窗口重置");
+});
+
+test("evaluateCredentialQuota cools five-hour usage at 85% of the limit", () => {
+  const now = new Date("2026-08-26T08:30:00.000Z");
+  const below = evaluateCredentialQuota(
+    { fiveHourCredits: 849, weeklyCredits: 0 },
+    { fiveHourLimit: 1_000, weeklyLimit: 10_000 },
+    now,
+  );
+  assert.equal(below.fiveHourExhausted, false);
+  assert.equal(below.exhausted, false);
+
+  const atThreshold = evaluateCredentialQuota(
+    { fiveHourCredits: 850, weeklyCredits: 0 },
+    { fiveHourLimit: 1_000, weeklyLimit: 10_000 },
+    now,
+  );
+  assert.equal(atThreshold.fiveHourExhausted, true);
+  assert.equal(atThreshold.exhausted, true);
 });
 
 test("evaluateCredentialQuota treats usage equal to the weekly limit as exhausted", () => {
@@ -111,7 +130,26 @@ test("evaluateCredentialQuota treats usage equal to the weekly limit as exhauste
   assert.equal(status.weeklyExhausted, true);
   assert.equal(status.exhaustedUntil?.toISOString(), weeklyResetAt(now).toISOString());
   assert.equal(creditCoolingKind(status), "weekly");
-  assert.equal(quotaExhaustedLastError(status), "周积分额度耗尽，冷却至窗口重置");
+  assert.equal(quotaExhaustedLastError(status), "周积分达到 95%，冷却至窗口重置");
+});
+
+test("evaluateCredentialQuota cools weekly usage at 95% of the limit", () => {
+  const now = new Date("2026-08-26T08:30:00.000Z");
+  const below = evaluateCredentialQuota(
+    { fiveHourCredits: 0, weeklyCredits: 9_499 },
+    { fiveHourLimit: 10_000, weeklyLimit: 10_000 },
+    now,
+  );
+  assert.equal(below.weeklyExhausted, false);
+  assert.equal(below.exhausted, false);
+
+  const atThreshold = evaluateCredentialQuota(
+    { fiveHourCredits: 0, weeklyCredits: 9_500 },
+    { fiveHourLimit: 10_000, weeklyLimit: 10_000 },
+    now,
+  );
+  assert.equal(atThreshold.weeklyExhausted, true);
+  assert.equal(atThreshold.exhausted, true);
 });
 
 test("evaluateCredentialQuota takes the later reset when both windows are exhausted", () => {

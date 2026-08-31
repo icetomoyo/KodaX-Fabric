@@ -30,6 +30,7 @@ export type RelayAuditInput = {
   candidate?: RelayCandidate | null;
   status: RelayAuditStatus;
   usage?: RelayUsage | null;
+  startedAt?: Date;
   httpStatus?: number | null;
   upstreamStatus?: number | null;
   errorCode?: string | null;
@@ -108,6 +109,7 @@ export async function writeRelayAudit(input: RelayAuditInput): Promise<void> {
   const cacheReadTokens = safeInteger(usage.cacheReadTokens);
   const errorCount = input.status === "success" ? 0 : 1;
   const now = new Date();
+  const startedAt = input.startedAt ?? now;
   const quotaDay = quotaDayAt(now, env.QUOTA_TIMEZONE);
   const credentialId = input.candidate?.credentialId;
   const shouldRecordHourly = input.status === "success" && totalTokens > 0 && credentialId != null;
@@ -120,6 +122,7 @@ export async function writeRelayAudit(input: RelayAuditInput): Promise<void> {
         cacheReadTokens: cacheReadTokens ?? 0,
       },
       creditRate,
+      startedAt,
       now,
     )
     : 0;

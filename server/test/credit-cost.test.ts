@@ -9,7 +9,9 @@ process.env.CREDENTIAL_ENCRYPT_KEY ??= "unit-test-credential-secret";
 const {
   computeRequestCredits,
   defaultCreditRateFor,
+  intervalPeakMultiplier,
   isPeakHour,
+  peakOverlapMs,
   resolveEffectiveCreditRate,
 } = await import("../src/lib/relay/credit-cost.js");
 
@@ -70,6 +72,51 @@ test("computeRequestCredits applies GLM-5.3 rates and peak / off-peak multiplier
   // ((10000 * 6.9 + 10000 * 24) / 10000) = 30.9
   assert.equal(computeRequestCredits(usage, glm53, peak), 30.9);
   assert.equal(computeRequestCredits(usage, glm53, offPeak), 15.45);
+});
+
+test("intervalPeakMultiplier is 1 inside weekday 14:00-18:00 UTC+8 and 0.5 outside", () => {
+  const peak = new Date("2026-08-28T06:00:00.000Z");
+  const offPeak = new Date("2026-08-28T10:00:00.000Z");
+  assert.equal(intervalPeakMultiplier(peak, peak), 1);
+  assert.equal(intervalPeakMultiplier(offPeak, offPeak), 0.5);
+});
+
+test("intervalPeakMultiplier splits a request that crosses 14:00 UTC+8", () => {
+  // Friday 13:50–14:10 UTC+8 = 20 min, half in peak.
+  const start = new Date("2026-08-28T05:50:00.000Z");
+  const end = new Date("2026-08-28T06:10:00.000Z");
+  assert.equal(peakOverlapMs(start, end), 10 * 60_000);
+  assert.equal(intervalPeakMultiplier(start, end), 0.75);
+});
+
+test("intervalPeakMultiplier ignores seconds and counts whole minutes", () => {
+  const start = new Date("2026-08-28T05:50:45.000Z");
+  const end = new Date("2026-08-28T06:10:20.000Z");
+  assert.equal(peakOverlapMs(start, end), 10 * 60_000);
+  assert.equal(intervalPeakMultiplier(start, end), 0.75);
+});
+
+test("intervalPeakMultiplier splits a request that crosses 18:00 UTC+8", () => {
+  // Friday 17:50–18:10 UTC+8 = 20 min, half in peak.
+  const start = new Date("2026-08-28T09:50:00.000Z");
+  const end = new Date("2026-08-28T10:10:00.000Z");
+  assert.equal(peakOverlapMs(start, end), 10 * 60_000);
+  assert.equal(intervalPeakMultiplier(start, end), 0.75);
+});
+
+test("intervalPeakMultiplier ignores weekend hours even during 14:00-18:00 UTC+8", () => {
+  const start = new Date("2026-08-29T06:00:00.000Z");
+  const end = new Date("2026-08-29T10:00:00.000Z");
+  assert.equal(peakOverlapMs(start, end), 0);
+  assert.equal(intervalPeakMultiplier(start, end), 0.5);
+});
+
+test("computeRequestCredits bills input at start and output across the peak window", () => {
+  const start = new Date("2026-08-28T05:50:00.000Z");
+  const end = new Date("2026-08-28T06:10:00.000Z");
+  const usage = { promptTokens: 10_000, completionTokens: 10_000, cacheReadTokens: 0 };
+  // input 6.9 × 0.5 + output 24 × 0.75 = 3.45 + 18 = 21.45
+  assert.equal(computeRequestCredits(usage, glm53, start, end), 21.45);
 });
 
 test("computeRequestCredits bills uncached and cache-hit tokens separately", () => {

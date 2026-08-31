@@ -13,6 +13,7 @@ import {
   lastUsedAtForCatalogModel,
 } from "../../lib/discovered-models.js";
 import { addCalendarDays, quotaDayAt, zonedDayStart } from "../../lib/quota-time.js";
+import { defaultCreditRateFor, type ModelCreditRate } from "../../lib/relay/credit-cost.js";
 import {
   requirePasswordChanged,
   requireRoles,
@@ -56,14 +57,9 @@ export async function adminModelPriceRoutes(app: FastifyInstance) {
     const usedByName = new Map(usedModels.map((row) => [row.model, row.lastUsedAt]));
     const channels = groupDiscoveredModelsByChannel(channelRows).map((channel) => ({
       ...channel,
-      models: channel.models.map((model) => {
-        const usedAt = lastUsedAtForCatalogModel(model, usedByName);
-        return {
-          model,
-          lastUsedAt: usedAt,
-          seenInLast30Days: usedAt != null,
-        };
-      }),
+      models: channel.models.map((model) =>
+        toCatalogModelEntry(model, lastUsedAtForCatalogModel(model, usedByName)),
+      ),
     }));
 
     return {
@@ -71,4 +67,23 @@ export async function adminModelPriceRoutes(app: FastifyInstance) {
       data: { channels },
     };
   });
+}
+
+export type CatalogModelEntry = {
+  model: string;
+  lastUsedAt: Date | null;
+  seenInLast30Days: boolean;
+  creditRate: ModelCreditRate | null;
+};
+
+export function toCatalogModelEntry(
+  model: string,
+  lastUsedAt: Date | null,
+): CatalogModelEntry {
+  return {
+    model,
+    lastUsedAt,
+    seenInLast30Days: lastUsedAt != null,
+    creditRate: defaultCreditRateFor(model),
+  };
 }
