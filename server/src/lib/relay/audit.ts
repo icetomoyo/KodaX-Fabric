@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import { env } from "../../config.js";
 import { db } from "../../db/client.js";
 import {
+  credentialUsageHourly,
   employeeApiKeys,
   requestAudits,
   requestErrorLogs,
@@ -11,6 +12,8 @@ import {
 import { resolveLoggedError } from "../glm-error-codes.js";
 import { quotaDayAt } from "../quota-time.js";
 import { extractCacheReadTokens } from "../usage-cache.js";
+import { hourStartOf } from "./credential-quota.js";
+import { computeRequestCredits, getModelCreditRate } from "./credit-cost.js";
 import { recordCredentialTokens } from "./credential-load.js";
 import type {
   RelayCandidate,
@@ -104,7 +107,23 @@ export async function writeRelayAudit(input: RelayAuditInput): Promise<void> {
   const totalTokens = safeInteger(usage.totalTokens) ?? 0;
   const cacheReadTokens = safeInteger(usage.cacheReadTokens);
   const errorCount = input.status === "success" ? 0 : 1;
-  const quotaDay = quotaDayAt(new Date(), env.QUOTA_TIMEZONE);
+  const now = new Date();
+  const quotaDay = quotaDayAt(now, env.QUOTA_TIMEZONE);
+  const credentialId = input.candidate?.credentialId;
+  const shouldRecordHourly = input.status === "success" && totalTokens > 0 && credentialId != null;
+  const creditRate = shouldRecordHourly ? await getModelCreditRate(input.clientModel) : null;
+  const requestCredits = shouldRecordHourly
+    ? computeRequestCredits(
+      {
+        promptTokens,
+        completionTokens,
+        cacheReadTokens: cacheReadTokens ?? 0,
+      },
+      creditRate,
+      now,
+    )
+    : 0;
+  const requestCreditsText = requestCredits.toFixed(4);
 
   const recorded = await db.transaction(async (tx) => {
     const [inserted] = await tx
@@ -207,13 +226,33 @@ export async function writeRelayAudit(input: RelayAuditInput): Promise<void> {
         });
     }
 
+    if (shouldRecordHourly && credentialId != null) {
+      await tx
+        .insert(credentialUsageHourly)
+        .values({
+          credentialId,
+          hourStart: hourStartOf(now),
+          totalTokens,
+          totalCredits: requestCreditsText,
+          requestCount: 1,
+        })
+        .onConflictDoUpdate({
+          target: [credentialUsageHourly.credentialId, credentialUsageHourly.hourStart],
+          set: {
+            totalTokens: sql`${credentialUsageHourly.totalTokens} + ${totalTokens}`,
+            totalCredits: sql`${credentialUsageHourly.totalCredits} + ${requestCreditsText}::numeric`,
+            requestCount: sql`${credentialUsageHourly.requestCount} + 1`,
+          },
+        });
+    }
+
     await tx
       .update(employeeApiKeys)
       .set({ lastUsedAt: new Date() })
       .where(sql`${employeeApiKeys.id} = ${input.principal.employeeApiKeyId}`);
     return true;
   });
-  if (recorded && input.candidate?.credentialId && totalTokens > 0) {
-    recordCredentialTokens(input.candidate.credentialId, totalTokens);
+  if (recorded && credentialId != null && totalTokens > 0) {
+    recordCredentialTokens(credentialId, totalTokens);
   }
 }

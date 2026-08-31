@@ -3,7 +3,7 @@
     <div class="head">
       <div>
         <h2 class="page-title" style="margin: 0">模型单价</h2>
-        <p class="page-subtitle">按渠道查看上游 Key 返回的模型，并为这些模型设置单价</p>
+        <p class="page-subtitle">按渠道为当前生效的模型设置单价。智谱只展示 glm-5.3 与 glm-5.3-flash</p>
       </div>
     </div>
 
@@ -31,7 +31,10 @@
         <div class="models-head">
           <div>
             <h3 class="models-title">{{ currentChannel?.name || "模型" }}</h3>
-            <p class="muted">{{ catalog.length }} 个模型，以上游返回列表为准</p>
+            <p class="muted" v-if="currentChannel?.providerCode === 'glm'">
+              {{ catalog.length }} 个模型。智谱文本模型归到 glm-5.3，多模态归到 glm-5.3-flash
+            </p>
+            <p class="muted" v-else>{{ catalog.length }} 个模型，以上游返回列表为准</p>
           </div>
         </div>
 
@@ -53,7 +56,27 @@
         />
 
         <el-table :data="catalog" stripe empty-text="该渠道暂无已发现模型">
-          <el-table-column prop="model" label="模型" min-width="180" show-overflow-tooltip />
+          <el-table-column label="模型" min-width="220">
+            <template #default="{ row }">
+              <div class="model-cell">
+                <span class="model-name" :title="row.model">{{ row.model }}</span>
+                <el-tag v-if="!row.effectiveCreditRate" size="small" type="info" effect="plain">
+                  未配置积分系数
+                </el-tag>
+                <el-tag
+                  v-else-if="row.effectiveCreditRate.source === 'default'"
+                  size="small"
+                  type="success"
+                  effect="plain"
+                >
+                  默认
+                </el-tag>
+                <el-tag v-else size="small" type="warning" effect="plain">
+                  自定义
+                </el-tag>
+              </div>
+            </template>
+          </el-table-column>
           <el-table-column label="输入单价" min-width="120">
             <template #default="{ row }">
               <span v-if="row.price" class="mono-num">{{ formatYuan(row.price.promptPricePerMillion, 4) }}</span>
@@ -80,6 +103,30 @@
               <span v-else class="muted">未定价</span>
             </template>
           </el-table-column>
+          <el-table-column label="Input 积分系数" min-width="140">
+            <template #default="{ row }">
+              <span v-if="row.effectiveCreditRate" class="mono-num">
+                {{ row.effectiveCreditRate.promptCreditsPer10k }}
+              </span>
+              <span v-else class="muted">—</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="Cached Input 积分系数" min-width="170">
+            <template #default="{ row }">
+              <span v-if="row.effectiveCreditRate" class="mono-num">
+                {{ row.effectiveCreditRate.cacheHitCreditsPer10k }}
+              </span>
+              <span v-else class="muted">—</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="Output 积分系数" min-width="150">
+            <template #default="{ row }">
+              <span v-if="row.effectiveCreditRate" class="mono-num">
+                {{ row.effectiveCreditRate.completionCreditsPer10k }}
+              </span>
+              <span v-else class="muted">—</span>
+            </template>
+          </el-table-column>
           <el-table-column label="最近使用" min-width="170">
             <template #default="{ row }">
               {{ formatDateTime(row.lastUsedAt) }}
@@ -99,8 +146,8 @@
     </div>
   </div>
 
-  <el-dialog v-model="showForm" :title="formTitle" width="560px">
-    <el-form label-width="110px">
+  <el-dialog v-model="showForm" :title="formTitle" width="620px">
+    <el-form label-width="170px">
       <el-form-item label="模型名" required>
         <el-select
           v-model="formModel"
@@ -130,6 +177,27 @@
           元/百万 token/小时。官方目前限时免费，可填 0。请求没有缓存存活时长，暂不计入单次成本
         </div>
       </el-form-item>
+      <el-form-item label="Input 积分系数">
+        <el-input v-model="formPromptCredits" :placeholder="creditPlaceholder(formDefaultRate?.promptCreditsPer10k)" />
+        <div class="form-help">积分/万 token；留空使用官方默认系数，填写可覆盖</div>
+      </el-form-item>
+      <el-form-item label="Cached Input 积分系数">
+        <el-input
+          v-model="formCacheHitCredits"
+          :placeholder="creditPlaceholder(formDefaultRate?.cacheHitCreditsPer10k)"
+        />
+        <div class="form-help">积分/万 token；留空使用官方默认系数，填写可覆盖</div>
+      </el-form-item>
+      <el-form-item label="Output 积分系数">
+        <el-input
+          v-model="formCompletionCredits"
+          :placeholder="creditPlaceholder(formDefaultRate?.completionCreditsPer10k)"
+        />
+        <div class="form-help">积分/万 token；留空使用官方默认系数，填写可覆盖</div>
+      </el-form-item>
+      <p class="form-help credit-rate-hint">
+        留空使用官方默认系数，填写可覆盖。GLM-5.3：6.9 / 1.7 / 24；Flash：2.3 / 0.56 / 8。
+      </p>
     </el-form>
     <template #footer>
       <el-button @click="showForm = false">取消</el-button>
@@ -145,6 +213,19 @@ import { http } from "@/api/http";
 import { formatDateTime } from "@/lib/date-time";
 import { formatYuan } from "@/lib/tokens";
 
+type EffectiveCreditRate = {
+  promptCreditsPer10k: string;
+  cacheHitCreditsPer10k: string;
+  completionCreditsPer10k: string;
+  source: "custom" | "default";
+};
+
+type ModelCreditRate = {
+  promptCreditsPer10k: string;
+  cacheHitCreditsPer10k: string;
+  completionCreditsPer10k: string;
+};
+
 type ModelPrice = {
   id: number;
   model: string;
@@ -152,16 +233,21 @@ type ModelPrice = {
   completionPricePerMillion: string;
   cacheHitPricePerMillion: string;
   cacheStoragePricePerMillionPerHour: string;
+  promptCreditsPer10k: string | null;
+  cacheHitCreditsPer10k: string | null;
+  completionCreditsPer10k: string | null;
   createdAt: string;
   updatedAt: string;
   lastUsedAt: string | null;
   seenInLast30Days: boolean;
+  effectiveCreditRate: EffectiveCreditRate | null;
 };
 
 type ChannelModel = {
   model: string;
   lastUsedAt: string | null;
   seenInLast30Days: boolean;
+  effectiveCreditRate: EffectiveCreditRate | null;
 };
 
 type ChannelGroup = {
@@ -178,9 +264,11 @@ type CatalogRow = {
   model: string;
   lastUsedAt: string | null;
   price: ModelPrice | null;
+  effectiveCreditRate: EffectiveCreditRate | null;
 };
 
 const PRICE_PATTERN = /^(?:0|[1-9]\d{0,7})(?:\.\d{1,4})?$/;
+const CREDIT_RATE_PATTERN = /^(?:0|[1-9]\d{0,5})(?:\.\d{1,4})?$/;
 
 const loading = ref(false);
 const saving = ref(false);
@@ -194,6 +282,9 @@ const formPrompt = ref("");
 const formCompletion = ref("");
 const formCacheHit = ref("");
 const formCacheStorage = ref("");
+const formPromptCredits = ref("");
+const formCacheHitCredits = ref("");
+const formCompletionCredits = ref("");
 
 const formTitle = computed(() => (editing.value ? `编辑单价 · ${editing.value.model}` : "新增单价"));
 
@@ -210,8 +301,9 @@ const catalog = computed<CatalogRow[]>(() => {
     const price = priceByModel.value.get(item.model) ?? null;
     return {
       model: item.model,
-      lastUsedAt: price?.lastUsedAt ?? item.lastUsedAt,
+      lastUsedAt: item.lastUsedAt ?? price?.lastUsedAt,
       price,
+      effectiveCreditRate: price?.effectiveCreditRate ?? item.effectiveCreditRate ?? null,
     };
   });
 });
@@ -256,6 +348,9 @@ function openCreate(model = "") {
   formCompletion.value = "";
   formCacheHit.value = "";
   formCacheStorage.value = "0";
+  formPromptCredits.value = "";
+  formCacheHitCredits.value = "";
+  formCompletionCredits.value = "";
   showForm.value = true;
 }
 
@@ -266,6 +361,9 @@ function openEdit(row: ModelPrice) {
   formCompletion.value = row.completionPricePerMillion;
   formCacheHit.value = row.cacheHitPricePerMillion;
   formCacheStorage.value = row.cacheStoragePricePerMillionPerHour;
+  formPromptCredits.value = row.promptCreditsPer10k ?? "";
+  formCacheHitCredits.value = row.cacheHitCreditsPer10k ?? "";
+  formCompletionCredits.value = row.completionCreditsPer10k ?? "";
   showForm.value = true;
 }
 
@@ -274,6 +372,36 @@ function validatePrice(value: string, label: string): string | null {
   if (!raw) return `请填写${label}`;
   if (!PRICE_PATTERN.test(raw)) return `${label}须为非负数字，最多 4 位小数`;
   return null;
+}
+
+const formDefaultRate = computed(() => defaultCreditRateFor(formModel.value));
+
+/** Mirrors server `defaultCreditRateFor` for form placeholders. */
+function defaultCreditRateFor(clientModel: string): ModelCreditRate | null {
+  const name = clientModel.toLowerCase();
+  if (name.startsWith("glm") && name.includes("flash")) {
+    return { promptCreditsPer10k: "2.3", cacheHitCreditsPer10k: "0.56", completionCreditsPer10k: "8" };
+  }
+  if (name.startsWith("glm")) {
+    return { promptCreditsPer10k: "6.9", cacheHitCreditsPer10k: "1.7", completionCreditsPer10k: "24" };
+  }
+  return null;
+}
+
+function creditPlaceholder(value: string | undefined): string {
+  return value != null ? `默认 ${value}` : "例如 6.9";
+}
+
+function parseOptionalCreditRate(
+  value: string,
+  label: string,
+): { ok: true; value: string | null } | { ok: false; message: string } {
+  const raw = value.trim();
+  if (!raw) return { ok: true, value: null };
+  if (!CREDIT_RATE_PATTERN.test(raw)) {
+    return { ok: false, message: `${label}须为非负数字，最多 4 位小数` };
+  }
+  return { ok: true, value: raw };
 }
 
 async function saveOne() {
@@ -306,12 +434,30 @@ async function saveOne() {
     ElMessage.warning(cacheStorageError);
     return;
   }
+  const promptCredits = parseOptionalCreditRate(formPromptCredits.value, "Input 积分系数");
+  if (!promptCredits.ok) {
+    ElMessage.warning(promptCredits.message);
+    return;
+  }
+  const cacheHitCredits = parseOptionalCreditRate(formCacheHitCredits.value, "Cached Input 积分系数");
+  if (!cacheHitCredits.ok) {
+    ElMessage.warning(cacheHitCredits.message);
+    return;
+  }
+  const completionCredits = parseOptionalCreditRate(formCompletionCredits.value, "Output 积分系数");
+  if (!completionCredits.ok) {
+    ElMessage.warning(completionCredits.message);
+    return;
+  }
   const payload = {
     model,
     promptPricePerMillion: formPrompt.value.trim(),
     completionPricePerMillion: formCompletion.value.trim(),
     cacheHitPricePerMillion: formCacheHit.value.trim(),
     cacheStoragePricePerMillionPerHour: formCacheStorage.value.trim(),
+    promptCreditsPer10k: promptCredits.value,
+    cacheHitCreditsPer10k: cacheHitCredits.value,
+    completionCreditsPer10k: completionCredits.value,
   };
   saving.value = true;
   try {
@@ -485,6 +631,24 @@ onMounted(load);
   color: #94a3b8;
   font-size: 12px;
   line-height: 1.5;
+}
+
+.credit-rate-hint {
+  margin: 0 0 0 170px;
+}
+
+.model-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.model-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 @media (max-width: 900px) {

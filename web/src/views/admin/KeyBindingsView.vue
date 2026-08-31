@@ -30,8 +30,9 @@
         </el-select>
         <el-select v-model="bindingKind" class="filter-item">
           <el-option label="全部绑定" value="all" />
-          <el-option label="仅指定授权" value="grant" />
-          <el-option label="仅公共池" value="pool" />
+          <el-option label="仅独占绑定" value="dedicated" />
+          <el-option label="仅团队共享" value="team_shared" />
+          <el-option label="仅企业共享" value="enterprise_shared" />
         </el-select>
         <el-input
           v-model="keyword"
@@ -53,8 +54,9 @@
         <span class="legend-item"><i class="swatch pending" />待绑定</span>
         <span class="legend-item"><i class="swatch cooling" />冷却中</span>
         <span class="legend-item"><i class="swatch disabled" />停用</span>
-        <span class="legend-item"><i class="line grant" />指定授权</span>
-        <span class="legend-item"><i class="line pool" />公共池</span>
+        <span class="legend-item"><i class="line dedicated" />独占绑定</span>
+        <span class="legend-item"><i class="line team_shared" />团队共享</span>
+        <span class="legend-item"><i class="line enterprise_shared" />企业共享</span>
         <span class="legend-count">
           {{ displayedEnterprises }} 家企业 ·
           {{ displayed?.teams.length ?? 0 }} 个团队 ·
@@ -163,8 +165,9 @@ import "@vue-flow/core/dist/style.css";
 import "@vue-flow/core/dist/theme-default.css";
 import "@vue-flow/controls/dist/style.css";
 
-type BindingKind = "org" | "owns" | "grant" | "pool";
-type KindFilter = "all" | "grant" | "pool";
+type BindingKind = "org" | "owns" | "dedicated" | "team_shared" | "enterprise_shared";
+type UseBindingKind = "dedicated" | "team_shared" | "enterprise_shared";
+type KindFilter = "all" | UseBindingKind;
 type NodeKind = "enterprise" | "team" | "employee" | "virtual_key" | "credential" | "lane_header";
 type CredentialLane = "bound" | "pending" | "cooling" | "disabled";
 
@@ -209,6 +212,7 @@ type GraphCredential = {
   providerName: string;
   status: "active" | "disabled" | "auto_disabled" | "cooling";
   supportedProtocols: string[];
+  bound?: boolean;
 };
 
 type GraphEdge = {
@@ -305,11 +309,28 @@ function credentialLaneLabel(lane: CredentialLane | undefined): string {
   return "绑定";
 }
 
+function useEdgeStyle(kind: BindingKind): Record<string, string | number | undefined> {
+  if (kind === "dedicated") {
+    return { stroke: "#2563eb", strokeWidth: 2 };
+  }
+  if (kind === "team_shared") {
+    return { stroke: "#0891b2", strokeWidth: 1.5, strokeDasharray: "6 4" };
+  }
+  if (kind === "enterprise_shared") {
+    return { stroke: "#4338ca", strokeWidth: 1.5, strokeDasharray: "2 4" };
+  }
+  return { stroke: "#94a3b8", strokeWidth: 1.5 };
+}
+
+function isUseEdgeKind(kind: BindingKind): kind is UseBindingKind {
+  return kind === "dedicated" || kind === "team_shared" || kind === "enterprise_shared";
+}
+
 function boundCredentialIds(source: KeyBindingGraph): Set<number> {
   const keyIds = new Set(source.virtualKeys.map((row) => row.id));
   const ids = new Set<number>();
   for (const edge of source.edges) {
-    if (edge.kind !== "grant" && edge.kind !== "pool") continue;
+    if (!isUseEdgeKind(edge.kind)) continue;
     if (!keyIds.has(edge.sourceId)) continue;
     ids.add(edge.targetId);
   }
@@ -355,7 +376,7 @@ function visibleGraph(source: KeyBindingGraph, kind: KindFilter): KeyBindingGrap
     virtualKeys,
     credentials: source.credentials,
     edges: source.edges.filter((edge) => {
-      if (edge.kind === "grant" || edge.kind === "pool") return useEdges.includes(edge);
+      if (isUseEdgeKind(edge.kind)) return useEdges.includes(edge);
       if (edge.kind === "owns") return keyIds.has(edge.targetId);
       return kept[edge.sourceType].has(edge.sourceId) && kept[edge.targetType].has(edge.targetId);
     }),
@@ -527,7 +548,7 @@ function layoutGraph(source: KeyBindingGraph): { nodes: Node[]; edges: Edge[] } 
 
   const boundTargets = new Map<number, number[]>();
   for (const edge of source.edges) {
-    if (edge.kind !== "grant" && edge.kind !== "pool") continue;
+    if (!isUseEdgeKind(edge.kind)) continue;
     const ys = boundTargets.get(edge.targetId) ?? [];
     const y = virtualKeyY.get(edge.sourceId);
     if (y != null) ys.push(y);
@@ -570,8 +591,6 @@ function layoutGraph(source: KeyBindingGraph): { nodes: Node[]; edges: Edge[] } 
   }
 
   const laidEdges: Edge[] = source.edges.map((edge) => {
-    const grant = edge.kind === "grant";
-    const org = edge.kind === "org" || edge.kind === "owns";
     return {
       id: edge.id,
       source: nodeId(edge.sourceType, edge.sourceId),
@@ -580,11 +599,7 @@ function layoutGraph(source: KeyBindingGraph): { nodes: Node[]; edges: Edge[] } 
       animated: false,
       markerEnd: MarkerType.ArrowClosed,
       pathOptions: { offset: 28, borderRadius: 8 },
-      style: {
-        stroke: grant ? "#2563eb" : org ? "#94a3b8" : "#64748b",
-        strokeWidth: grant ? 2 : 1.5,
-        strokeDasharray: edge.kind === "pool" ? "6 4" : undefined,
-      },
+      style: useEdgeStyle(edge.kind),
       data: { kind: edge.kind },
     };
   });
@@ -850,12 +865,16 @@ onMounted(load);
   height: 2px;
 }
 
-.line.grant {
+.line.dedicated {
   background: #2563eb;
 }
 
-.line.pool {
-  background: repeating-linear-gradient(90deg, #94a3b8 0 6px, transparent 6px 10px);
+.line.team_shared {
+  background: repeating-linear-gradient(90deg, #0891b2 0 6px, transparent 6px 10px);
+}
+
+.line.enterprise_shared {
+  background: repeating-linear-gradient(90deg, #4338ca 0 3px, transparent 3px 7px);
 }
 
 .canvas-card {

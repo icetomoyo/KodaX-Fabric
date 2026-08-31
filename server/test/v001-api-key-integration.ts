@@ -9,6 +9,11 @@
  *
  * Every fixture is uniquely tagged and cleanup addresses only rows whose IDs
  * were returned while creating this run's fixtures.
+ *
+ * Removed: grant_only / public_pool channel visibility and "no grant falls
+ * back to the public pool". shareMode and credential_employee_grants no longer
+ * exist; every enabled channel with a usable Key is listed, and scheduling
+ * uses credential_bindings instead of grants.
  */
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
@@ -38,7 +43,6 @@ const [
 ]);
 
 const {
-  credentialEmployeeGrants,
   employeeApiKeys,
   employees,
   teamMembers,
@@ -49,7 +53,7 @@ const {
   upstreamCredentials,
 } = schema;
 
-type Role = "employee" | "admin" ;
+type Role = "employee" | "org_admin";
 type Protocol = "openai_chat" | "anthropic_messages";
 type CredentialStatus = "active" | "cooling" | "disabled" | "auto_disabled";
 
@@ -96,7 +100,6 @@ const created = {
   providerIds: [] as number[],
   productLineIds: [] as number[],
   credentialIds: [] as number[],
-  grantIds: [] as number[],
   apiKeyIds: [] as number[],
   teamIds: [] as number[],
 };
@@ -252,7 +255,7 @@ async function createUsers(): Promise<void> {
   const passwordHash = await hashPassword(fixturePassword);
   for (const [role, suffix] of [
     ["employee", "emp"],
-    ["admin", "adm"],
+    ["org_admin", "adm"],
   ] as const) {
     const phone = `${suffix}${runId.slice(0, 16)}`;
     const name = `${role} ${marker}`;
@@ -301,7 +304,6 @@ async function createUsers(): Promise<void> {
 async function createProductLine(
   name: string,
   options: {
-    shareMode?: "public_pool" | "grant_only" | "disabled";
     status?: string;
     baseUrlOverride?: string | null;
   } = {},
@@ -315,7 +317,6 @@ async function createProductLine(
       code: `${name}_${marker}`,
       name: `${name} ${marker}`,
       productType: "api",
-      shareMode: options.shareMode ?? "public_pool",
       baseUrlOverride: options.baseUrlOverride ?? null,
       allowAutoRoute: false,
       status: options.status ?? "active",
@@ -400,8 +401,8 @@ async function createChannelFixtures(): Promise<void> {
     weight: 0,
   });
 
-  const grantLine = await createProductLine("grant", { shareMode: "grant_only" });
-  const granted = await createCredential("grant-authorized", grantLine, {
+  const grantLine = await createProductLine("grant");
+  await createCredential("grant-authorized", grantLine, {
     protocols: ["openai_chat"],
   });
   await createCredential("grant-unauthorized-chat", grantLine, {
@@ -413,16 +414,7 @@ async function createChannelFixtures(): Promise<void> {
     coolUntil: new Date(Date.now() + 60 * 60_000),
   });
 
-  const employee = requiredUser("employee");
-  const [grant] = await db
-    .insert(credentialEmployeeGrants)
-    .values({ credentialId: granted, employeeId: employee.id })
-    .returning({ id: credentialEmployeeGrants.id });
-  created.grantIds.push(grant.id);
-
-  const invisibleGrantLine = await createProductLine("grant-invisible", {
-    shareMode: "grant_only",
-  });
+  const invisibleGrantLine = await createProductLine("grant-invisible");
   await createCredential("grant-invisible-active", invisibleGrantLine, {
     protocols: ["openai_chat"],
   });
@@ -493,9 +485,9 @@ async function assertStrictMeRoleBoundary(): Promise<void> {
   const response = await app!.inject({
     method: "GET",
     url: "/api/me/upstream-channels",
-    headers: authHeaders(requiredUser("admin")),
+    headers: authHeaders(requiredUser("org_admin")),
   });
-  assert.equal(response.statusCode, 403, "admin unexpectedly entered /api/me");
+  assert.equal(response.statusCode, 403, "org_admin unexpectedly entered /api/me");
 }
 
 async function assertUpstreamChannelMetadata(): Promise<void> {
@@ -525,13 +517,13 @@ async function assertUpstreamChannelMetadata(): Promise<void> {
   const grantChannel = body.data.find(
     (channel) => channel.productLineId === requiredProductLine("grant"),
   );
-  assert(grantChannel, "historical grant_only channel was not visible");
+  assert(grantChannel, "enabled channel was not visible");
   assert.equal("shareMode" in grantChannel, false, "legacy shareMode leaked into employee DTO");
-  assert.equal(grantChannel.credentialCount, 3, "credential grants still restricted channel metadata");
+  assert.equal(grantChannel.credentialCount, 3, "cooling/active credentials were under-counted");
   assert.deepEqual(
     grantChannel.compatibleProtocols,
     ["openai_chat", "anthropic_messages"],
-    "ungranted credential protocols were still hidden",
+    "enabled-channel protocols were incomplete",
   );
 
   const formerlyInvisibleGrantChannel = body.data.find(
@@ -702,7 +694,7 @@ async function assertCreateValidationAndBinding(): Promise<void> {
 async function assertAdminCannotAccessEmployeeApiKeys(): Promise<void> {
   assert(createdBoundKeyId, "bound API Key fixture missing");
   const employee = requiredUser("employee");
-  const admin = requiredUser("admin");
+  const admin = requiredUser("org_admin");
 
   const usersResponse = await app!.inject({
     method: "GET",
@@ -862,7 +854,7 @@ async function assertDatabaseInvariants(): Promise<void> {
 
 async function assertRoleTransitionRevocation(): Promise<void> {
   const employee = requiredUser("employee");
-  const admin = requiredUser("admin");
+  const admin = requiredUser("org_admin");
   const fixtureKeyIds = [...created.apiKeyIds];
   assert(fixtureKeyIds.length >= 2, "role-transition test requires active API keys");
 
@@ -878,13 +870,13 @@ async function assertRoleTransitionRevocation(): Promise<void> {
     );
   assert.equal(activeBefore.length, fixtureKeyIds.length);
 
-  const toAdmin = await app!.inject({
+  const toTeamAdmin = await app!.inject({
     method: "PATCH",
     url: `/api/admin/users/${employee.id}`,
     headers: authHeaders(admin),
-    payload: { role: "admin" },
+    payload: { role: "team_admin" },
   });
-  assert.equal(toAdmin.statusCode, 200);
+  assert.equal(toTeamAdmin.statusCode, 200);
 
   const [afterTransition, keysAfterTransition] = await Promise.all([
     db
@@ -897,16 +889,21 @@ async function assertRoleTransitionRevocation(): Promise<void> {
       .from(employeeApiKeys)
       .where(inArray(employeeApiKeys.id, fixtureKeyIds)),
   ]);
-  assert.equal(afterTransition[0]?.role, "admin");
+  assert.equal(afterTransition[0]?.role, "team_admin");
   assert.equal(keysAfterTransition.length, fixtureKeyIds.length);
   assert(keysAfterTransition.every((key) => key.status === "revoked"));
 
-  const deniedMe = await app!.inject({
+  const meAfterPromotion = await app!.inject({
     method: "GET",
     url: "/api/me/api-keys",
     headers: authHeaders(employee),
   });
-  assert.equal(deniedMe.statusCode, 403, "stale employee session bypassed live role enforcement");
+  assert.equal(meAfterPromotion.statusCode, 200);
+  const meAfterBody = jsonBody<{ success: boolean; data: ApiKeyListItem[] }>(meAfterPromotion);
+  assert(
+    meAfterBody.data.every((key) => key.status === "revoked"),
+    "promoted team_admin still had an active API Key",
+  );
 
   const revocationAuditRows = await db
     .select({ detail: opsAuditLogs.detail })
@@ -918,7 +915,7 @@ async function assertRoleTransitionRevocation(): Promise<void> {
       ),
     );
   const revocationAudit = revocationAuditRows.find(
-    (row) => isRecord(row.detail) && row.detail.role === "admin",
+    (row) => isRecord(row.detail) && row.detail.role === "team_admin",
   );
   assert(revocationAudit && isRecord(revocationAudit.detail));
   assert.equal(revocationAudit.detail.previousRole, "employee");
@@ -964,9 +961,6 @@ async function cleanupFixtures(): Promise<void> {
   if (employeeIds.length > 0) {
     await db.delete(opsAuditLogs).where(inArray(opsAuditLogs.actorEmployeeId, employeeIds));
   }
-  await deleteTrackedIds(created.grantIds, (ids) =>
-    db.delete(credentialEmployeeGrants).where(inArray(credentialEmployeeGrants.id, ids)),
-  );
   await deleteTrackedIds(created.apiKeyIds, (ids) =>
     db.delete(employeeApiKeys).where(inArray(employeeApiKeys.id, ids)),
   );

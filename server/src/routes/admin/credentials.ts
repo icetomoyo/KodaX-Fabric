@@ -3,14 +3,17 @@ import { and, asc, desc, eq, gte, inArray, ne, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../../db/client.js";
 import {
-  credentialEmployeeGrants,
+  credentialBindings,
   employees,
+  enterprises,
   opsAuditLogs,
   productLines,
   providers,
   requestAudits,
+  teams,
   upstreamCredentials,
 } from "../../db/schema/index.js";
+import { getCredentialQuotaUsage } from "../../lib/relay/credential-quota.js";
 import {
   describeBulkCreateLocator,
   inspectCredentialSecretDuplicates,
@@ -83,6 +86,75 @@ type BulkProductLineContext = {
 const RECENT_WINDOW_MS = 24 * 60 * 60 * 1_000;
 
 const supportedProtocolsSchema = configurableSupportedProtocolsSchema;
+
+const creditLimitSchema = z.number().nonnegative().finite();
+const optionalNullableCreditLimitSchema = creditLimitSchema.nullable().optional();
+
+function parseStoredCreditLimit(value: string | null): number | null {
+  if (value == null) return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function serializeCreditLimit(value: number | null | undefined): string | null {
+  if (value == null) return null;
+  return String(value);
+}
+
+type CredentialBindingView = {
+  scopeType: "employee" | "team" | "enterprise";
+  scopeId: number;
+  scopeName: string;
+};
+
+async function loadCredentialBindingViews(
+  credentialIds: readonly number[],
+): Promise<Map<number, CredentialBindingView>> {
+  const views = new Map<number, CredentialBindingView>();
+  if (credentialIds.length === 0) return views;
+
+  const rows = await db
+    .select({
+      credentialId: credentialBindings.credentialId,
+      scopeType: credentialBindings.scopeType,
+      scopeId: credentialBindings.scopeId,
+      employeeName: employees.name,
+      teamName: teams.name,
+      enterpriseName: enterprises.name,
+    })
+    .from(credentialBindings)
+    .leftJoin(
+      employees,
+      and(
+        eq(credentialBindings.scopeType, "employee"),
+        eq(employees.id, credentialBindings.scopeId),
+      ),
+    )
+    .leftJoin(
+      teams,
+      and(
+        eq(credentialBindings.scopeType, "team"),
+        eq(teams.id, credentialBindings.scopeId),
+      ),
+    )
+    .leftJoin(
+      enterprises,
+      and(
+        eq(credentialBindings.scopeType, "enterprise"),
+        eq(enterprises.id, credentialBindings.scopeId),
+      ),
+    )
+    .where(inArray(credentialBindings.credentialId, [...credentialIds]));
+
+  for (const row of rows) {
+    views.set(row.credentialId, {
+      scopeType: row.scopeType,
+      scopeId: row.scopeId,
+      scopeName: row.employeeName ?? row.teamName ?? row.enterpriseName ?? "",
+    });
+  }
+  return views;
+}
 
 const upstreamSecretSchema = z
   .string()
@@ -612,10 +684,14 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
     const credentialRows = await db
       .select({
         id: upstreamCredentials.id,
+        label: upstreamCredentials.label,
+        secretSuffix: upstreamCredentials.secretSuffix,
         status: upstreamCredentials.status,
         coolUntil: upstreamCredentials.coolUntil,
         weight: upstreamCredentials.weight,
         supportedProtocols: upstreamCredentials.supportedProtocols,
+        fiveHourCreditLimit: upstreamCredentials.fiveHourCreditLimit,
+        weeklyCreditLimit: upstreamCredentials.weeklyCreditLimit,
       })
       .from(upstreamCredentials)
       .where(eq(upstreamCredentials.productLineId, located.productLine.id));
@@ -635,6 +711,10 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
       : [{ recentSuccessCount: 0, recentErrorCount: 0 }];
 
     const now = new Date();
+    const [usageById, bindingById] = await Promise.all([
+      getCredentialQuotaUsage(credentialIds, now),
+      loadCredentialBindingViews(credentialIds),
+    ]);
     const effectiveStatuses = credentialRows.map((row) => ({
       ...row,
       effectiveStatus: effectiveCredentialStatus(row.status, row.coolUntil, now),
@@ -662,7 +742,6 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
         code: located.productLine.code,
         name: located.productLine.name,
         productType: located.productLine.productType,
-        shareMode: located.productLine.shareMode,
         allowAutoRoute: located.productLine.allowAutoRoute,
         status: located.productLine.status,
         provider: {
@@ -687,6 +766,23 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
           recentSuccessCount: Number(recent?.recentSuccessCount) || 0,
           recentErrorCount: Number(recent?.recentErrorCount) || 0,
         },
+        credentials: effectiveStatuses.map((row) => {
+          const usage = usageById.get(row.id) ?? { fiveHourCredits: 0, weeklyCredits: 0 };
+          return {
+            id: row.id,
+            label: row.label,
+            secretSuffix: row.secretSuffix,
+            status: row.status,
+            effectiveStatus: row.effectiveStatus,
+            weight: row.weight,
+            supportedProtocols: row.supportedProtocols,
+            fiveHourCreditLimit: parseStoredCreditLimit(row.fiveHourCreditLimit),
+            weeklyCreditLimit: parseStoredCreditLimit(row.weeklyCreditLimit),
+            fiveHourCredits: usage.fiveHourCredits,
+            weeklyCredits: usage.weeklyCredits,
+            binding: bindingById.get(row.id) ?? null,
+          };
+        }),
       },
     };
   });
@@ -705,6 +801,8 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
           weight: z.number().int().min(0).max(10000).default(100),
           priority: z.number().int().min(-1000).max(1000).default(0),
           testAfterCreate: z.boolean().default(true),
+          fiveHourCreditLimit: optionalNullableCreditLimitSchema,
+          weeklyCreditLimit: optionalNullableCreditLimitSchema,
         })
         .safeParse(req.body);
 
@@ -793,7 +891,6 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
                 baseUrlOption.url === provider.defaultBaseUrl ? null : baseUrlOption.url,
               protocolConfigs: newChannelProtocolConfigResolution.configs,
               configVersion: 1,
-              shareMode: "public_pool",
               allowAutoRoute: true,
               status: "active",
             })
@@ -882,6 +979,8 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
             supportedProtocols: protocolResolution.protocols,
             weight: body.data.weight,
             priority: body.data.priority,
+            fiveHourCreditLimit: serializeCreditLimit(body.data.fiveHourCreditLimit),
+            weeklyCreditLimit: serializeCreditLimit(body.data.weeklyCreditLimit),
             meta: {
               providerTemplate: body.data.providerCode,
               createdBy: "quick_create",
@@ -982,6 +1081,8 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
           providerCode: body.data.providerCode,
           productLineId: created.productLine.id,
           supportedProtocols: created.credential.supportedProtocols,
+          fiveHourCreditLimit: body.data.fiveHourCreditLimit ?? null,
+          weeklyCreditLimit: body.data.weeklyCreditLimit ?? null,
           testOk: test?.ok ?? null,
         },
         ip: req.ip,
@@ -1541,7 +1642,6 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
             code: created.context.productLine.code,
             name: created.context.productLine.name,
             productType: created.context.productLine.productType,
-            shareMode: created.context.productLine.shareMode,
             allowAutoRoute: created.context.productLine.allowAutoRoute,
             status: created.context.productLine.status,
             baseUrl: created.context.baseUrl,
@@ -1584,13 +1684,14 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
         errorCount: upstreamCredentials.errorCount,
         lastUsedAt: upstreamCredentials.lastUsedAt,
         meta: upstreamCredentials.meta,
+        fiveHourCreditLimit: upstreamCredentials.fiveHourCreditLimit,
+        weeklyCreditLimit: upstreamCredentials.weeklyCreditLimit,
         createdAt: upstreamCredentials.createdAt,
         updatedAt: upstreamCredentials.updatedAt,
         productLineCode: productLines.code,
         productLineName: productLines.name,
         productLineStatus: productLines.status,
         productType: productLines.productType,
-        shareMode: productLines.shareMode,
         allowAutoRoute: productLines.allowAutoRoute,
         providerCode: providers.code,
         providerName: providers.name,
@@ -1615,22 +1716,26 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
 
     const credentialIds = rows.map((row) => row.id);
     const recentSince = new Date(Date.now() - RECENT_WINDOW_MS);
-    const recentRows = credentialIds.length
-      ? await db
-        .select({
-          credentialId: requestAudits.credentialId,
-          recentSuccessCount: sql<number>`coalesce(sum(case when ${requestAudits.status} = 'success' then 1 else 0 end), 0)::int`,
-          recentErrorCount: sql<number>`coalesce(sum(case when ${requestAudits.status} <> 'success' then 1 else 0 end), 0)::int`,
-        })
-        .from(requestAudits)
-        .where(
-          and(
-            inArray(requestAudits.credentialId, credentialIds),
-            gte(requestAudits.createdAt, recentSince),
-          ),
-        )
-        .groupBy(requestAudits.credentialId)
-      : [];
+    const [recentRows, usageById, bindingById] = await Promise.all([
+      credentialIds.length
+        ? db
+          .select({
+            credentialId: requestAudits.credentialId,
+            recentSuccessCount: sql<number>`coalesce(sum(case when ${requestAudits.status} = 'success' then 1 else 0 end), 0)::int`,
+            recentErrorCount: sql<number>`coalesce(sum(case when ${requestAudits.status} <> 'success' then 1 else 0 end), 0)::int`,
+          })
+          .from(requestAudits)
+          .where(
+            and(
+              inArray(requestAudits.credentialId, credentialIds),
+              gte(requestAudits.createdAt, recentSince),
+            ),
+          )
+          .groupBy(requestAudits.credentialId)
+        : Promise.resolve([]),
+      getCredentialQuotaUsage(credentialIds),
+      loadCredentialBindingViews(credentialIds),
+    ]);
 
     const recentById = new Map(
       recentRows
@@ -1665,12 +1770,20 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
 
     return {
       success: true,
-      data: rows.map((row) => ({
-        ...row,
-        recentWindowHours: 24,
-        recentSuccessCount: recentById.get(row.id)?.recentSuccessCount ?? 0,
-        recentErrorCount: recentById.get(row.id)?.recentErrorCount ?? 0,
-      })),
+      data: rows.map((row) => {
+        const usage = usageById.get(row.id) ?? { fiveHourCredits: 0, weeklyCredits: 0 };
+        return {
+          ...row,
+          recentWindowHours: 24,
+          recentSuccessCount: recentById.get(row.id)?.recentSuccessCount ?? 0,
+          recentErrorCount: recentById.get(row.id)?.recentErrorCount ?? 0,
+          fiveHourCreditLimit: parseStoredCreditLimit(row.fiveHourCreditLimit),
+          weeklyCreditLimit: parseStoredCreditLimit(row.weeklyCreditLimit),
+          fiveHourCredits: usage.fiveHourCredits,
+          weeklyCredits: usage.weeklyCredits,
+          binding: bindingById.get(row.id) ?? null,
+        };
+      }),
       productLines: productLineRows.map((line) => ({
         ...line,
         baseUrl: line.baseUrlOverride || line.defaultBaseUrl,
@@ -1806,10 +1919,6 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
           return { kind: "missing", missingIds } as const;
         }
 
-        await tx
-          .delete(credentialEmployeeGrants)
-          .where(inArray(credentialEmployeeGrants.credentialId, body.data.ids));
-
         const deleted = await tx
           .delete(upstreamCredentials)
           .where(inArray(upstreamCredentials.id, body.data.ids))
@@ -1864,6 +1973,8 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
           supportedProtocols: supportedProtocolsSchema.optional(),
           weight: z.number().int().min(0).max(10000).default(100),
           priority: z.number().int().default(0),
+          fiveHourCreditLimit: optionalNullableCreditLimitSchema,
+          weeklyCreditLimit: optionalNullableCreditLimitSchema,
           meta: z.record(z.unknown()).optional(),
         })
         .safeParse(req.body);
@@ -1952,6 +2063,8 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
             supportedProtocols: protocolResolution.protocols,
             weight: body.data.weight,
             priority: body.data.priority,
+            fiveHourCreditLimit: serializeCreditLimit(body.data.fiveHourCreditLimit),
+            weeklyCreditLimit: serializeCreditLimit(body.data.weeklyCreditLimit),
             meta: body.data.meta,
             status: "active",
           })
@@ -1962,6 +2075,8 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
             supportedProtocols: upstreamCredentials.supportedProtocols,
             productLineId: upstreamCredentials.productLineId,
             status: upstreamCredentials.status,
+            fiveHourCreditLimit: upstreamCredentials.fiveHourCreditLimit,
+            weeklyCreditLimit: upstreamCredentials.weeklyCreditLimit,
           });
 
         await tx.insert(opsAuditLogs).values({
@@ -1973,11 +2088,20 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
             label: row.label,
             productLineId: row.productLineId,
             supportedProtocols: row.supportedProtocols,
+            fiveHourCreditLimit: parseStoredCreditLimit(row.fiveHourCreditLimit),
+            weeklyCreditLimit: parseStoredCreditLimit(row.weeklyCreditLimit),
           },
           ip: req.ip,
         });
 
-        return { kind: "created", row } as const;
+        return {
+          kind: "created",
+          row: {
+            ...row,
+            fiveHourCreditLimit: parseStoredCreditLimit(row.fiveHourCreditLimit),
+            weeklyCreditLimit: parseStoredCreditLimit(row.weeklyCreditLimit),
+          },
+        } as const;
       });
 
       if (result.kind === "product_line_not_found") {
@@ -2061,6 +2185,8 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
             .enum(["active", "disabled", "auto_disabled", "cooling"])
             .optional(),
           coolUntil: z.string().datetime().nullable().optional(),
+          fiveHourCreditLimit: optionalNullableCreditLimitSchema,
+          weeklyCreditLimit: optionalNullableCreditLimitSchema,
           meta: z.record(z.unknown()).nullable().optional(),
         })
         .strict()
@@ -2131,6 +2257,12 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
           patch.lastError = null;
           patch.lastErrorAt = null;
         }
+        if (body.data.fiveHourCreditLimit !== undefined) {
+          patch.fiveHourCreditLimit = serializeCreditLimit(body.data.fiveHourCreditLimit);
+        }
+        if (body.data.weeklyCreditLimit !== undefined) {
+          patch.weeklyCreditLimit = serializeCreditLimit(body.data.weeklyCreditLimit);
+        }
 
         if (body.data.secret !== undefined) {
           const targetCredentials = await tx
@@ -2179,6 +2311,8 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
             secretSuffix: upstreamCredentials.secretSuffix,
             supportedProtocols: upstreamCredentials.supportedProtocols,
             productLineId: upstreamCredentials.productLineId,
+            fiveHourCreditLimit: upstreamCredentials.fiveHourCreditLimit,
+            weeklyCreditLimit: upstreamCredentials.weeklyCreditLimit,
           });
         if (!row) return { kind: "not_found" } as const;
 
@@ -2195,7 +2329,14 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
           ip: req.ip,
         });
 
-        return { kind: "updated", row } as const;
+        return {
+          kind: "updated",
+          row: {
+            ...row,
+            fiveHourCreditLimit: parseStoredCreditLimit(row.fiveHourCreditLimit),
+            weeklyCreditLimit: parseStoredCreditLimit(row.weeklyCreditLimit),
+          },
+        } as const;
       });
 
       if (result.kind === "not_found") {
@@ -2229,10 +2370,6 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
       }
 
       const deleted = await db.transaction(async (tx) => {
-        await tx
-          .delete(credentialEmployeeGrants)
-          .where(eq(credentialEmployeeGrants.credentialId, params.data.id));
-
         const [row] = await tx
           .delete(upstreamCredentials)
           .where(eq(upstreamCredentials.id, params.data.id))
@@ -2306,105 +2443,4 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
     },
   );
 
-  // Coding plan style grants — admin only.
-  app.get("/api/admin/credentials/:id/grants", async (req, reply) => {
-    const params = z.object({ id: z.coerce.number() }).safeParse(req.params);
-    if (!params.success) {
-      return reply.code(400).send({ success: false, message: "参数无效" });
-    }
-
-    const rows = await db
-      .select({
-        id: credentialEmployeeGrants.id,
-        employeeId: credentialEmployeeGrants.employeeId,
-        employeeName: employees.name,
-        employeePhone: employees.phone,
-        grantedBy: credentialEmployeeGrants.grantedBy,
-        createdAt: credentialEmployeeGrants.createdAt,
-      })
-      .from(credentialEmployeeGrants)
-      .innerJoin(employees, eq(credentialEmployeeGrants.employeeId, employees.id))
-      .where(eq(credentialEmployeeGrants.credentialId, params.data.id))
-      .orderBy(asc(credentialEmployeeGrants.id));
-
-    return { success: true, data: rows };
-  });
-
-  app.post(
-    "/api/admin/credentials/:id/grants",
-    { preHandler: [requireRoles("admin")] },
-    async (req, reply) => {
-      const params = z.object({ id: z.coerce.number() }).safeParse(req.params);
-      const body = z.object({ employeeId: z.number().int().positive() }).safeParse(req.body);
-      if (!params.success || !body.success) {
-        return reply.code(400).send({ success: false, message: "参数无效" });
-      }
-
-      try {
-        const [row] = await db
-          .insert(credentialEmployeeGrants)
-          .values({
-            credentialId: params.data.id,
-            employeeId: body.data.employeeId,
-            grantedBy: req.employeeId,
-          })
-          .returning();
-
-        await writeOpsAudit({
-          actorEmployeeId: req.employeeId,
-          action: "credential.grant",
-          targetType: "upstream_credential",
-          targetId: String(params.data.id),
-          detail: { employeeId: body.data.employeeId },
-          ip: req.ip,
-        });
-
-        return { success: true, data: row };
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        if (msg.includes("unique")) {
-          return reply.code(409).send({ success: false, message: "已授权该员工" });
-        }
-        throw e;
-      }
-    },
-  );
-
-  app.delete(
-    "/api/admin/credentials/:id/grants/:grantId",
-    { preHandler: [requireRoles("admin")] },
-    async (req, reply) => {
-      const params = z
-        .object({ id: z.coerce.number(), grantId: z.coerce.number() })
-        .safeParse(req.params);
-      if (!params.success) {
-        return reply.code(400).send({ success: false, message: "参数无效" });
-      }
-
-      const [row] = await db
-        .delete(credentialEmployeeGrants)
-        .where(
-          and(
-            eq(credentialEmployeeGrants.id, params.data.grantId),
-            eq(credentialEmployeeGrants.credentialId, params.data.id),
-          ),
-        )
-        .returning();
-
-      if (!row) {
-        return reply.code(404).send({ success: false, message: "授权不存在" });
-      }
-
-      await writeOpsAudit({
-        actorEmployeeId: req.employeeId,
-        action: "credential.ungrant",
-        targetType: "upstream_credential",
-        targetId: String(params.data.id),
-        detail: { grantId: params.data.grantId, employeeId: row.employeeId },
-        ip: req.ip,
-      });
-
-      return { success: true };
-    },
-  );
 }

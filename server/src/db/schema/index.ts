@@ -27,7 +27,6 @@ export const relayProtocolEnum = pgEnum("relay_protocol", [
   "openai_responses",
 ]);
 export const productTypeEnum = pgEnum("product_type", ["api", "coding_plan"]);
-export const shareModeEnum = pgEnum("share_mode", ["public_pool", "grant_only", "disabled"]);
 export const credentialStatusEnum = pgEnum("credential_status", [
   "active",
   "disabled",
@@ -40,6 +39,8 @@ export const auditStatusEnum = pgEnum("audit_status", [
   "client_error",
   "cancelled",
 ]);
+export const bindingScopeTypeEnum = pgEnum("binding_scope_type", ["employee", "team", "enterprise"]);
+export const usageTierEnum = pgEnum("usage_tier", ["light", "standard", "heavy"]);
 
 export const enterprises = pgTable(
   "enterprises",
@@ -76,6 +77,7 @@ export const employees = pgTable(
     mustChangePassword: boolean("must_change_password").notNull().default(true),
     passwordChangedAt: timestamp("password_changed_at", { withTimezone: true }),
     lastLoginAt: timestamp("last_login_at", { withTimezone: true }),
+    usageTier: usageTierEnum("usage_tier").notNull().default("standard"),
     createdBy: bigint("created_by", { mode: "number" }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -248,7 +250,6 @@ export const productLines = pgTable(
     baseUrlOverride: text("base_url_override"),
     protocolConfigs: jsonb("protocol_configs"),
     configVersion: integer("config_version").notNull().default(1),
-    shareMode: shareModeEnum("share_mode").notNull().default("public_pool"),
     allowAutoRoute: boolean("allow_auto_route").notNull().default(true),
     retryPolicy: jsonb("retry_policy"),
     status: varchar("status", { length: 32 }).notNull().default("active"),
@@ -282,28 +283,49 @@ export const upstreamCredentials = pgTable(
     errorCount: bigint("error_count", { mode: "number" }).notNull().default(0),
     lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
     meta: jsonb("meta"),
+    fiveHourCreditLimit: numeric("five_hour_credit_limit", { precision: 14, scale: 4 }),
+    weeklyCreditLimit: numeric("weekly_credit_limit", { precision: 14, scale: 4 }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index("upstream_credentials_pl_idx").on(t.productLineId, t.status)],
 );
 
-export const credentialEmployeeGrants = pgTable(
-  "credential_employee_grants",
+export const credentialBindings = pgTable(
+  "credential_bindings",
   {
     id: bigint("id", { mode: "number" }).generatedAlwaysAsIdentity().primaryKey(),
     credentialId: bigint("credential_id", { mode: "number" })
       .notNull()
-      .references(() => upstreamCredentials.id),
-    employeeId: bigint("employee_id", { mode: "number" })
+      .references(() => upstreamCredentials.id, { onDelete: "cascade", onUpdate: "no action" }),
+    productLineId: bigint("product_line_id", { mode: "number" })
       .notNull()
-      .references(() => employees.id),
-    grantedBy: bigint("granted_by", { mode: "number" }),
+      .references(() => productLines.id, { onDelete: "cascade", onUpdate: "no action" }),
+    scopeType: bindingScopeTypeEnum("scope_type").notNull(),
+    scopeId: bigint("scope_id", { mode: "number" }).notNull(),
+    boundAt: timestamp("bound_at", { withTimezone: true }).notNull().defaultNow(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
-    uniqueIndex("credential_employee_grants_uidx").on(t.credentialId, t.employeeId),
+    uniqueIndex("credential_bindings_credential_id_uidx").on(t.credentialId),
+    uniqueIndex("credential_bindings_product_line_scope_uidx").on(t.productLineId, t.scopeType, t.scopeId),
   ],
+);
+
+export const credentialUsageHourly = pgTable(
+  "credential_usage_hourly",
+  {
+    id: bigint("id", { mode: "number" }).generatedAlwaysAsIdentity().primaryKey(),
+    credentialId: bigint("credential_id", { mode: "number" })
+      .notNull()
+      .references(() => upstreamCredentials.id, { onDelete: "cascade", onUpdate: "no action" }),
+    hourStart: timestamp("hour_start", { withTimezone: true }).notNull(),
+    totalTokens: bigint("total_tokens", { mode: "number" }).notNull().default(0),
+    totalCredits: numeric("total_credits", { precision: 14, scale: 4 }).notNull().default("0"),
+    requestCount: bigint("request_count", { mode: "number" }).notNull().default(0),
+  },
+  (t) => [uniqueIndex("credential_usage_hourly_credential_hour_uidx").on(t.credentialId, t.hourStart)],
 );
 
 export const modelRoutes = pgTable(
@@ -473,6 +495,10 @@ export const modelPrices = pgTable(
     })
       .notNull()
       .default("0"),
+    /** Credits per 10k tokens. All-null = model is not credit-metered (0 credits). */
+    promptCreditsPer10k: numeric("prompt_credits_per_10k", { precision: 10, scale: 4 }),
+    cacheHitCreditsPer10k: numeric("cache_hit_credits_per_10k", { precision: 10, scale: 4 }),
+    completionCreditsPer10k: numeric("completion_credits_per_10k", { precision: 10, scale: 4 }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },

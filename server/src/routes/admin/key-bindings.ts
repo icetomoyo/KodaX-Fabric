@@ -4,7 +4,7 @@ import { z } from "zod";
 import { env } from "../../config.js";
 import { db } from "../../db/client.js";
 import {
-  credentialEmployeeGrants,
+  credentialBindings,
   employeeApiKeys,
   employees,
   enterprises,
@@ -45,7 +45,7 @@ export async function adminKeyBindingRoutes(app: FastifyInstance) {
     const now = new Date();
     const today = quotaDayAt(now, env.QUOTA_TIMEZONE);
     const usageFrom = addCalendarDays(today, -6);
-    const [keyRows, credentialRows, grantRows, membershipRows, usageRows] = await Promise.all([
+    const [keyRows, credentialRows, bindingRows, membershipRows, usageRows] = await Promise.all([
       db
         .select({
           id: employeeApiKeys.id,
@@ -85,10 +85,11 @@ export async function adminKeyBindingRoutes(app: FastifyInstance) {
         .innerJoin(providers, eq(productLines.providerId, providers.id)),
       db
         .select({
-          employeeId: credentialEmployeeGrants.employeeId,
-          credentialId: credentialEmployeeGrants.credentialId,
+          credentialId: credentialBindings.credentialId,
+          scopeType: credentialBindings.scopeType,
+          scopeId: credentialBindings.scopeId,
         })
-        .from(credentialEmployeeGrants),
+        .from(credentialBindings),
       db
         .select({
           employeeId: teamMembers.employeeId,
@@ -169,7 +170,7 @@ export async function adminKeyBindingRoutes(app: FastifyInstance) {
         status: effectiveCredentialStatus(row.status, row.coolUntil, now),
         supportedProtocols: row.supportedProtocols ?? [],
       })),
-      grants: grantRows,
+      bindings: bindingRows,
       filter: {
         productLineId: query.data.productLineId,
         enterpriseId: query.data.enterpriseId,

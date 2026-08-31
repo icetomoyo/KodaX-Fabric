@@ -43,7 +43,24 @@ export async function adminProviderRoutes(app: FastifyInstance) {
 
   app.get("/api/admin/providers", async () => {
     const rows = await db.select().from(providers).orderBy(asc(providers.id));
-    const lines = await db.select().from(productLines).orderBy(asc(productLines.id));
+    const lines = await db
+      .select({
+        id: productLines.id,
+        providerId: productLines.providerId,
+        code: productLines.code,
+        name: productLines.name,
+        productType: productLines.productType,
+        baseUrlOverride: productLines.baseUrlOverride,
+        protocolConfigs: productLines.protocolConfigs,
+        configVersion: productLines.configVersion,
+        allowAutoRoute: productLines.allowAutoRoute,
+        retryPolicy: productLines.retryPolicy,
+        status: productLines.status,
+        createdAt: productLines.createdAt,
+        updatedAt: productLines.updatedAt,
+      })
+      .from(productLines)
+      .orderBy(asc(productLines.id));
 
     const data = rows.map((p) => ({
       ...p,
@@ -64,7 +81,6 @@ export async function adminProviderRoutes(app: FastifyInstance) {
         baseUrlOverride: productLines.baseUrlOverride,
         protocolConfigs: productLines.protocolConfigs,
         configVersion: productLines.configVersion,
-        shareMode: productLines.shareMode,
         allowAutoRoute: productLines.allowAutoRoute,
         status: productLines.status,
         providerCode: providers.code,
@@ -115,7 +131,6 @@ export async function adminProviderRoutes(app: FastifyInstance) {
             code: "api",
             name: "API",
             productType: "api",
-            shareMode: "public_pool",
             allowAutoRoute: true,
             status: "active",
           });
@@ -181,7 +196,24 @@ export async function adminProviderRoutes(app: FastifyInstance) {
           ip: req.ip,
         });
 
-        return { success: true, data: row };
+        return {
+          success: true,
+          data: {
+            id: row.id,
+            providerId: row.providerId,
+            code: row.code,
+            name: row.name,
+            productType: row.productType,
+            baseUrlOverride: row.baseUrlOverride,
+            protocolConfigs: row.protocolConfigs,
+            configVersion: row.configVersion,
+            allowAutoRoute: row.allowAutoRoute,
+            retryPolicy: row.retryPolicy,
+            status: row.status,
+            createdAt: row.createdAt,
+            updatedAt: row.updatedAt,
+          },
+        };
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         if (msg.includes("unique")) {
@@ -471,10 +503,20 @@ export async function adminProviderRoutes(app: FastifyInstance) {
       return {
         success: true,
         data: {
-          ...result.row,
-          supportedProtocols: result.supportedProtocols,
+          id: result.row.id,
+          providerId: result.row.providerId,
+          code: result.row.code,
+          name: result.row.name,
+          productType: result.row.productType,
+          baseUrlOverride: result.row.baseUrlOverride,
           protocolConfigs: result.protocolConfigs,
           configVersion: result.configVersion,
+          allowAutoRoute: result.row.allowAutoRoute,
+          retryPolicy: result.row.retryPolicy,
+          status: result.row.status,
+          createdAt: result.row.createdAt,
+          updatedAt: result.row.updatedAt,
+          supportedProtocols: result.supportedProtocols,
           credentialCount: result.credentialCount,
           credentialHealthReset: result.credentialHealthReset,
         },

@@ -20,7 +20,7 @@ import { RELAY_ENDPOINTS } from "../../lib/relay/protocol.js";
 import type { RelayProtocol } from "../../lib/relay/protocol.js";
 import {
   resolveAccessibleRelayModels,
-  resolveRelayCandidates,
+  resolveRelayBoundCandidate,
 } from "../../lib/relay/routing.js";
 import { createSsePassthrough } from "../../lib/relay/sse.js";
 import type {
@@ -461,67 +461,83 @@ export async function chatCompletionRoutes(app: FastifyInstance) {
           return reply.code(httpStatus).send(payload);
         }
 
-        const resolution = await resolveRelayCandidates(
-          principal.employeeId,
-          body.model,
-          principal.protocol,
-          principal.productLineId,
-        );
-        const candidates = resolution.candidates;
-        if (candidates.length === 0) {
-          const boundUnavailable =
-            resolution.unavailableReason === "bound_channel_unavailable";
-          const cooling = resolution.unavailableReason === "cooling";
-          const unavailable = resolution.unavailableReason === "unavailable";
-          const httpStatus = boundUnavailable || unavailable ? 503 : cooling ? 429 : 404;
-          const errorCode = boundUnavailable
-            ? "bound_channel_unavailable"
-            : cooling
-              ? "model_channels_cooling"
-              : unavailable
-                ? "model_unavailable"
-                : "model_not_found";
-          const errorMessage = boundUnavailable
-            ? "当前 Key 绑定的上游渠道不可用"
-            : cooling
-              ? "该模型的上游渠道正在冷却，请稍后重试"
-              : unavailable
-                ? "该模型已配置，但当前没有可用的上游渠道"
-                : "当前 Key 绑定的上游渠道不支持该模型";
-          const payload = boundUnavailable
-            ? openAiError(errorMessage, "service_unavailable", errorCode)
-            : cooling
-              ? openAiError(errorMessage, "rate_limit_error", errorCode)
-              : unavailable
-                ? openAiError(errorMessage, "service_unavailable", errorCode)
-                : noRouteError(errorMessage);
-          if (resolution.retryAfterSeconds !== null) {
-            reply.header("retry-after", String(resolution.retryAfterSeconds));
-          }
-          await finalizeAudit({
-            candidate: null,
-            status: boundUnavailable || cooling || unavailable
-              ? "upstream_error"
-              : "client_error",
-            httpStatus,
-            upstreamStatus: null,
-            errorCode,
-            errorMessage,
-            usage: emptyRelayUsage(),
-            responseBody: payload,
-          });
-          return reply.code(httpStatus).send(payload);
-        }
-
-        const attempts = candidates.slice(0, env.RELAY_MAX_ATTEMPTS);
+        const excludeCredentialIds = new Set<number>();
         let lastCandidate: RelayCandidate | null = null;
         let lastFailure: RelayUpstreamAttemptResult | null = null;
 
-        for (let index = 0; index < attempts.length; index += 1) {
-          const candidate = attempts[index];
+        for (let index = 0; index < env.RELAY_MAX_ATTEMPTS; index += 1) {
+          const resolution = await resolveRelayBoundCandidate(
+            principal.employeeId,
+            body.model,
+            principal.protocol,
+            principal.productLineId,
+            excludeCredentialIds,
+          );
+          const candidate = resolution.candidate;
+          if (!candidate) {
+            if (index === 0) {
+              const boundUnavailable =
+                resolution.unavailableReason === "bound_channel_unavailable";
+              const cooling = resolution.unavailableReason === "cooling";
+              const unavailable = resolution.unavailableReason === "unavailable";
+              const modelDenied = resolution.unavailableReason === "model_not_allowed";
+              const httpStatus = modelDenied
+                ? 403
+                : boundUnavailable || unavailable
+                  ? 503
+                  : cooling
+                    ? 429
+                    : 404;
+              const errorCode = modelDenied
+                ? "model_not_allowed"
+                : boundUnavailable
+                  ? "bound_channel_unavailable"
+                  : cooling
+                    ? "model_channels_cooling"
+                    : unavailable
+                      ? "model_unavailable"
+                      : "model_not_found";
+              const errorMessage = modelDenied
+                ? "model not allowed"
+                : boundUnavailable
+                  ? "当前 Key 绑定的上游渠道不可用"
+                  : cooling
+                    ? "该模型的上游渠道正在冷却，请稍后重试"
+                    : unavailable
+                      ? "该模型已配置，但当前没有可用的上游渠道"
+                      : "当前 Key 绑定的上游渠道不支持该模型";
+              const payload = modelDenied
+                ? openAiError(errorMessage, "invalid_request_error", errorCode)
+                : boundUnavailable
+                  ? openAiError(errorMessage, "service_unavailable", errorCode)
+                  : cooling
+                    ? openAiError(errorMessage, "rate_limit_error", errorCode)
+                    : unavailable
+                      ? openAiError(errorMessage, "service_unavailable", errorCode)
+                      : noRouteError(errorMessage);
+              if (resolution.retryAfterSeconds !== null) {
+                reply.header("retry-after", String(resolution.retryAfterSeconds));
+              }
+              await finalizeAudit({
+                candidate: null,
+                status: boundUnavailable || cooling || unavailable
+                  ? "upstream_error"
+                  : "client_error",
+                httpStatus,
+                upstreamStatus: null,
+                errorCode,
+                errorMessage,
+                usage: emptyRelayUsage(),
+                responseBody: payload,
+              });
+              return reply.code(httpStatus).send(payload);
+            }
+            break;
+          }
+
           currentCandidate = candidate;
           lastCandidate = candidate;
-          const hasNext = index + 1 < attempts.length;
+          const hasNext = index + 1 < env.RELAY_MAX_ATTEMPTS;
           const result = await sendRelayUpstream({
             candidate,
             protocol: principal.protocol,
@@ -552,7 +568,10 @@ export async function chatCompletionRoutes(app: FastifyInstance) {
             if (disposition === "released") {
               activeAttempt = null;
             }
-            if (willRetry) continue;
+            if (willRetry) {
+              excludeCredentialIds.add(candidate.credentialId);
+              continue;
+            }
             break;
           }
 
@@ -579,7 +598,10 @@ export async function chatCompletionRoutes(app: FastifyInstance) {
               );
               result.abort(error);
               activeAttempt = null;
-              if (willRetry) continue;
+              if (willRetry) {
+              excludeCredentialIds.add(candidate.credentialId);
+              continue;
+            }
               lastFailure = {
                 ...result,
                 response: null,
@@ -610,7 +632,10 @@ export async function chatCompletionRoutes(app: FastifyInstance) {
               );
               result.cleanup();
               activeAttempt = null;
-              if (willRetry) continue;
+              if (willRetry) {
+              excludeCredentialIds.add(candidate.credentialId);
+              continue;
+            }
               lastFailure = {
                 ...result,
                 response: null,
@@ -662,7 +687,10 @@ export async function chatCompletionRoutes(app: FastifyInstance) {
             await discardResponse(response);
             result.cleanup();
             activeAttempt = null;
-            if (willRetry) continue;
+            if (willRetry) {
+              excludeCredentialIds.add(candidate.credentialId);
+              continue;
+            }
             lastFailure = {
               ...result,
               response: null,
@@ -696,7 +724,10 @@ export async function chatCompletionRoutes(app: FastifyInstance) {
             }
             result.abort(error);
             activeAttempt = null;
-            if (willRetry) continue;
+            if (willRetry) {
+              excludeCredentialIds.add(candidate.credentialId);
+              continue;
+            }
             lastFailure = {
               ...result,
               response: null,
@@ -726,7 +757,10 @@ export async function chatCompletionRoutes(app: FastifyInstance) {
             }
             result.cleanup();
             activeAttempt = null;
-            if (willRetry) continue;
+            if (willRetry) {
+              excludeCredentialIds.add(candidate.credentialId);
+              continue;
+            }
             lastFailure = {
               ...result,
               response: null,

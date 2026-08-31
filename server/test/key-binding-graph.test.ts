@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type {
+  KeyBindingBindingInput,
   KeyBindingCredentialInput,
   KeyBindingEmployeeInput,
-  KeyBindingGrantInput,
   KeyBindingVirtualKeyInput,
 } from "../src/lib/key-binding-graph.js";
 
@@ -58,13 +58,22 @@ function credential(
   };
 }
 
-function grant(employeeId: number, credentialId: number): KeyBindingGrantInput {
-  return { employeeId, credentialId };
+function binding(
+  credentialId: number,
+  scopeType: KeyBindingBindingInput["scopeType"],
+  scopeId: number,
+): KeyBindingBindingInput {
+  return { credentialId, scopeType, scopeId };
 }
 
 function useEdges(graph: ReturnType<typeof buildKeyBindingGraph>) {
   return graph.edges
-    .filter((edge) => edge.kind === "grant" || edge.kind === "pool")
+    .filter(
+      (edge) =>
+        edge.kind === "dedicated" ||
+        edge.kind === "team_shared" ||
+        edge.kind === "enterprise_shared",
+    )
     .map((edge) => `${edge.sourceId}->${edge.targetId}:${edge.kind}`)
     .sort();
 }
@@ -81,7 +90,7 @@ test("org chain links enterprise to team to employee", () => {
     employees: [employee({ id: 1, name: "张三" })],
     virtualKeys: [virtualKey({ id: 11, employeeId: 1, productLineId: 100 })],
     credentials: [credential({ id: 21, productLineId: 100 })],
-    grants: [],
+    bindings: [],
   });
 
   assert.deepEqual(orgEdges(graph), [
@@ -99,7 +108,7 @@ test("employee without a team hangs directly under the enterprise", () => {
     employees: [employee({ id: 1, name: "张三", teamId: null, teamName: null })],
     virtualKeys: [virtualKey({ id: 11, employeeId: 1, productLineId: 100 })],
     credentials: [credential({ id: 21, productLineId: 100 })],
-    grants: [],
+    bindings: [],
   });
 
   assert.deepEqual(orgEdges(graph), ["enterprise:1->employee:1"]);
@@ -111,7 +120,7 @@ test("employees without usage default to the standard tier", () => {
     employees: [employee({ id: 1, name: "张三" })],
     virtualKeys: [virtualKey({ id: 11, employeeId: 1, productLineId: 100 })],
     credentials: [credential({ id: 21, productLineId: 100 })],
-    grants: [],
+    bindings: [],
   });
   assert.equal(graph.employees[0]?.usageTier, "standard");
 });
@@ -124,7 +133,7 @@ test("employee owns each of their virtual keys", () => {
       virtualKey({ id: 12, employeeId: 1, productLineId: 100 }),
     ],
     credentials: [credential({ id: 21, productLineId: 100 })],
-    grants: [],
+    bindings: [],
   });
 
   assert.deepEqual(
@@ -137,7 +146,7 @@ test("employee owns each of their virtual keys", () => {
   assert.equal(graph.virtualKeys.length, 2);
 });
 
-test("empty grants keep the full same-channel credential pool", () => {
+test("unbound credentials stay in the graph with no virtual-key edges", () => {
   const graph = buildKeyBindingGraph({
     employees: [employee({ id: 1, name: "张三" })],
     virtualKeys: [virtualKey({ id: 11, employeeId: 1, productLineId: 100 })],
@@ -146,13 +155,21 @@ test("empty grants keep the full same-channel credential pool", () => {
       credential({ id: 22, productLineId: 100 }),
       credential({ id: 23, productLineId: 200 }),
     ],
-    grants: [],
+    bindings: [],
   });
 
-  assert.deepEqual(useEdges(graph), ["11->21:pool", "11->22:pool"]);
+  assert.deepEqual(useEdges(graph), []);
+  assert.deepEqual(
+    graph.credentials.map((row) => [row.id, row.bound]),
+    [
+      [21, false],
+      [22, false],
+      [23, false],
+    ],
+  );
 });
 
-test("grants on the product line restrict the virtual key to those credentials", () => {
+test("employee binding links that employee's virtual keys as dedicated", () => {
   const graph = buildKeyBindingGraph({
     employees: [employee({ id: 1, name: "张三" })],
     virtualKeys: [virtualKey({ id: 11, employeeId: 1, productLineId: 100 })],
@@ -160,13 +177,51 @@ test("grants on the product line restrict the virtual key to those credentials",
       credential({ id: 21, productLineId: 100 }),
       credential({ id: 22, productLineId: 100 }),
     ],
-    grants: [grant(1, 22)],
+    bindings: [binding(22, "employee", 1)],
   });
 
-  assert.deepEqual(useEdges(graph), ["11->22:grant"]);
+  assert.deepEqual(useEdges(graph), ["11->22:dedicated"]);
+  assert.equal(graph.credentials.find((row) => row.id === 21)?.bound, false);
+  assert.equal(graph.credentials.find((row) => row.id === 22)?.bound, true);
 });
 
-test("grants on another product line do not restrict this channel", () => {
+test("team binding links every team member's virtual keys as team_shared", () => {
+  const graph = buildKeyBindingGraph({
+    employees: [
+      employee({ id: 1, name: "张三", teamId: 10, teamName: "平台" }),
+      employee({ id: 2, name: "李四", teamId: 10, teamName: "平台" }),
+      employee({ id: 3, name: "王五", teamId: 20, teamName: "销售" }),
+    ],
+    virtualKeys: [
+      virtualKey({ id: 11, employeeId: 1, productLineId: 100 }),
+      virtualKey({ id: 12, employeeId: 2, productLineId: 100 }),
+      virtualKey({ id: 13, employeeId: 3, productLineId: 100 }),
+    ],
+    credentials: [credential({ id: 21, productLineId: 100 })],
+    bindings: [binding(21, "team", 10)],
+  });
+
+  assert.deepEqual(useEdges(graph), ["11->21:team_shared", "12->21:team_shared"]);
+});
+
+test("enterprise binding links that enterprise's employee virtual keys", () => {
+  const graph = buildKeyBindingGraph({
+    employees: [
+      employee({ id: 1, name: "张三", enterpriseId: 1, enterpriseName: "海致" }),
+      employee({ id: 2, name: "王五", enterpriseId: 2, enterpriseName: "星图" }),
+    ],
+    virtualKeys: [
+      virtualKey({ id: 11, employeeId: 1, productLineId: 100 }),
+      virtualKey({ id: 12, employeeId: 2, productLineId: 100 }),
+    ],
+    credentials: [credential({ id: 21, productLineId: 100 })],
+    bindings: [binding(21, "enterprise", 1)],
+  });
+
+  assert.deepEqual(useEdges(graph), ["11->21:enterprise_shared"]);
+});
+
+test("a binding on another product line does not connect this channel", () => {
   const graph = buildKeyBindingGraph({
     employees: [employee({ id: 1, name: "张三" })],
     virtualKeys: [
@@ -178,13 +233,13 @@ test("grants on another product line do not restrict this channel", () => {
       credential({ id: 22, productLineId: 200 }),
       credential({ id: 23, productLineId: 200 }),
     ],
-    grants: [grant(1, 22)],
+    bindings: [binding(22, "employee", 1)],
   });
 
-  assert.deepEqual(useEdges(graph), ["11->21:pool", "12->22:grant"]);
+  assert.deepEqual(useEdges(graph), ["12->22:dedicated"]);
 });
 
-test("protocol mismatch drops a credential even when it is granted", () => {
+test("protocol mismatch drops a credential even when it is bound", () => {
   const graph = buildKeyBindingGraph({
     employees: [employee({ id: 1, name: "张三" })],
     virtualKeys: [
@@ -207,10 +262,11 @@ test("protocol mismatch drops a credential even when it is granted", () => {
         supportedProtocols: ["openai_chat"],
       }),
     ],
-    grants: [grant(1, 21)],
+    bindings: [binding(21, "employee", 1)],
   });
 
   assert.deepEqual(useEdges(graph), []);
+  assert.equal(graph.credentials.find((row) => row.id === 21)?.bound, true);
 });
 
 test("employees without virtual keys are omitted; orphan credentials remain", () => {
@@ -224,7 +280,7 @@ test("employees without virtual keys are omitted; orphan credentials remain", ()
       credential({ id: 21, productLineId: 100 }),
       credential({ id: 22, productLineId: 200 }),
     ],
-    grants: [],
+    bindings: [],
   });
 
   assert.deepEqual(
@@ -251,7 +307,7 @@ test("productLineId filter keeps only that channel's keys and credentials", () =
       credential({ id: 21, productLineId: 100 }),
       credential({ id: 22, productLineId: 200 }),
     ],
-    grants: [],
+    bindings: [],
     filter: { productLineId: 100 },
   });
 
@@ -288,7 +344,7 @@ test("enterprise filter keeps that enterprise's employees and reachable channels
       credential({ id: 22, productLineId: 100 }),
       credential({ id: 23, productLineId: 200 }),
     ],
-    grants: [],
+    bindings: [],
     filter: { enterpriseId: 1 },
   });
 
@@ -313,7 +369,7 @@ test("search by team name keeps the org path", () => {
       virtualKey({ id: 12, employeeId: 2, productLineId: 100 }),
     ],
     credentials: [credential({ id: 21, productLineId: 100 })],
-    grants: [],
+    bindings: [],
     filter: { q: "平台" },
   });
 
@@ -345,7 +401,7 @@ test("search keeps the matched employee and the connected key path", () => {
       credential({ id: 21, productLineId: 100, label: "glm-prod" }),
       credential({ id: 22, productLineId: 100, label: "glm-spare" }),
     ],
-    grants: [grant(1, 21)],
+    bindings: [binding(21, "employee", 1)],
     filter: { q: "张三" },
   });
 

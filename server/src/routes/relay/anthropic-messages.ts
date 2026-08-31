@@ -23,7 +23,7 @@ import {
   RelayLimitError,
   type RelayQuotaLease,
 } from "../../lib/relay/quota.js";
-import { resolveRelayCandidates } from "../../lib/relay/routing.js";
+import { resolveRelayBoundCandidate } from "../../lib/relay/routing.js";
 import type {
   RelayCandidate,
   RelayRetryTraceItem,
@@ -412,74 +412,86 @@ async function handleNativeRequest(
       return reply.code(httpStatus).send(payload);
     }
 
-    const resolution = await resolveRelayCandidates(
-      principal.employeeId,
-      body.model,
-      config.protocol,
-      principal.productLineId,
-    );
-    const candidates = resolution.candidates;
-    if (candidates.length === 0) {
-      const boundUnavailable = resolution.unavailableReason === "bound_channel_unavailable";
-      const cooling = resolution.unavailableReason === "cooling";
-      const unavailable = resolution.unavailableReason === "unavailable";
-      const httpStatus = boundUnavailable || unavailable
-        ? 503
-        : cooling
-          ? 429
-          : 404;
-      const errorCode = boundUnavailable
-        ? "bound_channel_unavailable"
-        : cooling
-          ? "model_channels_cooling"
-          : unavailable
-            ? "model_unavailable"
-            : "model_not_found";
-      const errorMessage = boundUnavailable
-        ? "当前 Key 绑定的上游渠道不可用"
-        : cooling
-          ? "该模型的上游渠道正在冷却，请稍后重试"
-          : unavailable
-            ? "该模型已配置，但当前没有支持此协议的可用上游渠道"
-            : "当前 Key 绑定的上游渠道不支持该模型和协议";
-      const errorType = boundUnavailable || unavailable
-        ? "api_error"
-        : cooling
-          ? "rate_limit_error"
-          : "not_found_error";
-      const payload = sendError(
-        httpStatus,
-        errorMessage,
-        errorType,
-        errorCode,
-      );
-      if (resolution.retryAfterSeconds !== null) {
-        reply.header("retry-after", String(resolution.retryAfterSeconds));
-      }
-      await finalizeAudit({
-        candidate: null,
-        status: boundUnavailable || cooling || unavailable
-          ? "upstream_error"
-          : "client_error",
-        httpStatus,
-        upstreamStatus: null,
-        errorCode,
-        errorMessage,
-        usage: emptyRelayUsage(),
-        responseBody: payload,
-      });
-      return reply.code(httpStatus).send(payload);
-    }
-
-    const attempts = candidates.slice(0, env.RELAY_MAX_ATTEMPTS);
+    const excludeCredentialIds = new Set<number>();
     let lastCandidate: RelayCandidate | null = null;
     let lastFailure: RelayUpstreamAttemptResult | null = null;
 
-    for (let index = 0; index < attempts.length; index += 1) {
-      const candidate = attempts[index];
+    for (let index = 0; index < env.RELAY_MAX_ATTEMPTS; index += 1) {
+      const resolution = await resolveRelayBoundCandidate(
+        principal.employeeId,
+        body.model,
+        config.protocol,
+        principal.productLineId,
+        excludeCredentialIds,
+      );
+      const candidate = resolution.candidate;
+      if (!candidate) {
+        if (index === 0) {
+          const boundUnavailable = resolution.unavailableReason === "bound_channel_unavailable";
+          const cooling = resolution.unavailableReason === "cooling";
+          const unavailable = resolution.unavailableReason === "unavailable";
+          const modelDenied = resolution.unavailableReason === "model_not_allowed";
+          const httpStatus = modelDenied
+            ? 403
+            : boundUnavailable || unavailable
+              ? 503
+              : cooling
+                ? 429
+                : 404;
+          const errorCode = modelDenied
+            ? "model_not_allowed"
+            : boundUnavailable
+              ? "bound_channel_unavailable"
+              : cooling
+                ? "model_channels_cooling"
+                : unavailable
+                  ? "model_unavailable"
+                  : "model_not_found";
+          const errorMessage = modelDenied
+            ? "model not allowed"
+            : boundUnavailable
+              ? "当前 Key 绑定的上游渠道不可用"
+              : cooling
+                ? "该模型的上游渠道正在冷却，请稍后重试"
+                : unavailable
+                  ? "该模型已配置，但当前没有支持此协议的可用上游渠道"
+                  : "当前 Key 绑定的上游渠道不支持该模型和协议";
+          const errorType = modelDenied
+            ? "invalid_request_error"
+            : boundUnavailable || unavailable
+              ? "api_error"
+              : cooling
+                ? "rate_limit_error"
+                : "not_found_error";
+          const payload = sendError(
+            httpStatus,
+            errorMessage,
+            errorType,
+            errorCode,
+          );
+          if (resolution.retryAfterSeconds !== null) {
+            reply.header("retry-after", String(resolution.retryAfterSeconds));
+          }
+          await finalizeAudit({
+            candidate: null,
+            status: boundUnavailable || cooling || unavailable
+              ? "upstream_error"
+              : "client_error",
+            httpStatus,
+            upstreamStatus: null,
+            errorCode,
+            errorMessage,
+            usage: emptyRelayUsage(),
+            responseBody: payload,
+          });
+          return reply.code(httpStatus).send(payload);
+        }
+        break;
+      }
+
       currentCandidate = candidate;
       lastCandidate = candidate;
-      const hasNext = index + 1 < attempts.length;
+      const hasNext = index + 1 < env.RELAY_MAX_ATTEMPTS;
       const result = await sendRelayUpstream({
         candidate,
         protocol: config.protocol,
@@ -510,7 +522,10 @@ async function handleNativeRequest(
         lastFailure = result;
         const disposition = await settleFailedAttempt(result, willRetry);
         if (disposition === "released") activeAttempt = null;
-        if (willRetry) continue;
+        if (willRetry) {
+          excludeCredentialIds.add(candidate.credentialId);
+          continue;
+        }
         break;
       }
 
@@ -536,7 +551,10 @@ async function handleNativeRequest(
           );
           result.abort(error);
           activeAttempt = null;
-          if (willRetry) continue;
+          if (willRetry) {
+          excludeCredentialIds.add(candidate.credentialId);
+          continue;
+        }
           lastFailure = {
             ...result,
             response: null,
@@ -567,7 +585,10 @@ async function handleNativeRequest(
           );
           result.cleanup();
           activeAttempt = null;
-          if (willRetry) continue;
+          if (willRetry) {
+          excludeCredentialIds.add(candidate.credentialId);
+          continue;
+        }
           lastFailure = {
             ...result,
             response: null,
@@ -616,7 +637,10 @@ async function handleNativeRequest(
         await discardResponse(response);
         result.cleanup();
         activeAttempt = null;
-        if (willRetry) continue;
+        if (willRetry) {
+          excludeCredentialIds.add(candidate.credentialId);
+          continue;
+        }
         lastFailure = {
           ...result,
           response: null,
@@ -650,7 +674,10 @@ async function handleNativeRequest(
         }
         result.abort(error);
         activeAttempt = null;
-        if (willRetry) continue;
+        if (willRetry) {
+          excludeCredentialIds.add(candidate.credentialId);
+          continue;
+        }
         lastFailure = {
           ...result,
           response: null,
@@ -675,7 +702,10 @@ async function handleNativeRequest(
         );
         result.cleanup();
         activeAttempt = null;
-        if (willRetry) continue;
+        if (willRetry) {
+          excludeCredentialIds.add(candidate.credentialId);
+          continue;
+        }
         lastFailure = {
           ...result,
           response: null,

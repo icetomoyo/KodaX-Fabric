@@ -1,7 +1,6 @@
 import { and, eq, isNull, lte, or } from "drizzle-orm";
 import { db } from "../../db/client.js";
 import {
-  credentialEmployeeGrants,
   modelRoutes,
   productLines,
   providers,
@@ -15,11 +14,20 @@ import {
   getCredentialLoad,
 } from "./credential-load.js";
 import { resolveProtocolUpstreamConfig } from "../upstream-protocol-config.js";
+import {
+  acquireBoundCredential,
+  type BoundCredential,
+} from "./binding.js";
 import type { RelayProtocol } from "./protocol.js";
 import type {
   RelayCandidate,
 } from "./types.js";
 import { isValidRelayProductLineId } from "./types.js";
+import {
+  glmProviderBlocksClientModel,
+  isGlmClientModelAllowed,
+  isGlmProvider,
+} from "../discovered-models.js";
 
 export type AvailableRelayCredential = {
   credentialId: number;
@@ -53,6 +61,7 @@ export type RelayCandidateResolution = {
     | "bound_channel_unavailable"
     | "cooling"
     | "unavailable"
+    | "model_not_allowed"
     | null;
   retryAfterSeconds: number | null;
 };
@@ -62,6 +71,12 @@ export type RelayModelListResolution = {
   unavailableReason: "bound_channel_unavailable" | null;
 };
 
+export type RelayBoundCandidateResolution = {
+  candidate: RelayCandidate | null;
+  unavailableReason: RelayCandidateResolution["unavailableReason"];
+  retryAfterSeconds: number | null;
+};
+
 /** Defense-in-depth: scope raw snapshots before routing or ranking. */
 export function filterRelayItemsToProductLine<T extends { productLineId: number }>(
   items: readonly T[],
@@ -69,18 +84,6 @@ export function filterRelayItemsToProductLine<T extends { productLineId: number 
 ): T[] {
   if (!isValidRelayProductLineId(productLineId)) return [];
   return items.filter((item) => item.productLineId === productLineId);
-}
-
-/**
- * Restrict the pool when the employee has grants on this product line.
- * An empty grant set keeps the full pool so unbound employees are unchanged.
- */
-export function filterCredentialsByGrant<T extends { credentialId: number }>(
-  credentials: readonly T[],
-  grantedIds: ReadonlySet<number>,
-): T[] {
-  if (grantedIds.size === 0) return [...credentials];
-  return credentials.filter((credential) => grantedIds.has(credential.credentialId));
 }
 
 function discoveredModels(meta: unknown): string[] {
@@ -110,17 +113,17 @@ export function credentialSupportsProtocol(
 type RelayCredentialAccess = {
   credentials: AvailableRelayCredential[];
   boundChannelUnavailable: boolean;
+  providerCode: string | null;
 };
 
 async function loadAccessibleCredentials(
-  employeeId: number,
   protocol: RelayProtocol,
   productLineId: number,
   options: { readOnly?: boolean } = {},
 ): Promise<RelayCredentialAccess> {
   const now = new Date();
   if (!isValidRelayProductLineId(productLineId)) {
-    return { credentials: [], boundChannelUnavailable: true };
+    return { credentials: [], boundChannelUnavailable: true, providerCode: null };
   }
   // Cooling is a temporary state. Restore expired entries in persistent state
   // so admin views and subsequent scheduling agree that the credential is
@@ -139,7 +142,7 @@ async function loadAccessibleCredentials(
       );
   }
 
-  const [rows, boundChannel, grantedRows] = await Promise.all([
+  const [rows, boundChannel] = await Promise.all([
     db
       .select({
         credentialId: upstreamCredentials.id,
@@ -165,36 +168,28 @@ async function loadAccessibleCredentials(
       .innerJoin(providers, eq(productLines.providerId, providers.id))
       .where(eq(upstreamCredentials.productLineId, productLineId)),
     db
-        .select({
-          productLineId: productLines.id,
-          productLineStatus: productLines.status,
-          providerStatus: providers.status,
-        })
-        .from(productLines)
-        .innerJoin(providers, eq(productLines.providerId, providers.id))
-        .where(eq(productLines.id, productLineId))
-        .limit(1)
-        .then((result) => result[0] ?? null),
-    db
-      .select({ credentialId: credentialEmployeeGrants.credentialId })
-      .from(credentialEmployeeGrants)
-      .innerJoin(
-        upstreamCredentials,
-        eq(credentialEmployeeGrants.credentialId, upstreamCredentials.id),
-      )
-      .where(
-        and(
-          eq(credentialEmployeeGrants.employeeId, employeeId),
-          eq(upstreamCredentials.productLineId, productLineId),
-        ),
-      ),
+      .select({
+        productLineId: productLines.id,
+        productLineStatus: productLines.status,
+        providerStatus: providers.status,
+        providerCode: providers.code,
+      })
+      .from(productLines)
+      .innerJoin(providers, eq(productLines.providerId, providers.id))
+      .where(eq(productLines.id, productLineId))
+      .limit(1)
+      .then((result) => result[0] ?? null),
   ]);
 
   const unavailable = !boundChannel ||
     boundChannel.productLineStatus !== "active" ||
     boundChannel.providerStatus !== "active";
   if (unavailable) {
-    return { credentials: [], boundChannelUnavailable: true };
+    return {
+      credentials: [],
+      boundChannelUnavailable: true,
+      providerCode: boundChannel?.providerCode ?? null,
+    };
   }
 
   const credentials = rows
@@ -231,13 +226,10 @@ async function loadAccessibleCredentials(
     })
     .filter((credential): credential is AvailableRelayCredential => credential !== null);
 
-  const grantedIds = new Set(grantedRows.map((row) => row.credentialId));
   return {
-    credentials: filterCredentialsByGrant(
-      filterRelayItemsToProductLine(credentials, productLineId),
-      grantedIds,
-    ),
+    credentials: filterRelayItemsToProductLine(credentials, productLineId),
     boundChannelUnavailable: false,
+    providerCode: boundChannel.providerCode,
   };
 }
 
@@ -264,6 +256,50 @@ function unavailableResolution(
     return { unavailableReason: "cooling", retryAfterSeconds };
   }
   return { unavailableReason: "unavailable", retryAfterSeconds: null };
+}
+
+function retryAfterSecondsFrom(retryAt: Date | null): number | null {
+  if (!retryAt) return null;
+  const seconds = Math.ceil((retryAt.getTime() - Date.now()) / 1_000);
+  return seconds > 0 ? seconds : null;
+}
+
+function mapAcquireFailure(
+  reason: "no_scope" | "exhausted_pool" | "no_binding_available",
+  retryAt: Date | null,
+): Pick<RelayBoundCandidateResolution, "unavailableReason" | "retryAfterSeconds"> {
+  if (reason === "exhausted_pool") {
+    return { unavailableReason: "cooling", retryAfterSeconds: retryAfterSecondsFrom(retryAt) };
+  }
+  return { unavailableReason: "unavailable", retryAfterSeconds: null };
+}
+
+/**
+ * Snapshot-equivalent model-route pick: explicit positive-weight routes win
+ * by priority then weight; no routes means transparent clientModel passthrough;
+ * only zero-weight routes suppress fallback.
+ */
+function pickModelRoute(
+  rawRoutes: readonly AvailableRelayModelRoute[],
+  productLineId: number,
+):
+  | { kind: "transparent" }
+  | { kind: "routed"; route: AvailableRelayModelRoute }
+  | { kind: "suppressed" } {
+  const routes = filterRelayItemsToProductLine(rawRoutes, productLineId);
+  if (routes.length === 0) return { kind: "transparent" };
+  const positive = routes.filter((route) => route.routeWeight > 0);
+  if (positive.length === 0) return { kind: "suppressed" };
+  let best = positive[0];
+  for (const route of positive) {
+    if (
+      route.routePriority > best.routePriority ||
+      (route.routePriority === best.routePriority && route.routeWeight > best.routeWeight)
+    ) {
+      best = route;
+    }
+  }
+  return { kind: "routed", route: best };
 }
 
 function candidateRank(candidate: RelayCandidate): [number, number] {
@@ -355,8 +391,24 @@ export function orderRelayCandidates(
   return ordered;
 }
 
+type CandidateCredentialSource = Pick<
+  AvailableRelayCredential,
+  | "providerCode"
+  | "authStyle"
+  | "supportedProtocols"
+  | "productLineId"
+  | "productType"
+  | "retryPolicy"
+  | "credentialId"
+  | "credentialSuffix"
+  | "secretEncrypted"
+  | "baseUrl"
+  | "credentialPriority"
+  | "credentialWeight"
+>;
+
 function toRelayCandidate(
-  credential: AvailableRelayCredential,
+  credential: CandidateCredentialSource,
   clientModel: string,
   upstreamProtocol: RelayProtocol,
   route?: AvailableRelayModelRoute,
@@ -403,7 +455,19 @@ export function resolveRelayCandidatesFromSnapshot(
       retryAfterSeconds: null,
     };
   }
-  const credentials = filterRelayItemsToProductLine(rawCredentials, productLineId)
+  const scopedCredentials = filterRelayItemsToProductLine(rawCredentials, productLineId);
+  if (
+    scopedCredentials.some((credential) =>
+      glmProviderBlocksClientModel(credential.providerCode, clientModel)
+    )
+  ) {
+    return {
+      candidates: [],
+      unavailableReason: "model_not_allowed",
+      retryAfterSeconds: null,
+    };
+  }
+  const credentials = scopedCredentials
     .filter((credential) => credentialSupportsProtocol(credential, upstreamProtocol));
   const routes = filterRelayItemsToProductLine(rawRoutes, productLineId);
   const activeCredentials = credentials.filter(
@@ -454,33 +518,11 @@ export function resolveRelayCandidatesFromSnapshot(
   };
 }
 
-export async function resolveRelayCandidates(
-  employeeId: number,
-  clientModel: string,
-  upstreamProtocol: RelayProtocol,
+async function loadEnabledModelRoutes(
   productLineId: number,
-): Promise<RelayCandidateResolution> {
-  if (!isValidRelayProductLineId(productLineId)) {
-    return {
-      candidates: [],
-      unavailableReason: "bound_channel_unavailable",
-      retryAfterSeconds: null,
-    };
-  }
-  const access = await loadAccessibleCredentials(
-    employeeId,
-    upstreamProtocol,
-    productLineId,
-  );
-  if (access.boundChannelUnavailable) {
-    return {
-      candidates: [],
-      unavailableReason: "bound_channel_unavailable",
-      retryAfterSeconds: null,
-    };
-  }
-
-  const routes = await db
+  clientModel?: string,
+): Promise<AvailableRelayModelRoute[]> {
+  return db
     .select({
       routeId: modelRoutes.id,
       productLineId: modelRoutes.productLineId,
@@ -493,36 +535,100 @@ export async function resolveRelayCandidates(
     .innerJoin(providers, eq(productLines.providerId, providers.id))
     .where(
       and(
-        eq(modelRoutes.clientModel, clientModel),
         eq(modelRoutes.enabled, true),
         eq(productLines.status, "active"),
         eq(providers.status, "active"),
         eq(modelRoutes.productLineId, productLineId),
+        clientModel === undefined ? undefined : eq(modelRoutes.clientModel, clientModel),
       ),
     );
+}
 
-  return resolveRelayCandidatesFromSnapshot(
+/**
+ * Resolve the client model onto one bound Key. Snapshot routing supplies the
+ * upstream model / route weights; acquireBoundCredential supplies the Key.
+ */
+export async function resolveRelayBoundCandidate(
+  employeeId: number,
+  clientModel: string,
+  protocol: RelayProtocol,
+  productLineId: number,
+  excludeCredentialIds?: ReadonlySet<number>,
+): Promise<RelayBoundCandidateResolution> {
+  if (!isValidRelayProductLineId(productLineId)) {
+    return {
+      candidate: null,
+      unavailableReason: "bound_channel_unavailable",
+      retryAfterSeconds: null,
+    };
+  }
+  const access = await loadAccessibleCredentials(protocol, productLineId);
+  if (access.boundChannelUnavailable) {
+    return {
+      candidate: null,
+      unavailableReason: "bound_channel_unavailable",
+      retryAfterSeconds: null,
+    };
+  }
+  if (access.providerCode && glmProviderBlocksClientModel(access.providerCode, clientModel)) {
+    return {
+      candidate: null,
+      unavailableReason: "model_not_allowed",
+      retryAfterSeconds: null,
+    };
+  }
+
+  const routes = await loadEnabledModelRoutes(productLineId, clientModel);
+  const snapshot = resolveRelayCandidatesFromSnapshot(
     access.credentials,
     routes,
     clientModel,
-    upstreamProtocol,
+    protocol,
     productLineId,
   );
-}
+  const modelRoute = pickModelRoute(routes, productLineId);
+  if (modelRoute.kind === "suppressed") {
+    return {
+      candidate: null,
+      unavailableReason: "unavailable",
+      retryAfterSeconds: null,
+    };
+  }
 
-export async function getRelayCandidates(
-  employeeId: number,
-  clientModel: string,
-  upstreamProtocol: RelayProtocol,
-  productLineId: number,
-): Promise<RelayCandidate[]> {
-  return (await resolveRelayCandidates(
+  const acquired = await acquireBoundCredential({
     employeeId,
-    clientModel,
-    upstreamProtocol,
     productLineId,
-  ))
-    .candidates;
+    protocol,
+    excludeCredentialIds,
+  });
+  if (!acquired.ok) {
+    return { candidate: null, ...mapAcquireFailure(acquired.reason, acquired.retryAt) };
+  }
+
+  const bound: BoundCredential = acquired.credential;
+  if (!credentialSupportsProtocol(bound, protocol)) {
+    return { candidate: null, ...mapAcquireFailure("no_binding_available", null) };
+  }
+
+  const preferred = snapshot.candidates[0];
+  const route: AvailableRelayModelRoute | undefined =
+    preferred && preferred.routeId !== null
+      ? {
+          routeId: preferred.routeId,
+          productLineId: preferred.productLineId,
+          upstreamModel: preferred.upstreamModel,
+          routePriority: preferred.routePriority,
+          routeWeight: preferred.routeWeight,
+        }
+      : modelRoute.kind === "routed"
+        ? modelRoute.route
+        : undefined;
+
+  return {
+    candidate: toRelayCandidate(bound, clientModel, protocol, route),
+    unavailableReason: null,
+    retryAfterSeconds: null,
+  };
 }
 
 export async function resolveAccessibleRelayModels(
@@ -534,7 +640,6 @@ export async function resolveAccessibleRelayModels(
     return { models: [], unavailableReason: "bound_channel_unavailable" };
   }
   const access = await loadAccessibleCredentials(
-    employeeId,
     upstreamProtocol,
     productLineId,
     { readOnly: true },
@@ -542,6 +647,7 @@ export async function resolveAccessibleRelayModels(
   if (access.boundChannelUnavailable) {
     return { models: [], unavailableReason: "bound_channel_unavailable" };
   }
+  const glmOnly = access.providerCode != null && isGlmProvider(access.providerCode);
   const credentials = access.credentials.filter(
     (credential) =>
       credential.credentialStatus === "active" && credential.credentialWeight > 0,
@@ -568,16 +674,19 @@ export async function resolveAccessibleRelayModels(
 
   const byId = new Map<string, string>();
   const boundExplicitModels = new Set(routes.map((route) => route.clientModel));
+  const allowModel = (model: string) => !glmOnly || isGlmClientModelAllowed(model);
   for (const credential of credentials) {
     for (const model of discoveredModels(credential.meta)) {
       // Prefer the explicit model-list entry for a duplicate client model.
       if (boundExplicitModels.has(model)) continue;
+      if (!allowModel(model)) continue;
       if (!byId.has(model)) byId.set(model, credential.providerCode);
     }
   }
   for (const route of routes) {
     const callable = eligibleProductLines.has(route.productLineId) &&
-      route.routeWeight > 0;
+      route.routeWeight > 0 &&
+      allowModel(route.clientModel);
     if (callable) {
       byId.set(route.clientModel, route.providerCode);
     }

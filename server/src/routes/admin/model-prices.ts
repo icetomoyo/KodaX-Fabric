@@ -11,10 +11,12 @@ import {
   upstreamCredentials,
 } from "../../db/schema/index.js";
 import {
-  collectDiscoveredModels,
+  collectCatalogModels,
   groupDiscoveredModelsByChannel,
+  lastUsedAtForCatalogModel,
 } from "../../lib/discovered-models.js";
 import { writeOpsAudit } from "../../lib/ops-audit.js";
+import { resolveEffectiveCreditRate } from "../../lib/relay/credit-cost.js";
 import { addCalendarDays, quotaDayAt, zonedDayStart } from "../../lib/quota-time.js";
 import {
   requirePasswordChanged,
@@ -23,6 +25,7 @@ import {
 } from "../../middleware/auth.js";
 
 const PRICE_PATTERN = /^(?:0|[1-9]\d{0,7})(?:\.\d{1,4})?$/;
+const CREDIT_RATE_PATTERN = /^(?:0|[1-9]\d{0,5})(?:\.\d{1,4})?$/;
 
 const priceAmountSchema = z
   .union([z.number().nonnegative().finite(), z.string().trim().min(1)])
@@ -34,12 +37,30 @@ const priceAmountSchema = z
   })
   .transform((value) => (typeof value === "number" ? value.toString() : value.trim()));
 
+const optionalNullableCreditRateSchema = z
+  .union([z.number().nonnegative().finite(), z.string().trim(), z.null()])
+  .superRefine((value, ctx) => {
+    if (value === null || value === "") return;
+    const raw = typeof value === "number" ? value.toString() : value;
+    if (!CREDIT_RATE_PATTERN.test(raw)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "invalid credit rate" });
+    }
+  })
+  .transform((value): string | null => {
+    if (value === null || value === "") return null;
+    return typeof value === "number" ? value.toString() : value.trim();
+  })
+  .optional();
+
 const createPriceSchema = z.object({
   model: z.string().trim().min(1).max(128),
   promptPricePerMillion: priceAmountSchema,
   completionPricePerMillion: priceAmountSchema,
   cacheHitPricePerMillion: priceAmountSchema,
   cacheStoragePricePerMillionPerHour: priceAmountSchema,
+  promptCreditsPer10k: optionalNullableCreditRateSchema,
+  cacheHitCreditsPer10k: optionalNullableCreditRateSchema,
+  completionCreditsPer10k: optionalNullableCreditRateSchema,
 });
 
 const updatePriceSchema = z
@@ -49,6 +70,9 @@ const updatePriceSchema = z
     completionPricePerMillion: priceAmountSchema.optional(),
     cacheHitPricePerMillion: priceAmountSchema.optional(),
     cacheStoragePricePerMillionPerHour: priceAmountSchema.optional(),
+    promptCreditsPer10k: optionalNullableCreditRateSchema,
+    cacheHitCreditsPer10k: optionalNullableCreditRateSchema,
+    completionCreditsPer10k: optionalNullableCreditRateSchema,
   })
   .refine((data) => Object.keys(data).length > 0);
 
@@ -64,6 +88,9 @@ const priceReturning = {
   completionPricePerMillion: modelPrices.completionPricePerMillion,
   cacheHitPricePerMillion: modelPrices.cacheHitPricePerMillion,
   cacheStoragePricePerMillionPerHour: modelPrices.cacheStoragePricePerMillionPerHour,
+  promptCreditsPer10k: modelPrices.promptCreditsPer10k,
+  cacheHitCreditsPer10k: modelPrices.cacheHitCreditsPer10k,
+  completionCreditsPer10k: modelPrices.completionCreditsPer10k,
   createdAt: modelPrices.createdAt,
   updatedAt: modelPrices.updatedAt,
 };
@@ -75,6 +102,9 @@ function serializePrice(row: {
   completionPricePerMillion: string;
   cacheHitPricePerMillion: string;
   cacheStoragePricePerMillionPerHour: string;
+  promptCreditsPer10k: string | null;
+  cacheHitCreditsPer10k: string | null;
+  completionCreditsPer10k: string | null;
   createdAt: Date;
   updatedAt: Date;
   lastUsedAt?: Date | null;
@@ -86,10 +116,14 @@ function serializePrice(row: {
     completionPricePerMillion: row.completionPricePerMillion,
     cacheHitPricePerMillion: row.cacheHitPricePerMillion,
     cacheStoragePricePerMillionPerHour: row.cacheStoragePricePerMillionPerHour,
+    promptCreditsPer10k: row.promptCreditsPer10k,
+    cacheHitCreditsPer10k: row.cacheHitCreditsPer10k,
+    completionCreditsPer10k: row.completionCreditsPer10k,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
     lastUsedAt: row.lastUsedAt ?? null,
     seenInLast30Days: row.lastUsedAt != null,
+    effectiveCreditRate: resolveEffectiveCreditRate(row.model, row),
   };
 }
 
@@ -124,6 +158,9 @@ export async function adminModelPriceRoutes(app: FastifyInstance) {
           modelPrices.completionPricePerMillion,
           modelPrices.cacheHitPricePerMillion,
           modelPrices.cacheStoragePricePerMillionPerHour,
+          modelPrices.promptCreditsPer10k,
+          modelPrices.cacheHitCreditsPer10k,
+          modelPrices.completionCreditsPer10k,
           modelPrices.createdAt,
           modelPrices.updatedAt,
         )
@@ -153,14 +190,19 @@ export async function adminModelPriceRoutes(app: FastifyInstance) {
 
     const pricedNames = new Set(prices.map((row) => row.model));
     const usedByName = new Map(usedModels.map((row) => [row.model, row.lastUsedAt]));
+    const storedByName = new Map(prices.map((row) => [row.model, row]));
     const channels = groupDiscoveredModelsByChannel(channelRows).map((channel) => ({
       ...channel,
       unpricedCount: channel.models.filter((model) => !pricedNames.has(model)).length,
-      models: channel.models.map((model) => ({
-        model,
-        lastUsedAt: usedByName.get(model) ?? null,
-        seenInLast30Days: usedByName.has(model),
-      })),
+      models: channel.models.map((model) => {
+        const lastUsedAt = lastUsedAtForCatalogModel(model, usedByName);
+        return {
+          model,
+          lastUsedAt,
+          seenInLast30Days: lastUsedAt != null,
+          effectiveCreditRate: resolveEffectiveCreditRate(model, storedByName.get(model) ?? null),
+        };
+      }),
     }));
 
     return {
@@ -178,8 +220,8 @@ export async function adminModelPriceRoutes(app: FastifyInstance) {
       return reply.code(400).send({ success: false, message: "参数无效" });
     }
     const credentialMetas = await db.select({ meta: upstreamCredentials.meta }).from(upstreamCredentials);
-    const discoveredModels = collectDiscoveredModels(credentialMetas.map((row) => row.meta));
-    if (!discoveredModels.includes(body.data.model)) {
+    const catalogModels = collectCatalogModels(credentialMetas.map((row) => row.meta));
+    if (!catalogModels.includes(body.data.model)) {
       return reply.code(400).send({ success: false, message: "只能为渠道已发现的模型定价" });
     }
     try {
@@ -191,6 +233,9 @@ export async function adminModelPriceRoutes(app: FastifyInstance) {
           completionPricePerMillion: body.data.completionPricePerMillion,
           cacheHitPricePerMillion: body.data.cacheHitPricePerMillion,
           cacheStoragePricePerMillionPerHour: body.data.cacheStoragePricePerMillionPerHour,
+          promptCreditsPer10k: body.data.promptCreditsPer10k ?? null,
+          cacheHitCreditsPer10k: body.data.cacheHitCreditsPer10k ?? null,
+          completionCreditsPer10k: body.data.completionCreditsPer10k ?? null,
         })
         .returning(priceReturning);
       await writeOpsAudit({
@@ -204,6 +249,9 @@ export async function adminModelPriceRoutes(app: FastifyInstance) {
           completionPricePerMillion: row.completionPricePerMillion,
           cacheHitPricePerMillion: row.cacheHitPricePerMillion,
           cacheStoragePricePerMillionPerHour: row.cacheStoragePricePerMillionPerHour,
+          promptCreditsPer10k: row.promptCreditsPer10k,
+          cacheHitCreditsPer10k: row.cacheHitCreditsPer10k,
+          completionCreditsPer10k: row.completionCreditsPer10k,
         },
         ip: req.ip,
       });
@@ -228,6 +276,9 @@ export async function adminModelPriceRoutes(app: FastifyInstance) {
       completionPricePerMillion?: string;
       cacheHitPricePerMillion?: string;
       cacheStoragePricePerMillionPerHour?: string;
+      promptCreditsPer10k?: string | null;
+      cacheHitCreditsPer10k?: string | null;
+      completionCreditsPer10k?: string | null;
       updatedAt: Date;
     } = { updatedAt: new Date() };
     if (body.data.model !== undefined) patch.model = body.data.model;
@@ -242,6 +293,15 @@ export async function adminModelPriceRoutes(app: FastifyInstance) {
     }
     if (body.data.cacheStoragePricePerMillionPerHour !== undefined) {
       patch.cacheStoragePricePerMillionPerHour = body.data.cacheStoragePricePerMillionPerHour;
+    }
+    if (body.data.promptCreditsPer10k !== undefined) {
+      patch.promptCreditsPer10k = body.data.promptCreditsPer10k;
+    }
+    if (body.data.cacheHitCreditsPer10k !== undefined) {
+      patch.cacheHitCreditsPer10k = body.data.cacheHitCreditsPer10k;
+    }
+    if (body.data.completionCreditsPer10k !== undefined) {
+      patch.completionCreditsPer10k = body.data.completionCreditsPer10k;
     }
     try {
       const [row] = await db
@@ -264,6 +324,9 @@ export async function adminModelPriceRoutes(app: FastifyInstance) {
           completionPricePerMillion: row.completionPricePerMillion,
           cacheHitPricePerMillion: row.cacheHitPricePerMillion,
           cacheStoragePricePerMillionPerHour: row.cacheStoragePricePerMillionPerHour,
+          promptCreditsPer10k: row.promptCreditsPer10k,
+          cacheHitCreditsPer10k: row.cacheHitCreditsPer10k,
+          completionCreditsPer10k: row.completionCreditsPer10k,
         },
         ip: req.ip,
       });

@@ -11,7 +11,6 @@ process.env.JWT_SECRET ??= "unit-test-jwt-secret";
 process.env.CREDENTIAL_ENCRYPT_KEY ??= "unit-test-credential-secret";
 
 const {
-  filterCredentialsByGrant,
   filterRelayItemsToProductLine,
   resolveRelayCandidatesFromSnapshot,
 } = await import("../src/lib/relay/routing.js");
@@ -73,24 +72,6 @@ test("product line scopes raw items before routing and ranking", () => {
   assert.deepEqual(filterRelayItemsToProductLine(items, 1), [items[0]]);
   assert.deepEqual(filterRelayItemsToProductLine(items, 2), [items[1]]);
   assert.deepEqual(filterRelayItemsToProductLine(items, 0), []);
-});
-
-test("granted credentials restrict the pool when the grant set is non-empty", () => {
-  const credentials = [credential(11, 1), credential(22, 1), credential(33, 1)];
-  const filtered = filterCredentialsByGrant(credentials, new Set([22]));
-  assert.deepEqual(
-    filtered.map((item) => item.credentialId),
-    [22],
-  );
-});
-
-test("an empty grant set leaves the full credential pool unchanged", () => {
-  const credentials = [credential(11, 1), credential(22, 1)];
-  const filtered = filterCredentialsByGrant(credentials, new Set());
-  assert.deepEqual(
-    filtered.map((item) => item.credentialId),
-    [11, 22],
-  );
 });
 
 test("routing fails closed when an invalid product line bypasses middleware", () => {
@@ -201,6 +182,50 @@ test("cooling mixed with a permanently unavailable credential produces 503 class
   assert.deepEqual(result.candidates, []);
   assert.equal(result.unavailableReason, "unavailable");
   assert.equal(result.retryAfterSeconds, null);
+});
+
+test("glm provider only accepts glm-5.3 and glm-5.3-flash", () => {
+  const denied = resolveRelayCandidatesFromSnapshot(
+    [credential(11, 1, { providerCode: "glm", meta: { discoveredModels: ["glm-4.6", "glm-5.3"] } })],
+    [],
+    "glm-4.6",
+    "openai_chat",
+    1,
+  );
+  assert.deepEqual(denied.candidates, []);
+  assert.equal(denied.unavailableReason, "model_not_allowed");
+
+  const text = resolveRelayCandidatesFromSnapshot(
+    [credential(11, 1, { providerCode: "glm" })],
+    [],
+    "GLM-5.3",
+    "openai_chat",
+    1,
+  );
+  assert.equal(text.unavailableReason, null);
+  assert.equal(text.candidates[0]?.upstreamModel, "GLM-5.3");
+
+  const flash = resolveRelayCandidatesFromSnapshot(
+    [credential(11, 1, { providerCode: "glm" })],
+    [],
+    "glm-5.3-flash",
+    "anthropic_messages",
+    1,
+  );
+  assert.equal(flash.unavailableReason, null);
+  assert.equal(flash.candidates[0]?.upstreamModel, "glm-5.3-flash");
+});
+
+test("non-glm providers still forward arbitrary client models", () => {
+  const result = resolveRelayCandidatesFromSnapshot(
+    [credential(11, 1, { providerCode: "custom" })],
+    [],
+    "qwen38-27b",
+    "openai_chat",
+    1,
+  );
+  assert.equal(result.unavailableReason, null);
+  assert.equal(result.candidates[0]?.upstreamModel, "qwen38-27b");
 });
 
 test("arbitrary client models are forwarded unchanged without discovery metadata", () => {

@@ -45,6 +45,7 @@ const envSchema = z.object({
     .min(1_024)
     .default(1 * 1024 * 1024),
   ALERT_CHECK_INTERVAL_SECONDS: z.coerce.number().int().min(10).default(60),
+  TIER_REBIND_INTERVAL_SECONDS: z.coerce.number().int().min(300).max(604_800).default(86_400),
   ALERT_COOLING_RATIO_THRESHOLD: z.coerce.number().min(0).max(1).default(0.3),
   ALERT_SILENCE_SECONDS: z.coerce.number().int().min(0).default(900),
   ALERT_WEBHOOK_URL: z

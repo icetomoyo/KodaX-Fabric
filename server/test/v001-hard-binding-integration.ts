@@ -21,7 +21,7 @@ import {
   type ServerResponse,
 } from "node:http";
 import type { AddressInfo } from "node:net";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 
 // Candidate ordering and retry behavior must be fixed before config.ts loads.
@@ -48,16 +48,20 @@ const [
 ]);
 
 const {
-  credentialEmployeeGrants,
+  credentialBindings,
   employeeApiKeys,
   employees,
+  enterprises,
   modelRoutes,
   productLines,
   providers,
-
   requestAudits,
+  requestErrorLogs,
+  teams,
+  teamMembers,
   upstreamCredentials,
   usageCountersDaily,
+  usageCountersTeamDaily,
 } = schema;
 
 type Protocol = "openai_chat" | "anthropic_messages";
@@ -98,12 +102,13 @@ const allProtocols: Protocol[] = [
 
 const created = {
   employeeId: null as number | null,
+  teamId: null as number | null,
   apiKeyIds: [] as number[],
   providerIds: [] as number[],
   productLineIds: [] as number[],
   credentialIds: [] as number[],
   routeIds: [] as number[],
-  grantIds: [] as number[],
+  bindingIds: [] as number[],
 };
 
 const productLineByChannel = new Map<Channel, number>();
@@ -350,6 +355,10 @@ async function insertCredential(
 
 async function insertFixtures(upstreamBaseUrl: string): Promise<void> {
   const enterpriseId = await getDefaultEnterpriseId();
+  await db
+    .update(enterprises)
+    .set({ packagePlan: "plus", updatedAt: new Date() })
+    .where(and(eq(enterprises.id, enterpriseId), isNull(enterprises.packagePlan)));
   const [employee] = await db
     .insert(employees)
     .values({
@@ -360,10 +369,27 @@ async function insertFixtures(upstreamBaseUrl: string): Promise<void> {
       role: "employee",
       status: "active",
       enterpriseId,
+      usageTier: "heavy",
       mustChangePassword: false,
     })
     .returning({ id: employees.id });
   created.employeeId = employee.id;
+
+  const [team] = await db
+    .insert(teams)
+    .values({
+      enterpriseId,
+      name: `Hard Binding Team ${marker}`,
+      status: "active",
+      monthlyYuanQuota: "99999.00",
+    })
+    .returning({ id: teams.id });
+  created.teamId = team.id;
+  await db.insert(teamMembers).values({
+    teamId: team.id,
+    employeeId: employee.id,
+    role: "member",
+  });
 
   for (const channel of ["A", "B"] as const) {
     const [provider] = await db
@@ -386,7 +412,6 @@ async function insertFixtures(upstreamBaseUrl: string): Promise<void> {
         code: `hard_binding_${channel.toLowerCase()}_${marker}`,
         name: `Hard Binding Channel ${channel} ${marker}`,
         productType: "api",
-        shareMode: "public_pool",
         allowAutoRoute: false,
         status: "active",
       })
@@ -431,6 +456,17 @@ async function insertFixtures(upstreamBaseUrl: string): Promise<void> {
   }
 
   const productLineA = requireProductLine("A");
+  const [binding] = await db
+    .insert(credentialBindings)
+    .values({
+      credentialId: requireCredential("A-first"),
+      productLineId: productLineA,
+      scopeType: "employee",
+      scopeId: employee.id,
+    })
+    .returning({ id: credentialBindings.id });
+  created.bindingIds.push(binding.id);
+
   for (const protocol of allProtocols) {
     const generated = generateApiKey();
     const [row] = await db
@@ -443,6 +479,7 @@ async function insertFixtures(upstreamBaseUrl: string): Promise<void> {
         keyEncrypted: encryptEmployeeApiKey(generated.raw),
         protocol,
         productLineId: productLineA,
+        teamId: team.id,
         status: "active",
         expiresAt: new Date(Date.now() + 30 * 60_000),
       })
@@ -592,8 +629,10 @@ async function assertProtocolEntrypoints(baseUrl: string): Promise<ApiResult[]> 
   assert.equal(countTokens.status, 200);
   assert.equal((JSON.parse(countTokens.text) as { input_tokens?: number }).input_tokens, 19);
 
-  assert.equal(countCalls("A", "first"), 3, "A/first did not receive all retry traps");
-  assert.equal(countCalls("A", "second"), 3, "A/second did not complete all retries");
+  // First chat uses the bound A-first Key, then rebinds. Later entrypoints
+  // stay on A-second instead of re-ranking A-first by priority.
+  assert.equal(countCalls("A", "first"), 1, "only the first request should hit the original bound Key");
+  assert.equal(countCalls("A", "second"), 3, "rebound Key should finish the first retry and later entrypoints");
   assertChannelBWasNeverCalled("the protocol entrypoints");
   assert.deepEqual(mockFailures, [], "local mock upstream observed invalid relay requests");
 
@@ -606,6 +645,19 @@ async function assertProtocolEntrypoints(baseUrl: string): Promise<ApiResult[]> 
     assert.equal(audit.productLineId, requireProductLine("A"));
     assert.equal(audit.credentialId, requireCredential("A-second"));
   }
+
+  const [rebound] = await db
+    .select({ credentialId: credentialBindings.credentialId })
+    .from(credentialBindings)
+    .where(
+      and(
+        eq(credentialBindings.productLineId, requireProductLine("A")),
+        eq(credentialBindings.scopeType, "employee"),
+        eq(credentialBindings.scopeId, requireEmployeeId()),
+      ),
+    )
+    .limit(1);
+  assert.equal(rebound?.credentialId, requireCredential("A-second"), "failed A-first did not rebind");
 
   return [chat, messages, countTokens];
 }
@@ -622,6 +674,28 @@ async function restoreFirstCredential(): Promise<void> {
       updatedAt: new Date(),
     })
     .where(eq(upstreamCredentials.id, requireCredential("A-first")));
+
+  const productLineA = requireProductLine("A");
+  const employeeId = requireEmployeeId();
+  await db
+    .delete(credentialBindings)
+    .where(
+      and(
+        eq(credentialBindings.productLineId, productLineA),
+        eq(credentialBindings.scopeType, "employee"),
+        eq(credentialBindings.scopeId, employeeId),
+      ),
+    );
+  const [binding] = await db
+    .insert(credentialBindings)
+    .values({
+      credentialId: requireCredential("A-first"),
+      productLineId: productLineA,
+      scopeType: "employee",
+      scopeId: employeeId,
+    })
+    .returning({ id: credentialBindings.id });
+  created.bindingIds.push(binding.id);
 }
 
 async function assertRetryFailureClassesStayBound(baseUrl: string): Promise<void> {
@@ -746,13 +820,17 @@ async function cleanup(): Promise<void> {
   }
   if (created.employeeId !== null) {
     await db.delete(requestAudits).where(eq(requestAudits.employeeId, created.employeeId));
+    await db.delete(requestErrorLogs).where(eq(requestErrorLogs.employeeId, created.employeeId));
     await db
       .delete(usageCountersDaily)
       .where(eq(usageCountersDaily.employeeId, created.employeeId));
+    await db
+      .delete(usageCountersTeamDaily)
+      .where(eq(usageCountersTeamDaily.employeeId, created.employeeId));
   }
 
-  await deleteIds(created.grantIds, (ids) =>
-    db.delete(credentialEmployeeGrants).where(inArray(credentialEmployeeGrants.id, ids)));
+  await deleteIds(created.productLineIds, (ids) =>
+    db.delete(credentialBindings).where(inArray(credentialBindings.productLineId, ids)));
   await deleteIds(created.apiKeyIds, (ids) =>
     db.delete(employeeApiKeys).where(inArray(employeeApiKeys.id, ids)));
   await deleteIds(created.routeIds, (ids) =>
@@ -763,6 +841,10 @@ async function cleanup(): Promise<void> {
     db.delete(productLines).where(inArray(productLines.id, ids)));
   await deleteIds(created.providerIds, (ids) =>
     db.delete(providers).where(inArray(providers.id, ids)));
+  if (created.teamId !== null) {
+    await db.delete(teamMembers).where(eq(teamMembers.teamId, created.teamId));
+    await db.delete(teams).where(eq(teams.id, created.teamId));
+  }
   if (created.employeeId !== null) {
     await db.delete(employees).where(
       and(eq(employees.id, created.employeeId), eq(employees.phone, employeePhone)),

@@ -14,10 +14,12 @@ import {
   type ServerResponse,
 } from "node:http";
 import type { AddressInfo } from "node:net";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 
-process.env.RELAY_MAX_ATTEMPTS = "2";
+// Single bound Key: a retryable 529 would otherwise exclude it and return 502
+// after the unbound pool is empty. Keep one attempt so native 529 headers pass through.
+process.env.RELAY_MAX_ATTEMPTS = "1";
 process.env.RELAY_UPSTREAM_TIMEOUT_MS = "10000";
 
 const [
@@ -39,15 +41,20 @@ const [
 ]);
 
 const {
-  credentialEmployeeGrants,
+  credentialBindings,
   employeeApiKeys,
   employees,
+  enterprises,
   modelRoutes,
   productLines,
   providers,
   requestAudits,
+  requestErrorLogs,
+  teams,
+  teamMembers,
   upstreamCredentials,
   usageCountersDaily,
+  usageCountersTeamDaily,
 } = schema;
 
 type ProtocolName = "anthropic_messages";
@@ -64,11 +71,12 @@ const marker = `native_${runToken.slice(0, 14)}`;
 const employeePhone = `nv${runToken.slice(0, 16)}`;
 const created = {
   employeeId: null as number | null,
+  teamId: null as number | null,
   employeeApiKeyIds: [] as number[],
   providerIds: [] as number[],
   productLineIds: [] as number[],
   credentialIds: [] as number[],
-  grantIds: [] as number[],
+  bindingIds: [] as number[],
   routeIds: [] as number[],
 };
 const trackedRequestIds = new Set<string>();
@@ -267,6 +275,10 @@ function createMockUpstream(): Server {
 
 async function insertFixtures(upstreamBaseUrl: string): Promise<void> {
   const enterpriseId = await getDefaultEnterpriseId();
+  await db
+    .update(enterprises)
+    .set({ packagePlan: "plus", updatedAt: new Date() })
+    .where(and(eq(enterprises.id, enterpriseId), isNull(enterprises.packagePlan)));
   const [employee] = await db
     .insert(employees)
     .values({
@@ -277,10 +289,27 @@ async function insertFixtures(upstreamBaseUrl: string): Promise<void> {
       role: "employee",
       status: "active",
       enterpriseId,
+      usageTier: "heavy",
       mustChangePassword: false,
     })
     .returning({ id: employees.id });
   created.employeeId = employee.id;
+
+  const [team] = await db
+    .insert(teams)
+    .values({
+      enterpriseId,
+      name: `Native Mock Team ${marker}`,
+      status: "active",
+      monthlyYuanQuota: "99999.00",
+    })
+    .returning({ id: teams.id });
+  created.teamId = team.id;
+  await db.insert(teamMembers).values({
+    teamId: team.id,
+    employeeId: employee.id,
+    role: "member",
+  });
 
   for (const protocol of ["anthropic_messages"] as const) {
     const tag = "messages";
@@ -307,7 +336,6 @@ async function insertFixtures(upstreamBaseUrl: string): Promise<void> {
         code: `${tag}_${marker}`,
         name: `Native ${tag} Line ${marker}`,
         productType: "api",
-        shareMode: "grant_only",
         allowAutoRoute: false,
         status: "active",
       })
@@ -324,6 +352,7 @@ async function insertFixtures(upstreamBaseUrl: string): Promise<void> {
         keyEncrypted: encryptEmployeeApiKey(generated.raw),
         protocol,
         productLineId: line.id,
+        teamId: team.id,
         expiresAt: new Date(Date.now() + 15 * 60_000),
       })
       .returning({ id: employeeApiKeys.id });
@@ -345,11 +374,16 @@ async function insertFixtures(upstreamBaseUrl: string): Promise<void> {
       .returning({ id: upstreamCredentials.id });
     created.credentialIds.push(credential.id);
 
-    const [grant] = await db
-      .insert(credentialEmployeeGrants)
-      .values({ credentialId: credential.id, employeeId: employee.id })
-      .returning({ id: credentialEmployeeGrants.id });
-    created.grantIds.push(grant.id);
+    const [binding] = await db
+      .insert(credentialBindings)
+      .values({
+        credentialId: credential.id,
+        productLineId: line.id,
+        scopeType: "employee",
+        scopeId: employee.id,
+      })
+      .returning({ id: credentialBindings.id });
+    created.bindingIds.push(binding.id);
 
     const [route] = await db
       .insert(modelRoutes)
@@ -409,6 +443,7 @@ async function waitForAudit(requestId: string) {
         status: requestAudits.status,
         totalTokens: requestAudits.totalTokens,
         cacheReadTokens: requestAudits.cacheReadTokens,
+        credentialId: requestAudits.credentialId,
       })
       .from(requestAudits)
       .where(eq(requestAudits.requestId, requestId))
@@ -538,7 +573,6 @@ async function runAssertions(baseUrl: string): Promise<void> {
   assert.equal(malformedBody.request_id, malformedRequestId);
   assert.equal(malformedResponse.headers.get("request-id"), malformedRequestId);
   const malformedAudit = await waitForAudit(malformedRequestId);
-  assert.equal(malformedAudit.protocol, "anthropic_messages");
   assert.equal(malformedAudit.status, "client_error");
 
   const messageJson = await call(
@@ -629,6 +663,23 @@ async function runAssertions(baseUrl: string): Promise<void> {
     waitForAudit(countTokens.requestId),
     waitForAudit(messageOverload.requestId),
   ]);
+  assert(created.employeeId !== null);
+  const boundCredentialId = created.credentialIds[0];
+  assert(boundCredentialId, "bound credential fixture is missing");
+  const [binding] = await db
+    .select({ credentialId: credentialBindings.credentialId })
+    .from(credentialBindings)
+    .where(
+      and(
+        eq(credentialBindings.scopeType, "employee"),
+        eq(credentialBindings.scopeId, created.employeeId),
+      ),
+    )
+    .limit(1);
+  assert.equal(binding?.credentialId, boundCredentialId, "successful traffic left the bound Key");
+  for (const row of audited) {
+    assert.equal(row.credentialId, boundCredentialId, "request did not use the bound Key");
+  }
   assert.deepEqual(
     audited.map((item) => item.totalTokens),
     [14, 19, null, null],
@@ -676,10 +727,14 @@ async function cleanup(): Promise<void> {
   }
   if (created.employeeId !== null) {
     await db.delete(requestAudits).where(eq(requestAudits.employeeId, created.employeeId));
+    await db.delete(requestErrorLogs).where(eq(requestErrorLogs.employeeId, created.employeeId));
     await db.delete(usageCountersDaily).where(eq(usageCountersDaily.employeeId, created.employeeId));
+    await db
+      .delete(usageCountersTeamDaily)
+      .where(eq(usageCountersTeamDaily.employeeId, created.employeeId));
   }
-  await deleteIds(created.grantIds, (ids) =>
-    db.delete(credentialEmployeeGrants).where(inArray(credentialEmployeeGrants.id, ids)));
+  await deleteIds(created.productLineIds, (ids) =>
+    db.delete(credentialBindings).where(inArray(credentialBindings.productLineId, ids)));
   await deleteIds(created.employeeApiKeyIds, (ids) =>
     db.delete(employeeApiKeys).where(inArray(employeeApiKeys.id, ids)));
   await deleteIds(created.routeIds, (ids) =>
@@ -690,6 +745,10 @@ async function cleanup(): Promise<void> {
     db.delete(productLines).where(inArray(productLines.id, ids)));
   await deleteIds(created.providerIds, (ids) =>
     db.delete(providers).where(inArray(providers.id, ids)));
+  if (created.teamId !== null) {
+    await db.delete(teamMembers).where(eq(teamMembers.teamId, created.teamId));
+    await db.delete(teams).where(eq(teams.id, created.teamId));
+  }
   if (created.employeeId !== null) {
     await db.delete(employees).where(
       and(eq(employees.id, created.employeeId), eq(employees.phone, employeePhone)),

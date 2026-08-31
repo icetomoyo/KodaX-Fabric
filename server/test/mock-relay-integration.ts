@@ -16,7 +16,7 @@ import {
   type ServerResponse,
 } from "node:http";
 import type { AddressInfo } from "node:net";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 
 // Make retry and cooldown behavior deterministic before config.ts is loaded.
@@ -43,15 +43,20 @@ const [
 ]);
 
 const {
-  credentialEmployeeGrants,
+  credentialBindings,
   employeeApiKeys,
   employees,
+  enterprises,
   modelRoutes,
   productLines,
   providers,
   requestAudits,
+  requestErrorLogs,
+  teams,
+  teamMembers,
   upstreamCredentials,
   usageCountersDaily,
+  usageCountersTeamDaily,
 } = schema;
 
 type MockResponseKind = "401" | "400" | "429" | "500" | "json" | "sse";
@@ -147,11 +152,12 @@ const scenarios: ScenarioDefinition[] = [
 
 const created = {
   employeeId: null as number | null,
+  teamId: null as number | null,
   employeeApiKeyIds: [] as number[],
   providerIds: [] as number[],
   productLineIds: [] as number[],
   credentialIds: [] as number[],
-  grantIds: [] as number[],
+  bindingIds: [] as number[],
   routeIds: [] as number[],
 };
 const trackedRequestIds = new Set<string>();
@@ -348,6 +354,10 @@ function createMockServer(): Server {
 
 async function insertFixtures(upstreamBaseUrl: string): Promise<void> {
   const enterpriseId = await getDefaultEnterpriseId();
+  await db
+    .update(enterprises)
+    .set({ packagePlan: "plus", updatedAt: new Date() })
+    .where(and(eq(enterprises.id, enterpriseId), isNull(enterprises.packagePlan)));
   const [employee] = await db
     .insert(employees)
     .values({
@@ -358,10 +368,27 @@ async function insertFixtures(upstreamBaseUrl: string): Promise<void> {
       role: "employee",
       status: "active",
       enterpriseId,
+      usageTier: "heavy",
       mustChangePassword: false,
     })
     .returning({ id: employees.id });
   created.employeeId = employee.id;
+
+  const [team] = await db
+    .insert(teams)
+    .values({
+      enterpriseId,
+      name: `M2 Mock Team ${marker}`,
+      status: "active",
+      monthlyYuanQuota: "99999.00",
+    })
+    .returning({ id: teams.id });
+  created.teamId = team.id;
+  await db.insert(teamMembers).values({
+    teamId: team.id,
+    employeeId: employee.id,
+    role: "member",
+  });
 
   for (const definition of scenarios) {
     const scenarioMarker = `${marker}_${definition.name.replaceAll("-", "_")}`;
@@ -387,7 +414,6 @@ async function insertFixtures(upstreamBaseUrl: string): Promise<void> {
         code: `line_${scenarioMarker}`,
         name: `M2 Mock Line ${scenarioMarker}`,
         productType: "api",
-        shareMode: "grant_only",
         allowAutoRoute: false,
         status: "active",
       })
@@ -406,6 +432,7 @@ async function insertFixtures(upstreamBaseUrl: string): Promise<void> {
         keyEncrypted: encryptEmployeeApiKey(generatedKey.raw),
         protocol: "openai_chat",
         productLineId: productLine.id,
+        teamId: team.id,
         expiresAt: new Date(Date.now() + 15 * 60_000),
       })
       .returning({ id: employeeApiKeys.id });
@@ -441,14 +468,16 @@ async function insertFixtures(upstreamBaseUrl: string): Promise<void> {
       .returning({ id: upstreamCredentials.id });
     created.credentialIds.push(firstCredential.id, secondCredential.id);
 
-    const grants = await db
-      .insert(credentialEmployeeGrants)
-      .values([
-        { credentialId: firstCredential.id, employeeId: employee.id },
-        { credentialId: secondCredential.id, employeeId: employee.id },
-      ])
-      .returning({ id: credentialEmployeeGrants.id });
-    created.grantIds.push(...grants.map((grant) => grant.id));
+    const [binding] = await db
+      .insert(credentialBindings)
+      .values({
+        credentialId: firstCredential.id,
+        productLineId: productLine.id,
+        scopeType: "employee",
+        scopeId: employee.id,
+      })
+      .returning({ id: credentialBindings.id });
+    created.bindingIds.push(binding.id);
 
     const [route] = await db
       .insert(modelRoutes)
@@ -544,6 +573,24 @@ async function callRelay(baseUrl: string, fixture: ScenarioFixture): Promise<Rel
     body,
     requestId,
   };
+}
+
+async function selectEmployeeBinding(
+  productLineId: number,
+  employeeId: number,
+): Promise<number | null> {
+  const [row] = await db
+    .select({ credentialId: credentialBindings.credentialId })
+    .from(credentialBindings)
+    .where(
+      and(
+        eq(credentialBindings.productLineId, productLineId),
+        eq(credentialBindings.scopeType, "employee"),
+        eq(credentialBindings.scopeId, employeeId),
+      ),
+    )
+    .limit(1);
+  return row?.credentialId ?? null;
 }
 
 async function selectPersistedAudit(requestId: string): Promise<PersistedAudit | null> {
@@ -703,6 +750,26 @@ async function runAssertions(tokenHubBaseUrl: string): Promise<void> {
 
   await assertCredentialHealth();
 
+  const employeeId = created.employeeId;
+  assert(employeeId !== null);
+  const [authBinding, badRequestBinding, rateLimitBinding, streamBinding] = await Promise.all(
+    [auth, badRequest, rateLimit, stream].map((fixture) =>
+      selectEmployeeBinding(fixture.productLineId, employeeId),
+    ),
+  );
+  assert.equal(authBinding, auth.secondCredentialId, "401 did not rebind to the pool Key");
+  assert.equal(
+    badRequestBinding,
+    badRequest.firstCredentialId,
+    "400 must keep the original bound Key",
+  );
+  assert.equal(
+    rateLimitBinding,
+    rateLimit.secondCredentialId,
+    "429 did not rebind to the pool Key",
+  );
+  assert.equal(streamBinding, stream.secondCredentialId, "500 did not rebind to the pool Key");
+
   console.log(
     JSON.stringify(
       {
@@ -755,13 +822,17 @@ async function cleanupFixtures(): Promise<void> {
 
   if (created.employeeId !== null) {
     await db.delete(requestAudits).where(eq(requestAudits.employeeId, created.employeeId));
+    await db.delete(requestErrorLogs).where(eq(requestErrorLogs.employeeId, created.employeeId));
     await db
       .delete(usageCountersDaily)
       .where(eq(usageCountersDaily.employeeId, created.employeeId));
+    await db
+      .delete(usageCountersTeamDaily)
+      .where(eq(usageCountersTeamDaily.employeeId, created.employeeId));
   }
 
-  await deleteIds(created.grantIds, (ids) =>
-    db.delete(credentialEmployeeGrants).where(inArray(credentialEmployeeGrants.id, ids)),
+  await deleteIds(created.productLineIds, (ids) =>
+    db.delete(credentialBindings).where(inArray(credentialBindings.productLineId, ids)),
   );
   await deleteIds(created.employeeApiKeyIds, (ids) =>
     db.delete(employeeApiKeys).where(inArray(employeeApiKeys.id, ids)),
@@ -778,6 +849,10 @@ async function cleanupFixtures(): Promise<void> {
   await deleteIds(created.providerIds, (ids) =>
     db.delete(providers).where(inArray(providers.id, ids)),
   );
+  if (created.teamId !== null) {
+    await db.delete(teamMembers).where(eq(teamMembers.teamId, created.teamId));
+    await db.delete(teams).where(eq(teams.id, created.teamId));
+  }
   if (created.employeeId !== null) {
     await db
       .delete(employees)

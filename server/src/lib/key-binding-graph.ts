@@ -1,7 +1,4 @@
-import {
-  credentialSupportsProtocol,
-  filterCredentialsByGrant,
-} from "./relay/routing.js";
+import { credentialSupportsProtocol } from "./relay/routing.js";
 import type { RelayProtocol } from "./relay/protocol.js";
 import { isRelayProtocol } from "./relay/protocol.js";
 import type { UsageTier } from "./usage-tier.js";
@@ -42,9 +39,12 @@ export type KeyBindingCredentialInput = {
   supportedProtocols: readonly string[];
 };
 
-export type KeyBindingGrantInput = {
-  employeeId: number;
+export type KeyBindingScopeType = "employee" | "team" | "enterprise";
+
+export type KeyBindingBindingInput = {
   credentialId: number;
+  scopeType: KeyBindingScopeType;
+  scopeId: number;
 };
 
 export type KeyBindingGraphFilter = {
@@ -55,7 +55,9 @@ export type KeyBindingGraphFilter = {
 
 export type KeyBindingEmployee = KeyBindingEmployeeInput;
 export type KeyBindingVirtualKey = KeyBindingVirtualKeyInput;
-export type KeyBindingCredential = KeyBindingCredentialInput;
+export type KeyBindingCredential = KeyBindingCredentialInput & {
+  bound: boolean;
+};
 
 export type KeyBindingNodeType =
   | "enterprise"
@@ -64,13 +66,20 @@ export type KeyBindingNodeType =
   | "virtual_key"
   | "credential";
 
+export type KeyBindingEdgeKind =
+  | "org"
+  | "owns"
+  | "dedicated"
+  | "team_shared"
+  | "enterprise_shared";
+
 export type KeyBindingEdge = {
   id: string;
   sourceType: KeyBindingNodeType;
   sourceId: number;
   targetType: KeyBindingNodeType;
   targetId: number;
-  kind: "org" | "owns" | "grant" | "pool";
+  kind: KeyBindingEdgeKind;
 };
 
 export type KeyBindingChannel = {
@@ -105,14 +114,17 @@ type GraphInput = {
   employees: readonly KeyBindingEmployeeInput[];
   virtualKeys: readonly KeyBindingVirtualKeyInput[];
   credentials: readonly KeyBindingCredentialInput[];
-  grants: readonly KeyBindingGrantInput[];
+  bindings: readonly KeyBindingBindingInput[];
   filter?: KeyBindingGraphFilter;
 };
 
-type CredentialRef = {
-  credentialId: number;
-  productLineId: number;
-  supportedProtocols: readonly RelayProtocol[];
+const BINDING_EDGE_KIND: Record<
+  KeyBindingScopeType,
+  Extract<KeyBindingEdgeKind, "dedicated" | "team_shared" | "enterprise_shared">
+> = {
+  employee: "dedicated",
+  team: "team_shared",
+  enterprise: "enterprise_shared",
 };
 
 function asRelayProtocols(values: readonly string[]): RelayProtocol[] {
@@ -250,41 +262,38 @@ function collectChannels(
   return [...byId.values()].sort((a, b) => a.id - b.id);
 }
 
+function employeeMatchesBinding(
+  employee: KeyBindingEmployeeInput,
+  binding: KeyBindingBindingInput,
+): boolean {
+  switch (binding.scopeType) {
+    case "employee":
+      return employee.id === binding.scopeId;
+    case "team":
+      return employee.teamId === binding.scopeId;
+    case "enterprise":
+      return employee.enterpriseId === binding.scopeId;
+  }
+}
+
 /**
  * Build the super-admin graph:
- * enterprise → team → employee → virtual Key → upstream (智谱) Key.
+ * enterprise → team → employee → virtual Key → upstream credential.
  *
- * Virtual Key → credential edges follow relay access:
- * grants on that product line restrict the pool; otherwise the whole
- * same-channel pool is used. Protocol support is applied in both cases.
+ * Virtual Key → credential edges follow credential_bindings:
+ * employee scope → that employee's keys (`dedicated`);
+ * team scope → every member's keys (`team_shared`);
+ * enterprise scope → that enterprise's employee keys (`enterprise_shared`).
+ * Unbound credentials stay in the graph with `bound: false`.
  */
 export function buildKeyBindingGraph(input: GraphInput): KeyBindingGraph {
   const employeesById = new Map(input.employees.map((row) => [row.id, row]));
   const credentialsById = new Map(input.credentials.map((row) => [row.id, row]));
-
-  const grantsByEmployeeLine = new Map<string, Set<number>>();
-  for (const grant of input.grants) {
-    const credential = credentialsById.get(grant.credentialId);
-    if (!credential) continue;
-    const key = `${grant.employeeId}:${credential.productLineId}`;
-    let ids = grantsByEmployeeLine.get(key);
-    if (!ids) {
-      ids = new Set();
-      grantsByEmployeeLine.set(key, ids);
-    }
-    ids.add(grant.credentialId);
-  }
-
-  const credentialsByLine = new Map<number, CredentialRef[]>();
-  for (const row of input.credentials) {
-    const list = credentialsByLine.get(row.productLineId) ?? [];
-    list.push({
-      credentialId: row.id,
-      productLineId: row.productLineId,
-      supportedProtocols: asRelayProtocols(row.supportedProtocols),
-    });
-    credentialsByLine.set(row.productLineId, list);
-  }
+  const boundCredentialIds = new Set(
+    input.bindings
+      .filter((row) => credentialsById.has(row.credentialId))
+      .map((row) => row.credentialId),
+  );
 
   const virtualKeys = input.virtualKeys.filter((row) => employeesById.has(row.employeeId));
   const ownsEdges: KeyBindingEdge[] = [];
@@ -302,20 +311,28 @@ export function buildKeyBindingGraph(input: GraphInput): KeyBindingGraph {
 
     const protocol = key.protocol;
     if (!isRelayProtocol(protocol)) continue;
-    const lineCredentials = credentialsByLine.get(key.productLineId) ?? [];
-    const protocolCredentials = lineCredentials.filter((row) =>
-      credentialSupportsProtocol(row, protocol),
-    );
-    const grantedIds = grantsByEmployeeLine.get(`${key.employeeId}:${key.productLineId}`) ?? new Set();
-    const accessible = filterCredentialsByGrant(protocolCredentials, grantedIds);
-    const kind = grantedIds.size > 0 ? "grant" : "pool";
-    for (const credential of accessible) {
+    const employee = employeesById.get(key.employeeId);
+    if (!employee) continue;
+
+    for (const binding of input.bindings) {
+      const credential = credentialsById.get(binding.credentialId);
+      if (!credential || credential.productLineId !== key.productLineId) continue;
+      if (
+        !credentialSupportsProtocol(
+          { supportedProtocols: asRelayProtocols(credential.supportedProtocols) },
+          protocol,
+        )
+      ) {
+        continue;
+      }
+      if (!employeeMatchesBinding(employee, binding)) continue;
+      const kind = BINDING_EDGE_KIND[binding.scopeType];
       useEdges.push({
-        id: `use:${key.id}:${credential.credentialId}:${kind}`,
+        id: `use:${key.id}:${credential.id}:${kind}`,
         sourceType: "virtual_key",
         sourceId: key.id,
         targetType: "credential",
-        targetId: credential.credentialId,
+        targetId: credential.id,
         kind,
       });
     }
@@ -324,7 +341,10 @@ export function buildKeyBindingGraph(input: GraphInput): KeyBindingGraph {
   const usedEmployeeIds = new Set(virtualKeys.map((row) => row.employeeId));
   let employees = input.employees.filter((row) => usedEmployeeIds.has(row.id));
   let keys = virtualKeys;
-  let credentials = [...input.credentials];
+  let credentials: KeyBindingCredential[] = input.credentials.map((row) => ({
+    ...row,
+    bound: boundCredentialIds.has(row.id),
+  }));
   let edges: KeyBindingEdge[] = [...ownsEdges, ...useEdges];
 
   const productLineId = input.filter?.productLineId;

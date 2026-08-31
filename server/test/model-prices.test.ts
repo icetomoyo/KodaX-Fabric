@@ -11,9 +11,13 @@ process.env.QUOTA_TIMEZONE = "Asia/Shanghai";
 const { adminModelPriceRoutes } = await import("../src/routes/admin/model-prices.js");
 const {
   attachPricesToChannelModels,
+  collectCatalogModels,
   collectDiscoveredModels,
   groupDiscoveredModelsByChannel,
+  isGlmClientModelAllowed,
+  lastUsedAtForCatalogModel,
   parseDiscoveredModels,
+  toCatalogModelName,
 } = await import("../src/lib/discovered-models.js");
 const { meRoutes } = await import("../src/routes/me.js");
 const { billedCacheReadTokens, extractCacheReadTokens } = await import(
@@ -224,14 +228,86 @@ test("channel model groups use only that channel's discovered Key list", () => {
       providerCode: "glm",
       meta: null,
     },
+    {
+      productLineId: 3,
+      productLineName: "公司qwen3.8-27b",
+      productLineCode: "c_custom",
+      providerName: "自定义",
+      providerCode: "custom",
+      meta: { discoveredModels: ["qwen38-27b"] },
+    },
   ]);
   assert.deepEqual(
     grouped.map((channel) => ({ id: channel.id, name: channel.name, models: channel.models })),
     [
-      { id: 1, name: "GLM", models: ["glm-4.6", "glm-5.3", "glm-5.3-flash"] },
+      { id: 3, name: "公司qwen3.8-27b", models: ["qwen38-27b"] },
+      { id: 1, name: "GLM", models: ["glm-5.3", "glm-5.3-flash"] },
       { id: 2, name: "GLM（国际版）", models: [] },
     ],
   );
+});
+
+test("Zhipu coding-plan aliases collapse to glm-5.3 and glm-5.3-flash", () => {
+  assert.equal(toCatalogModelName("glm-4.5"), "glm-5.3");
+  assert.equal(toCatalogModelName("glm-4.5-air"), "glm-5.3");
+  assert.equal(toCatalogModelName("glm-4.6"), "glm-5.3");
+  assert.equal(toCatalogModelName("glm-5"), "glm-5.3");
+  assert.equal(toCatalogModelName("glm-5.1"), "glm-5.3");
+  assert.equal(toCatalogModelName("glm-5.2"), "glm-5.3");
+  assert.equal(toCatalogModelName("GLM-5.3"), "glm-5.3");
+
+  assert.equal(toCatalogModelName("glm-4.7"), "glm-5.3-flash");
+  assert.equal(toCatalogModelName("glm-4.7-flash"), "glm-5.3-flash");
+  assert.equal(toCatalogModelName("glm-4.7-flashx"), "glm-5.3-flash");
+  assert.equal(toCatalogModelName("glm-5-turbo"), "glm-5.3-flash");
+  assert.equal(toCatalogModelName("glm-5.3-flash"), "glm-5.3-flash");
+
+  assert.equal(toCatalogModelName("glm-ocr"), "glm-ocr");
+  assert.equal(toCatalogModelName("qwen38-27b"), "qwen38-27b");
+});
+
+test("Zhipu relay whitelist accepts only glm-5.3 and glm-5.3-flash", () => {
+  assert.equal(isGlmClientModelAllowed("glm-5.3"), true);
+  assert.equal(isGlmClientModelAllowed("GLM-5.3-FLASH"), true);
+  assert.equal(isGlmClientModelAllowed(" glm-5.3 "), true);
+  assert.equal(isGlmClientModelAllowed("glm-4.6"), false);
+  assert.equal(isGlmClientModelAllowed("glm-5.2"), false);
+  assert.equal(isGlmClientModelAllowed("glm-4.7-flash"), false);
+  assert.equal(isGlmClientModelAllowed("qwen38-27b"), false);
+});
+
+test("pricing catalog only keeps current Zhipu coding-plan models", () => {
+  assert.deepEqual(
+    collectCatalogModels([
+      {
+        discoveredModels: [
+          "glm-4.5",
+          "glm-4.6",
+          "glm-4.7",
+          "glm-5-turbo",
+          "glm-5.3",
+          "glm-5.3-flash",
+          "qwen38-27b",
+        ],
+      },
+    ]),
+    ["glm-5.3", "glm-5.3-flash", "qwen38-27b"],
+  );
+});
+
+test("catalog last-used rolls up historical GLM aliases", () => {
+  const older = new Date("2026-08-20T00:00:00.000Z");
+  const newer = new Date("2026-08-30T00:00:00.000Z");
+  const usedByName = new Map<string, Date | null>([
+    ["glm-4.6", older],
+    ["glm-5.2", newer],
+    ["glm-4.7-flash", older],
+    ["qwen38-27b", newer],
+  ]);
+  assert.equal(lastUsedAtForCatalogModel("glm-5.3", usedByName)?.toISOString(), newer.toISOString());
+  assert.equal(lastUsedAtForCatalogModel("glm-5.3-flash", usedByName)?.toISOString(), older.toISOString());
+  assert.equal(lastUsedAtForCatalogModel("qwen38-27b", usedByName)?.toISOString(), newer.toISOString());
+  assert.equal(lastUsedAtForCatalogModel("glm-5", usedByName), null);
 });
 
 test("discovered models come from Key test metadata, not a typed catalog", () => {
@@ -368,6 +444,32 @@ test("team usage SQL aggregates cost in numeric and marks unpriced models", () =
   assert.match(byModelSql, /coalesce\("model_prices"\."prompt_price_per_million", 0\)/);
   assert.match(byModelSql, /coalesce\("model_prices"\."cache_hit_price_per_million", 0\)/);
   assert.match(byModelSql, /group by "request_audits"\."client_model"/);
+});
+
+test("model-price credit rates reject negatives and accept omission", async () => {
+  const negative = await injectPriceRoutes(adminSession, {
+    method: "POST",
+    url: "/api/admin/model-prices",
+    payload: {
+      model: "glm-5.3",
+      promptPricePerMillion: "1",
+      completionPricePerMillion: "2",
+      cacheHitPricePerMillion: "0",
+      cacheStoragePricePerMillionPerHour: "0",
+      promptCreditsPer10k: -1,
+    },
+  });
+  assert.equal(negative.statusCode, 400);
+
+  const omitted = await injectPriceRoutes(adminSession, {
+    method: "PATCH",
+    url: "/api/admin/model-prices/999999999",
+    payload: { promptCreditsPer10k: null, cacheHitCreditsPer10k: null, completionCreditsPer10k: null },
+  });
+  // Validation accepted the nullable credit fields when the request reaches
+  // the DB layer (unit env has no real DB, so 404/500 are both fine; only 400
+  // would mean the schema rejected them).
+  assert.notEqual(omitted.statusCode, 400);
 });
 
 test("cost SQL fragment zeros missing prices before summing", () => {

@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc -p tsconfig.json",
-    "test": "tsx --test test/relay-core.test.ts test/relay-binding.test.ts test/chat-completions.test.ts test/native-sse.test.ts test/api-key-encryption.test.ts test/admin-user-security.test.ts test/credential-bulk.test.ts test/custom-channel.test.ts test/upstream-channel-metadata.test.ts test/upstream-channel-update.test.ts test/upstream-protocol-config.test.ts test/upstream-connection-test.test.ts test/channel-overview.test.ts test/ticket-system.test.ts test/v003.test.ts test/enterprise-rbac.test.ts test/team-org.test.ts test/team-quota.test.ts test/model-prices.test.ts test/projects.test.ts test/error-logs.test.ts test/overview.test.ts test/capacity-alert.test.ts test/key-binding-graph.test.ts test/usage-tier.test.ts",
+    "test": "tsx --test test/relay-core.test.ts test/relay-binding.test.ts test/chat-completions.test.ts test/native-sse.test.ts test/api-key-encryption.test.ts test/admin-user-security.test.ts test/credential-bulk.test.ts test/custom-channel.test.ts test/upstream-channel-metadata.test.ts test/upstream-channel-update.test.ts test/upstream-protocol-config.test.ts test/upstream-connection-test.test.ts test/channel-overview.test.ts test/ticket-system.test.ts test/v003.test.ts test/enterprise-rbac.test.ts test/team-org.test.ts test/team-quota.test.ts test/model-prices.test.ts test/projects.test.ts test/error-logs.test.ts test/overview.test.ts test/capacity-alert.test.ts test/key-binding-graph.test.ts test/usage-tier.test.ts test/credential-quota.test.ts test/credential-binding.test.ts test/credit-cost.test.ts",
     "test:enterprise:isolation": "tsx test/enterprise-isolation.integration.ts",
     "test:enterprise:launch": "tsx test/enterprise-launch.ts",
     "test:relay:live": "tsx test/live-relay-smoke.ts",
@@ -14,6 +14,7 @@
     "test:relay:native:mock": "tsx test/mock-native-protocol-integration.ts",
     "test:v001:api": "tsx test/v001-api-key-integration.ts",
     "test:v001:binding": "tsx test/v001-hard-binding-integration.ts",
+    "test:binding:scheduling": "tsx test/binding-scheduling-integration.ts",
     "test:v003:integration": "tsx test/v003-integration.ts",
     "test:v005:integration": "tsx test/v005-integration.ts",
     "test:registration": "tsx test/registration-approval.integration.ts",

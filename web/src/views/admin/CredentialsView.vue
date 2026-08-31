@@ -163,6 +163,37 @@
                           <template v-else>{{ healthSummary(row) }}</template>
                         </span>
                       </div>
+                      <div class="key-card-meta">
+                        <span class="binding-badge" :class="bindingTone(row.binding)">
+                          {{ bindingLabel(row.binding) }}
+                        </span>
+                        <div class="quota-meters">
+                          <div class="quota-meter">
+                            <div class="quota-meter-head">
+                              <span>5 小时</span>
+                              <span>{{ formatQuotaPair(row.fiveHourCredits, row.fiveHourCreditLimit) }}</span>
+                            </div>
+                            <div v-if="row.fiveHourCreditLimit != null" class="quota-track">
+                              <i
+                                :style="{ width: `${usagePercent(row.fiveHourCredits, row.fiveHourCreditLimit)}%` }"
+                                :class="quotaTrackClass(row.fiveHourCredits, row.fiveHourCreditLimit)"
+                              />
+                            </div>
+                          </div>
+                          <div class="quota-meter">
+                            <div class="quota-meter-head">
+                              <span>本周</span>
+                              <span>{{ formatQuotaPair(row.weeklyCredits, row.weeklyCreditLimit) }}</span>
+                            </div>
+                            <div v-if="row.weeklyCreditLimit != null" class="quota-track">
+                              <i
+                                :style="{ width: `${usagePercent(row.weeklyCredits, row.weeklyCreditLimit)}%` }"
+                                :class="quotaTrackClass(row.weeklyCredits, row.weeklyCreditLimit)"
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      </div>
                       <div class="key-card-foot">
                         <span
                           class="traffic"
@@ -418,6 +449,24 @@
           <div class="form-help">新 Key 自动继承当前渠道协议，无需单独配置。</div>
         </el-form-item>
 
+        <div class="quota-fields">
+          <el-form-item label="5 小时积分额度">
+            <el-input
+              v-model="bulkForm.fiveHourCreditLimit"
+              placeholder="团队高级版 35000"
+              clearable
+            />
+          </el-form-item>
+          <el-form-item label="周积分额度">
+            <el-input
+              v-model="bulkForm.weeklyCreditLimit"
+              placeholder="团队高级版 155000"
+              clearable
+            />
+          </el-form-item>
+        </div>
+        <p class="form-help">额度按智谱积分计量，可空非负数，允许小数；留空表示该窗口不限额。导入的 Key 共用同一组额度。</p>
+
       </el-form>
 
       <template #footer>
@@ -470,7 +519,6 @@
               <div class="info-item"><dt>供应商</dt><dd>{{ selectedChannelSummary.provider.name }}</dd></div>
               <div class="info-item"><dt>ProductLine</dt><dd>{{ selectedChannelSummary.code }}</dd></div>
               <div class="info-item"><dt>接入类型</dt><dd>{{ selectedChannelSummary.productType === "coding_plan" ? "Coding Plan" : "API" }}</dd></div>
-              <div class="info-item"><dt>共享模式</dt><dd>{{ selectedChannelSummary.shareMode }}</dd></div>
               <div class="info-item full"><dt>Base URL</dt><dd class="url-value">{{ selectedChannelSummary.baseUrl }}</dd></div>
               <div class="info-item full">
                 <dt>协议路由</dt>
@@ -579,6 +627,72 @@
 
           <section class="detail-section">
             <div class="section-heading-row">
+              <h4 class="section-heading">额度与绑定</h4>
+              <el-button
+                v-if="canWrite"
+                type="primary"
+                size="small"
+                :loading="quotaSaving"
+                @click="saveQuotaLimits"
+              >
+                保存额度
+              </el-button>
+            </div>
+            <dl class="info-grid">
+              <div class="info-item">
+                <dt>绑定状态</dt>
+                <dd>
+                  <span class="binding-badge" :class="bindingTone(detailRow.binding)">
+                    {{ bindingLabel(detailRow.binding) }}
+                  </span>
+                </dd>
+              </div>
+              <div class="info-item">
+                <dt>5 小时用量</dt>
+                <dd>{{ formatQuotaPair(detailRow.fiveHourCredits, detailRow.fiveHourCreditLimit) }}</dd>
+              </div>
+              <div class="info-item">
+                <dt>本周用量</dt>
+                <dd>{{ formatQuotaPair(detailRow.weeklyCredits, detailRow.weeklyCreditLimit) }}</dd>
+              </div>
+            </dl>
+            <div v-if="detailRow.fiveHourCreditLimit != null" class="quota-progress">
+              <span>5 小时</span>
+              <el-progress
+                :percentage="usagePercent(detailRow.fiveHourCredits, detailRow.fiveHourCreditLimit)"
+                :status="usageProgressStatus(detailRow.fiveHourCredits, detailRow.fiveHourCreditLimit)"
+              />
+            </div>
+            <div v-if="detailRow.weeklyCreditLimit != null" class="quota-progress">
+              <span>本周</span>
+              <el-progress
+                :percentage="usagePercent(detailRow.weeklyCredits, detailRow.weeklyCreditLimit)"
+                :status="usageProgressStatus(detailRow.weeklyCredits, detailRow.weeklyCreditLimit)"
+              />
+            </div>
+            <el-form v-if="canWrite" label-position="top" class="credential-form quota-edit-form">
+              <div class="quota-fields">
+                <el-form-item label="5 小时积分额度">
+                  <el-input
+                    v-model="quotaEditForm.fiveHourCreditLimit"
+                    placeholder="团队高级版 35000"
+                    clearable
+                  />
+                </el-form-item>
+                <el-form-item label="周积分额度">
+                  <el-input
+                    v-model="quotaEditForm.weeklyCreditLimit"
+                    placeholder="团队高级版 155000"
+                    clearable
+                  />
+                </el-form-item>
+              </div>
+              <p class="form-help">额度按智谱积分计量，可空非负数，允许小数；留空表示不限额。</p>
+            </el-form>
+          </section>
+
+          <section class="detail-section">
+            <div class="section-heading-row">
               <h4 class="section-heading">健康检查</h4>
               <div v-if="canWrite" class="test-controls">
                 <el-button
@@ -647,6 +761,7 @@ import { useRoute, useRouter } from "vue-router";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { http } from "@/api/http";
 import { formatDateTime } from "@/lib/date-time";
+import { usagePercent, usageProgressStatus } from "@/lib/tokens";
 import { useAuthStore } from "@/stores/auth";
 import ChannelConfigFields from "@/views/admin/ChannelConfigFields.vue";
 import ProtocolRouteSummary from "@/views/admin/ProtocolRouteSummary.vue";
@@ -661,6 +776,13 @@ import {
 
 type ChannelStatus = "active" | "disabled";
 type CredentialStatus = ChannelStatus | "auto_disabled" | "cooling";
+type BindingScopeType = "employee" | "team" | "enterprise";
+
+type CredentialBinding = {
+  scopeType: BindingScopeType;
+  scopeId: number;
+  scopeName: string;
+};
 
 type TestResult = {
   ok: boolean;
@@ -701,6 +823,11 @@ type CredentialRow = {
   configVersion: number;
   defaultBaseUrl: string;
   baseUrlOverride: string | null;
+  fiveHourCreditLimit: number | null;
+  weeklyCreditLimit: number | null;
+  fiveHourCredits: number;
+  weeklyCredits: number;
+  binding: CredentialBinding | null;
   createdAt?: string;
   updatedAt?: string;
   meta: {
@@ -789,7 +916,6 @@ type ChannelSummary = {
   code: string;
   name: string;
   productType: "api" | "coding_plan";
-  shareMode: string;
   allowAutoRoute: boolean;
   status: ChannelStatus;
   provider: { id: number; code: string; name: string; status: string };
@@ -876,7 +1002,14 @@ const bulkForm = reactive({
   rawKeys: "",
   supportedProtocols: ["openai_chat"] as RelayProtocol[],
   status: "active" as ChannelStatus,
+  fiveHourCreditLimit: "",
+  weeklyCreditLimit: "",
 });
+const quotaEditForm = reactive({
+  fiveHourCreditLimit: "",
+  weeklyCreditLimit: "",
+});
+const quotaSaving = ref(false);
 const bulkFormProtocolConfigs = ref<RelayProtocolConfigs>({});
 
 const channelEditForm = reactive({
@@ -1335,6 +1468,63 @@ function statusPill(row: CredentialRow): { text: string; tone: string } | null {
   return null;
 }
 
+function bindingLabel(binding: CredentialBinding | null): string {
+  if (!binding) return "待绑定";
+  const prefix = binding.scopeType === "employee"
+    ? "独占"
+    : binding.scopeType === "team"
+      ? "团队"
+      : "企业";
+  return binding.scopeName ? `${prefix}·${binding.scopeName}` : prefix;
+}
+
+function bindingTone(binding: CredentialBinding | null): BindingScopeType | "pending" {
+  return binding?.scopeType ?? "pending";
+}
+
+function formatCreditAmount(value: number): string {
+  const n = Math.round(Number(value));
+  if (!Number.isFinite(n)) return "0";
+  return n.toLocaleString("zh-CN");
+}
+
+function formatQuotaPair(used: number, limit: number | null): string {
+  const usedText = formatCreditAmount(used);
+  return limit == null ? `${usedText} / 不限` : `${usedText} / ${formatCreditAmount(limit)} 积分`;
+}
+
+function quotaTrackClass(used: number, limit: number): string {
+  const percent = usagePercent(used, limit);
+  if (percent >= 100) return "full";
+  if (percent >= 80) return "warn";
+  return "";
+}
+
+type ParsedCreditLimit =
+  | { ok: true; fiveHourCreditLimit: number | null; weeklyCreditLimit: number | null }
+  | { ok: false };
+
+function parseOptionalCreditLimit(raw: string): number | null | undefined {
+  const trimmed = raw.trim();
+  if (trimmed === "") return null;
+  if (!/^(?:0|[1-9]\d*)(?:\.\d+)?$/.test(trimmed)) return undefined;
+  const value = Number(trimmed);
+  if (!Number.isFinite(value) || value < 0) return undefined;
+  return value;
+}
+
+function parseQuotaFields(fiveHourRaw: string, weeklyRaw: string): ParsedCreditLimit {
+  const fiveHourCreditLimit = parseOptionalCreditLimit(fiveHourRaw);
+  const weeklyCreditLimit = parseOptionalCreditLimit(weeklyRaw);
+  if (fiveHourCreditLimit === undefined || weeklyCreditLimit === undefined) return { ok: false };
+  return { ok: true, fiveHourCreditLimit, weeklyCreditLimit };
+}
+
+function syncQuotaEditForm(row: CredentialRow) {
+  quotaEditForm.fiveHourCreditLimit = row.fiveHourCreditLimit == null ? "" : String(row.fiveHourCreditLimit);
+  quotaEditForm.weeklyCreditLimit = row.weeklyCreditLimit == null ? "" : String(row.weeklyCreditLimit);
+}
+
 function providerColor(code: string): string {
   if (code === CUSTOM_PROVIDER_CODE) return CUSTOM_PROVIDER_COLOR;
   return templates.value.find((item) => item.code === code)?.color ?? "#64748b";
@@ -1542,6 +1732,8 @@ function resetBulkForm() {
   bulkForm.productLineId = null;
   bulkForm.rawKeys = "";
   bulkForm.status = "active";
+  bulkForm.fiveHourCreditLimit = "";
+  bulkForm.weeklyCreditLimit = "";
   const firstNew = bulkChannelOptions.value.find(
     (item) => !isTemplateOptionConfigured(item.template, item.option),
   );
@@ -1865,6 +2057,11 @@ async function saveBulkKeys() {
     ElMessage.warning("请先修正 Key 格式错误");
     return;
   }
+  const quotas = parseQuotaFields(bulkForm.fiveHourCreditLimit, bulkForm.weeklyCreditLimit);
+  if (!quotas.ok) {
+    ElMessage.warning("额度须为非负数，允许小数，留空表示不限");
+    return;
+  }
   if (creatingChannel && !bulkForm.supportedProtocols.length) {
     ElMessage.warning("请至少选择一种支持协议");
     return;
@@ -1927,6 +2124,17 @@ async function saveBulkKeys() {
         : {}),
     };
     const { data } = await http.post("/api/admin/credentials/bulk-create", payload);
+    const createdIds = createdCredentialIds(data.data?.credentials);
+    if (quotas.fiveHourCreditLimit != null || quotas.weeklyCreditLimit != null) {
+      await Promise.all(
+        createdIds.map((id) =>
+          http.patch(`/api/admin/credentials/${id}`, {
+            fiveHourCreditLimit: quotas.fiveHourCreditLimit,
+            weeklyCreditLimit: quotas.weeklyCreditLimit,
+          }),
+        ),
+      );
+    }
     const targetId = Number(
       data.data?.productLineId
       ?? data.data?.productLine?.id
@@ -2084,8 +2292,43 @@ async function removeCredential(row: CredentialRow) {
   }
 }
 
+function createdCredentialIds(value: unknown): number[] {
+  if (!Array.isArray(value)) return [];
+  const ids: number[] = [];
+  for (const item of value) {
+    if (typeof item !== "object" || item == null || !("id" in item)) continue;
+    const id = item.id;
+    if (typeof id === "number" && Number.isInteger(id) && id > 0) ids.push(id);
+  }
+  return ids;
+}
+
+async function saveQuotaLimits() {
+  const row = detailRow.value;
+  if (!canWrite.value || !row) return;
+  const quotas = parseQuotaFields(quotaEditForm.fiveHourCreditLimit, quotaEditForm.weeklyCreditLimit);
+  if (!quotas.ok) {
+    ElMessage.warning("额度须为非负数，允许小数，留空表示不限");
+    return;
+  }
+  quotaSaving.value = true;
+  try {
+    await http.patch(`/api/admin/credentials/${row.id}`, {
+      fiveHourCreditLimit: quotas.fiveHourCreditLimit,
+      weeklyCreditLimit: quotas.weeklyCreditLimit,
+    });
+    ElMessage.success("额度已更新");
+    await loadCredentials();
+  } catch (error) {
+    ElMessage.error(getErrorMessage(error, "额度更新失败"));
+  } finally {
+    quotaSaving.value = false;
+  }
+}
+
 function openKeyDetails(row: CredentialRow) {
   detailCredentialId.value = row.id;
+  syncQuotaEditForm(row);
   showKeyDetails.value = true;
 }
 
@@ -2737,6 +2980,111 @@ onMounted(refreshAll);
   color: #64748b;
 }
 
+.key-card-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.binding-badge {
+  align-self: flex-start;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+.binding-badge.pending {
+  background: #fffbeb;
+  color: #a16207;
+}
+
+.binding-badge.employee {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
+.binding-badge.team {
+  background: #cffafe;
+  color: #0e7490;
+}
+
+.binding-badge.enterprise {
+  background: #e0e7ff;
+  color: #4338ca;
+}
+
+.quota-meters {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.quota-meter {
+  min-width: 0;
+}
+
+.quota-meter-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  color: #64748b;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.quota-meter-head span:last-child {
+  color: #334155;
+  font-weight: 600;
+}
+
+.quota-track {
+  height: 4px;
+  margin-top: 4px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #e2e8f0;
+}
+
+.quota-track i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: #2563eb;
+}
+
+.quota-track i.warn {
+  background: #d97706;
+}
+
+.quota-track i.full {
+  background: #dc2626;
+}
+
+.quota-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 16px;
+}
+
+.quota-edit-form {
+  margin-top: 12px;
+}
+
+.quota-progress {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+  color: #64748b;
+  font-size: 12px;
+}
+
 .key-card-foot {
   display: flex;
   align-items: center;
@@ -3191,6 +3539,11 @@ onMounted(refreshAll);
 }
 
 @media (max-width: 720px) {
+  .quota-fields,
+  .quota-meters {
+    grid-template-columns: 1fr;
+  }
+
   .page-head {
     display: flex;
     flex-direction: column;
