@@ -1,11 +1,11 @@
 /**
  * Daily usage-tier rebind job.
  *
- * Recalculates `employees.usageTier` from the last 7 calendar days' peak
- * `usage_counters_daily.totalTokens` (same window as request-time binding).
- * After a tier change, rebound each employee
- * onto the Key their new scope needs, one rung at a time (heavy exclusive →
- * standard team → light enterprise) and drop bindings nobody still needs.
+ * Recalculates `employees.usageTier`: 7×24h after registration stays 重度;
+ * after that, the last 7 calendar days' peak `usage_counters_daily.totalTokens`
+ * (same window as request-time binding). After a tier change, rebound each
+ * employee onto the Key their new scope needs (heavy exclusive → standard
+ * team → light enterprise) and drop bindings nobody still needs.
  */
 import { and, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import type { FastifyBaseLogger } from "fastify";
@@ -45,6 +45,7 @@ export async function runTierRebindOnce(
       .select({
         id: employees.id,
         usageTier: employees.usageTier,
+        createdAt: employees.createdAt,
       })
       .from(employees)
       .where(eq(employees.status, "active")),
@@ -64,7 +65,7 @@ export async function runTierRebindOnce(
 
   const idsByNextTier = emptyIdsByTier();
   for (const row of activeRows) {
-    const next = effectiveUsageTier(row.usageTier, peakByEmployee.get(row.id) ?? null);
+    const next = effectiveUsageTier(peakByEmployee.get(row.id) ?? null, row.createdAt, now);
     if (next !== row.usageTier) {
       idsByNextTier[next].push(row.id);
     }

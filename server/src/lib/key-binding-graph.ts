@@ -3,8 +3,7 @@ import { credentialSupportsProtocol } from "./relay/routing.js";
 import type { CreditCoolingKind } from "./relay/credential-quota.js";
 import type { RelayProtocol } from "./relay/protocol.js";
 import { isRelayProtocol } from "./relay/protocol.js";
-import type { UsageTier } from "./usage-tier.js";
-import { classifyUsageTier } from "./usage-tier.js";
+import { DEFAULT_USAGE_TIER, type UsageTier } from "./usage-tier.js";
 
 export type KeyBindingEmployeeInput = {
   id: number;
@@ -272,7 +271,7 @@ function employeeMatchesBinding(
 ): boolean {
   const scope = resolveBindingScope({
     employeeId: employee.id,
-    usageTier: employee.usageTier ?? classifyUsageTier(null),
+    usageTier: employee.usageTier ?? DEFAULT_USAGE_TIER,
     teamId: employee.teamId,
     enterpriseId: employee.enterpriseId,
   });
@@ -283,15 +282,15 @@ function employeeMatchesBinding(
  * Usage tier the canvas should draw for an employee.
  *
  * Always the committed `employees.usageTier`. Request-time
- * `effectiveUsageTier` may already be one rung toward the 7-day peak, but
- * that step is only written on the next acquire or the daily job. Drawing
- * the preview looks for a team/enterprise Key that does not exist yet and
- * hides the exclusive Key still in `credential_bindings`.
+ * `effectiveUsageTier` may already have classified after the 7×24h
+ * protection window, but that write happens on the next acquire or the
+ * daily job. Drawing the preview hides the exclusive Key still in
+ * `credential_bindings`.
  */
 export function usageTierForKeyBindingGraph(
   stored: UsageTier | null | undefined,
 ): UsageTier {
-  return stored ?? classifyUsageTier(null);
+  return stored ?? DEFAULT_USAGE_TIER;
 }
 
 /**
@@ -423,7 +422,7 @@ export function buildKeyBindingGraph(input: GraphInput): KeyBindingGraph {
     .sort((a, b) => a.id - b.id)
     .map((row) => ({
       ...row,
-      usageTier: row.usageTier ?? classifyUsageTier(null),
+      usageTier: row.usageTier ?? DEFAULT_USAGE_TIER,
     }));
   keys = uniqueById(keys).sort((a, b) => a.id - b.id);
   credentials = uniqueById(credentials).sort((a, b) => a.id - b.id);

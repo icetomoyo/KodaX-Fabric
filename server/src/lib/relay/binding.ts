@@ -90,6 +90,7 @@ const MAX_POOL_ATTEMPTS = 3;
 type EmployeeScopeRow = {
   usageTier: UsageTier;
   enterpriseId: number | null;
+  createdAt: Date;
 };
 
 export type BindingEligibilityPerson = {
@@ -161,8 +162,8 @@ const credentialSnapshotSelect = {
  * heavy → exclusive employee Key; standard → team share, else enterprise;
  * light → enterprise share. Returns null when the required subject is missing.
  *
- * Request-time binding steps `employees.usageTier` one rung toward the latest
- * 7-day peak (new users start 重度 and degrade 标准 → 轻度).
+ * Request-time binding keeps 重度 for 7×24h after registration, then
+ * classifies from the latest 7-day peak.
  */
 export function resolveBindingScope(input: ResolveBindingScopeInput): BindingScope | null {
   if (input.usageTier === "heavy") {
@@ -187,9 +188,9 @@ export function resolveBindingScope(input: ResolveBindingScopeInput): BindingSco
 }
 
 /**
- * Resolve scope from observed peak tokens only (no one-step clamp).
- * Request-time binding uses `effectiveUsageTier` so a new 重度 user does not
- * jump to 轻度 after the first quiet request.
+ * Resolve scope from observed peak tokens only (no registration protection).
+ * Request-time binding uses `effectiveUsageTier` so a new account stays 重度
+ * for 7×24h after `employees.createdAt`.
  */
 export function resolveBindingScopeFromPeak(
   input: Omit<ResolveBindingScopeInput, "usageTier"> & {
@@ -275,6 +276,7 @@ async function resolveEmployeeBinding(
       .select({
         usageTier: employees.usageTier,
         enterpriseId: employees.enterpriseId,
+        createdAt: employees.createdAt,
       })
       .from(employees)
       .where(eq(employees.id, employeeId))
@@ -289,7 +291,7 @@ async function resolveEmployeeBinding(
     loadPeakDailyTokens(employeeId, now),
   ]);
   if (!employee) return null;
-  const liveTier = effectiveUsageTier(employee.usageTier, peakTokens);
+  const liveTier = effectiveUsageTier(peakTokens, employee.createdAt, now);
   return {
     liveTier,
     storedTier: employee.usageTier,

@@ -39,6 +39,7 @@ const [
   { hourStartOf },
   { env },
   { quotaDayAt },
+  { USAGE_TIER_PROTECTION_MS },
 ] = await Promise.all([
   import("../src/app.js"),
   import("../src/db/client.js"),
@@ -50,6 +51,7 @@ const [
   import("../src/lib/relay/credential-quota.js"),
   import("../src/config.js"),
   import("../src/lib/quota-time.js"),
+  import("../src/lib/usage-tier.js"),
 ]);
 
 const {
@@ -220,6 +222,7 @@ async function insertEmployee(input: {
       enterpriseId: input.enterpriseId,
       usageTier: input.usageTier,
       mustChangePassword: false,
+      createdAt: new Date(Date.now() - USAGE_TIER_PROTECTION_MS - 60_000),
     })
     .returning({ id: employees.id });
   created.employeeIds.push(employee.id);

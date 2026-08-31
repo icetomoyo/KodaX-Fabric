@@ -71,18 +71,9 @@ test("standard without a team or enterprise cannot resolve a scope", () => {
   );
 });
 
-test("unused peak classifies as heavy exclusive, quiet usage as light enterprise", () => {
-  assert.deepEqual(
-    resolveBindingScopeFromPeak({
-      employeeId: 29,
-      peakTokens: null,
-      teamId: 4,
-      enterpriseId: 2,
-    }),
-    { scopeType: "employee", scopeId: 29 },
-  );
-  assert.equal(classifyUsageTier(0), "heavy");
-  for (const peak of [1, 699_847]) {
+test("unused peak and quiet usage both share the enterprise Key", () => {
+  assert.equal(classifyUsageTier(0), "light");
+  for (const peak of [null, 0, 1, 699_847]) {
     assert.deepEqual(
       resolveBindingScopeFromPeak({
         employeeId: 29,

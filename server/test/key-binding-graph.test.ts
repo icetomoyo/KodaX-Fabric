@@ -217,11 +217,12 @@ test("employee binding links that employee's virtual keys as dedicated", () => {
 });
 
 test("quiet first-day usage must not hide an exclusive Key still bound at stored heavy", () => {
-  // 144: 张闯 (heavy) created VK cc; first request bound GLM Key 01 at employee
-  // scope. 33_060 tokens would step effectiveUsageTier to standard, which looks
-  // for a team Key that does not exist yet.
+  // 144: 张闯 created VK cc during the 7×24h protection window; first request
+  // bound GLM Key 01 at employee scope. Live classification of 33_060 tokens
+  // is light, but the canvas must follow the committed heavy row.
   const peakTokens = 33_060;
-  assert.equal(effectiveUsageTier("heavy", peakTokens), "standard");
+  const createdAt = new Date();
+  assert.equal(effectiveUsageTier(peakTokens, createdAt, createdAt), "heavy");
   const usageTier = usageTierForKeyBindingGraph("heavy");
   const graph = buildKeyBindingGraph({
     employees: [

@@ -4,28 +4,43 @@ import {
   classifyUsageTier,
   classifyUsageTierFromDays,
   effectiveUsageTier,
-  stepUsageTier,
+  isUsageTierProtected,
+  USAGE_TIER_PROTECTION_MS,
 } from "../src/lib/usage-tier.js";
 
-test("new or unused users default to heavy", () => {
-  assert.equal(classifyUsageTier(null), "heavy");
-  assert.equal(classifyUsageTier(undefined), "heavy");
-  assert.equal(classifyUsageTier(0), "heavy");
-  assert.equal(classifyUsageTierFromDays([]), "heavy");
+const REGISTERED = new Date("2026-08-01T00:00:00.000Z");
+
+function at(iso: string): Date {
+  return new Date(iso);
+}
+
+test("unused accounts classify as light", () => {
+  assert.equal(classifyUsageTier(null), "light");
+  assert.equal(classifyUsageTier(undefined), "light");
+  assert.equal(classifyUsageTier(0), "light");
+  assert.equal(classifyUsageTierFromDays([]), "light");
 });
 
-test("tier changes move one rung at a time", () => {
-  assert.equal(stepUsageTier("heavy", "light"), "standard");
-  assert.equal(stepUsageTier("standard", "light"), "light");
-  assert.equal(stepUsageTier("light", "heavy"), "standard");
-  assert.equal(stepUsageTier("standard", "heavy"), "heavy");
-  assert.equal(stepUsageTier("heavy", "heavy"), "heavy");
+test("registration protection lasts 7 × 24 hours", () => {
+  assert.equal(USAGE_TIER_PROTECTION_MS, 7 * 24 * 60 * 60 * 1000);
+  assert.equal(isUsageTierProtected(REGISTERED, at("2026-08-07T23:59:59.999Z")), true);
+  assert.equal(isUsageTierProtected(REGISTERED, at("2026-08-08T00:00:00.000Z")), false);
+  assert.equal(
+    effectiveUsageTier(699_847, REGISTERED, at("2026-08-07T23:59:59.999Z")),
+    "heavy",
+  );
+  assert.equal(effectiveUsageTier(80_000_000, REGISTERED, at("2026-08-04T12:00:00.000Z")), "heavy");
+  assert.equal(effectiveUsageTier(0, REGISTERED, at("2026-08-04T12:00:00.000Z")), "heavy");
+  assert.equal(effectiveUsageTier(null, REGISTERED, at("2026-08-04T12:00:00.000Z")), "heavy");
 });
 
-test("a new heavy user with a quiet first window steps down to standard, not light", () => {
-  assert.equal(effectiveUsageTier("heavy", 699_847), "standard");
-  assert.equal(effectiveUsageTier("standard", 699_847), "light");
-  assert.equal(effectiveUsageTier("heavy", null), "heavy");
+test("after protection, the 7-day peak classifies directly", () => {
+  const graduated = at("2026-08-08T00:00:00.000Z");
+  assert.equal(effectiveUsageTier(null, REGISTERED, graduated), "light");
+  assert.equal(effectiveUsageTier(0, REGISTERED, graduated), "light");
+  assert.equal(effectiveUsageTier(699_847, REGISTERED, graduated), "light");
+  assert.equal(effectiveUsageTier(12_000_000, REGISTERED, graduated), "standard");
+  assert.equal(effectiveUsageTier(80_000_000, REGISTERED, graduated), "heavy");
 });
 
 test("daily usage below 3 million is light", () => {
