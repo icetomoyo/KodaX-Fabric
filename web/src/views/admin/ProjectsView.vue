@@ -47,7 +47,7 @@
           </el-descriptions-item>
           <el-descriptions-item label="成员数">{{ selected.memberCount }}</el-descriptions-item>
         </el-descriptions>
-        <p class="hint">用量和套餐目前仍记在团队上。项目用于协作分组，为以后按项目记账预留。</p>
+        <p class="hint">用量目前仍记在团队上。项目用于协作分组。</p>
       </template>
       <el-empty v-else description="请选择左侧项目" />
     </main>

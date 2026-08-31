@@ -5,7 +5,7 @@
         <div>
           <h2 class="page-title">Key 绑定</h2>
           <p class="page-subtitle">
-            企业 → 团队 → 员工 → 虚拟 Key → 智谱 Key（绑定）→ 待绑定 → 冷却中 → 停用
+            企业 → 团队 → 员工 → 虚拟 Key → 智谱 Key（绑定）→ 待绑定 → 5小时冷却 → 周冷却 → 停用
           </p>
         </div>
         <el-button :loading="loading" @click="load">刷新</el-button>
@@ -52,7 +52,8 @@
         <span class="legend-item"><i class="swatch virtual" />虚拟 Key</span>
         <span class="legend-item"><i class="swatch bound" />绑定</span>
         <span class="legend-item"><i class="swatch pending" />待绑定</span>
-        <span class="legend-item"><i class="swatch cooling" />冷却中</span>
+        <span class="legend-item"><i class="swatch cooling_5h" />5小时冷却</span>
+        <span class="legend-item"><i class="swatch cooling_weekly" />周冷却</span>
         <span class="legend-item"><i class="swatch disabled" />停用</span>
         <span class="legend-item"><i class="line dedicated" />独占绑定</span>
         <span class="legend-item"><i class="line team_shared" />团队共享</span>
@@ -64,7 +65,8 @@
           {{ displayed?.virtualKeys.length ?? 0 }} 把虚拟 Key ·
           绑定 {{ credentialLaneCounts.bound }} ·
           待绑定 {{ credentialLaneCounts.pending }} ·
-          冷却 {{ credentialLaneCounts.cooling }} ·
+          5小时冷却 {{ credentialLaneCounts.cooling_5h }} ·
+          周冷却 {{ credentialLaneCounts.cooling_weekly }} ·
           停用 {{ credentialLaneCounts.disabled }}
         </span>
       </div>
@@ -134,7 +136,7 @@
             <Handle type="target" :position="Position.Left" :connectable="false" />
             <strong>{{ data.label }}</strong>
             <span class="mono">…{{ data.secretSuffix }}</span>
-            <span>{{ data.productLineName }} · {{ credentialLaneLabel(data.lane) }}</span>
+            <span>{{ credentialNodeCaption(data) }}</span>
           </div>
         </template>
         <Background :gap="18" pattern-color="#e5e7eb" />
@@ -169,7 +171,8 @@ type BindingKind = "org" | "owns" | "dedicated" | "team_shared" | "enterprise_sh
 type UseBindingKind = "dedicated" | "team_shared" | "enterprise_shared";
 type KindFilter = "all" | UseBindingKind;
 type NodeKind = "enterprise" | "team" | "employee" | "virtual_key" | "credential" | "lane_header";
-type CredentialLane = "bound" | "pending" | "cooling" | "disabled";
+type CoolingKind = "five_hour" | "weekly" | "other";
+type CredentialLane = "bound" | "pending" | "cooling_5h" | "cooling_weekly" | "disabled";
 
 type UsageTier = "light" | "standard" | "heavy";
 
@@ -211,6 +214,8 @@ type GraphCredential = {
   providerCode: string;
   providerName: string;
   status: "active" | "disabled" | "auto_disabled" | "cooling";
+  coolingKind?: CoolingKind | null;
+  coolUntil?: string | null;
   supportedProtocols: string[];
   bound?: boolean;
 };
@@ -241,13 +246,18 @@ const COL_X = {
   virtual_key: 1080,
   bound: 1440,
   pending: 1800,
-  cooling: 2160,
-  disabled: 2520,
+  cooling_5h: 2160,
+  cooling_weekly: 2520,
+  disabled: 2880,
 } as const;
 
-const STATUS_HEADERS: Array<{ key: "pending" | "cooling" | "disabled"; label: string }> = [
+const STATUS_HEADERS: Array<{
+  key: "pending" | "cooling_5h" | "cooling_weekly" | "disabled";
+  label: string;
+}> = [
   { key: "pending", label: "待绑定" },
-  { key: "cooling", label: "冷却中" },
+  { key: "cooling_5h", label: "5小时冷却" },
+  { key: "cooling_weekly", label: "周冷却" },
   { key: "disabled", label: "停用" },
 ];
 const NODE_H = 92;
@@ -279,7 +289,7 @@ const displayedEnterprises = computed(() => {
 });
 const credentialLaneCounts = computed(() => {
   const source = displayed.value;
-  const empty = { bound: 0, pending: 0, cooling: 0, disabled: 0 };
+  const empty = { bound: 0, pending: 0, cooling_5h: 0, cooling_weekly: 0, disabled: 0 };
   if (!source) return empty;
   const boundIds = boundCredentialIds(source);
   for (const credential of source.credentials) {
@@ -302,11 +312,34 @@ function usageTierLabel(tier: UsageTier | undefined): string {
   return "标准用户";
 }
 
-function credentialLaneLabel(lane: CredentialLane | undefined): string {
+function credentialLaneLabel(lane: CredentialLane | undefined, coolingKind?: CoolingKind | null): string {
   if (lane === "pending") return "待绑定";
-  if (lane === "cooling") return "冷却中";
+  if (lane === "cooling_weekly") return "周冷却";
+  if (lane === "cooling_5h") return coolingKind === "other" ? "冷却中" : "5小时冷却";
   if (lane === "disabled") return "停用";
   return "绑定";
+}
+
+function formatCoolUntil(value: string | null | undefined): string {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const pad = (part: number) => String(part).padStart(2, "0");
+  return `${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function credentialNodeCaption(data: {
+  productLineName?: string;
+  lane?: CredentialLane;
+  coolingKind?: CoolingKind | null;
+  coolUntil?: string | null;
+}): string {
+  const lane = credentialLaneLabel(data.lane, data.coolingKind);
+  if (data.lane === "cooling_5h" || data.lane === "cooling_weekly") {
+    const until = formatCoolUntil(data.coolUntil);
+    return until ? `${lane} · 至 ${until}` : lane;
+  }
+  return `${data.productLineName ?? ""} · ${lane}`;
 }
 
 function useEdgeStyle(kind: BindingKind): Record<string, string | number | undefined> {
@@ -341,8 +374,10 @@ function credentialLane(
   credential: GraphCredential,
   boundIds: Set<number>,
 ): CredentialLane {
-  if (credential.status === "cooling") return "cooling";
   if (credential.status === "disabled" || credential.status === "auto_disabled") return "disabled";
+  if (credential.coolingKind === "weekly") return "cooling_weekly";
+  if (credential.coolingKind === "five_hour" || credential.coolingKind === "other") return "cooling_5h";
+  if (credential.status === "cooling") return "cooling_5h";
   if (boundIds.has(credential.id)) return "bound";
   return "pending";
 }
@@ -539,7 +574,8 @@ function layoutGraph(source: KeyBindingGraph): { nodes: Node[]; edges: Edge[] } 
   const credentialsByLane: Record<CredentialLane, GraphCredential[]> = {
     bound: [],
     pending: [],
-    cooling: [],
+    cooling_5h: [],
+    cooling_weekly: [],
     disabled: [],
   };
   for (const credential of source.credentials) {
@@ -577,7 +613,7 @@ function layoutGraph(source: KeyBindingGraph): { nodes: Node[]; edges: Edge[] } 
     boundCursor = y + NODE_H + NODE_GAP;
   }
 
-  for (const lane of ["pending", "cooling", "disabled"] as const) {
+  for (const lane of ["pending", "cooling_5h", "cooling_weekly", "disabled"] as const) {
     let laneCursor = 0;
     for (const credential of credentialsByLane[lane]) {
       laidNodes.push(
@@ -852,8 +888,12 @@ onMounted(load);
   background: #ca8a04;
 }
 
-.swatch.cooling {
+.swatch.cooling_5h {
   background: #d97706;
+}
+
+.swatch.cooling_weekly {
+  background: #b91c1c;
 }
 
 .swatch.disabled {
@@ -1006,8 +1046,12 @@ onMounted(load);
   border-left: 3px solid #ca8a04;
 }
 
-.graph-node.credential.cooling {
+.graph-node.credential.cooling_5h {
   border-left: 3px solid #d97706;
+}
+
+.graph-node.credential.cooling_weekly {
+  border-left: 3px solid #b91c1c;
 }
 
 .graph-node.credential.disabled {

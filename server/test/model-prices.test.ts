@@ -10,7 +10,6 @@ process.env.QUOTA_TIMEZONE = "Asia/Shanghai";
 
 const { adminModelPriceRoutes } = await import("../src/routes/admin/model-prices.js");
 const {
-  attachPricesToChannelModels,
   collectCatalogModels,
   collectDiscoveredModels,
   groupDiscoveredModelsByChannel,
@@ -27,15 +26,10 @@ const { adminTeamRoutes, buildTeamListQuery } = await import("../src/routes/admi
 const {
   buildTeamUsageByModelQuery,
   buildTeamUsageDailyQuery,
-  computeCostYuan,
   fillDailyTeamUsage,
   formatYuan,
   mapModelUsageRows,
-  requestCostYuanExpr,
-  sumRequestCostYuanSql,
 } = await import("../src/lib/model-cost.js");
-const { db } = await import("../src/db/client.js");
-const { requestAudits } = await import("../src/db/schema/index.js");
 const { resolveTeamListScope } = await import("../src/lib/org.js");
 
 const adminSession = {
@@ -73,7 +67,6 @@ function attachSession(session: typeof adminSession) {
 async function injectPriceRoutes(session: typeof adminSession | null, request: {
   method: "GET" | "POST" | "PATCH" | "DELETE";
   url: string;
-  payload?: Record<string, unknown>;
 }) {
   const app = Fastify();
   if (session) app.addHook("onRequest", attachSession(session));
@@ -86,43 +79,15 @@ async function injectPriceRoutes(session: typeof adminSession | null, request: {
   }
 }
 
-test("unauthenticated model-price calls return 401", async () => {
+test("unauthenticated model catalog calls return 401", async () => {
   const list = await injectPriceRoutes(null, { method: "GET", url: "/api/admin/model-prices" });
-  const create = await injectPriceRoutes(null, {
-    method: "POST",
-    url: "/api/admin/model-prices",
-    payload: { model: "gpt-4o", promptPricePerMillion: "1", completionPricePerMillion: "2" },
-  });
-  const patch = await injectPriceRoutes(null, {
-    method: "PATCH",
-    url: "/api/admin/model-prices/1",
-    payload: { promptPricePerMillion: "3" },
-  });
-  const del = await injectPriceRoutes(null, { method: "DELETE", url: "/api/admin/model-prices/1" });
   assert.equal(list.statusCode, 401);
-  assert.equal(create.statusCode, 401);
-  assert.equal(patch.statusCode, 401);
-  assert.equal(del.statusCode, 401);
 });
 
-test("org_admin and team_admin cannot mutate or list model prices", async () => {
+test("org_admin and team_admin cannot list the admin model catalog", async () => {
   for (const session of [orgAdminSession, teamAdminSession]) {
     const list = await injectPriceRoutes(session, { method: "GET", url: "/api/admin/model-prices" });
-    const create = await injectPriceRoutes(session, {
-      method: "POST",
-      url: "/api/admin/model-prices",
-      payload: { model: "gpt-4o", promptPricePerMillion: "1", completionPricePerMillion: "2" },
-    });
-    const patch = await injectPriceRoutes(session, {
-      method: "PATCH",
-      url: "/api/admin/model-prices/1",
-      payload: { promptPricePerMillion: "3" },
-    });
-    const del = await injectPriceRoutes(session, { method: "DELETE", url: "/api/admin/model-prices/1" });
     assert.equal(list.statusCode, 403);
-    assert.equal(create.statusCode, 403);
-    assert.equal(patch.statusCode, 403);
-    assert.equal(del.statusCode, 403);
   }
 });
 
@@ -136,45 +101,6 @@ test("unauthenticated team usage calls return 401", async () => {
   } finally {
     await app.close();
   }
-});
-
-test("employee model catalog attaches unit prices to discovered models only", () => {
-  const channels = attachPricesToChannelModels(
-    [
-      {
-        id: 1,
-        name: "GLM",
-        code: "api",
-        providerName: "智谱",
-        providerCode: "glm",
-        models: ["glm-4.6", "glm-5.3"],
-      },
-    ],
-    [
-      {
-        model: "glm-4.6",
-        promptPricePerMillion: "8.0000",
-        completionPricePerMillion: "28.0000",
-        cacheHitPricePerMillion: "2.0000",
-      },
-    ],
-  );
-  assert.deepEqual(channels[0]?.models, [
-    {
-      model: "glm-4.6",
-      priced: true,
-      promptPricePerMillion: "8.0000",
-      completionPricePerMillion: "28.0000",
-      cacheHitPricePerMillion: "2.0000",
-    },
-    {
-      model: "glm-5.3",
-      priced: false,
-      promptPricePerMillion: null,
-      completionPricePerMillion: null,
-      cacheHitPricePerMillion: null,
-    },
-  ]);
 });
 
 test("employee model list is unauthenticated 401 and forbidden to admin/org_admin", async () => {
@@ -336,34 +262,15 @@ test("formatYuan keeps two decimals without exposing raw floats", () => {
   assert.equal(formatYuan("12.345000"), "12.35");
 });
 
-test("priced usage converts tokens to yuan; unpriced models stay 0", () => {
-  const priced = { promptPricePerMillion: "2.5000", completionPricePerMillion: "10.0000" };
-  assert.equal(computeCostYuan(1_000_000, 500_000, priced), "7.50");
-  assert.equal(computeCostYuan(200_000, 0, priced), "0.50");
-  assert.equal(computeCostYuan(1_000_000, 1_000_000, null), "0.00");
-  assert.equal(computeCostYuan(0, 0, priced), "0.00");
-
+test("model usage rows keep token totals", () => {
   const mixed = mapModelUsageRows([
-    { model: "gpt-4o", totalTokens: 1_500_000, costYuan: "7.50", priced: true },
-    { model: "new-model", totalTokens: 800_000, costYuan: "3.21", priced: false },
+    { model: "gpt-4o", totalTokens: 1_500_000 },
+    { model: "new-model", totalTokens: 800_000 },
   ]);
   assert.deepEqual(mixed, [
-    { model: "gpt-4o", totalTokens: 1_500_000, costYuan: "7.50", priced: true },
-    { model: "new-model", totalTokens: 800_000, costYuan: "0.00", priced: false },
+    { model: "gpt-4o", totalTokens: 1_500_000 },
+    { model: "new-model", totalTokens: 800_000 },
   ]);
-});
-
-test("cache hits are billed at cache-hit price, not full input price", () => {
-  const priced = {
-    promptPricePerMillion: "8",
-    completionPricePerMillion: "28",
-    cacheHitPricePerMillion: "2",
-  };
-  // 200k uncached * 8 + 800k cache * 2 + 100k out * 28 = 1.6 + 1.6 + 2.8 = 6.00
-  assert.equal(computeCostYuan(1_000_000, 100_000, priced, 800_000), "6.00");
-  // cache-hit price missing → cache portion is 0, not charged as input
-  assert.equal(computeCostYuan(1_000_000, 0, { ...priced, cacheHitPricePerMillion: undefined }, 800_000), "1.60");
-  assert.equal(computeCostYuan(1_000_000, 0, priced, 0), "8.00");
 });
 
 test("cache-read tokens come from Anthropic or OpenAI usage JSON", () => {
@@ -381,17 +288,17 @@ test("cache-read tokens come from Anthropic or OpenAI usage JSON", () => {
   assert.equal(billedCacheReadTokens(100, { cache_read_input_tokens: 40 }), 40);
 });
 
-test("daily usage fill keeps costYuan as a 2-decimal string", () => {
+test("daily usage fill keeps token totals", () => {
   const daily = fillDailyTeamUsage("2026-08-22", "2026-08-23", [
-    { day: "2026-08-23", totalTokens: "1000", requestCount: "2", costYuan: "1.2" },
+    { day: "2026-08-23", totalTokens: "1000", requestCount: "2" },
   ]);
   assert.deepEqual(daily, [
-    { day: "2026-08-22", totalTokens: 0, requestCount: 0, costYuan: "0.00" },
-    { day: "2026-08-23", totalTokens: 1000, requestCount: 2, costYuan: "1.20" },
+    { day: "2026-08-22", totalTokens: 0, requestCount: 0 },
+    { day: "2026-08-23", totalTokens: 1000, requestCount: 2 },
   ]);
 });
 
-test("team list SQL folds request_audits cost with coalesce-0 for missing prices", () => {
+test("team list SQL sums token counters without model prices", () => {
   const scope = resolveTeamListScope(
     { role: "org_admin", enterpriseId: 4, employeeId: 1 },
     undefined,
@@ -401,22 +308,12 @@ test("team list SQL folds request_audits cost with coalesce-0 for missing prices
   if ("forbidden" in scope) return;
   const compiled = buildTeamListQuery(scope).toSQL();
   const compiledSql = compiled.sql.replace(/\s+/g, " ");
-  assert.match(compiledSql, /today_cost_yuan|prompt_price_per_million|model_prices/i);
-  assert.match(compiledSql, /request_audits/);
-  assert.match(compiledSql, /model_prices/);
-  assert.match(compiledSql, /\/ 1000000/);
-  assert.match(compiledSql, /coalesce\("model_prices"\."prompt_price_per_million", 0\)/);
-  assert.match(compiledSql, /coalesce\("model_prices"\."completion_price_per_million", 0\)/);
-  assert.match(compiledSql, /coalesce\("model_prices"\."cache_hit_price_per_million", 0\)/);
-  assert.match(compiledSql, /cache_read_tokens/);
-  assert.equal(
-    compiled.params.some((value) => value instanceof Date),
-    false,
-    "cost window must bind ISO strings; Date params throw in postgres.js",
-  );
+  assert.match(compiledSql, /usage_counters_team_daily/);
+  assert.doesNotMatch(compiledSql, /model_prices/);
+  assert.doesNotMatch(compiledSql, /prompt_price_per_million/);
 });
 
-test("team usage SQL aggregates cost in numeric and marks unpriced models", () => {
+test("team usage SQL aggregates tokens by day and model", () => {
   const range = {
     teamId: 8,
     start: new Date("2026-08-01T16:00:00.000Z"),
@@ -426,10 +323,9 @@ test("team usage SQL aggregates cost in numeric and marks unpriced models", () =
   const daily = buildTeamUsageDailyQuery(range).toSQL();
   const dailySql = daily.sql.replace(/\s+/g, " ");
   assert.match(dailySql, /from "request_audits"/);
-  assert.match(dailySql, /left join "model_prices"/);
+  assert.doesNotMatch(dailySql, /model_prices/);
   assert.match(dailySql, /at time zone/);
   assert.match(dailySql, /group by 1/i);
-  assert.match(dailySql, /\/ 1000000/);
   assert.match(dailySql, /coalesce\(sum\(/);
   assert.equal(daily.params.includes(8), true);
   assert.equal(
@@ -440,50 +336,6 @@ test("team usage SQL aggregates cost in numeric and marks unpriced models", () =
 
   const byModel = buildTeamUsageByModelQuery(range).toSQL();
   const byModelSql = byModel.sql.replace(/\s+/g, " ");
-  assert.match(byModelSql, /"model_prices"\."id" is not null/);
-  assert.match(byModelSql, /coalesce\("model_prices"\."prompt_price_per_million", 0\)/);
-  assert.match(byModelSql, /coalesce\("model_prices"\."cache_hit_price_per_million", 0\)/);
+  assert.doesNotMatch(byModelSql, /model_prices/);
   assert.match(byModelSql, /group by "request_audits"\."client_model"/);
-});
-
-test("model-price credit rates reject negatives and accept omission", async () => {
-  const negative = await injectPriceRoutes(adminSession, {
-    method: "POST",
-    url: "/api/admin/model-prices",
-    payload: {
-      model: "glm-5.3",
-      promptPricePerMillion: "1",
-      completionPricePerMillion: "2",
-      cacheHitPricePerMillion: "0",
-      cacheStoragePricePerMillionPerHour: "0",
-      promptCreditsPer10k: -1,
-    },
-  });
-  assert.equal(negative.statusCode, 400);
-
-  const omitted = await injectPriceRoutes(adminSession, {
-    method: "PATCH",
-    url: "/api/admin/model-prices/999999999",
-    payload: { promptCreditsPer10k: null, cacheHitCreditsPer10k: null, completionCreditsPer10k: null },
-  });
-  // Validation accepted the nullable credit fields when the request reaches
-  // the DB layer (unit env has no real DB, so 404/500 are both fine; only 400
-  // would mean the schema rejected them).
-  assert.notEqual(omitted.statusCode, 400);
-});
-
-test("cost SQL fragment zeros missing prices before summing", () => {
-  const compiled = db
-    .select({
-      cost: requestCostYuanExpr,
-      total: sumRequestCostYuanSql,
-    })
-    .from(requestAudits)
-    .toSQL();
-  const compiledSql = compiled.sql.replace(/\s+/g, " ");
-  assert.match(compiledSql, /coalesce\("model_prices"\."prompt_price_per_million", 0\)/);
-  assert.match(compiledSql, /coalesce\("model_prices"\."cache_hit_price_per_million", 0\)/);
-  assert.match(compiledSql, /coalesce\("request_audits"\."prompt_tokens", 0\)/);
-  assert.match(compiledSql, /cache_read_tokens/);
-  assert.match(compiledSql, /coalesce\(sum\(/);
 });

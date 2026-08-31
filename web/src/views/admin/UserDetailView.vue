@@ -43,28 +43,16 @@
       </section>
 
       <section class="page-card team-quota-card">
-        <h3>团队配额</h3>
+        <h3>团队用量</h3>
         <el-empty
           v-if="!usage.quota.teams?.length"
-          description="未加入团队，无团队配额"
+          description="未加入团队"
           :image-size="72"
         />
         <el-table v-else :data="usage.quota.teams" stripe>
           <el-table-column prop="teamName" label="团队" min-width="140" />
-          <el-table-column label="团队每月额度" min-width="140">
-            <template #default="{ row }">
-              <el-tag v-if="row.teamQuota === 0" type="danger" size="small">未分配</el-tag>
-              <span v-else>{{ formatYuan(row.teamQuota) }}</span>
-            </template>
-          </el-table-column>
           <el-table-column label="团队本月已用" min-width="130">
-            <template #default="{ row }">{{ formatYuan(row.teamUsedMonth) }}</template>
-          </el-table-column>
-          <el-table-column label="个人每日上限" min-width="180">
-            <template #default="{ row }">
-              <span v-if="row.myLimit == null">不限（受团队池约束）</span>
-              <span v-else>{{ formatNumber(row.myLimit) }}</span>
-            </template>
+            <template #default="{ row }">{{ formatTokenCompact(row.teamUsedMonth) }}</template>
           </el-table-column>
           <el-table-column label="个人今日已用" min-width="130">
             <template #default="{ row }">{{ formatNumber(row.myUsedToday) }}</template>
@@ -152,7 +140,7 @@ import type { EChartsCoreOption } from "echarts/core";
 import { http } from "@/api/http";
 import UsageChart from "@/components/UsageChart.vue";
 import { formatDateTime, formatDateTimeInTimeZone } from "@/lib/date-time";
-import { formatYuan } from "@/lib/tokens";
+import { formatTokenCompact } from "@/lib/tokens";
 
 type UsageCounts = {
   promptTokens: number;
@@ -185,9 +173,7 @@ type UsageResponse = {
     teams: Array<{
       teamId: number;
       teamName: string;
-      teamQuota: number;
       teamUsedMonth: number;
-      myLimit: number | null;
       myUsedToday: number;
     }>;
   };

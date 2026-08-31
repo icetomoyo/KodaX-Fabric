@@ -146,6 +146,34 @@ test("employee owns each of their virtual keys", () => {
   assert.equal(graph.virtualKeys.length, 2);
 });
 
+test("credential coolingKind and coolUntil pass through to the graph", () => {
+  const graph = buildKeyBindingGraph({
+    employees: [employee({ id: 1, name: "张三" })],
+    virtualKeys: [virtualKey({ id: 11, employeeId: 1, productLineId: 100 })],
+    credentials: [
+      credential({
+        id: 21,
+        productLineId: 100,
+        status: "cooling",
+        coolingKind: "weekly",
+        coolUntil: "2026-09-03T11:00:00.000Z",
+      }),
+      credential({
+        id: 22,
+        productLineId: 100,
+        status: "cooling",
+        coolingKind: "five_hour",
+        coolUntil: "2026-08-31T14:00:00.000Z",
+      }),
+    ],
+    bindings: [],
+  });
+
+  assert.equal(graph.credentials.find((row) => row.id === 21)?.coolingKind, "weekly");
+  assert.equal(graph.credentials.find((row) => row.id === 21)?.coolUntil, "2026-09-03T11:00:00.000Z");
+  assert.equal(graph.credentials.find((row) => row.id === 22)?.coolingKind, "five_hour");
+});
+
 test("unbound credentials stay in the graph with no virtual-key edges", () => {
   const graph = buildKeyBindingGraph({
     employees: [employee({ id: 1, name: "张三" })],

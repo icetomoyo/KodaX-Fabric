@@ -57,7 +57,6 @@ const {
   modelRoutes,
   productLines,
   providers,
-  modelPrices,
   requestAudits,
   requestErrorLogs,
   teams,
@@ -97,7 +96,6 @@ const created = {
   apiKeyIds: [] as number[],
   routeIds: [] as number[],
   usageHourlyIds: [] as number[],
-  modelPriceIds: [] as number[],
 };
 
 let app: FastifyInstance | null = null;
@@ -253,7 +251,7 @@ async function insertChannel(
   upstreamBaseUrl: string,
   options: { firstFiveHourCreditLimit?: number } = {},
 ): Promise<ChannelFixture> {
-  const clientModel = `client-${tag}-${marker}`;
+  const clientModel = tag === "quota" ? "glm-5.3" : `glm-${tag}-${marker}`;
   const [provider] = await db
     .insert(providers)
     .values({
@@ -351,10 +349,6 @@ async function insertBinding(
 
 async function insertFixtures(upstreamBaseUrl: string): Promise<void> {
   const enterpriseId = await getDefaultEnterpriseId();
-  await db
-    .update(enterprises)
-    .set({ packagePlan: "plus", updatedAt: new Date() })
-    .where(and(eq(enterprises.id, enterpriseId), isNull(enterprises.packagePlan)));
 
   const [exclusiveTeam] = await db
     .insert(teams)
@@ -362,7 +356,7 @@ async function insertFixtures(upstreamBaseUrl: string): Promise<void> {
       enterpriseId,
       name: `exclusive-${marker}`,
       status: "active",
-      monthlyYuanQuota: "99999.00",
+
     })
     .returning({ id: teams.id });
   const [shareTeam] = await db
@@ -371,7 +365,7 @@ async function insertFixtures(upstreamBaseUrl: string): Promise<void> {
       enterpriseId,
       name: `share-${marker}`,
       status: "active",
-      monthlyYuanQuota: "99999.00",
+
     })
     .returning({ id: teams.id });
   const [quotaTeam] = await db
@@ -380,7 +374,7 @@ async function insertFixtures(upstreamBaseUrl: string): Promise<void> {
       enterpriseId,
       name: `quota-${marker}`,
       status: "active",
-      monthlyYuanQuota: "99999.00",
+
     })
     .returning({ id: teams.id });
   created.teamIds.push(exclusiveTeam.id, shareTeam.id, quotaTeam.id);
@@ -434,19 +428,6 @@ async function insertFixtures(upstreamBaseUrl: string): Promise<void> {
     "employee",
     quotaHeavy.id,
   );
-
-  const [price] = await db
-    .insert(modelPrices)
-    .values({
-      model: quotaRebind.clientModel,
-      promptPricePerMillion: "0",
-      completionPricePerMillion: "0",
-      promptCreditsPer10k: "6.9",
-      cacheHitCreditsPer10k: "1.7",
-      completionCreditsPer10k: "24",
-    })
-    .returning({ id: modelPrices.id });
-  created.modelPriceIds.push(price.id);
 
   const [usage] = await db
     .insert(credentialUsageHourly)
@@ -628,8 +609,6 @@ async function cleanup(): Promise<void> {
   }
   await deleteIds(created.usageHourlyIds, (ids) =>
     db.delete(credentialUsageHourly).where(inArray(credentialUsageHourly.id, ids)));
-  await deleteIds(created.modelPriceIds, (ids) =>
-    db.delete(modelPrices).where(inArray(modelPrices.id, ids)));
   await deleteIds(created.productLineIds, (ids) =>
     db.delete(credentialBindings).where(inArray(credentialBindings.productLineId, ids)));
   await deleteIds(created.apiKeyIds, (ids) =>

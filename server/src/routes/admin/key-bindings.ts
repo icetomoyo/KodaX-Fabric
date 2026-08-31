@@ -18,6 +18,11 @@ import {
 import { effectiveCredentialStatus } from "../../lib/credential-status.js";
 import { buildKeyBindingGraph } from "../../lib/key-binding-graph.js";
 import { addCalendarDays, quotaDayAt } from "../../lib/quota-time.js";
+import {
+  evaluateCredentialQuota,
+  getCredentialQuotaUsage,
+  resolveGraphCoolingKind,
+} from "../../lib/relay/credential-quota.js";
 import { classifyUsageTier } from "../../lib/usage-tier.js";
 import {
   requirePasswordChanged,
@@ -78,6 +83,8 @@ export async function adminKeyBindingRoutes(app: FastifyInstance) {
           providerName: providers.name,
           status: upstreamCredentials.status,
           coolUntil: upstreamCredentials.coolUntil,
+          fiveHourCreditLimit: upstreamCredentials.fiveHourCreditLimit,
+          weeklyCreditLimit: upstreamCredentials.weeklyCreditLimit,
           supportedProtocols: upstreamCredentials.supportedProtocols,
         })
         .from(upstreamCredentials)
@@ -145,6 +152,11 @@ export async function adminKeyBindingRoutes(app: FastifyInstance) {
       });
     }
 
+    const usageById = await getCredentialQuotaUsage(
+      credentialRows.map((row) => row.id),
+      now,
+    );
+
     const graph = buildKeyBindingGraph({
       employees: [...employeesById.values()],
       virtualKeys: keyRows.map((row) => ({
@@ -159,17 +171,32 @@ export async function adminKeyBindingRoutes(app: FastifyInstance) {
         teamName: row.teamName,
         status: row.status,
       })),
-      credentials: credentialRows.map((row) => ({
-        id: row.id,
-        label: row.label,
-        secretSuffix: row.secretSuffix,
-        productLineId: row.productLineId,
-        productLineName: row.productLineName,
-        providerCode: row.providerCode,
-        providerName: row.providerName,
-        status: effectiveCredentialStatus(row.status, row.coolUntil, now),
-        supportedProtocols: row.supportedProtocols ?? [],
-      })),
+      credentials: credentialRows.map((row) => {
+        const status = effectiveCredentialStatus(row.status, row.coolUntil, now);
+        const usage = usageById.get(row.id) ?? { fiveHourCredits: 0, weeklyCredits: 0 };
+        const quota = evaluateCredentialQuota(
+          usage,
+          {
+            fiveHourLimit: creditLimitNumber(row.fiveHourCreditLimit),
+            weeklyLimit: creditLimitNumber(row.weeklyCreditLimit),
+          },
+          now,
+        );
+        const coolingKind = resolveGraphCoolingKind(status, quota);
+        return {
+          id: row.id,
+          label: row.label,
+          secretSuffix: row.secretSuffix,
+          productLineId: row.productLineId,
+          productLineName: row.productLineName,
+          providerCode: row.providerCode,
+          providerName: row.providerName,
+          status,
+          coolingKind,
+          coolUntil: coolingUntilIso(coolingKind, row.coolUntil, quota.exhaustedUntil),
+          supportedProtocols: row.supportedProtocols ?? [],
+        };
+      }),
       bindings: bindingRows,
       filter: {
         productLineId: query.data.productLineId,
@@ -180,4 +207,20 @@ export async function adminKeyBindingRoutes(app: FastifyInstance) {
 
     return { success: true, data: graph };
   });
+}
+
+function creditLimitNumber(value: string | null): number | null {
+  if (value == null) return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function coolingUntilIso(
+  coolingKind: ReturnType<typeof resolveGraphCoolingKind>,
+  coolUntil: Date | null,
+  exhaustedUntil: Date | null,
+): string | null {
+  if (!coolingKind) return null;
+  const until = coolingKind === "other" ? coolUntil : exhaustedUntil ?? coolUntil;
+  return until ? until.toISOString() : null;
 }

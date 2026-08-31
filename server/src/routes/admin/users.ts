@@ -6,14 +6,13 @@ import { db } from "../../db/client.js";
 import {
   employeeApiKeys,
   employees,
-  modelPrices,
   requestAudits,
   teamMembers,
   teams,
   usageCountersDaily,
 } from "../../db/schema/index.js";
-import { formatYuan, requestCostYuanExpr } from "../../lib/model-cost.js";
-import { listEmployeeTeamQuotaViews } from "../../lib/team-quota.js";
+
+import { listEmployeeTeamUsageViews } from "../../lib/team-quota.js";
 import {
   canAccessEmployee,
   resolveUpdatedUserFields,
@@ -119,10 +118,8 @@ export function buildEmployeeLogsQuery(input: {
       totalTokens: requestAudits.totalTokens,
       cacheReadTokens: requestAudits.cacheReadTokens,
       createdAt: requestAudits.createdAt,
-      costYuan: requestCostYuanExpr,
     })
     .from(requestAudits)
-    .leftJoin(modelPrices, eq(modelPrices.model, requestAudits.clientModel))
     .where(
       and(
         eq(requestAudits.employeeId, input.employeeId),
@@ -306,7 +303,7 @@ export async function adminUserRoutes(app: FastifyInstance) {
         ))
         .limit(1);
     const usedToday = Number(todayRow?.totalTokens) || 0;
-    const teamQuotas = await listEmployeeTeamQuotaViews(
+    const teamUsage = await listEmployeeTeamUsageViews(
       employee.id,
       today,
       zonedMonthRange(now, env.QUOTA_TIMEZONE),
@@ -329,7 +326,7 @@ export async function adminUserRoutes(app: FastifyInstance) {
         quota: {
           usedToday,
           resetAt: nextQuotaResetAt(now, env.QUOTA_TIMEZONE),
-          teams: teamQuotas,
+          teams: teamUsage,
         },
       },
     };
@@ -399,10 +396,7 @@ export async function adminUserRoutes(app: FastifyInstance) {
       success: true,
       data: {
         total: countRow?.total ?? 0,
-        items: items.map((row) => ({
-          ...row,
-          costYuan: formatYuan(row.costYuan),
-        })),
+        items,
       },
     };
   });

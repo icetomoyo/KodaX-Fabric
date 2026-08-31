@@ -1,11 +1,9 @@
 import type { FastifyInstance } from "fastify";
-import { asc, desc, eq, inArray, sql } from "drizzle-orm";
+import { asc, desc, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../../db/client.js";
 import { employees, enterprises, teams } from "../../db/schema/index.js";
 import { insertEnterprise } from "../../lib/enterprise.js";
-import { packageMonthlyYuan, parseYuanNumber } from "../../lib/enterprise-package.js";
-import { sumAssignedTeamQuota } from "../../lib/team-quota.js";
 import { writeOpsAudit } from "../../lib/ops-audit.js";
 import {
   requirePasswordChanged,
@@ -20,7 +18,6 @@ export function buildEnterpriseListQuery() {
       name: enterprises.name,
       code: enterprises.code,
       status: enterprises.status,
-      packagePlan: enterprises.packagePlan,
       createdAt: enterprises.createdAt,
       updatedAt: enterprises.updatedAt,
     })
@@ -36,7 +33,6 @@ const updateEnterpriseSchema = z
   .object({
     name: z.string().trim().min(1).max(100).optional(),
     status: z.enum(["active", "disabled"]).optional(),
-    packagePlan: z.enum(["plus", "pro", "max"]).nullable().optional(),
   })
   .refine((data) => Object.keys(data).length > 0);
 
@@ -68,19 +64,6 @@ export async function adminEnterpriseRoutes(app: FastifyInstance) {
       list.push(person);
       byEnterprise.set(person.enterpriseId, list);
     }
-    const assignedRows = ids.length
-      ? await db
-          .select({
-            enterpriseId: teams.enterpriseId,
-            total: sql<string>`coalesce(sum(${teams.monthlyYuanQuota}), 0)`,
-          })
-          .from(teams)
-          .where(inArray(teams.enterpriseId, ids))
-          .groupBy(teams.enterpriseId)
-      : [];
-    const assignedByEnterprise = new Map(
-      assignedRows.map((row) => [row.enterpriseId, parseYuanNumber(row.total)]),
-    );
     return {
       success: true,
       data: rows.map((row) => {
@@ -91,8 +74,6 @@ export async function adminEnterpriseRoutes(app: FastifyInstance) {
           null;
         return {
           ...row,
-          monthlyYuan: packageMonthlyYuan(row.packagePlan),
-          assignedTeamQuota: assignedByEnterprise.get(row.id) ?? 0,
           contact: contact
             ? {
                 employeeId: contact.id,
@@ -158,16 +139,6 @@ export async function adminEnterpriseRoutes(app: FastifyInstance) {
     }
 
     try {
-      if (body.data.packagePlan !== undefined) {
-        const assigned = await sumAssignedTeamQuota(params.data.id);
-        const nextYuan = packageMonthlyYuan(body.data.packagePlan);
-        if (assigned > nextYuan) {
-          return reply.code(400).send({
-            success: false,
-            message: "已分配给团队的额度超过该套餐，请先下调团队额度",
-          });
-        }
-      }
       const [row] = await db
         .update(enterprises)
         .set({
@@ -180,7 +151,6 @@ export async function adminEnterpriseRoutes(app: FastifyInstance) {
           name: enterprises.name,
           code: enterprises.code,
           status: enterprises.status,
-          packagePlan: enterprises.packagePlan,
           createdAt: enterprises.createdAt,
           updatedAt: enterprises.updatedAt,
         });
@@ -198,8 +168,6 @@ export async function adminEnterpriseRoutes(app: FastifyInstance) {
           fields: Object.keys(body.data),
           name: row.name,
           status: row.status,
-          packagePlan: row.packagePlan,
-          monthlyYuan: packageMonthlyYuan(row.packagePlan),
         },
         ip: req.ip,
       });

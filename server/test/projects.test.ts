@@ -59,5 +59,5 @@ test("project workspace is a three-pane team-admin page", () => {
   assert.match(view, /项目详情/);
   assert.match(view, /项目成员/);
   assert.match(view, /员工可以同时加入多个项目/);
-  assert.match(view, /用量和套餐目前仍记在团队上/);
+  assert.match(view, /用量目前仍记在团队上/);
 });

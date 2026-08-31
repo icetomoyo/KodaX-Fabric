@@ -30,6 +30,7 @@ import type { UsageTier } from "../usage-tier.js";
 import {
   evaluateCredentialQuota,
   getCredentialQuotaUsage,
+  quotaExhaustedLastError,
   type CredentialQuotaStatus,
 } from "./credential-quota.js";
 import type { RelayProtocol } from "./protocol.js";
@@ -79,7 +80,6 @@ export type AcquireBindingResult =
   | { ok: true; credential: BoundCredential; bindingScope: BindingScope; replaced: boolean }
   | { ok: false; reason: "no_scope" | "exhausted_pool" | "no_binding_available"; retryAt: Date | null };
 
-const QUOTA_EXHAUSTED_LAST_ERROR = "5 小时/周积分额度耗尽，冷却至窗口重置";
 const MAX_POOL_ATTEMPTS = 3;
 
 type EmployeeScopeRow = {
@@ -555,7 +555,7 @@ async function coolCredentialForQuota(
         else ${upstreamCredentials.coolUntil}
       end`,
       errorCount: sql`${upstreamCredentials.errorCount} + 1`,
-      lastError: QUOTA_EXHAUSTED_LAST_ERROR.slice(0, 1_000),
+      lastError: quotaExhaustedLastError(quota).slice(0, 1_000),
       lastErrorAt: now,
       lastUsedAt: now,
       updatedAt: now,

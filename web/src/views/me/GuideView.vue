@@ -408,14 +408,9 @@ const troubleshootingItems = computed(() => [
     resolution: `重启 CC Switch；确认其上游地址是 ${clientBaseUrl.value}，而不是 127.0.0.1:15721。`,
   },
   {
-    title: "403 team_required / team_quota_not_assigned",
-    cause: "API Key 未绑定团队，或该团队尚未分配每日额度。",
-    resolution: "确认 Key 已绑定团队；若团队额度为 0，请联系企业管理员分配额度。",
-  },
-  {
-    title: "429 team_quota_exceeded / member_limit_exceeded",
-    cause: "团队当日额度或你的个人每日上限已用尽。",
-    resolution: "等待次日重置，或联系团队 / 企业管理员调整额度。",
+    title: "403 team_required",
+    cause: "API Key 未绑定团队。",
+    resolution: "确认 Key 已绑定团队后再调用。",
   },
 ]);
 

@@ -1,7 +1,3 @@
-import { eq } from "drizzle-orm";
-import { db } from "../../db/client.js";
-import { modelPrices } from "../../db/schema/index.js";
-
 /**
  * Per-10k-token credit coefficients stored as numeric strings (Drizzle).
  *
@@ -48,9 +44,7 @@ const GLM_DEFAULT_CREDIT_RATE: ModelCreditRate = {
  * ("积分抵扣计算方式"). Names containing `flash` under the GLM family use
  * the Flash row; remaining models that start with `glm` use the GLM-5.3
  * row because Zhipu bills historical models at GLM-5.3 rates. Non-GLM
- * models have no built-in rate. When official rates change, override the
- * three columns on the model-prices admin page first; edit this table
- * only if the built-in default itself is wrong.
+ * models have no built-in rate. Edit this table when official rates change.
  */
 export function defaultCreditRateFor(clientModel: string): ModelCreditRate | null {
   const name = clientModel.toLowerCase();
@@ -148,25 +142,7 @@ export function computeRequestCredits(
   return Number.isFinite(credits) && credits > 0 ? credits : 0;
 }
 
-/**
- * Metering lookup: complete custom columns on `model_prices` override the
- * built-in default; otherwise `defaultCreditRateFor`; otherwise null.
- */
+/** Metering lookup uses the built-in coding-plan table. */
 export async function getModelCreditRate(clientModel: string): Promise<ModelCreditRate | null> {
-  const [row] = await db
-    .select({
-      promptCreditsPer10k: modelPrices.promptCreditsPer10k,
-      cacheHitCreditsPer10k: modelPrices.cacheHitCreditsPer10k,
-      completionCreditsPer10k: modelPrices.completionCreditsPer10k,
-    })
-    .from(modelPrices)
-    .where(eq(modelPrices.model, clientModel.slice(0, 128)))
-    .limit(1);
-  const effective = resolveEffectiveCreditRate(clientModel, row ?? null);
-  if (!effective) return null;
-  return {
-    promptCreditsPer10k: effective.promptCreditsPer10k,
-    cacheHitCreditsPer10k: effective.cacheHitCreditsPer10k,
-    completionCreditsPer10k: effective.completionCreditsPer10k,
-  };
+  return defaultCreditRateFor(clientModel);
 }

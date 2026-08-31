@@ -100,9 +100,6 @@
             </el-tooltip>
           </template>
         </el-table-column>
-        <el-table-column label="花销" width="110" align="right">
-          <template #default="{ row }">{{ formatYuan(row.costYuan) }}</template>
-        </el-table-column>
         <el-table-column label="状态" width="120">
           <template #default="{ row }">
             <el-tag :type="statusTagType(row.status)" size="small">
@@ -136,7 +133,7 @@ import { ElMessage } from "element-plus";
 import { http } from "@/api/http";
 import { copyText } from "@/lib/clipboard";
 import { formatDateTime } from "@/lib/date-time";
-import { formatYuan } from "@/lib/tokens";
+
 
 type LogStatus = "success" | "upstream_error" | "client_error" | "cancelled";
 type ProductType = "api" | "coding_plan";
@@ -153,7 +150,6 @@ interface MeLogRow {
   totalTokens: number | null;
   cacheReadTokens: number | null;
   createdAt: string;
-  costYuan: string;
 }
 
 type CatalogChannel = {

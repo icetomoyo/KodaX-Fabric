@@ -82,9 +82,6 @@
         <el-table-column label="Tokens" width="100" align="right">
           <template #default="{ row }">{{ formatTokenCount(row.totalTokens) }}</template>
         </el-table-column>
-        <el-table-column label="成本" width="100" align="right">
-          <template #default="{ row }">{{ formatYuan(row.costYuan) }}</template>
-        </el-table-column>
         <el-table-column label="状态" width="100">
           <template #default="{ row }">
             <el-tag :type="statusTagType(row.status)" size="small">{{ statusText(row.status) }}</el-tag>
@@ -113,7 +110,7 @@ import { http } from "@/api/http";
 import UsageChart from "@/components/UsageChart.vue";
 import { formatDateTime } from "@/lib/date-time";
 import { roleLabel as formatRoleLabel } from "@/lib/roles";
-import { formatTokenCount, formatYuan } from "@/lib/tokens";
+import { formatTokenCount } from "@/lib/tokens";
 
 type Employee = {
   id: number;
@@ -147,7 +144,6 @@ type LogRow = {
   status: LogStatus;
   totalTokens: number | null;
   createdAt: string;
-  costYuan: string;
 };
 
 const props = defineProps<{

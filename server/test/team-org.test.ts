@@ -103,7 +103,7 @@ test("team_admin list SQL is constrained to administered teams", () => {
   const compiled = buildTeamListQuery(scope).toSQL();
   const compiledSql = compiled.sql.replace(/\s+/g, " ");
   assert.match(compiledSql, /from "teams"/);
-  assert.match(compiledSql, /monthly_yuan_quota/);
+  assert.doesNotMatch(compiledSql, /monthly_yuan_quota/);
   assert.match(compiledSql, /usage_counters_team_daily/);
   assert.match(compiledSql, /"teams"\."id" in/i);
   assert.equal(compiled.params.includes(8), true);

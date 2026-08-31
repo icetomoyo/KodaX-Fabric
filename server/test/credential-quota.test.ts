@@ -8,10 +8,14 @@ process.env.CREDENTIAL_ENCRYPT_KEY ??= "unit-test-credential-secret";
 process.env.QUOTA_TIMEZONE = "Asia/Shanghai";
 
 const {
+  CREDENTIAL_WEEKLY_EPOCH,
+  creditCoolingKind,
   evaluateCredentialQuota,
   fiveHourResetAt,
   fiveHourWindowStart,
   hourStartOf,
+  quotaExhaustedLastError,
+  resolveGraphCoolingKind,
   weekStartOf,
   weeklyResetAt,
 } = await import("../src/lib/relay/credential-quota.js");
@@ -39,20 +43,30 @@ test("five-hour window and reset cross a UTC day boundary", () => {
   assert.equal(fiveHourResetAt(now).toISOString(), "2026-09-01T02:00:00.000Z");
 });
 
-test("weekStartOf is Monday 00:00 in QUOTA_TIMEZONE", () => {
-  const midweek = new Date("2026-08-26T08:00:00.000Z");
-  assert.equal(weekStartOf(midweek).toISOString(), "2026-08-23T16:00:00.000Z");
-  assert.equal(weeklyResetAt(midweek).toISOString(), "2026-08-30T16:00:00.000Z");
+test("weekStartOf aligns to 19:00 UTC+8 after the upstream 18:49 reset", () => {
+  assert.equal(CREDENTIAL_WEEKLY_EPOCH.toISOString(), "2026-09-03T11:00:00.000Z");
+
+  const atEpoch = new Date("2026-09-03T11:00:00.000Z");
+  assert.equal(weekStartOf(atEpoch).toISOString(), "2026-09-03T11:00:00.000Z");
+  assert.equal(weeklyResetAt(atEpoch).toISOString(), "2026-09-10T11:00:00.000Z");
+
+  const midCycle = new Date("2026-09-05T00:00:00.000Z");
+  assert.equal(weekStartOf(midCycle).toISOString(), "2026-09-03T11:00:00.000Z");
+  assert.equal(weeklyResetAt(midCycle).toISOString(), "2026-09-10T11:00:00.000Z");
 });
 
-test("weekStartOf and weeklyResetAt cross Sunday into Monday in QUOTA_TIMEZONE", () => {
-  const sundayEvening = new Date("2026-08-30T15:59:59.999Z");
-  assert.equal(weekStartOf(sundayEvening).toISOString(), "2026-08-23T16:00:00.000Z");
-  assert.equal(weeklyResetAt(sundayEvening).toISOString(), "2026-08-30T16:00:00.000Z");
+test("weekStartOf and weeklyResetAt cross the shared 7-day epoch", () => {
+  const stillOldWeek = new Date("2026-09-03T10:49:00.000Z");
+  assert.equal(weekStartOf(stillOldWeek).toISOString(), "2026-08-27T11:00:00.000Z");
+  assert.equal(weeklyResetAt(stillOldWeek).toISOString(), "2026-09-03T11:00:00.000Z");
 
-  const mondayMidnight = new Date("2026-08-30T16:00:00.000Z");
-  assert.equal(weekStartOf(mondayMidnight).toISOString(), "2026-08-30T16:00:00.000Z");
-  assert.equal(weeklyResetAt(mondayMidnight).toISOString(), "2026-09-06T16:00:00.000Z");
+  const justBefore = new Date("2026-09-03T10:59:59.999Z");
+  assert.equal(weekStartOf(justBefore).toISOString(), "2026-08-27T11:00:00.000Z");
+  assert.equal(weeklyResetAt(justBefore).toISOString(), "2026-09-03T11:00:00.000Z");
+
+  const nextCycle = new Date("2026-09-10T11:00:00.000Z");
+  assert.equal(weekStartOf(nextCycle).toISOString(), "2026-09-10T11:00:00.000Z");
+  assert.equal(weeklyResetAt(nextCycle).toISOString(), "2026-09-17T11:00:00.000Z");
 });
 
 test("evaluateCredentialQuota treats null limits as unlimited", () => {
@@ -63,6 +77,8 @@ test("evaluateCredentialQuota treats null limits as unlimited", () => {
     now,
   );
   assert.equal(status.exhausted, false);
+  assert.equal(status.fiveHourExhausted, false);
+  assert.equal(status.weeklyExhausted, false);
   assert.equal(status.exhaustedUntil, null);
   assert.equal(status.fiveHourLimit, null);
   assert.equal(status.weeklyLimit, null);
@@ -76,7 +92,11 @@ test("evaluateCredentialQuota exhausts a single five-hour window", () => {
     now,
   );
   assert.equal(status.exhausted, true);
+  assert.equal(status.fiveHourExhausted, true);
+  assert.equal(status.weeklyExhausted, false);
   assert.equal(status.exhaustedUntil?.toISOString(), fiveHourResetAt(now).toISOString());
+  assert.equal(creditCoolingKind(status), "five_hour");
+  assert.equal(quotaExhaustedLastError(status), "5 小时积分额度耗尽，冷却至窗口重置");
 });
 
 test("evaluateCredentialQuota treats usage equal to the weekly limit as exhausted", () => {
@@ -87,7 +107,11 @@ test("evaluateCredentialQuota treats usage equal to the weekly limit as exhauste
     now,
   );
   assert.equal(status.exhausted, true);
+  assert.equal(status.fiveHourExhausted, false);
+  assert.equal(status.weeklyExhausted, true);
   assert.equal(status.exhaustedUntil?.toISOString(), weeklyResetAt(now).toISOString());
+  assert.equal(creditCoolingKind(status), "weekly");
+  assert.equal(quotaExhaustedLastError(status), "周积分额度耗尽，冷却至窗口重置");
 });
 
 test("evaluateCredentialQuota takes the later reset when both windows are exhausted", () => {
@@ -102,5 +126,20 @@ test("evaluateCredentialQuota takes the later reset when both windows are exhaus
     now,
   );
   assert.equal(status.exhausted, true);
+  assert.equal(status.fiveHourExhausted, true);
+  assert.equal(status.weeklyExhausted, true);
   assert.equal(status.exhaustedUntil?.toISOString(), weeklyReset.toISOString());
+  assert.equal(creditCoolingKind(status), "weekly");
+  assert.equal(resolveGraphCoolingKind("active", status), "weekly");
+});
+
+test("resolveGraphCoolingKind keeps short rate-limit cooling as other", () => {
+  assert.equal(
+    resolveGraphCoolingKind("cooling", { fiveHourExhausted: false, weeklyExhausted: false }),
+    "other",
+  );
+  assert.equal(
+    resolveGraphCoolingKind("active", { fiveHourExhausted: false, weeklyExhausted: false }),
+    null,
+  );
 });

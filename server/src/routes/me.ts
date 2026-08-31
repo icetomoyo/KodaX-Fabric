@@ -7,7 +7,6 @@ import {
   employeeApiKeys,
   employees,
   enterprises,
-  modelPrices,
   opsAuditLogs,
   productLines,
   providers,
@@ -19,17 +18,13 @@ import {
 } from "../db/schema/index.js";
 import { insertEnterprise } from "../lib/enterprise.js";
 import { parseDateOnly, quotaDayAt, zonedDateRange, zonedMonthRange } from "../lib/quota-time.js";
-import { listEmployeeTeamQuotaViews } from "../lib/team-quota.js";
-import { formatYuan, requestCostYuanExpr } from "../lib/model-cost.js";
+import { listEmployeeTeamUsageViews } from "../lib/team-quota.js";
 import { encryptEmployeeApiKey, generateApiKey } from "../lib/api-key.js";
 import {
   RELAY_BASE_PATH,
   RELAY_PROTOCOLS,
 } from "../lib/relay/protocol.js";
-import {
-  attachPricesToChannelModels,
-  groupDiscoveredModelsByChannel,
-} from "../lib/discovered-models.js";
+import { groupDiscoveredModelsByChannel } from "../lib/discovered-models.js";
 import {
   getEmployeeUpstreamChannel,
   getEmployeeUpstreamChannels,
@@ -193,51 +188,38 @@ export async function meRoutes(app: FastifyInstance) {
     }
 
     const productLineIds = accessible.map((channel) => channel.productLineId);
-    const [channelRows, prices] = await Promise.all([
-      db
-        .select({
-          productLineId: productLines.id,
-          productLineName: productLines.name,
-          productLineCode: productLines.code,
-          providerName: providers.name,
-          providerCode: providers.code,
-          meta: upstreamCredentials.meta,
-        })
-        .from(productLines)
-        .innerJoin(providers, eq(productLines.providerId, providers.id))
-        .leftJoin(
-          upstreamCredentials,
-          and(
-            eq(upstreamCredentials.productLineId, productLines.id),
-            inArray(upstreamCredentials.status, ["active", "cooling"]),
-            gt(upstreamCredentials.weight, 0),
-          ),
-        )
-        .where(inArray(productLines.id, productLineIds)),
-      db
-        .select({
-          model: modelPrices.model,
-          promptPricePerMillion: modelPrices.promptPricePerMillion,
-          completionPricePerMillion: modelPrices.completionPricePerMillion,
-          cacheHitPricePerMillion: modelPrices.cacheHitPricePerMillion,
-        })
-        .from(modelPrices),
-    ]);
+    const channelRows = await db
+      .select({
+        productLineId: productLines.id,
+        productLineName: productLines.name,
+        productLineCode: productLines.code,
+        providerName: providers.name,
+        providerCode: providers.code,
+        meta: upstreamCredentials.meta,
+      })
+      .from(productLines)
+      .innerJoin(providers, eq(productLines.providerId, providers.id))
+      .leftJoin(
+        upstreamCredentials,
+        and(
+          eq(upstreamCredentials.productLineId, productLines.id),
+          inArray(upstreamCredentials.status, ["active", "cooling"]),
+          gt(upstreamCredentials.weight, 0),
+        ),
+      )
+      .where(inArray(productLines.id, productLineIds));
 
     const groupedById = new Map(
       groupDiscoveredModelsByChannel(channelRows).map((channel) => [channel.id, channel]),
     );
-    const channels = attachPricesToChannelModels(
-      accessible.map((channel) => groupedById.get(channel.productLineId) ?? {
-        id: channel.productLineId,
-        name: channel.productLineName,
-        code: channel.productLineCode,
-        providerName: channel.providerName,
-        providerCode: channel.providerCode,
-        models: [],
-      }),
-      prices,
-    );
+    const channels = accessible.map((channel) => groupedById.get(channel.productLineId) ?? {
+      id: channel.productLineId,
+      name: channel.productLineName,
+      code: channel.productLineCode,
+      providerName: channel.providerName,
+      providerCode: channel.providerCode,
+      models: [],
+    });
 
     return { success: true, data: { channels } };
   });
@@ -550,7 +532,7 @@ export async function meRoutes(app: FastifyInstance) {
       .leftJoin(enterprises, eq(employees.enterpriseId, enterprises.id))
       .where(eq(employees.id, req.employeeId!))
       .limit(1);
-    const teamQuotas = await listEmployeeTeamQuotaViews(
+    const teamUsage = await listEmployeeTeamUsageViews(
       req.employeeId!,
       today,
       zonedMonthRange(new Date(), env.QUOTA_TIMEZONE),
@@ -575,9 +557,8 @@ export async function meRoutes(app: FastifyInstance) {
           enterpriseId: employee?.enterpriseId ?? null,
           enterpriseName: employee?.enterpriseName ?? null,
           enterpriseCode: employee?.enterpriseCode ?? null,
-          hasQuota: employee?.enterpriseStatus === "active" && teamQuotas.some((row) => row.teamQuota > 0),
         },
-        teams: teamQuotas,
+        teams: teamUsage,
         relay: {
           baseUrl: buildRelayBaseUrl(req),
           note: "Authorization: Bearer <your employee API key>",
@@ -638,10 +619,8 @@ export async function meRoutes(app: FastifyInstance) {
           totalTokens: requestAudits.totalTokens,
           cacheReadTokens: requestAudits.cacheReadTokens,
           createdAt: requestAudits.createdAt,
-          costYuan: requestCostYuanExpr,
         })
         .from(requestAudits)
-        .leftJoin(modelPrices, eq(modelPrices.model, requestAudits.clientModel))
         .where(whereExpr)
         .orderBy(desc(requestAudits.createdAt), desc(requestAudits.id))
         .limit(filters.limit)
@@ -652,10 +631,7 @@ export async function meRoutes(app: FastifyInstance) {
       success: true,
       data: {
         total: countRow?.total ?? 0,
-        items: items.map((row) => ({
-          ...row,
-          costYuan: formatYuan(row.costYuan),
-        })),
+        items,
       },
     };
   });

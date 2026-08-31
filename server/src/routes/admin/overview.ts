@@ -14,7 +14,6 @@ import {
   usageCountersTeamDaily,
 } from "../../db/schema/index.js";
 import { getChannelOverviewStats } from "../../lib/channel-overview.js";
-import { packageMonthlyYuan } from "../../lib/enterprise-package.js";
 import { listAdminTeamIds } from "../../lib/org.js";
 import {
   requirePasswordChanged,
@@ -145,7 +144,6 @@ async function enterpriseOverview(enterpriseId: number) {
   const [enterprise] = await db
     .select({
       name: enterprises.name,
-      packagePlan: enterprises.packagePlan,
     })
     .from(enterprises)
     .where(eq(enterprises.id, enterpriseId))
@@ -217,8 +215,6 @@ async function enterpriseOverview(enterpriseId: number) {
       name: enterprise?.name ?? "",
       teamCount: Number(teamCount?.n ?? 0),
       employeeCount: Number(employeeCount?.n ?? 0),
-      packagePlan: enterprise?.packagePlan ?? null,
-      packageYuan: packageMonthlyYuan(enterprise?.packagePlan),
     },
     today,
     topTeamsToday: topTeams,
@@ -231,7 +227,7 @@ async function teamScopeOverview(teamIds: number[]) {
   if (teamIds.length === 0) {
     return {
       role: "team_admin" as const,
-      team: { teamCount: 0, memberCount: 0, projectCount: 0, quotaYuan: "0" },
+      team: { teamCount: 0, memberCount: 0, projectCount: 0 },
       today: { requests: 0, tokens: 0, errors: 0 },
       topMembersToday: [],
       byProviderToday: [],
@@ -246,12 +242,6 @@ async function teamScopeOverview(teamIds: number[]) {
     .select({ n: count() })
     .from(projects)
     .where(inArray(projects.teamId, teamIds));
-  const [quota] = await db
-    .select({
-      quotaYuan: sql<string>`coalesce(sum(${teams.monthlyYuanQuota}), 0)`,
-    })
-    .from(teams)
-    .where(inArray(teams.id, teamIds));
   const todayWhere = and(todayExpr, inArray(requestAudits.teamId, teamIds));
   const [today, topMembers, byProvider, errors] = await Promise.all([
     todayStats(todayWhere),
@@ -282,7 +272,6 @@ async function teamScopeOverview(teamIds: number[]) {
       teamCount: teamIds.length,
       memberCount: Number(memberCount?.n ?? 0),
       projectCount: Number(projectCount?.n ?? 0),
-      quotaYuan: String(quota?.quotaYuan ?? "0"),
     },
     today,
     topMembersToday: topMembers,

@@ -27,22 +27,6 @@
           </el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="套餐" width="80">
-        <template #default="{ row }">
-          <el-tag v-if="!row.packagePlan" type="danger" size="small">未发放</el-tag>
-          <span v-else>{{ packageLabel(row.packagePlan) }}</span>
-        </template>
-      </el-table-column>
-      <el-table-column label="每月额度" width="112" align="right" header-align="right">
-        <template #default="{ row }">
-          <span class="mono-num">{{ formatYuan(row.monthlyYuan) }}</span>
-        </template>
-      </el-table-column>
-      <el-table-column label="已分给团队" width="112" align="right" header-align="right">
-        <template #default="{ row }">
-          <span class="mono-num">{{ formatYuan(row.assignedTeamQuota) }}</span>
-        </template>
-      </el-table-column>
       <el-table-column label="创建时间" width="168">
         <template #default="{ row }">
           <span class="created-at">{{ formatDateTime(row.createdAt) }}</span>
@@ -52,7 +36,6 @@
         <template #default="{ row }">
           <div class="row-actions">
             <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
-            <el-button link type="primary" @click="openQuota(row)">分配套餐</el-button>
             <el-button
               v-if="row.status === 'pending'"
               link
@@ -99,26 +82,6 @@
         <el-button type="primary" :loading="updating" @click="updateOne">保存</el-button>
       </template>
     </el-dialog>
-
-    <el-dialog v-model="showQuota" :title="`分配套餐 · ${quotaRow?.name || ''}`" width="480px">
-      <el-form label-width="90px">
-        <el-form-item label="套餐" required>
-          <el-radio-group v-model="quotaPlan">
-            <el-radio value="">未发放</el-radio>
-            <el-radio v-for="item in ENTERPRISE_PACKAGES" :key="item.plan" :value="item.plan">
-              {{ item.label }}（每月 {{ formatYuan(item.monthlyYuan) }}）
-            </el-radio>
-          </el-radio-group>
-          <div class="form-help">
-            套餐按月计费，金额按模型单价折算。不能低于已分给团队的 {{ formatYuan(quotaRow?.assignedTeamQuota ?? 0) }}。
-          </div>
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="showQuota = false">取消</el-button>
-        <el-button type="primary" :loading="updatingQuota" @click="saveQuota">保存</el-button>
-      </template>
-    </el-dialog>
   </div>
 </template>
 
@@ -127,17 +90,12 @@ import { onMounted, ref } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { http } from "@/api/http";
 import { formatDateTime } from "@/lib/date-time";
-import { ENTERPRISE_PACKAGES, packageLabel, packageMonthlyYuan, type EnterprisePackagePlan } from "@/lib/packages";
-import { formatYuan } from "@/lib/tokens";
 
 type EnterpriseRow = {
   id: number;
   name: string;
   code: string;
   status: "pending" | "active" | "disabled";
-  packagePlan: EnterprisePackagePlan | null;
-  monthlyYuan: number;
-  assignedTeamQuota: number;
   createdAt: string;
   updatedAt: string;
   contact: { employeeId: number; name: string; phone: string; role: string } | null;
@@ -146,16 +104,12 @@ type EnterpriseRow = {
 const rows = ref<EnterpriseRow[]>([]);
 const showCreate = ref(false);
 const showEdit = ref(false);
-const showQuota = ref(false);
 const saving = ref(false);
 const updating = ref(false);
-const updatingQuota = ref(false);
 const approvingId = ref<number | null>(null);
 const createName = ref("");
 const editName = ref("");
 const editRow = ref<EnterpriseRow | null>(null);
-const quotaRow = ref<EnterpriseRow | null>(null);
-const quotaPlan = ref<EnterprisePackagePlan | "">("");
 
 async function load() {
   const { data } = await http.get("/api/admin/enterprises");
@@ -171,34 +125,6 @@ function openEdit(row: EnterpriseRow) {
   editRow.value = row;
   editName.value = row.name;
   showEdit.value = true;
-}
-
-function openQuota(row: EnterpriseRow) {
-  quotaRow.value = row;
-  quotaPlan.value = row.packagePlan ?? "";
-  showQuota.value = true;
-}
-
-async function saveQuota() {
-  if (!quotaRow.value) return;
-  if (packageMonthlyYuan(quotaPlan.value) < Number(quotaRow.value.assignedTeamQuota || 0)) {
-    ElMessage.warning("已分配给团队的额度超过该套餐，请先下调团队额度");
-    return;
-  }
-  updatingQuota.value = true;
-  try {
-    const { data } = await http.patch(`/api/admin/enterprises/${quotaRow.value.id}`, {
-      packagePlan: quotaPlan.value === "" ? null : quotaPlan.value,
-    });
-    if (!data.success) throw new Error(data.message);
-    ElMessage.success("已分配套餐");
-    showQuota.value = false;
-    await load();
-  } catch (e: unknown) {
-    ElMessage.error(requestMessage(e, "分配失败"));
-  } finally {
-    updatingQuota.value = false;
-  }
 }
 
 async function createOne() {

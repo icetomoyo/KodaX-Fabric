@@ -169,7 +169,7 @@ test("super-admin enterprise list builder selects name and status", () => {
   assert.match(compiledSql, /"name"/);
   assert.match(compiledSql, /"code"/);
   assert.match(compiledSql, /"status"/);
-  assert.match(compiledSql, /package_plan/);
+  assert.doesNotMatch(compiledSql, /package_plan/);
 });
 
 test("self-register rejects missing or weak passwords without writing an account", async () => {
@@ -311,8 +311,8 @@ test("admin shell source includes 企业管理 and org_admin lands on workbench"
     "utf8",
   );
   assert.match(enterprisesView, /审核通过/);
-  assert.match(enterprisesView, /分配套餐/);
-  assert.match(enterprisesView, /ENTERPRISE_PACKAGES/);
+  assert.doesNotMatch(enterprisesView, /分配套餐/);
+  assert.doesNotMatch(enterprisesView, /ENTERPRISE_PACKAGES/);
   assert.doesNotMatch(enterprisesView, /指定企业管理员/);
   const usersView = readFileSync(resolve(root, "web/src/views/admin/UsersView.vue"), "utf8");
   assert.match(usersView, /邀请已注册员工/);

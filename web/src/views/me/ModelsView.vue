@@ -38,9 +38,7 @@
         <div class="models-head">
           <div>
             <h3 class="models-title">{{ currentChannel ? channelLabel(currentChannel) : "模型" }}</h3>
-            <p class="muted">
-              {{ catalog.length }} 个模型 · 单价为元 / 百万 tokens
-            </p>
+            <p class="muted">{{ catalog.length }} 个模型</p>
           </div>
         </div>
 
@@ -64,24 +62,6 @@
               </div>
             </template>
           </el-table-column>
-          <el-table-column label="输入" min-width="120">
-            <template #default="{ row }">
-              <span v-if="row.priced" class="mono-num">{{ formatYuan(row.promptPricePerMillion, 4) }}</span>
-              <span v-else class="muted">未定价</span>
-            </template>
-          </el-table-column>
-          <el-table-column label="输出" min-width="120">
-            <template #default="{ row }">
-              <span v-if="row.priced" class="mono-num">{{ formatYuan(row.completionPricePerMillion, 4) }}</span>
-              <span v-else class="muted">未定价</span>
-            </template>
-          </el-table-column>
-          <el-table-column label="缓存命中" min-width="120">
-            <template #default="{ row }">
-              <span v-if="row.priced" class="mono-num">{{ formatYuan(row.cacheHitPricePerMillion, 4) }}</span>
-              <span v-else class="muted">未定价</span>
-            </template>
-          </el-table-column>
         </el-table>
       </section>
     </div>
@@ -93,14 +73,9 @@ import { computed, onMounted, ref } from "vue";
 import { ElMessage } from "element-plus";
 import { http } from "@/api/http";
 import { copyText } from "@/lib/clipboard";
-import { formatYuan } from "@/lib/tokens";
 
 type CatalogModel = {
   model: string;
-  priced: boolean;
-  promptPricePerMillion: string | null;
-  completionPricePerMillion: string | null;
-  cacheHitPricePerMillion: string | null;
 };
 
 type CatalogChannel = {
@@ -109,7 +84,7 @@ type CatalogChannel = {
   code: string;
   providerName: string;
   providerCode: string;
-  models: CatalogModel[];
+  models: Array<string | CatalogModel>;
 };
 
 const loading = ref(false);
@@ -120,7 +95,11 @@ const currentChannel = computed(() =>
   channels.value.find((channel) => channel.id === selectedChannelId.value) ?? null,
 );
 
-const catalog = computed(() => currentChannel.value?.models ?? []);
+const catalog = computed(() =>
+  (currentChannel.value?.models ?? []).map((item) =>
+    typeof item === "string" ? { model: item } : item,
+  ),
+);
 
 function channelLabel(channel: Pick<CatalogChannel, "providerName" | "name">): string {
   const company = channel.providerName.trim();

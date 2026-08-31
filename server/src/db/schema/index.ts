@@ -17,7 +17,6 @@ import {
 export const employeeRoleEnum = pgEnum("employee_role", ["employee", "admin", "org_admin", "team_admin"]);
 export const employeeStatusEnum = pgEnum("employee_status", ["pending", "active", "disabled"]);
 export const enterpriseStatusEnum = pgEnum("enterprise_status", ["pending", "active", "disabled"]);
-export const enterprisePackageEnum = pgEnum("enterprise_package", ["plus", "pro", "max"]);
 export const orgUnitStatusEnum = pgEnum("org_unit_status", ["active", "disabled"]);
 export const teamMemberRoleEnum = pgEnum("team_member_role", ["member", "team_admin"]);
 export const apiKeyStatusEnum = pgEnum("api_key_status", ["active", "revoked"]);
@@ -49,8 +48,6 @@ export const enterprises = pgTable(
     name: varchar("name", { length: 100 }).notNull(),
     code: varchar("code", { length: 16 }).notNull(),
     status: enterpriseStatusEnum("status").notNull().default("active"),
-    // Null means the platform has not granted a monthly package.
-    packagePlan: enterprisePackageEnum("package_plan"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -97,8 +94,6 @@ export const teams = pgTable(
       .references(() => enterprises.id, { onDelete: "restrict", onUpdate: "no action" }),
     name: varchar("name", { length: 100 }).notNull(),
     status: orgUnitStatusEnum("status").notNull().default("active"),
-    // 0 means unassigned: every Key on this team is denied at relay time.
-    monthlyYuanQuota: numeric("monthly_yuan_quota", { precision: 12, scale: 2 }).notNull().default("0"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -119,8 +114,6 @@ export const teamMembers = pgTable(
       .notNull()
       .references(() => employees.id, { onDelete: "cascade", onUpdate: "no action" }),
     role: teamMemberRoleEnum("role").notNull().default("member"),
-    // Null means no per-member cap; only the team pool applies.
-    dailyTokenLimit: bigint("daily_token_limit", { mode: "number" }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
@@ -477,30 +470,3 @@ export const systemSettings = pgTable("system_settings", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
-/** Unit prices in CNY, keyed by the public client model name. */
-export const modelPrices = pgTable(
-  "model_prices",
-  {
-    id: bigint("id", { mode: "number" }).generatedAlwaysAsIdentity().primaryKey(),
-    model: varchar("model", { length: 128 }).notNull(),
-    promptPricePerMillion: numeric("prompt_price_per_million", { precision: 12, scale: 4 }).notNull(),
-    completionPricePerMillion: numeric("completion_price_per_million", { precision: 12, scale: 4 }).notNull(),
-    cacheHitPricePerMillion: numeric("cache_hit_price_per_million", { precision: 12, scale: 4 })
-      .notNull()
-      .default("0"),
-    /** CNY per million cached tokens per hour. Not applied to per-request cost. */
-    cacheStoragePricePerMillionPerHour: numeric("cache_storage_price_per_million_per_hour", {
-      precision: 12,
-      scale: 4,
-    })
-      .notNull()
-      .default("0"),
-    /** Credits per 10k tokens. All-null = model is not credit-metered (0 credits). */
-    promptCreditsPer10k: numeric("prompt_credits_per_10k", { precision: 10, scale: 4 }),
-    cacheHitCreditsPer10k: numeric("cache_hit_credits_per_10k", { precision: 10, scale: 4 }),
-    completionCreditsPer10k: numeric("completion_credits_per_10k", { precision: 10, scale: 4 }),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-  },
-  (t) => [uniqueIndex("model_prices_model_uidx").on(t.model)],
-);

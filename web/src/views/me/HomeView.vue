@@ -77,7 +77,7 @@
         </div>
         <div class="kpi-card">
           <span class="kpi-label">所属团队</span>
-          <strong class="kpi-value">{{ formatNumber(teamQuotas.length) }}</strong>
+          <strong class="kpi-value">{{ formatNumber(teamUsage.length) }}</strong>
           <span class="kpi-foot">{{ hasTeam ? "已加入" : "尚未加入" }}</span>
         </div>
         <div class="kpi-card muted">
@@ -99,7 +99,7 @@
           <span class="quick-dot indigo" />
           <span>
             <strong>模型</strong>
-            <small>可用模型 · 调用成本</small>
+            <small>可用模型</small>
           </span>
         </button>
         <button type="button" class="quick-link" @click="router.push('/me/guide')">
@@ -126,55 +126,29 @@
       </div>
     </section>
 
-    <section v-if="teamQuotas.length" class="page-card panel-card">
+    <section v-if="teamUsage.length" class="page-card panel-card">
       <div class="panel-head">
         <div>
-          <h3 class="panel-title">我的团队配额</h3>
-          <p class="panel-desc">额度按团队记账，员工调用消耗团队池</p>
+          <h3 class="panel-title">我的用量</h3>
+          <p class="panel-desc">按团队统计 Token 消耗</p>
         </div>
       </div>
       <div class="team-quota-grid">
-        <article v-for="team in teamQuotas" :key="team.teamId" class="team-quota-card">
+        <article v-for="team in teamUsage" :key="team.teamId" class="team-quota-card">
           <div class="team-quota-head">
             <strong>{{ team.teamName }}</strong>
             <el-tag v-if="teamRoleLabel(team.teamId)" size="small" effect="plain">
               {{ teamRoleLabel(team.teamId) }}
             </el-tag>
           </div>
-          <el-alert
-            v-if="team.teamQuota === 0"
-            title="该团队未分配额度，暂不可调用"
-            type="warning"
-            :closable="false"
-            show-icon
-          />
-          <template v-else>
-            <div class="quota-row">
-              <span>团队每月额度</span>
-              <b>{{ formatYuan(team.teamQuota) }}</b>
-            </div>
-            <div class="quota-row">
-              <span>团队本月已用</span>
-              <b>{{ formatYuan(team.teamUsedMonth) }}</b>
-            </div>
-            <el-progress
-              :percentage="usagePercent(team.teamUsedMonth, team.teamQuota)"
-              :status="usageProgressStatus(team.teamUsedMonth, team.teamQuota)"
-            />
-            <div class="quota-row">
-              <span>我的上限</span>
-              <b>{{ team.myLimit == null ? "不限（受团队池约束）" : formatTokenMillion(team.myLimit) }}</b>
-            </div>
-            <div class="quota-row">
-              <span>我的今日已用</span>
-              <b>{{ formatTokenMillion(team.myUsedToday) }}</b>
-            </div>
-            <el-progress
-              v-if="team.myLimit != null"
-              :percentage="usagePercent(team.myUsedToday, team.myLimit)"
-              :status="usageProgressStatus(team.myUsedToday, team.myLimit)"
-            />
-          </template>
+          <div class="quota-row">
+            <span>团队本月已用</span>
+            <b>{{ formatTokenCompact(team.teamUsedMonth) }}</b>
+          </div>
+          <div class="quota-row">
+            <span>我的今日已用</span>
+            <b>{{ formatTokenMillion(team.myUsedToday) }}</b>
+          </div>
         </article>
       </div>
     </section>
@@ -208,7 +182,7 @@ import { computed, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import { ElMessage } from "element-plus";
 import { http } from "@/api/http";
-import { formatTokenMillion, formatYuan, usagePercent, usageProgressStatus } from "@/lib/tokens";
+import { formatTokenCompact, formatTokenMillion } from "@/lib/tokens";
 import { useAuthStore } from "@/stores/auth";
 import {
   RELAY_BASE_PATH,
@@ -216,12 +190,10 @@ import {
   relayProtocolOptions,
 } from "@/views/relay-protocol";
 
-type TeamQuota = {
+type TeamUsage = {
   teamId: number;
   teamName: string;
-  teamQuota: number;
   teamUsedMonth: number;
-  myLimit: number | null;
   myUsedToday: number;
 };
 
@@ -232,9 +204,8 @@ type UsageResponse = {
     enterpriseId: number | null;
     enterpriseName: string | null;
     enterpriseCode: string | null;
-    hasQuota: boolean;
   };
-  teams?: TeamQuota[];
+  teams?: TeamUsage[];
   relay?: { baseUrl: string };
 };
 
@@ -259,12 +230,12 @@ const orgTeams = ref<
 >([]);
 const usage = ref<UsageResponse | null>(null);
 
-const teamQuotas = computed(() => usage.value?.teams ?? []);
+const teamUsage = computed(() => usage.value?.teams ?? []);
 const pendingApplication = computed(() =>
   orgEnterprise.value?.status === "pending" ? orgEnterprise.value : null,
 );
 const hasEnterprise = computed(() => orgEnterprise.value?.status === "active");
-const hasTeam = computed(() => teamQuotas.value.length > 0 || orgTeams.value.length > 0);
+const hasTeam = computed(() => teamUsage.value.length > 0 || orgTeams.value.length > 0);
 const membershipName = computed(
   () => orgEnterprise.value?.name || usage.value?.membership?.enterpriseName || auth.user?.enterprise?.name || "",
 );

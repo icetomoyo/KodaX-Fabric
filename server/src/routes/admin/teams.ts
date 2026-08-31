@@ -15,19 +15,10 @@ import {
   buildTeamUsageDailyQuery,
   defaultUsageRange,
   fillDailyTeamUsage,
-  formatYuan,
   mapModelUsageRows,
-  memberTodayCostYuanSql,
-  teamTodayCostYuanSql,
 } from "../../lib/model-cost.js";
 import { writeOpsAudit } from "../../lib/ops-audit.js";
-import {
-  isYuanQuota,
-  packageMonthlyYuan,
-  parseYuanNumber,
-} from "../../lib/enterprise-package.js";
 import { inclusiveDayCount, quotaDayAt, zonedDateRange, zonedMonthRange } from "../../lib/quota-time.js";
-import { isTokenQuotaUnit, sumAssignedTeamQuota, teamQuotaFitsEnterprise } from "../../lib/team-quota.js";
 import {
   canAdminTeam,
   canCreateTeam,
@@ -53,7 +44,6 @@ type TeamListQuery = {
 
 export function buildTeamListQuery(query: TeamListQuery) {
   const today = quotaDayAt(new Date(), env.QUOTA_TIMEZONE);
-  const { start, endExclusive } = zonedDateRange(today, today, env.QUOTA_TIMEZONE);
   const month = zonedMonthRange(new Date(), env.QUOTA_TIMEZONE);
   const memberCount = sql<number>`(
     select count(*)::int from ${teamMembers} where ${teamMembers.teamId} = ${teams.id}
@@ -64,8 +54,13 @@ export function buildTeamListQuery(query: TeamListQuery) {
     where ${usageCountersTeamDaily.teamId} = ${teams.id}
       and ${usageCountersTeamDaily.day} = ${today}
   )`;
-  const todayCostYuan = teamTodayCostYuanSql(start, endExclusive);
-  const monthCostYuan = teamTodayCostYuanSql(month.start, month.endExclusive);
+  const monthTotalTokens = sql<number>`(
+    select coalesce(sum(${usageCountersTeamDaily.totalTokens}), 0)
+    from ${usageCountersTeamDaily}
+    where ${usageCountersTeamDaily.teamId} = ${teams.id}
+      and ${usageCountersTeamDaily.day} >= ${month.from}
+      and ${usageCountersTeamDaily.day} <= ${month.to}
+  )`;
   return db
     .select({
       id: teams.id,
@@ -74,11 +69,8 @@ export function buildTeamListQuery(query: TeamListQuery) {
       enterpriseId: teams.enterpriseId,
       enterpriseName: enterprises.name,
       memberCount,
-      monthlyYuanQuota: teams.monthlyYuanQuota,
-      packagePlan: enterprises.packagePlan,
       todayTotalTokens,
-      todayCostYuan,
-      monthCostYuan,
+      monthTotalTokens,
       createdAt: teams.createdAt,
       updatedAt: teams.updatedAt,
     })
@@ -152,29 +144,13 @@ export async function adminTeamRoutes(app: FastifyInstance) {
       return reply.code(403).send({ success: false, message: "权限不足" });
     }
     const rows = await buildTeamListQuery(scope);
-    let packagePlan: "plus" | "pro" | "max" | null = null;
-    let enterpriseMonthlyYuan: number | null = null;
-    if (actor.role === "org_admin" && actor.enterpriseId != null) {
-      const [enterprise] = await db
-        .select({ packagePlan: enterprises.packagePlan })
-        .from(enterprises)
-        .where(eq(enterprises.id, actor.enterpriseId))
-        .limit(1);
-      packagePlan = enterprise?.packagePlan ?? null;
-      enterpriseMonthlyYuan = packageMonthlyYuan(packagePlan);
-    }
     return {
       success: true,
       data: rows.map((row) => ({
         ...row,
-        monthlyYuanQuota: parseYuanNumber(row.monthlyYuanQuota),
-        enterpriseMonthlyYuan: packageMonthlyYuan(row.packagePlan),
         todayTotalTokens: Number(row.todayTotalTokens),
-        todayCostYuan: formatYuan(row.todayCostYuan),
-        monthCostYuan: formatYuan(row.monthCostYuan),
+        monthTotalTokens: Number(row.monthTotalTokens),
       })),
-      packagePlan,
-      enterpriseMonthlyYuan,
     };
   });
 
@@ -237,13 +213,6 @@ export async function adminTeamRoutes(app: FastifyInstance) {
       .object({
         name: z.string().trim().min(1).max(100).optional(),
         status: z.enum(["active", "disabled"]).optional(),
-        monthlyYuanQuota: z
-          .number()
-          .int()
-          .nonnegative()
-          .max(1_000_000_000)
-          .refine(isYuanQuota, "每月额度必须是非负整数，单位元")
-          .optional(),
       })
       .refine((data) => Object.keys(data).length > 0)
       .safeParse(req.body);
@@ -256,31 +225,12 @@ export async function adminTeamRoutes(app: FastifyInstance) {
     if (!canCreateTeam(actor, access.enterpriseId)) {
       return reply.code(403).send({ success: false, message: "权限不足" });
     }
-    if (body.data.monthlyYuanQuota != null) {
-      const [enterprise] = await db
-        .select({ packagePlan: enterprises.packagePlan })
-        .from(enterprises)
-        .where(eq(enterprises.id, access.enterpriseId))
-        .limit(1);
-      const assignedOthers = await sumAssignedTeamQuota(access.enterpriseId, access.teamId);
-      const fitError = teamQuotaFitsEnterprise(
-        packageMonthlyYuan(enterprise?.packagePlan),
-        assignedOthers,
-        body.data.monthlyYuanQuota,
-      );
-      if (fitError) {
-        return reply.code(400).send({ success: false, message: fitError });
-      }
-    }
     try {
       const [row] = await db
         .update(teams)
         .set({
           ...(body.data.name != null ? { name: body.data.name } : {}),
           ...(body.data.status != null ? { status: body.data.status } : {}),
-          ...(body.data.monthlyYuanQuota != null
-            ? { monthlyYuanQuota: body.data.monthlyYuanQuota.toFixed(2) }
-            : {}),
           updatedAt: new Date(),
         })
         .where(eq(teams.id, access.teamId))
@@ -289,7 +239,6 @@ export async function adminTeamRoutes(app: FastifyInstance) {
           name: teams.name,
           status: teams.status,
           enterpriseId: teams.enterpriseId,
-          monthlyYuanQuota: teams.monthlyYuanQuota,
         });
       await writeOpsAudit({
         actorEmployeeId: actor.employeeId,
@@ -299,7 +248,6 @@ export async function adminTeamRoutes(app: FastifyInstance) {
         detail: {
           fields: Object.keys(body.data),
           name: row.name,
-          monthlyYuanQuota: row.monthlyYuanQuota,
         },
         ip: req.ip,
       });
@@ -323,8 +271,15 @@ export async function adminTeamRoutes(app: FastifyInstance) {
       return reply.code(403).send({ success: false, message: "权限不足" });
     }
     const today = quotaDayAt(new Date(), env.QUOTA_TIMEZONE);
-    const { start, endExclusive } = zonedDateRange(today, today, env.QUOTA_TIMEZONE);
     const month = zonedMonthRange(new Date(), env.QUOTA_TIMEZONE);
+    const monthTotalTokens = sql<number>`(
+      select coalesce(sum(uc.total_tokens), 0)
+      from usage_counters_team_daily uc
+      where uc.team_id = ${teamMembers.teamId}
+        and uc.employee_id = ${teamMembers.employeeId}
+        and uc.day >= ${month.from}
+        and uc.day <= ${month.to}
+    )`;
     const rows = await db
       .select({
         id: teamMembers.id,
@@ -334,10 +289,8 @@ export async function adminTeamRoutes(app: FastifyInstance) {
         dept: employees.dept,
         role: teamMembers.role,
         status: employees.status,
-        dailyTokenLimit: teamMembers.dailyTokenLimit,
         todayTotalTokens: sql<number>`coalesce(${usageCountersTeamDaily.totalTokens}, 0)`,
-        todayCostYuan: memberTodayCostYuanSql(access.teamId, start, endExclusive),
-        monthCostYuan: memberTodayCostYuanSql(access.teamId, month.start, month.endExclusive),
+        monthTotalTokens,
         createdAt: teamMembers.createdAt,
       })
       .from(teamMembers)
@@ -357,8 +310,7 @@ export async function adminTeamRoutes(app: FastifyInstance) {
       data: rows.map((row) => ({
         ...row,
         todayTotalTokens: Number(row.todayTotalTokens),
-        todayCostYuan: formatYuan(row.todayCostYuan),
-        monthCostYuan: formatYuan(row.monthCostYuan),
+        monthTotalTokens: Number(row.monthTotalTokens),
       })),
     };
   });
@@ -520,17 +472,8 @@ export async function adminTeamRoutes(app: FastifyInstance) {
       .safeParse(req.params);
     const body = z
       .object({
-        role: z.enum(["member", "team_admin"]).optional(),
-        dailyTokenLimit: z
-          .number()
-          .int()
-          .nonnegative()
-          .max(Number.MAX_SAFE_INTEGER)
-          .nullable()
-          .refine((value) => value == null || isTokenQuotaUnit(value), "额度最低单位是 1 M（百万 Token）")
-          .optional(),
+        role: z.enum(["member", "team_admin"]),
       })
-      .refine((data) => data.role !== undefined || data.dailyTokenLimit !== undefined)
       .safeParse(req.body);
     if (!params.success || !body.success) {
       return reply.code(400).send({ success: false, message: "参数无效" });
@@ -544,15 +487,9 @@ export async function adminTeamRoutes(app: FastifyInstance) {
     if (!canAdminTeam(actor, access)) {
       return reply.code(403).send({ success: false, message: "权限不足" });
     }
-    const patch: {
-      role?: "member" | "team_admin";
-      dailyTokenLimit?: number | null;
-    } = {};
-    if (body.data.role !== undefined) patch.role = body.data.role;
-    if (body.data.dailyTokenLimit !== undefined) patch.dailyTokenLimit = body.data.dailyTokenLimit;
     const [row] = await db
       .update(teamMembers)
-      .set(patch)
+      .set({ role: body.data.role })
       .where(
         and(
           eq(teamMembers.teamId, access.teamId),
@@ -562,30 +499,17 @@ export async function adminTeamRoutes(app: FastifyInstance) {
       .returning({
         employeeId: teamMembers.employeeId,
         role: teamMembers.role,
-        dailyTokenLimit: teamMembers.dailyTokenLimit,
       });
     if (!row) return reply.code(404).send({ success: false, message: "成员不存在" });
-    if (body.data.role !== undefined) {
-      await refreshConsoleRole(row.employeeId);
-      await writeOpsAudit({
-        actorEmployeeId: actor.employeeId,
-        action: "team.member_role",
-        targetType: "team",
-        targetId: String(access.teamId),
-        detail: { employeeId: row.employeeId, role: row.role },
-        ip: req.ip,
-      });
-    }
-    if (body.data.dailyTokenLimit !== undefined) {
-      await writeOpsAudit({
-        actorEmployeeId: actor.employeeId,
-        action: "team.member_limit",
-        targetType: "team",
-        targetId: String(access.teamId),
-        detail: { employeeId: row.employeeId, dailyTokenLimit: row.dailyTokenLimit },
-        ip: req.ip,
-      });
-    }
+    await refreshConsoleRole(row.employeeId);
+    await writeOpsAudit({
+      actorEmployeeId: actor.employeeId,
+      action: "team.member_role",
+      targetType: "team",
+      targetId: String(access.teamId),
+      detail: { employeeId: row.employeeId, role: row.role },
+      ip: req.ip,
+    });
     return { success: true, data: row };
   });
 

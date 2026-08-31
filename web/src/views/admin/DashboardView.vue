@@ -226,8 +226,7 @@ import { useRouter } from "vue-router";
 import { ElMessage } from "element-plus";
 import { http } from "@/api/http";
 import { formatDateTime } from "@/lib/date-time";
-import { packageLabel, packageMonthlyYuan } from "@/lib/packages";
-import { formatYuan } from "@/lib/tokens";
+
 import { useAuthStore } from "@/stores/auth";
 
 type OverviewData = {
@@ -240,17 +239,13 @@ type OverviewData = {
     name?: string;
     teamCount?: number;
     employeeCount?: number;
-    packagePlan?: string | null;
-    packageYuan?: number;
-    monthUsedYuan?: string;
+    monthUsedTokens?: number;
   };
   team?: {
     teamCount?: number;
     memberCount?: number;
     projectCount?: number;
-    quotaYuan?: string;
-    monthUsedYuan?: string;
-    todayCostYuan?: string;
+    monthUsedTokens?: number;
   };
   projects?: Array<{
     id: number;
@@ -353,9 +348,9 @@ const kpis = computed((): KpiCard[] => {
         tone: "accent",
       },
       {
-        label: "本月消耗",
-        value: formatYuan(data.value?.org?.monthUsedYuan ?? 0),
-        foot: "按模型单价折算",
+        label: "本月 Tokens",
+        value: formatCompact(data.value?.org?.monthUsedTokens ?? 0),
+        foot: "本企业本月消耗",
         tone: "",
       },
       {
@@ -370,25 +365,9 @@ const kpis = computed((): KpiCard[] => {
         foot: "本企业账号",
         tone: "success",
       },
-      {
-        label: "套餐",
-        value: packageLabel(data.value?.org?.packagePlan),
-        foot: `每月 ${formatYuan(data.value?.org?.packageYuan ?? 0)}`,
-        tone: "",
-      },
-      {
-        label: "已分配额度",
-        value: formatYuan(data.value?.team?.quotaYuan ?? 0),
-        foot: "各团队月额度合计",
-        tone: "muted",
-      },
     ];
   }
   if (role.value === "team_admin") {
-    const quota = Number(data.value?.team?.quotaYuan ?? 0);
-    const used = Number(data.value?.team?.monthUsedYuan ?? 0);
-    const remain = Math.max(0, quota - used);
-    const usedPct = quota > 0 ? Math.min(100, Math.round((used / quota) * 100)) : 0;
     return [
       {
         label: "今日 Tokens",
@@ -397,22 +376,10 @@ const kpis = computed((): KpiCard[] => {
         tone: "accent",
       },
       {
-        label: "今日成本",
-        value: formatYuan(data.value?.team?.todayCostYuan ?? 0),
-        foot: "按模型单价折算",
+        label: "本月 Tokens",
+        value: formatCompact(data.value?.team?.monthUsedTokens ?? 0),
+        foot: "所管团队本月消耗",
         tone: "",
-      },
-      {
-        label: "本月消耗",
-        value: formatYuan(used),
-        foot: quota > 0 ? `额度已用 ${usedPct}%` : "团队尚未分配额度",
-        tone: usedPct >= 90 ? "danger" : "",
-      },
-      {
-        label: "额度剩余",
-        value: formatYuan(remain),
-        foot: `总额度 ${formatYuan(quota)}`,
-        tone: remain <= 0 && quota > 0 ? "danger" : "",
       },
       {
         label: "成员",
@@ -478,7 +445,7 @@ const quickLinks = computed(() => {
     { to: "/admin/credentials", title: "上游渠道", desc: "凭证池 · 连通测试 · 启停", dot: "blue" },
     { to: "/admin/enterprises", title: "企业管理", desc: "审核合作申请 · 启停企业", dot: "violet" },
     { to: "/admin/logs", title: "调用日志", desc: "按企业 / 团队 / 渠道排障", dot: "teal" },
-    { to: "/admin/model-prices", title: "模型单价", desc: "对外标价 · 输入 / 输出", dot: "amber" },
+    { to: "/admin/model-prices", title: "模型列表", desc: "渠道可用模型", dot: "amber" },
   ];
 });
 
@@ -574,11 +541,8 @@ type TeamListRow = {
   name: string;
   enterpriseName?: string;
   memberCount?: number;
-  packagePlan?: string | null;
-  monthlyYuanQuota?: string | number;
   todayTotalTokens?: number;
-  todayCostYuan?: string | number;
-  monthCostYuan?: string | number;
+  monthTotalTokens?: number;
 };
 
 type TeamMemberRow = {
@@ -586,7 +550,6 @@ type TeamMemberRow = {
   name: string;
   role?: "member" | "team_admin";
   todayTotalTokens?: number;
-  todayCostYuan?: string | number;
 };
 
 function sumNumber(rows: TeamListRow[], pick: (row: TeamListRow) => unknown): number {
@@ -630,7 +593,6 @@ async function loadScopedWorkbench() {
       .sort((left, right) => (right.totalTokens || 0) - (left.totalTokens || 0))
       .slice(0, 10);
   }
-  const packagePlan = teams[0]?.packagePlan ?? null;
   const topTeams = [...teams]
     .sort((left, right) => (Number(right.todayTotalTokens) || 0) - (Number(left.todayTotalTokens) || 0))
     .slice(0, 10)
@@ -646,17 +608,13 @@ async function loadScopedWorkbench() {
     org: {
       teamCount: teams.length,
       employeeCount,
-      packagePlan,
-      packageYuan: packageMonthlyYuan(packagePlan),
-      monthUsedYuan: String(sumNumber(teams, (row) => row.monthCostYuan)),
+      monthUsedTokens: sumNumber(teams, (row) => row.monthTotalTokens),
     },
     team: {
       teamCount: teams.length,
       memberCount: sumNumber(teams, (row) => row.memberCount),
       projectCount: projects.length,
-      quotaYuan: String(sumNumber(teams, (row) => row.monthlyYuanQuota)),
-      monthUsedYuan: String(sumNumber(teams, (row) => row.monthCostYuan)),
-      todayCostYuan: String(sumNumber(teams, (row) => row.todayCostYuan)),
+      monthUsedTokens: sumNumber(teams, (row) => row.monthTotalTokens),
     },
     today: {
       requests: 0,

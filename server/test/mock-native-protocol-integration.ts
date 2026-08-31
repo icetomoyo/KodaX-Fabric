@@ -275,10 +275,6 @@ function createMockUpstream(): Server {
 
 async function insertFixtures(upstreamBaseUrl: string): Promise<void> {
   const enterpriseId = await getDefaultEnterpriseId();
-  await db
-    .update(enterprises)
-    .set({ packagePlan: "plus", updatedAt: new Date() })
-    .where(and(eq(enterprises.id, enterpriseId), isNull(enterprises.packagePlan)));
   const [employee] = await db
     .insert(employees)
     .values({
@@ -301,7 +297,7 @@ async function insertFixtures(upstreamBaseUrl: string): Promise<void> {
       enterpriseId,
       name: `Native Mock Team ${marker}`,
       status: "active",
-      monthlyYuanQuota: "99999.00",
+
     })
     .returning({ id: teams.id });
   created.teamId = team.id;

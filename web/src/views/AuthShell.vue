@@ -11,11 +11,11 @@
       <div class="brand-copy">
         <h1>KodaX Fabric</h1>
         <p class="module">Token Hub</p>
-        <p>企业模型调用的统一入口。上游渠道、团队额度与调用审计收在一处。</p>
+        <p>企业模型调用的统一入口。上游渠道与调用审计收在一处。</p>
       </div>
       <ul class="points">
         <li>集中接入官方与自定义上游</li>
-        <li>按团队计量额度与费用</li>
+        <li>按团队统计用量</li>
         <li>OpenAI / Anthropic 原生转发</li>
       </ul>
     </aside>

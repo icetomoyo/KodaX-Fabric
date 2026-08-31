@@ -1,4 +1,5 @@
 import { credentialSupportsProtocol } from "./relay/routing.js";
+import type { CreditCoolingKind } from "./relay/credential-quota.js";
 import type { RelayProtocol } from "./relay/protocol.js";
 import { isRelayProtocol } from "./relay/protocol.js";
 import type { UsageTier } from "./usage-tier.js";
@@ -36,6 +37,8 @@ export type KeyBindingCredentialInput = {
   providerCode: string;
   providerName: string;
   status: "active" | "disabled" | "auto_disabled" | "cooling";
+  coolingKind?: CreditCoolingKind | null;
+  coolUntil?: string | null;
   supportedProtocols: readonly string[];
 };
 

@@ -22,14 +22,14 @@
           {{ row.role === "team_admin" ? "团队管理员" : "成员" }}
         </template>
       </el-table-column>
-      <el-table-column label="今日成本" min-width="110">
+      <el-table-column label="今日 Tokens" min-width="120">
         <template #default="{ row }">
-          <span class="mono-num">{{ formatYuan(row.todayCostYuan) }}</span>
+          <span class="mono-num">{{ formatTokenCompact(row.todayTotalTokens) }}</span>
         </template>
       </el-table-column>
-      <el-table-column label="本月成本" min-width="110">
+      <el-table-column label="本月 Tokens" min-width="120">
         <template #default="{ row }">
-          <span class="mono-num">{{ formatYuan(row.monthCostYuan) }}</span>
+          <span class="mono-num">{{ formatTokenCompact(row.monthTotalTokens) }}</span>
         </template>
       </el-table-column>
     </el-table>
@@ -58,7 +58,7 @@
 import { onMounted, ref } from "vue";
 import { ElMessage } from "element-plus";
 import { http } from "@/api/http";
-import { formatYuan } from "@/lib/tokens";
+import { formatTokenCompact } from "@/lib/tokens";
 
 type TeamRow = { id: number; name: string };
 type MemberRow = {
@@ -68,8 +68,8 @@ type MemberRow = {
   teamId: number;
   teamName: string;
   role: "member" | "team_admin";
-  todayCostYuan: string;
-  monthCostYuan: string;
+  todayTotalTokens: number;
+  monthTotalTokens: number;
 };
 
 const teams = ref<TeamRow[]>([]);
