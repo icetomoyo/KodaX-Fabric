@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
-import { eq } from "drizzle-orm";
+import { and, eq, gte, lte, sql } from "drizzle-orm";
 import { z } from "zod";
+import { env } from "../../config.js";
 import { db } from "../../db/client.js";
 import {
   credentialEmployeeGrants,
@@ -12,9 +13,12 @@ import {
   teamMembers,
   teams,
   upstreamCredentials,
+  usageCountersDaily,
 } from "../../db/schema/index.js";
 import { effectiveCredentialStatus } from "../../lib/credential-status.js";
 import { buildKeyBindingGraph } from "../../lib/key-binding-graph.js";
+import { addCalendarDays, quotaDayAt } from "../../lib/quota-time.js";
+import { classifyUsageTier } from "../../lib/usage-tier.js";
 import {
   requirePasswordChanged,
   requireRoles,
@@ -38,7 +42,10 @@ export async function adminKeyBindingRoutes(app: FastifyInstance) {
       return reply.code(400).send({ success: false, message: "参数无效" });
     }
 
-    const [keyRows, credentialRows, grantRows, membershipRows] = await Promise.all([
+    const now = new Date();
+    const today = quotaDayAt(now, env.QUOTA_TIMEZONE);
+    const usageFrom = addCalendarDays(today, -6);
+    const [keyRows, credentialRows, grantRows, membershipRows, usageRows] = await Promise.all([
       db
         .select({
           id: employeeApiKeys.id,
@@ -90,10 +97,26 @@ export async function adminKeyBindingRoutes(app: FastifyInstance) {
         })
         .from(teamMembers)
         .innerJoin(teams, eq(teamMembers.teamId, teams.id)),
+      db
+        .select({
+          employeeId: usageCountersDaily.employeeId,
+          peakTokens: sql<number>`max(${usageCountersDaily.totalTokens})`,
+        })
+        .from(usageCountersDaily)
+        .where(
+          and(
+            gte(usageCountersDaily.day, usageFrom),
+            lte(usageCountersDaily.day, today),
+          ),
+        )
+        .groupBy(usageCountersDaily.employeeId),
     ]);
 
     const membershipByEmployee = new Map(
       membershipRows.map((row) => [row.employeeId, row]),
+    );
+    const peakByEmployee = new Map(
+      usageRows.map((row) => [row.employeeId, Number(row.peakTokens) || 0]),
     );
     const employeesById = new Map<
       number,
@@ -104,6 +127,7 @@ export async function adminKeyBindingRoutes(app: FastifyInstance) {
         enterpriseName: string | null;
         teamId: number | null;
         teamName: string | null;
+        usageTier: ReturnType<typeof classifyUsageTier>;
       }
     >();
     for (const row of keyRows) {
@@ -116,10 +140,10 @@ export async function adminKeyBindingRoutes(app: FastifyInstance) {
         enterpriseName: row.enterpriseName,
         teamId: membership?.teamId ?? row.teamId,
         teamName: membership?.teamName ?? row.teamName,
+        usageTier: classifyUsageTier(peakByEmployee.get(row.employeeId) ?? null),
       });
     }
 
-    const now = new Date();
     const graph = buildKeyBindingGraph({
       employees: [...employeesById.values()],
       virtualKeys: keyRows.map((row) => ({

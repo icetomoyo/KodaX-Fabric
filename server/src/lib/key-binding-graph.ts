@@ -4,6 +4,8 @@ import {
 } from "./relay/routing.js";
 import type { RelayProtocol } from "./relay/protocol.js";
 import { isRelayProtocol } from "./relay/protocol.js";
+import type { UsageTier } from "./usage-tier.js";
+import { classifyUsageTier } from "./usage-tier.js";
 
 export type KeyBindingEmployeeInput = {
   id: number;
@@ -12,6 +14,7 @@ export type KeyBindingEmployeeInput = {
   enterpriseName: string | null;
   teamId: number | null;
   teamName: string | null;
+  usageTier?: UsageTier;
 };
 
 export type KeyBindingVirtualKeyInput = {
@@ -54,13 +57,20 @@ export type KeyBindingEmployee = KeyBindingEmployeeInput;
 export type KeyBindingVirtualKey = KeyBindingVirtualKeyInput;
 export type KeyBindingCredential = KeyBindingCredentialInput;
 
+export type KeyBindingNodeType =
+  | "enterprise"
+  | "team"
+  | "employee"
+  | "virtual_key"
+  | "credential";
+
 export type KeyBindingEdge = {
   id: string;
-  sourceType: "employee" | "virtual_key";
+  sourceType: KeyBindingNodeType;
   sourceId: number;
-  targetType: "virtual_key" | "credential";
+  targetType: KeyBindingNodeType;
   targetId: number;
-  kind: "owns" | "grant" | "pool";
+  kind: "org" | "owns" | "grant" | "pool";
 };
 
 export type KeyBindingChannel = {
@@ -75,8 +85,15 @@ export type KeyBindingEnterprise = {
   name: string;
 };
 
+export type KeyBindingTeam = {
+  id: number;
+  name: string;
+  enterpriseId: number | null;
+};
+
 export type KeyBindingGraph = {
   employees: KeyBindingEmployee[];
+  teams: KeyBindingTeam[];
   virtualKeys: KeyBindingVirtualKey[];
   credentials: KeyBindingCredential[];
   edges: KeyBindingEdge[];
@@ -107,7 +124,11 @@ function normalizeQuery(value: string | undefined): string {
 }
 
 function employeeMatches(row: KeyBindingEmployeeInput, q: string): boolean {
-  return row.name.toLowerCase().includes(q);
+  return (
+    row.name.toLowerCase().includes(q) ||
+    (row.enterpriseName?.toLowerCase().includes(q) ?? false) ||
+    (row.teamName?.toLowerCase().includes(q) ?? false)
+  );
 }
 
 function virtualKeyMatches(row: KeyBindingVirtualKeyInput, q: string): boolean {
@@ -148,6 +169,62 @@ function collectEnterprises(
   return [...byId.values()].sort((a, b) => a.id - b.id);
 }
 
+function collectTeams(employees: readonly KeyBindingEmployeeInput[]): KeyBindingTeam[] {
+  const byId = new Map<number, KeyBindingTeam>();
+  for (const row of employees) {
+    if (row.teamId == null || !row.teamName) continue;
+    byId.set(row.teamId, {
+      id: row.teamId,
+      name: row.teamName,
+      enterpriseId: row.enterpriseId,
+    });
+  }
+  return [...byId.values()].sort((a, b) => a.id - b.id);
+}
+
+function buildOrgEdges(employees: readonly KeyBindingEmployeeInput[]): KeyBindingEdge[] {
+  const edges: KeyBindingEdge[] = [];
+  const seenEnterpriseTeam = new Set<string>();
+  for (const employee of employees) {
+    if (employee.teamId != null) {
+      if (employee.enterpriseId != null) {
+        const id = `org:ent:${employee.enterpriseId}:team:${employee.teamId}`;
+        if (!seenEnterpriseTeam.has(id)) {
+          seenEnterpriseTeam.add(id);
+          edges.push({
+            id,
+            sourceType: "enterprise",
+            sourceId: employee.enterpriseId,
+            targetType: "team",
+            targetId: employee.teamId,
+            kind: "org",
+          });
+        }
+      }
+      edges.push({
+        id: `org:team:${employee.teamId}:emp:${employee.id}`,
+        sourceType: "team",
+        sourceId: employee.teamId,
+        targetType: "employee",
+        targetId: employee.id,
+        kind: "org",
+      });
+      continue;
+    }
+    if (employee.enterpriseId != null) {
+      edges.push({
+        id: `org:ent:${employee.enterpriseId}:emp:${employee.id}`,
+        sourceType: "enterprise",
+        sourceId: employee.enterpriseId,
+        targetType: "employee",
+        targetId: employee.id,
+        kind: "org",
+      });
+    }
+  }
+  return edges;
+}
+
 function collectChannels(
   virtualKeys: readonly KeyBindingVirtualKeyInput[],
   credentials: readonly KeyBindingCredentialInput[],
@@ -174,7 +251,8 @@ function collectChannels(
 }
 
 /**
- * Build the super-admin graph: employee → virtual Key → upstream (智谱) Key.
+ * Build the super-admin graph:
+ * enterprise → team → employee → virtual Key → upstream (智谱) Key.
  *
  * Virtual Key → credential edges follow relay access:
  * grants on that product line restrict the pool; otherwise the whole
@@ -303,20 +381,33 @@ export function buildKeyBindingGraph(input: GraphInput): KeyBindingGraph {
     credentials = credentials.filter((row) => keepCredentials.has(row.id));
   }
 
+  employees = uniqueById(employees)
+    .sort((a, b) => a.id - b.id)
+    .map((row) => ({
+      ...row,
+      usageTier: row.usageTier ?? classifyUsageTier(null),
+    }));
+  keys = uniqueById(keys).sort((a, b) => a.id - b.id);
+  credentials = uniqueById(credentials).sort((a, b) => a.id - b.id);
+  const teams = collectTeams(employees);
   const employeeIds = new Set(employees.map((row) => row.id));
   const keyIds = new Set(keys.map((row) => row.id));
   const credentialIds = new Set(credentials.map((row) => row.id));
-  edges = edges.filter((edge) => {
-    if (edge.kind === "owns") {
-      return employeeIds.has(edge.sourceId) && keyIds.has(edge.targetId);
-    }
-    return keyIds.has(edge.sourceId) && credentialIds.has(edge.targetId);
-  });
+  edges = [
+    ...buildOrgEdges(employees),
+    ...edges.filter((edge) => {
+      if (edge.kind === "owns") {
+        return employeeIds.has(edge.sourceId) && keyIds.has(edge.targetId);
+      }
+      return keyIds.has(edge.sourceId) && credentialIds.has(edge.targetId);
+    }),
+  ];
 
   return {
-    employees: uniqueById(employees).sort((a, b) => a.id - b.id),
-    virtualKeys: uniqueById(keys).sort((a, b) => a.id - b.id),
-    credentials: uniqueById(credentials).sort((a, b) => a.id - b.id),
+    employees,
+    teams,
+    virtualKeys: keys,
+    credentials,
     edges,
     channels: collectChannels(input.virtualKeys, input.credentials),
     enterprises: collectEnterprises(input.employees),

@@ -64,10 +64,57 @@ function grant(employeeId: number, credentialId: number): KeyBindingGrantInput {
 
 function useEdges(graph: ReturnType<typeof buildKeyBindingGraph>) {
   return graph.edges
-    .filter((edge) => edge.kind !== "owns")
+    .filter((edge) => edge.kind === "grant" || edge.kind === "pool")
     .map((edge) => `${edge.sourceId}->${edge.targetId}:${edge.kind}`)
     .sort();
 }
+
+function orgEdges(graph: ReturnType<typeof buildKeyBindingGraph>) {
+  return graph.edges
+    .filter((edge) => edge.kind === "org")
+    .map((edge) => `${edge.sourceType}:${edge.sourceId}->${edge.targetType}:${edge.targetId}`)
+    .sort();
+}
+
+test("org chain links enterprise to team to employee", () => {
+  const graph = buildKeyBindingGraph({
+    employees: [employee({ id: 1, name: "张三" })],
+    virtualKeys: [virtualKey({ id: 11, employeeId: 1, productLineId: 100 })],
+    credentials: [credential({ id: 21, productLineId: 100 })],
+    grants: [],
+  });
+
+  assert.deepEqual(orgEdges(graph), [
+    "enterprise:1->team:10",
+    "team:10->employee:1",
+  ]);
+  assert.deepEqual(
+    graph.teams.map((row) => row.id),
+    [10],
+  );
+});
+
+test("employee without a team hangs directly under the enterprise", () => {
+  const graph = buildKeyBindingGraph({
+    employees: [employee({ id: 1, name: "张三", teamId: null, teamName: null })],
+    virtualKeys: [virtualKey({ id: 11, employeeId: 1, productLineId: 100 })],
+    credentials: [credential({ id: 21, productLineId: 100 })],
+    grants: [],
+  });
+
+  assert.deepEqual(orgEdges(graph), ["enterprise:1->employee:1"]);
+  assert.deepEqual(graph.teams, []);
+});
+
+test("employees without usage default to the standard tier", () => {
+  const graph = buildKeyBindingGraph({
+    employees: [employee({ id: 1, name: "张三" })],
+    virtualKeys: [virtualKey({ id: 11, employeeId: 1, productLineId: 100 })],
+    credentials: [credential({ id: 21, productLineId: 100 })],
+    grants: [],
+  });
+  assert.equal(graph.employees[0]?.usageTier, "standard");
+});
 
 test("employee owns each of their virtual keys", () => {
   const graph = buildKeyBindingGraph({
@@ -253,6 +300,35 @@ test("enterprise filter keeps that enterprise's employees and reachable channels
     graph.credentials.map((row) => row.id).sort(),
     [21, 22],
   );
+});
+
+test("search by team name keeps the org path", () => {
+  const graph = buildKeyBindingGraph({
+    employees: [
+      employee({ id: 1, name: "张三", teamId: 10, teamName: "平台" }),
+      employee({ id: 2, name: "李四", teamId: 20, teamName: "销售" }),
+    ],
+    virtualKeys: [
+      virtualKey({ id: 11, employeeId: 1, productLineId: 100 }),
+      virtualKey({ id: 12, employeeId: 2, productLineId: 100 }),
+    ],
+    credentials: [credential({ id: 21, productLineId: 100 })],
+    grants: [],
+    filter: { q: "平台" },
+  });
+
+  assert.deepEqual(
+    graph.employees.map((row) => row.id),
+    [1],
+  );
+  assert.deepEqual(
+    graph.teams.map((row) => row.id),
+    [10],
+  );
+  assert.deepEqual(orgEdges(graph), [
+    "enterprise:1->team:10",
+    "team:10->employee:1",
+  ]);
 });
 
 test("search keeps the matched employee and the connected key path", () => {
