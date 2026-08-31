@@ -280,6 +280,21 @@ function employeeMatchesBinding(
 }
 
 /**
+ * Usage tier the canvas should draw for an employee.
+ *
+ * Always the committed `employees.usageTier`. Request-time
+ * `effectiveUsageTier` may already be one rung toward the 7-day peak, but
+ * that step is only written on the next acquire or the daily job. Drawing
+ * the preview looks for a team/enterprise Key that does not exist yet and
+ * hides the exclusive Key still in `credential_bindings`.
+ */
+export function usageTierForKeyBindingGraph(
+  stored: UsageTier | null | undefined,
+): UsageTier {
+  return stored ?? classifyUsageTier(null);
+}
+
+/**
  * Build the super-admin graph:
  * enterprise → team → employee → virtual Key → upstream credential.
  *

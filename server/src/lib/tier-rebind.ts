@@ -2,8 +2,8 @@
  * Daily usage-tier rebind job.
  *
  * Recalculates `employees.usageTier` from the last 7 calendar days' peak
- * `usage_counters_daily.totalTokens` (same window as the admin key-bindings
- * view and request-time binding). After a tier change, rebound each employee
+ * `usage_counters_daily.totalTokens` (same window as request-time binding).
+ * After a tier change, rebound each employee
  * onto the Key their new scope needs, one rung at a time (heavy exclusive →
  * standard team → light enterprise) and drop bindings nobody still needs.
  */

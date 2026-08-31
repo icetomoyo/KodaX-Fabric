@@ -6,13 +6,16 @@ import type {
   KeyBindingEmployeeInput,
   KeyBindingVirtualKeyInput,
 } from "../src/lib/key-binding-graph.js";
+import { effectiveUsageTier } from "../src/lib/usage-tier.js";
 
 process.env.DATABASE_URL ??= "postgresql://test:test@127.0.0.1:5432/test";
 process.env.REDIS_URL ??= "redis://127.0.0.1:6379/15";
 process.env.JWT_SECRET ??= "unit-test-jwt-secret";
 process.env.CREDENTIAL_ENCRYPT_KEY ??= "unit-test-credential-secret";
 
-const { buildKeyBindingGraph } = await import("../src/lib/key-binding-graph.js");
+const { buildKeyBindingGraph, usageTierForKeyBindingGraph } = await import(
+  "../src/lib/key-binding-graph.js"
+);
 
 function employee(
   partial: Partial<KeyBindingEmployeeInput> & Pick<KeyBindingEmployeeInput, "id" | "name">,
@@ -211,6 +214,40 @@ test("employee binding links that employee's virtual keys as dedicated", () => {
   assert.deepEqual(useEdges(graph), ["11->22:dedicated"]);
   assert.equal(graph.credentials.find((row) => row.id === 21)?.bound, false);
   assert.equal(graph.credentials.find((row) => row.id === 22)?.bound, true);
+});
+
+test("quiet first-day usage must not hide an exclusive Key still bound at stored heavy", () => {
+  // 144: 张闯 (heavy) created VK cc; first request bound GLM Key 01 at employee
+  // scope. 33_060 tokens would step effectiveUsageTier to standard, which looks
+  // for a team Key that does not exist yet.
+  const peakTokens = 33_060;
+  assert.equal(effectiveUsageTier("heavy", peakTokens), "standard");
+  const usageTier = usageTierForKeyBindingGraph("heavy");
+  const graph = buildKeyBindingGraph({
+    employees: [
+      employee({
+        id: 26,
+        name: "张闯",
+        teamId: 4,
+        teamName: "前沿",
+        usageTier,
+      }),
+    ],
+    virtualKeys: [
+      virtualKey({
+        id: 74,
+        employeeId: 26,
+        productLineId: 1,
+        name: "cc",
+        protocol: "anthropic_messages",
+      }),
+    ],
+    credentials: [credential({ id: 94, productLineId: 1, label: "GLM Key 01" })],
+    bindings: [binding(94, "employee", 26)],
+  });
+
+  assert.equal(usageTier, "heavy");
+  assert.deepEqual(useEdges(graph), ["74->94:dedicated"]);
 });
 
 test("team binding links every team member's virtual keys as team_shared", () => {
