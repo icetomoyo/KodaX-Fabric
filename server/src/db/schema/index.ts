@@ -260,6 +260,7 @@ export const upstreamCredentials = pgTable(
       .notNull()
       .references(() => productLines.id),
     label: varchar("label", { length: 200 }).notNull(),
+    tag: varchar("tag", { length: 32 }),
     secretEncrypted: text("secret_encrypted").notNull(),
     secretSuffix: varchar("secret_suffix", { length: 8 }).notNull(),
     supportedProtocols: relayProtocolEnum("supported_protocols")

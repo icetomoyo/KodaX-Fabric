@@ -183,6 +183,13 @@
       "when": 1788175000000,
       "tag": "0025_heavy_default_usage_tier",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1788176000000,
+      "tag": "0026_credential_tag",
+      "breakpoints": true
     }
   ]
 }

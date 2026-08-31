@@ -173,6 +173,16 @@ const optionalCredentialLabelSchema = z.preprocess(
   z.string().trim().min(1).max(200).optional(),
 );
 
+const optionalCredentialTagSchema = z.preprocess(
+  (value) => {
+    if (value == null) return null;
+    if (typeof value !== "string") return value;
+    const trimmed = value.trim();
+    return trimmed === "" ? null : trimmed;
+  },
+  z.string().max(32).nullable().optional(),
+);
+
 const protocolUpstreamConfigSchema = z.object({
   baseUrl: z
     .string()
@@ -214,6 +224,7 @@ const bulkCredentialCreateSchema = z
       .min(1)
       .max(200),
     defaults: bulkCredentialDefaultsSchema.optional(),
+    tag: optionalCredentialTagSchema,
     // Also accept the originally proposed flat form for API compatibility.
     supportedProtocols: supportedProtocolsSchema.optional(),
     weight: z.number().int().min(0).max(10000).optional(),
@@ -685,6 +696,7 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
       .select({
         id: upstreamCredentials.id,
         label: upstreamCredentials.label,
+        tag: upstreamCredentials.tag,
         secretSuffix: upstreamCredentials.secretSuffix,
         status: upstreamCredentials.status,
         coolUntil: upstreamCredentials.coolUntil,
@@ -771,6 +783,7 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
           return {
             id: row.id,
             label: row.label,
+            tag: row.tag,
             secretSuffix: row.secretSuffix,
             status: row.status,
             effectiveStatus: row.effectiveStatus,
@@ -1520,6 +1533,7 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
               label:
                 item.label
                 ?? `${context.productLine.name} Key ${String(existingRows.length + index + 1).padStart(labelWidth, "0")}`,
+              tag: body.data.tag ?? null,
               secretEncrypted: encryptSecret(item.secret),
               secretSuffix: secretSuffix(item.secret),
               supportedProtocols: protocolResolution.protocols,
@@ -1672,6 +1686,7 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
         id: upstreamCredentials.id,
         productLineId: upstreamCredentials.productLineId,
         label: upstreamCredentials.label,
+        tag: upstreamCredentials.tag,
         secretSuffix: upstreamCredentials.secretSuffix,
         supportedProtocols: upstreamCredentials.supportedProtocols,
         weight: upstreamCredentials.weight,

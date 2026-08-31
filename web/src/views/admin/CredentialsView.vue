@@ -145,6 +145,9 @@
                       <div class="key-card-main">
                         <div class="key-card-id">
                           <strong class="key-card-label">{{ row.label }}</strong>
+                          <el-tag v-if="row.tag" size="small" effect="plain" class="key-note-tag">
+                            {{ row.tag }}
+                          </el-tag>
                           <span class="key-suffix">•••• {{ row.secretSuffix }}</span>
                           <span
                             v-if="statusPill(row)"
@@ -398,6 +401,16 @@
       <el-divider />
 
       <el-form label-position="top" class="credential-form">
+        <el-form-item label="标签">
+          <el-input
+            v-model="bulkForm.tag"
+            maxlength="32"
+            show-word-limit
+            clearable
+            placeholder="可选，例如：国际、国内、测试"
+          />
+          <div class="form-help">只作备注展示，不影响转发地址和调度。</div>
+        </el-form-item>
         <el-form-item label="API Key" required>
           <el-input
             v-model="bulkForm.rawKeys"
@@ -799,6 +812,7 @@ type CredentialRow = {
   id: number;
   productLineId: number;
   label: string;
+  tag?: string | null;
   secretSuffix: string;
   supportedProtocols: RelayProtocol[];
   weight: number;
@@ -1000,6 +1014,7 @@ const bulkForm = reactive({
   baseUrl: "",
   name: "",
   rawKeys: "",
+  tag: "",
   supportedProtocols: ["openai_chat"] as RelayProtocol[],
   status: "active" as ChannelStatus,
   fiveHourCreditLimit: "",
@@ -1731,6 +1746,7 @@ function defaultCustomProtocolConfigs(): RelayProtocolConfigs {
 function resetBulkForm() {
   bulkForm.productLineId = null;
   bulkForm.rawKeys = "";
+  bulkForm.tag = "";
   bulkForm.status = "active";
   bulkForm.fiveHourCreditLimit = "";
   bulkForm.weeklyCreditLimit = "";
@@ -2116,6 +2132,7 @@ async function saveBulkKeys() {
             name: bulkForm.name.trim(),
             status: bulkForm.status,
           }),
+      tag: bulkForm.tag.trim() || undefined,
       keys: parsed.keys.map(({ label, secret, hasCustomLabel }) => (
         hasCustomLabel ? { label, secret } : { secret }
       )),
@@ -2900,6 +2917,13 @@ onMounted(refreshAll);
   letter-spacing: -0.01em;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.key-note-tag {
+  flex: 0 0 auto;
+  max-width: 8em;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .key-suffix {
