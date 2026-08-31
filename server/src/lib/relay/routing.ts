@@ -1,6 +1,7 @@
 import { and, eq, isNull, lte, or } from "drizzle-orm";
 import { db } from "../../db/client.js";
 import {
+  credentialEmployeeGrants,
   modelRoutes,
   productLines,
   providers,
@@ -70,6 +71,18 @@ export function filterRelayItemsToProductLine<T extends { productLineId: number 
   return items.filter((item) => item.productLineId === productLineId);
 }
 
+/**
+ * Restrict the pool when the employee has grants on this product line.
+ * An empty grant set keeps the full pool so unbound employees are unchanged.
+ */
+export function filterCredentialsByGrant<T extends { credentialId: number }>(
+  credentials: readonly T[],
+  grantedIds: ReadonlySet<number>,
+): T[] {
+  if (grantedIds.size === 0) return [...credentials];
+  return credentials.filter((credential) => grantedIds.has(credential.credentialId));
+}
+
 function discoveredModels(meta: unknown): string[] {
   if (!meta || typeof meta !== "object" || Array.isArray(meta)) return [];
   const object = meta as Record<string, unknown>;
@@ -100,7 +113,7 @@ type RelayCredentialAccess = {
 };
 
 async function loadAccessibleCredentials(
-  _employeeId: number,
+  employeeId: number,
   protocol: RelayProtocol,
   productLineId: number,
   options: { readOnly?: boolean } = {},
@@ -126,7 +139,7 @@ async function loadAccessibleCredentials(
       );
   }
 
-  const [rows, boundChannel] = await Promise.all([
+  const [rows, boundChannel, grantedRows] = await Promise.all([
     db
       .select({
         credentialId: upstreamCredentials.id,
@@ -162,6 +175,19 @@ async function loadAccessibleCredentials(
         .where(eq(productLines.id, productLineId))
         .limit(1)
         .then((result) => result[0] ?? null),
+    db
+      .select({ credentialId: credentialEmployeeGrants.credentialId })
+      .from(credentialEmployeeGrants)
+      .innerJoin(
+        upstreamCredentials,
+        eq(credentialEmployeeGrants.credentialId, upstreamCredentials.id),
+      )
+      .where(
+        and(
+          eq(credentialEmployeeGrants.employeeId, employeeId),
+          eq(upstreamCredentials.productLineId, productLineId),
+        ),
+      ),
   ]);
 
   const unavailable = !boundChannel ||
@@ -205,8 +231,12 @@ async function loadAccessibleCredentials(
     })
     .filter((credential): credential is AvailableRelayCredential => credential !== null);
 
+  const grantedIds = new Set(grantedRows.map((row) => row.credentialId));
   return {
-    credentials: filterRelayItemsToProductLine(credentials, productLineId),
+    credentials: filterCredentialsByGrant(
+      filterRelayItemsToProductLine(credentials, productLineId),
+      grantedIds,
+    ),
     boundChannelUnavailable: false,
   };
 }

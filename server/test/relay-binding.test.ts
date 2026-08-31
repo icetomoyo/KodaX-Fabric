@@ -11,6 +11,7 @@ process.env.JWT_SECRET ??= "unit-test-jwt-secret";
 process.env.CREDENTIAL_ENCRYPT_KEY ??= "unit-test-credential-secret";
 
 const {
+  filterCredentialsByGrant,
   filterRelayItemsToProductLine,
   resolveRelayCandidatesFromSnapshot,
 } = await import("../src/lib/relay/routing.js");
@@ -72,6 +73,24 @@ test("product line scopes raw items before routing and ranking", () => {
   assert.deepEqual(filterRelayItemsToProductLine(items, 1), [items[0]]);
   assert.deepEqual(filterRelayItemsToProductLine(items, 2), [items[1]]);
   assert.deepEqual(filterRelayItemsToProductLine(items, 0), []);
+});
+
+test("granted credentials restrict the pool when the grant set is non-empty", () => {
+  const credentials = [credential(11, 1), credential(22, 1), credential(33, 1)];
+  const filtered = filterCredentialsByGrant(credentials, new Set([22]));
+  assert.deepEqual(
+    filtered.map((item) => item.credentialId),
+    [22],
+  );
+});
+
+test("an empty grant set leaves the full credential pool unchanged", () => {
+  const credentials = [credential(11, 1), credential(22, 1)];
+  const filtered = filterCredentialsByGrant(credentials, new Set());
+  assert.deepEqual(
+    filtered.map((item) => item.credentialId),
+    [11, 22],
+  );
 });
 
 test("routing fails closed when an invalid product line bypasses middleware", () => {
