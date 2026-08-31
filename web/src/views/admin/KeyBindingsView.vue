@@ -46,8 +46,8 @@ import { MarkerType, type Edge, type Node, type NodeMouseEvent } from "@vue-flow
 import { ElMessage } from "element-plus";
 import { http } from "@/api/http";
 
-type BindingKind = "org" | "owns" | "dedicated" | "team_shared" | "enterprise_shared";
-type UseBindingKind = "dedicated" | "team_shared" | "enterprise_shared";
+type BindingKind = "org" | "owns" | "dedicated" | "team_shared" | "enterprise_shared" | "open_shared";
+type UseBindingKind = "dedicated" | "team_shared" | "enterprise_shared" | "open_shared";
 type NodeKind = "enterprise" | "team" | "employee" | "virtual_key" | "credential" | "lane_header";
 type CoolingKind = "five_hour" | "weekly" | "other";
 type CredentialLane = "bound" | "pending" | "cooling_5h" | "cooling_weekly" | "disabled";
@@ -192,11 +192,19 @@ function useEdgeStyle(kind: BindingKind): Record<string, string | number | undef
   if (kind === "enterprise_shared") {
     return { stroke: "#4338ca", strokeWidth: 1.5, strokeDasharray: "2 4" };
   }
+  if (kind === "open_shared") {
+    return { stroke: "#059669", strokeWidth: 1.5 };
+  }
   return { stroke: "#94a3b8", strokeWidth: 1.5 };
 }
 
 function isUseEdgeKind(kind: BindingKind): kind is UseBindingKind {
-  return kind === "dedicated" || kind === "team_shared" || kind === "enterprise_shared";
+  return (
+    kind === "dedicated" ||
+    kind === "team_shared" ||
+    kind === "enterprise_shared" ||
+    kind === "open_shared"
+  );
 }
 
 function boundCredentialIds(source: KeyBindingGraph): Set<number> {

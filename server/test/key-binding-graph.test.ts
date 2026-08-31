@@ -75,7 +75,8 @@ function useEdges(graph: ReturnType<typeof buildKeyBindingGraph>) {
       (edge) =>
         edge.kind === "dedicated" ||
         edge.kind === "team_shared" ||
-        edge.kind === "enterprise_shared",
+        edge.kind === "enterprise_shared" ||
+        edge.kind === "open_shared",
     )
     .map((edge) => `${edge.sourceId}->${edge.targetId}:${edge.kind}`)
     .sort();
@@ -198,6 +199,42 @@ test("unbound credentials stay in the graph with no virtual-key edges", () => {
       [23, false],
     ],
   );
+});
+
+test("self-hosted custom credentials connect every virtual key on the channel", () => {
+  const graph = buildKeyBindingGraph({
+    employees: [
+      employee({ id: 1, name: "甲", usageTier: "heavy" }),
+      employee({ id: 2, name: "乙", usageTier: "light" }),
+    ],
+    virtualKeys: [
+      virtualKey({
+        id: 11,
+        employeeId: 1,
+        productLineId: 3,
+        protocol: "openai_chat",
+      }),
+      virtualKey({
+        id: 12,
+        employeeId: 2,
+        productLineId: 3,
+        protocol: "openai_chat",
+      }),
+    ],
+    credentials: [
+      credential({
+        id: 71,
+        productLineId: 3,
+        providerCode: "custom",
+        providerName: "自定义",
+        label: "公司qwen",
+      }),
+    ],
+    bindings: [binding(71, "employee", 1)],
+  });
+
+  assert.deepEqual(useEdges(graph), ["11->71:open_shared", "12->71:open_shared"]);
+  assert.equal(graph.credentials[0]?.bound, true);
 });
 
 test("employee binding links that employee's virtual keys as dedicated", () => {

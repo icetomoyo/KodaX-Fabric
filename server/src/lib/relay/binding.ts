@@ -39,6 +39,7 @@ import {
   type CredentialQuotaStatus,
 } from "./credential-quota.js";
 import { isRelayProtocol, type RelayProtocol } from "./protocol.js";
+import { isOpenPoolProvider, OPEN_POOL_PROVIDER_CODE } from "./open-pool.js";
 
 export type BindingScopeType = "employee" | "team" | "enterprise";
 
@@ -304,6 +305,65 @@ async function resolveEmployeeBinding(
   };
 }
 
+async function isOpenPoolProductLine(productLineId: number): Promise<boolean> {
+  const [row] = await db
+    .select({ providerCode: providers.code })
+    .from(productLines)
+    .innerJoin(providers, eq(productLines.providerId, providers.id))
+    .where(eq(productLines.id, productLineId))
+    .limit(1);
+  return isOpenPoolProvider(row?.providerCode);
+}
+
+async function acquireOpenPoolCredential(
+  params: AcquireBindingParams,
+  now: Date,
+): Promise<AcquireBindingResult> {
+  await restoreExpiredCooling(params.productLineId, now);
+  const pool = await loadChannelPool(
+    params.productLineId,
+    params.protocol,
+    params.excludeCredentialIds ?? new Set(),
+    false,
+  );
+  const usageMap = await getCredentialQuotaUsage(
+    pool.map((row) => row.credentialId),
+    now,
+  );
+  const retryTimes: number[] = [];
+  for (const snapshot of pool) {
+    const usage = usageMap.get(snapshot.credentialId) ?? { fiveHourCredits: 0, weeklyCredits: 0 };
+    const quota = evaluateCredentialQuota(
+      usage,
+      {
+        fiveHourLimit: creditLimitNumber(snapshot.fiveHourCreditLimit),
+        weeklyLimit: creditLimitNumber(snapshot.weeklyCreditLimit),
+      },
+      now,
+    );
+    const status = effectiveCredentialStatus(snapshot.credentialStatus, snapshot.coolUntil, now);
+    if (quota.exhausted && quota.exhaustedUntil) {
+      retryTimes.push(quota.exhaustedUntil.getTime());
+    }
+    if (status === "cooling" && snapshot.coolUntil) {
+      retryTimes.push(snapshot.coolUntil.getTime());
+    }
+    if (status !== "active" || quota.exhausted) continue;
+    const credential = toBoundCredential(snapshot, params.protocol, now);
+    if (!credential) continue;
+    return {
+      ok: true,
+      credential,
+      bindingScope: { scopeType: "employee", scopeId: params.employeeId },
+      replaced: false,
+    };
+  }
+  if (retryTimes.length) {
+    return { ok: false, reason: "exhausted_pool", retryAt: earliestFuture(retryTimes, now) };
+  }
+  return { ok: false, reason: "no_binding_available", retryAt: null };
+}
+
 /**
  * Return a usable Key for the employee's scope on this product line.
  *
@@ -319,6 +379,9 @@ export async function acquireBoundCredential(
   params: AcquireBindingParams,
 ): Promise<AcquireBindingResult> {
   const now = params.now ?? new Date();
+  if (await isOpenPoolProductLine(params.productLineId)) {
+    return acquireOpenPoolCredential(params, now);
+  }
   const resolved = await resolveEmployeeBinding(params.employeeId, now);
   if (!resolved?.scope) {
     return { ok: false, reason: "no_scope", retryAt: null };
@@ -381,8 +444,11 @@ export async function rebindEmployeesToCurrentScope(
       employeeId: employeeApiKeys.employeeId,
       productLineId: employeeApiKeys.productLineId,
       protocol: employeeApiKeys.protocol,
+      providerCode: providers.code,
     })
     .from(employeeApiKeys)
+    .innerJoin(productLines, eq(employeeApiKeys.productLineId, productLines.id))
+    .innerJoin(providers, eq(productLines.providerId, providers.id))
     .where(
       and(
         inArray(employeeApiKeys.employeeId, [...employeeIds]),
@@ -395,6 +461,7 @@ export async function rebindEmployeesToCurrentScope(
     const stamp = `${key.employeeId}:${key.productLineId}`;
     if (seen.has(stamp)) continue;
     seen.add(stamp);
+    if (isOpenPoolProvider(key.providerCode)) continue;
     if (!isRelayProtocol(key.protocol)) continue;
     const result = await acquireBoundCredential({
       employeeId: key.employeeId,
@@ -412,17 +479,30 @@ export async function rebindEmployeesToCurrentScope(
  * subjects, or scopes left empty after a usage-tier upgrade/downgrade.
  */
 export async function releaseOrphanBindings(now: Date = new Date()): Promise<number> {
-  const [rows, people] = await Promise.all([
+  const [rows, people, openLineRows] = await Promise.all([
     db
       .select({
         id: credentialBindings.id,
         scopeType: credentialBindings.scopeType,
         scopeId: credentialBindings.scopeId,
+        productLineId: credentialBindings.productLineId,
       })
       .from(credentialBindings),
     loadEmployeesForEligibility(now),
+    db
+      .select({ id: productLines.id })
+      .from(productLines)
+      .innerJoin(providers, eq(productLines.providerId, providers.id))
+      .where(eq(providers.code, OPEN_POOL_PROVIDER_CODE)),
   ]);
-  const ids = unusedBindingIds(rows, people);
+  const openLineIds = new Set(openLineRows.map((row) => row.id));
+  const ids = [
+    ...rows.filter((row) => openLineIds.has(row.productLineId)).map((row) => row.id),
+    ...unusedBindingIds(
+      rows.filter((row) => !openLineIds.has(row.productLineId)),
+      people,
+    ),
+  ];
   if (ids.length === 0) return 0;
   const deleted = await db
     .delete(credentialBindings)
@@ -652,6 +732,15 @@ async function loadUnboundPool(
   protocol: RelayProtocol,
   exclude: ReadonlySet<number>,
 ): Promise<CredentialSnapshotRow[]> {
+  return loadChannelPool(productLineId, protocol, exclude, true);
+}
+
+async function loadChannelPool(
+  productLineId: number,
+  protocol: RelayProtocol,
+  exclude: ReadonlySet<number>,
+  unboundOnly: boolean,
+): Promise<CredentialSnapshotRow[]> {
   const excludeIds = [...exclude];
   const rows = await db
     .select(credentialSnapshotSelect)
@@ -663,7 +752,7 @@ async function loadUnboundPool(
       and(
         eq(upstreamCredentials.productLineId, productLineId),
         gt(upstreamCredentials.weight, 0),
-        isNull(credentialBindings.id),
+        unboundOnly ? isNull(credentialBindings.id) : undefined,
         or(
           eq(upstreamCredentials.status, "active"),
           eq(upstreamCredentials.status, "cooling"),
@@ -676,7 +765,10 @@ async function loadUnboundPool(
       desc(upstreamCredentials.weight),
       asc(upstreamCredentials.id),
     );
-  return rows.filter((row) => supportsProtocol(row.supportedProtocols, protocol));
+  const unique = unboundOnly
+    ? rows
+    : rows.filter((row, index, all) => all.findIndex((item) => item.credentialId === row.credentialId) === index);
+  return unique.filter((row) => supportsProtocol(row.supportedProtocols, protocol));
 }
 
 async function coolCredentialForQuota(

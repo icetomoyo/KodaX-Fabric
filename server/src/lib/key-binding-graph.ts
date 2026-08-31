@@ -1,4 +1,5 @@
 import { resolveBindingScope } from "./relay/binding.js";
+import { isOpenPoolProvider } from "./relay/open-pool.js";
 import { credentialSupportsProtocol } from "./relay/routing.js";
 import type { CreditCoolingKind } from "./relay/credential-quota.js";
 import type { RelayProtocol } from "./relay/protocol.js";
@@ -74,7 +75,8 @@ export type KeyBindingEdgeKind =
   | "owns"
   | "dedicated"
   | "team_shared"
-  | "enterprise_shared";
+  | "enterprise_shared"
+  | "open_shared";
 
 export type KeyBindingEdge = {
   id: string;
@@ -301,6 +303,8 @@ export function usageTierForKeyBindingGraph(
  * employees whose current usage tier would actually use that scope:
  * heavy → employee (`dedicated`); standard → team (`team_shared`), else
  * enterprise; light → enterprise (`enterprise_shared`).
+ * Self-hosted (`custom`) channels skip usage-tier binding: every virtual Key
+ * on that channel connects to every protocol-compatible credential (`open_shared`).
  * Unbound credentials stay in the graph with `bound: false`.
  */
 export function buildKeyBindingGraph(input: GraphInput): KeyBindingGraph {
@@ -331,9 +335,31 @@ export function buildKeyBindingGraph(input: GraphInput): KeyBindingGraph {
     const employee = employeesById.get(key.employeeId);
     if (!employee) continue;
 
+    for (const credential of input.credentials) {
+      if (!isOpenPoolProvider(credential.providerCode)) continue;
+      if (credential.productLineId !== key.productLineId) continue;
+      if (
+        !credentialSupportsProtocol(
+          { supportedProtocols: asRelayProtocols(credential.supportedProtocols) },
+          protocol,
+        )
+      ) {
+        continue;
+      }
+      useEdges.push({
+        id: `use:${key.id}:${credential.id}:open_shared`,
+        sourceType: "virtual_key",
+        sourceId: key.id,
+        targetType: "credential",
+        targetId: credential.id,
+        kind: "open_shared",
+      });
+    }
+
     for (const binding of input.bindings) {
       const credential = credentialsById.get(binding.credentialId);
       if (!credential || credential.productLineId !== key.productLineId) continue;
+      if (isOpenPoolProvider(credential.providerCode)) continue;
       if (
         !credentialSupportsProtocol(
           { supportedProtocols: asRelayProtocols(credential.supportedProtocols) },
@@ -358,9 +384,12 @@ export function buildKeyBindingGraph(input: GraphInput): KeyBindingGraph {
   const usedEmployeeIds = new Set(virtualKeys.map((row) => row.employeeId));
   let employees = input.employees.filter((row) => usedEmployeeIds.has(row.id));
   let keys = virtualKeys;
+  const openPoolLinkedIds = new Set(
+    useEdges.filter((edge) => edge.kind === "open_shared").map((edge) => edge.targetId),
+  );
   let credentials: KeyBindingCredential[] = input.credentials.map((row) => ({
     ...row,
-    bound: boundCredentialIds.has(row.id),
+    bound: boundCredentialIds.has(row.id) || openPoolLinkedIds.has(row.id),
   }));
   let edges: KeyBindingEdge[] = [...ownsEdges, ...useEdges];
 

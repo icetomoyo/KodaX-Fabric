@@ -7,12 +7,19 @@ process.env.JWT_SECRET ??= "unit-test-jwt-secret";
 process.env.CREDENTIAL_ENCRYPT_KEY ??= "unit-test-credential-secret";
 
 const { classifyUsageTier } = await import("../src/lib/usage-tier.js");
+const { isOpenPoolProvider } = await import("../src/lib/relay/open-pool.js");
 const {
   bindingStillNeeded,
   resolveBindingScope,
   resolveBindingScopeFromPeak,
   unusedBindingIds,
 } = await import("../src/lib/relay/binding.js");
+
+test("custom self-hosted channels skip usage-tier Key binding", () => {
+  assert.equal(isOpenPoolProvider("custom"), true);
+  assert.equal(isOpenPoolProvider("glm"), false);
+  assert.equal(isOpenPoolProvider(null), false);
+});
 
 test("heavy always binds to the employee, ignoring team and enterprise", () => {
   assert.deepEqual(
