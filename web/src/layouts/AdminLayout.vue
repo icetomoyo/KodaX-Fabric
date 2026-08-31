@@ -14,6 +14,7 @@
         <el-menu-item v-if="auth.isTeamAdmin" index="/admin/projects">项目管理</el-menu-item>
         <el-menu-item v-if="auth.isTeamAdmin" index="/admin/keys">API Key</el-menu-item>
         <el-menu-item v-if="auth.isSuperAdmin" index="/admin/credentials">上游渠道</el-menu-item>
+        <el-menu-item v-if="auth.isSuperAdmin" index="/admin/key-bindings">Key 绑定</el-menu-item>
         <el-menu-item v-if="auth.isSuperAdmin" index="/admin/model-prices">模型单价</el-menu-item>
         <el-menu-item v-if="auth.isSuperAdmin" index="/admin/logs">调用日志</el-menu-item>
         <el-menu-item index="/admin/error-logs">报错日志</el-menu-item>

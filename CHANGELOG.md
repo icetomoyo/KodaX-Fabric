@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- 超管后台「Key 绑定」：在上游渠道和模型单价之间用关系图画员工 → 虚拟 Key → 智谱 Key
+
 ### Changed
 
 - 工程与 npm 包主体名称统一为 **KodaX-Fabric**（`kodax-fabric` / `@kodax-fabric/*`）；Token Hub 作为核心模块名保留

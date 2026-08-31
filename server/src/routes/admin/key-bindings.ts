@@ -1,0 +1,158 @@
+import type { FastifyInstance } from "fastify";
+import { eq } from "drizzle-orm";
+import { z } from "zod";
+import { db } from "../../db/client.js";
+import {
+  credentialEmployeeGrants,
+  employeeApiKeys,
+  employees,
+  enterprises,
+  productLines,
+  providers,
+  teamMembers,
+  teams,
+  upstreamCredentials,
+} from "../../db/schema/index.js";
+import { effectiveCredentialStatus } from "../../lib/credential-status.js";
+import { buildKeyBindingGraph } from "../../lib/key-binding-graph.js";
+import {
+  requirePasswordChanged,
+  requireRoles,
+  requireSession,
+} from "../../middleware/auth.js";
+
+const querySchema = z.object({
+  productLineId: z.coerce.number().int().positive().optional(),
+  enterpriseId: z.coerce.number().int().positive().optional(),
+  q: z.string().trim().max(100).optional(),
+});
+
+export async function adminKeyBindingRoutes(app: FastifyInstance) {
+  app.addHook("preHandler", requireSession);
+  app.addHook("preHandler", requirePasswordChanged);
+  app.addHook("preHandler", requireRoles("admin"));
+
+  app.get("/api/admin/key-bindings", async (req, reply) => {
+    const query = querySchema.safeParse(req.query);
+    if (!query.success) {
+      return reply.code(400).send({ success: false, message: "参数无效" });
+    }
+
+    const [keyRows, credentialRows, grantRows, membershipRows] = await Promise.all([
+      db
+        .select({
+          id: employeeApiKeys.id,
+          employeeId: employeeApiKeys.employeeId,
+          name: employeeApiKeys.name,
+          keyPrefix: employeeApiKeys.keyPrefix,
+          protocol: employeeApiKeys.protocol,
+          productLineId: employeeApiKeys.productLineId,
+          productLineName: productLines.name,
+          teamId: employeeApiKeys.teamId,
+          teamName: teams.name,
+          status: employeeApiKeys.status,
+          employeeName: employees.name,
+          enterpriseId: employees.enterpriseId,
+          enterpriseName: enterprises.name,
+        })
+        .from(employeeApiKeys)
+        .innerJoin(employees, eq(employeeApiKeys.employeeId, employees.id))
+        .innerJoin(productLines, eq(employeeApiKeys.productLineId, productLines.id))
+        .leftJoin(teams, eq(employeeApiKeys.teamId, teams.id))
+        .leftJoin(enterprises, eq(employees.enterpriseId, enterprises.id)),
+      db
+        .select({
+          id: upstreamCredentials.id,
+          label: upstreamCredentials.label,
+          secretSuffix: upstreamCredentials.secretSuffix,
+          productLineId: upstreamCredentials.productLineId,
+          productLineName: productLines.name,
+          providerCode: providers.code,
+          providerName: providers.name,
+          status: upstreamCredentials.status,
+          coolUntil: upstreamCredentials.coolUntil,
+          supportedProtocols: upstreamCredentials.supportedProtocols,
+        })
+        .from(upstreamCredentials)
+        .innerJoin(productLines, eq(upstreamCredentials.productLineId, productLines.id))
+        .innerJoin(providers, eq(productLines.providerId, providers.id)),
+      db
+        .select({
+          employeeId: credentialEmployeeGrants.employeeId,
+          credentialId: credentialEmployeeGrants.credentialId,
+        })
+        .from(credentialEmployeeGrants),
+      db
+        .select({
+          employeeId: teamMembers.employeeId,
+          teamId: teams.id,
+          teamName: teams.name,
+        })
+        .from(teamMembers)
+        .innerJoin(teams, eq(teamMembers.teamId, teams.id)),
+    ]);
+
+    const membershipByEmployee = new Map(
+      membershipRows.map((row) => [row.employeeId, row]),
+    );
+    const employeesById = new Map<
+      number,
+      {
+        id: number;
+        name: string;
+        enterpriseId: number | null;
+        enterpriseName: string | null;
+        teamId: number | null;
+        teamName: string | null;
+      }
+    >();
+    for (const row of keyRows) {
+      if (employeesById.has(row.employeeId)) continue;
+      const membership = membershipByEmployee.get(row.employeeId);
+      employeesById.set(row.employeeId, {
+        id: row.employeeId,
+        name: row.employeeName,
+        enterpriseId: row.enterpriseId,
+        enterpriseName: row.enterpriseName,
+        teamId: membership?.teamId ?? row.teamId,
+        teamName: membership?.teamName ?? row.teamName,
+      });
+    }
+
+    const now = new Date();
+    const graph = buildKeyBindingGraph({
+      employees: [...employeesById.values()],
+      virtualKeys: keyRows.map((row) => ({
+        id: row.id,
+        employeeId: row.employeeId,
+        name: row.name,
+        keyPrefix: row.keyPrefix,
+        protocol: row.protocol,
+        productLineId: row.productLineId,
+        productLineName: row.productLineName,
+        teamId: row.teamId,
+        teamName: row.teamName,
+        status: row.status,
+      })),
+      credentials: credentialRows.map((row) => ({
+        id: row.id,
+        label: row.label,
+        secretSuffix: row.secretSuffix,
+        productLineId: row.productLineId,
+        productLineName: row.productLineName,
+        providerCode: row.providerCode,
+        providerName: row.providerName,
+        status: effectiveCredentialStatus(row.status, row.coolUntil, now),
+        supportedProtocols: row.supportedProtocols ?? [],
+      })),
+      grants: grantRows,
+      filter: {
+        productLineId: query.data.productLineId,
+        enterpriseId: query.data.enterpriseId,
+        q: query.data.q,
+      },
+    });
+
+    return { success: true, data: graph };
+  });
+}

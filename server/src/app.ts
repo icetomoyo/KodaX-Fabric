@@ -12,6 +12,7 @@ import { adminProjectRoutes } from "./routes/admin/projects.js";
 import { adminOverviewRoutes } from "./routes/admin/overview.js";
 import { adminProviderRoutes } from "./routes/admin/providers.js";
 import { adminCredentialRoutes } from "./routes/admin/credentials.js";
+import { adminKeyBindingRoutes } from "./routes/admin/key-bindings.js";
 import { adminModelPriceRoutes } from "./routes/admin/model-prices.js";
 import { adminModelRouteRoutes } from "./routes/admin/model-routes.js";
 import { adminLogRoutes } from "./routes/admin/logs.js";
@@ -44,6 +45,7 @@ export async function buildApp() {
   await app.register(adminOverviewRoutes);
   await app.register(adminProviderRoutes);
   await app.register(adminCredentialRoutes);
+  await app.register(adminKeyBindingRoutes);
   await app.register(adminModelPriceRoutes);
   await app.register(adminModelRouteRoutes);
   await app.register(adminLogRoutes);
