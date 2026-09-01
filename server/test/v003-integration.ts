@@ -197,8 +197,32 @@ async function main() {
     assert.equal(logs.items.length, 1);
     assert.equal(logs.items[0].totalTokens, 10);
     assert.equal(logs.items[0].cacheReadTokens, 2);
+    assert.equal(logs.items[0].employeeName, `employee-${marker}`);
+    assert.equal(logs.items[0].credits, 0);
     assert.equal("requestBody" in logs.items[0], false);
     assert.equal("responseBody" in logs.items[0], false);
+
+    const byEmployee = await app.inject({
+      method: "GET",
+      url: `/api/admin/logs?employeeId=${employee.id}`,
+      headers: auth("admin"),
+    });
+    assert.equal(byEmployee.statusCode, 200);
+    assert.equal(json<{ data: { total: number } }>(byEmployee).data.total, 2);
+
+    const detailResponse = await app.inject({
+      method: "GET",
+      url: `/api/admin/logs/${requestIds[0]}`,
+      headers: auth("admin"),
+    });
+    assert.equal(detailResponse.statusCode, 200);
+    const detail = json<{ data: Record<string, unknown> }>(detailResponse).data;
+    assert.equal(detail.requestId, requestIds[0]);
+    assert.equal(detail.employeeName, `employee-${marker}`);
+    assert.equal(detail.credits, 0);
+    assert.equal(detail.hasContextFile, false);
+    assert.equal(detail.omittedBodies, false);
+    assert.equal(detail.context, null);
 
     const missingContext = await app.inject({
       method: "GET",

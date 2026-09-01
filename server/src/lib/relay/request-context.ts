@@ -7,10 +7,10 @@
  */
 import type { IncomingHttpHeaders } from "node:http";
 import { constants as fsConstants } from "node:fs";
-import { access, mkdir, rename, unlink, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
-import { gzip } from "node:zlib";
+import { gunzipSync, gzip } from "node:zlib";
 import { env } from "../../config.js";
 import { addCalendarDays, quotaDayAt } from "../quota-time.js";
 import type { RelayCandidate, RelayPrincipal, RelayRetryTraceItem, RelayUsage } from "./types.js";
@@ -125,6 +125,43 @@ export async function findRequestContextFile(
     }
   }
   return null;
+}
+
+export async function readRequestContextRecord(filePath: string): Promise<unknown> {
+  const raw = await readFile(filePath);
+  return JSON.parse(gunzipSync(raw).toString("utf8"));
+}
+
+/** Inline detail is for the drawer; 50MB files stay on the download endpoint. */
+export const DETAIL_CONTEXT_MAX_BYTES = 256 * 1024;
+const DETAIL_OMITTED = { omitted: "正文过大，请下载 JSON 查看" };
+
+export function summarizeRequestContextForDetail(
+  record: unknown,
+  maxBytes = DETAIL_CONTEXT_MAX_BYTES,
+): { context: unknown; omittedBodies: boolean } {
+  if (record == null || typeof record !== "object") {
+    return { context: record, omittedBodies: false };
+  }
+  if (Buffer.byteLength(JSON.stringify(record)) <= maxBytes) {
+    return { context: record, omittedBodies: false };
+  }
+  const input = record as Record<string, unknown>;
+  const streamAudit = input.streamAudit;
+  const stripped: Record<string, unknown> = {
+    ...input,
+    requestBody: DETAIL_OMITTED,
+    responseBody: DETAIL_OMITTED,
+    streamAudit:
+      streamAudit && typeof streamAudit === "object"
+        ? { ...(streamAudit as Record<string, unknown>), assembled: DETAIL_OMITTED }
+        : streamAudit,
+  };
+  if (Buffer.byteLength(JSON.stringify(stripped)) > maxBytes) {
+    stripped.headers = DETAIL_OMITTED;
+    stripped.retryTrace = [];
+  }
+  return { context: stripped, omittedBodies: true };
 }
 
 export function redactHeaders(

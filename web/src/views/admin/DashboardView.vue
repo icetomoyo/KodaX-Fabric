@@ -444,7 +444,7 @@ const quickLinks = computed(() => {
   return [
     { to: "/admin/credentials", title: "上游渠道", desc: "凭证池 · 连通测试 · 启停", dot: "blue" },
     { to: "/admin/enterprises", title: "企业管理", desc: "审核合作申请 · 启停企业", dot: "violet" },
-    { to: "/admin/logs", title: "调用日志", desc: "按企业 / 团队 / 渠道排障", dot: "teal" },
+    { to: "/admin/logs", title: "调用日志", desc: "按企业 / 团队 / 员工排障", dot: "teal" },
     { to: "/admin/model-prices", title: "模型列表", desc: "渠道可用模型", dot: "amber" },
   ];
 });

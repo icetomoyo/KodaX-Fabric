@@ -30,6 +30,7 @@
           :loading="teamsLoading"
           placeholder="全部团队"
           style="width: 180px"
+          @change="onTeamChange"
         >
           <el-option
             v-for="item in teams"
@@ -40,19 +41,22 @@
         </el-select>
       </el-form-item>
       <el-form-item>
-        <div class="metric-filter">
-          <span class="metric-filter-label">Tokens</span>
-          <el-select v-model="filters.tokensOp" style="width: 76px">
-            <el-option label="大于" value="gt" />
-            <el-option label="小于" value="lt" />
-          </el-select>
-          <el-input
-            v-model="filters.tokens"
-            clearable
-            placeholder="数值"
-            style="width: 92px"
+        <el-select
+          v-model="filters.employeeId"
+          clearable
+          filterable
+          :disabled="!filters.enterpriseId"
+          :loading="employeesLoading"
+          placeholder="全部员工"
+          style="width: 160px"
+        >
+          <el-option
+            v-for="item in visibleEmployees"
+            :key="item.id"
+            :label="item.name"
+            :value="item.id"
           />
-        </div>
+        </el-select>
       </el-form-item>
       <el-form-item>
         <el-button type="primary" @click="search">查询</el-button>
@@ -70,43 +74,41 @@
       empty-text="暂无日志"
       v-loading="loading"
     >
-      <el-table-column label="Request ID" min-width="300">
+      <el-table-column label="Request ID" min-width="220">
         <template #default="{ row }">
           <el-button class="request-id-button" link @click="copyRequestId(row.requestId)">
             {{ row.requestId }}
           </el-button>
         </template>
       </el-table-column>
-      <el-table-column label="Tokens" width="88" align="right" header-align="right">
+      <el-table-column label="企业 / 团队" min-width="160" show-overflow-tooltip>
+        <template #default="{ row }">
+          <span class="employee-text">
+            {{ row.enterpriseName || "—" }}
+            <template v-if="row.teamName"> · {{ row.teamName }}</template>
+          </span>
+        </template>
+      </el-table-column>
+      <el-table-column label="员工" width="100" show-overflow-tooltip>
+        <template #default="{ row }">
+          <span class="employee-text">{{ row.employeeName || "—" }}</span>
+        </template>
+      </el-table-column>
+      <el-table-column label="模型" width="140" show-overflow-tooltip>
+        <template #default="{ row }">
+          <span class="model-text">{{ row.clientModel }}</span>
+        </template>
+      </el-table-column>
+      <el-table-column label="Tokens" width="96" align="right" header-align="right">
         <template #default="{ row }">
           <el-tooltip :content="tokenTooltip(row)" placement="top" :show-after="300">
             <span class="metric-text">{{ formatNumber(row.totalTokens) }}</span>
           </el-tooltip>
         </template>
       </el-table-column>
-      <el-table-column label="缓存命中" width="86" align="right" header-align="right">
+      <el-table-column label="积分" width="88" align="right" header-align="right">
         <template #default="{ row }">
-          <el-tooltip
-            :disabled="row.cacheReadTokens == null"
-            :content="cacheHitText(row.cacheReadTokens, row.promptTokens)"
-            placement="top"
-            :show-after="300"
-          >
-            <span class="metric-text">{{ formatNumber(row.cacheReadTokens) }}</span>
-          </el-tooltip>
-        </template>
-      </el-table-column>
-      <el-table-column label="渠道" width="148">
-        <template #default="{ row }">
-          <span class="channel-cell">
-            <span class="channel-name">{{ providerText(row.providerCode) }}</span>
-            <span v-if="row.productType === 'coding_plan'" class="type-chip">套餐</span>
-          </span>
-        </template>
-      </el-table-column>
-      <el-table-column label="模型" width="140">
-        <template #default="{ row }">
-          <span class="model-text">{{ row.clientModel }}</span>
+          <span class="metric-text">{{ formatCredits(row.credits) }}</span>
         </template>
       </el-table-column>
       <el-table-column label="状态" width="112">
@@ -119,21 +121,14 @@
           </span>
         </template>
       </el-table-column>
-      <el-table-column label="企业 / 团队" min-width="160">
-        <template #default="{ row }">
-          <span class="employee-text">
-            {{ row.enterpriseName || "—" }}
-            <template v-if="row.teamName"> · {{ row.teamName }}</template>
-          </span>
-        </template>
-      </el-table-column>
       <el-table-column label="时间" width="156">
         <template #default="{ row }">
           <span class="time-text">{{ formatDateTime(row.createdAt) }}</span>
         </template>
       </el-table-column>
-      <el-table-column label="" width="72" align="right">
+      <el-table-column label="操作" width="120" align="right">
         <template #default="{ row }">
+          <el-button class="download-button" link @click="openDetail(row)">详情</el-button>
           <el-button
             class="download-button"
             link
@@ -157,6 +152,130 @@
         @current-change="load"
       />
     </div>
+
+    <el-drawer
+      v-model="showDetail"
+      :title="detail?.requestId || '请求详情'"
+      size="min(720px, 96vw)"
+      destroy-on-close
+    >
+      <div v-loading="detailLoading" class="detail-body">
+        <template v-if="detail">
+          <el-alert
+            v-if="detail.omittedBodies"
+            type="warning"
+            :closable="false"
+            show-icon
+            title="请求/响应正文过大，详情里已省略，请下载 JSON 查看全文"
+          />
+          <el-alert
+            v-else-if="!detail.hasContextFile"
+            type="info"
+            :closable="false"
+            show-icon
+            title="该请求没有全文记录（部署前的旧日志没有文件）"
+          />
+
+          <dl class="detail-grid">
+            <div>
+              <dt>员工</dt>
+              <dd>{{ detail.employeeName }} · {{ detail.employeePhone }}</dd>
+            </div>
+            <div>
+              <dt>企业 / 团队</dt>
+              <dd>{{ detail.enterpriseName || "—" }}<template v-if="detail.teamName"> · {{ detail.teamName }}</template></dd>
+            </div>
+            <div>
+              <dt>模型</dt>
+              <dd>{{ detail.clientModel }}</dd>
+            </div>
+            <div>
+              <dt>渠道</dt>
+              <dd>{{ detail.providerCode || "—" }} · {{ productTypeText(detail.productType) }}</dd>
+            </div>
+            <div>
+              <dt>状态</dt>
+              <dd>{{ statusText(detail.status) }}</dd>
+            </div>
+            <div>
+              <dt>Tokens</dt>
+              <dd>{{ tokenTooltip(detail) }}</dd>
+            </div>
+            <div>
+              <dt>积分</dt>
+              <dd>{{ formatCredits(detail.credits) }}</dd>
+            </div>
+            <div>
+              <dt>时间</dt>
+              <dd>{{ formatDateTime(detail.createdAt) }}</dd>
+            </div>
+            <div v-if="contextRecord">
+              <dt>耗时</dt>
+              <dd>{{ contextRecord.latencyMs ?? "—" }} ms</dd>
+            </div>
+            <div v-if="contextRecord">
+              <dt>协议 / 路径</dt>
+              <dd>{{ contextRecord.protocol }} · {{ contextRecord.path }}{{ contextRecord.stream ? " · 流式" : "" }}</dd>
+            </div>
+            <div v-if="contextRecord?.candidate">
+              <dt>渠道 Key</dt>
+              <dd>•••• {{ contextRecord.candidate.credentialSuffix }} · {{ contextRecord.candidate.providerCode }}</dd>
+            </div>
+            <div v-if="detail.error">
+              <dt>HTTP</dt>
+              <dd>{{ detail.error.httpStatus ?? "—" }} / 上游 {{ detail.error.upstreamStatus ?? "—" }}</dd>
+            </div>
+          </dl>
+
+          <section v-if="detail.error" class="detail-section">
+            <h3>错误</h3>
+            <p class="error-text">
+              {{ detail.error.errorCode || "—" }}
+              {{ detail.error.errorMessage }}
+            </p>
+          </section>
+
+          <section v-if="contextRecord?.retryTrace?.length" class="detail-section">
+            <h3>调度轨迹</h3>
+            <el-table :data="contextRecord.retryTrace" size="small" stripe>
+              <el-table-column prop="attempt" label="#" width="50" />
+              <el-table-column prop="credentialSuffix" label="Key" width="80" />
+              <el-table-column prop="outcome" label="结果" width="100" />
+              <el-table-column prop="status" label="HTTP" width="70" />
+              <el-table-column prop="latencyMs" label="耗时" width="80" />
+              <el-table-column prop="reason" label="原因" min-width="140" show-overflow-tooltip />
+            </el-table>
+          </section>
+
+          <section v-if="contextRecord?.headers" class="detail-section">
+            <h3>请求头</h3>
+            <StructuredJson :value="contextRecord.headers" empty-text="没有保存请求头" />
+          </section>
+          <section class="detail-section">
+            <h3>请求体</h3>
+            <StructuredJson :value="contextRecord?.requestBody" empty-text="没有保存请求体（部署前的旧日志没有全文）" />
+          </section>
+          <section class="detail-section">
+            <h3>响应</h3>
+            <StructuredJson
+              :value="contextRecord?.responseBody ?? contextRecord?.streamAudit?.assembled"
+              empty-text="没有保存响应正文"
+            />
+          </section>
+        </template>
+      </div>
+      <template #footer>
+        <el-button @click="showDetail = false">关闭</el-button>
+        <el-button
+          type="primary"
+          :disabled="!detail?.hasContextFile"
+          :loading="Boolean(detail && downloadingId === detail.requestId)"
+          @click="detail && downloadContext(detail)"
+        >
+          下载全文
+        </el-button>
+      </template>
+    </el-drawer>
   </div>
 </template>
 
@@ -164,6 +283,7 @@
 import { computed, onMounted, reactive, ref } from "vue";
 import { ElMessage } from "element-plus";
 import { http } from "@/api/http";
+import StructuredJson from "@/components/StructuredJson.vue";
 import { copyText } from "@/lib/clipboard";
 import { formatDateTime } from "@/lib/date-time";
 
@@ -173,6 +293,8 @@ type ProductType = "api" | "coding_plan";
 interface LogRow {
   id: number;
   requestId: string;
+  employeeId: number;
+  employeeName: string;
   enterpriseName: string | null;
   teamName: string | null;
   clientModel: string;
@@ -183,7 +305,21 @@ interface LogRow {
   completionTokens: number | null;
   totalTokens: number | null;
   cacheReadTokens: number | null;
+  credits: number;
   createdAt: string;
+}
+
+interface LogDetail extends LogRow {
+  employeePhone: string;
+  error: {
+    httpStatus: number | null;
+    upstreamStatus: number | null;
+    errorCode: string | null;
+    errorMessage: string | null;
+  } | null;
+  hasContextFile: boolean;
+  omittedBodies: boolean;
+  context: Record<string, unknown> | null;
 }
 
 interface NamedOption {
@@ -191,45 +327,64 @@ interface NamedOption {
   name: string;
 }
 
-const providerNames: Record<string, string> = {
-  glm: "智谱/GLM",
-  kimi: "月之暗面/Kimi",
-  deepseek: "深度求索/DeepSeek",
-  minimax: "MiniMax",
-};
-
 const numberFormatter = new Intl.NumberFormat("zh-CN");
-type CompareOp = "gt" | "lt";
+const creditFormatter = new Intl.NumberFormat("zh-CN", {
+  maximumFractionDigits: 4,
+  minimumFractionDigits: 0,
+});
 
 const filters = reactive({
-  enterpriseId: undefined as number | undefined,
-  teamId: undefined as number | undefined,
-  tokensOp: "gt" as CompareOp,
-  tokens: "",
+  enterpriseId: null as number | null,
+  teamId: null as number | null,
+  employeeId: null as number | null,
 });
 const enterprises = ref<NamedOption[]>([]);
 const enterprisesLoading = ref(false);
 const teams = ref<NamedOption[]>([]);
 const teamsLoading = ref(false);
+const enterpriseEmployees = ref<NamedOption[]>([]);
+const teamEmployees = ref<NamedOption[] | null>(null);
+const employeesLoading = ref(false);
 const items = ref<LogRow[]>([]);
 const total = ref(0);
 const page = ref(1);
 const limit = 10;
 const loading = ref(false);
 const downloadingId = ref<string | null>(null);
+const showDetail = ref(false);
+const detailLoading = ref(false);
+const detail = ref<LogDetail | null>(null);
 
 const hasFilters = computed(() => Boolean(
-  filters.enterpriseId
-  || filters.teamId
-  || filters.tokens.trim(),
+  filters.enterpriseId || filters.teamId || filters.employeeId,
 ));
 
-function parseFilterNumber(raw: string): number | undefined {
-  const value = raw.trim();
-  if (!value) return undefined;
-  const parsed = Number(value);
-  return Number.isInteger(parsed) && parsed >= 0 ? parsed : undefined;
-}
+const visibleEmployees = computed(() => {
+  if (teamEmployees.value) return teamEmployees.value;
+  const seen = new Set<number>();
+  return enterpriseEmployees.value.filter((row) => {
+    if (seen.has(row.id)) return false;
+    seen.add(row.id);
+    return true;
+  });
+});
+
+const contextRecord = computed(() => {
+  const value = detail.value?.context;
+  if (!value || typeof value !== "object") return null;
+  return value as {
+    latencyMs?: number;
+    protocol?: string;
+    path?: string;
+    stream?: boolean;
+    headers?: Record<string, string>;
+    candidate?: { credentialSuffix?: string; providerCode?: string } | null;
+    retryTrace?: Array<Record<string, unknown>>;
+    requestBody?: unknown;
+    responseBody?: unknown;
+    streamAudit?: { assembled?: unknown };
+  };
+});
 
 function statusText(status: LogStatus): string {
   return (
@@ -242,38 +397,77 @@ function statusText(status: LogStatus): string {
   )[status];
 }
 
-function providerText(code: string | null): string {
-  if (!code) return "—";
-  return providerNames[code.toLowerCase()] ?? code;
+function productTypeText(value: ProductType | null | undefined): string {
+  if (value === "coding_plan") return "套餐";
+  if (value === "api") return "按量";
+  return "—";
 }
 
 function formatNumber(value: number | null | undefined): string {
   return value == null ? "—" : numberFormatter.format(value);
 }
 
-function tokenTooltip(row: LogRow): string {
+function formatCredits(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value) || value <= 0) return "—";
+  return creditFormatter.format(value);
+}
+
+function tokenTooltip(row: Pick<LogRow, "promptTokens" | "completionTokens" | "totalTokens">): string {
   return `${formatNumber(row.promptTokens)} + ${formatNumber(row.completionTokens)} = ${formatNumber(row.totalTokens)}`;
 }
 
-function cacheHitText(cacheRead: number | null, promptTokens: number | null): string {
-  if (cacheRead == null) return "—";
-  if (!promptTokens || cacheRead <= 0) return formatNumber(cacheRead);
-  const percent = Math.min(100, (cacheRead / promptTokens) * 100);
-  return `${formatNumber(cacheRead)} (${percent.toFixed(1)}%)`;
-}
-
 async function onEnterpriseChange() {
-  filters.teamId = undefined;
+  filters.teamId = null;
+  filters.employeeId = null;
   teams.value = [];
+  enterpriseEmployees.value = [];
+  teamEmployees.value = null;
   if (!filters.enterpriseId) return;
   teamsLoading.value = true;
+  employeesLoading.value = true;
   try {
-    const { data } = await http.get(`/api/admin/enterprises/${filters.enterpriseId}/teams`);
-    if (data.success) teams.value = data.data;
+    const [teamRes, userRes] = await Promise.all([
+      http.get(`/api/admin/enterprises/${filters.enterpriseId}/teams`),
+      http.get("/api/admin/users", { params: { enterpriseId: filters.enterpriseId, limit: 200 } }),
+    ]);
+    if (teamRes.data.success) teams.value = teamRes.data.data;
+    if (userRes.data.success) {
+      enterpriseEmployees.value = (userRes.data.data as Array<{
+        id: number;
+        name: string;
+        role: string;
+      }>)
+        .filter((row) => row.role !== "admin")
+        .map((row) => ({ id: row.id, name: row.name }));
+    }
   } catch (e: any) {
-    ElMessage.error(e.response?.data?.message || "团队列表加载失败");
+    ElMessage.error(e.response?.data?.message || "筛选项加载失败");
   } finally {
     teamsLoading.value = false;
+    employeesLoading.value = false;
+  }
+}
+
+async function onTeamChange() {
+  filters.employeeId = null;
+  if (!filters.teamId) {
+    teamEmployees.value = null;
+    return;
+  }
+  employeesLoading.value = true;
+  try {
+    const { data } = await http.get(`/api/admin/teams/${filters.teamId}/members`);
+    if (data.success) {
+      teamEmployees.value = (data.data as Array<{ employeeId: number; name: string }>).map((row) => ({
+        id: row.employeeId,
+        name: row.name,
+      }));
+    }
+  } catch (e: any) {
+    ElMessage.error(e.response?.data?.message || "员工列表加载失败");
+    teamEmployees.value = null;
+  } finally {
+    employeesLoading.value = false;
   }
 }
 
@@ -310,23 +504,39 @@ async function downloadContext(row: LogRow) {
   }
 }
 
-async function load() {
-  const tokens = parseFilterNumber(filters.tokens);
-  if (filters.tokens.trim() && tokens == null) {
-    ElMessage.warning("Tokens 请输入非负整数");
-    return;
+async function openDetail(row: LogRow) {
+  showDetail.value = true;
+  detailLoading.value = true;
+  detail.value = null;
+  try {
+    const { data } = await http.get(`/api/admin/logs/${encodeURIComponent(row.requestId)}`, {
+      timeout: 60_000,
+    });
+    if (data.success) detail.value = data.data;
+  } catch (e: any) {
+    ElMessage.error(e.response?.data?.message || "详情加载失败");
+    showDetail.value = false;
+  } finally {
+    detailLoading.value = false;
   }
+}
 
+function listQueryParams() {
+  const params: Record<string, number> = {
+    limit,
+    offset: (page.value - 1) * limit,
+  };
+  if (filters.enterpriseId) params.enterpriseId = filters.enterpriseId;
+  if (filters.teamId) params.teamId = filters.teamId;
+  if (filters.employeeId) params.employeeId = filters.employeeId;
+  return params;
+}
+
+async function load() {
   loading.value = true;
   try {
     const { data } = await http.get("/api/admin/logs", {
-      params: {
-        limit,
-        offset: (page.value - 1) * limit,
-        enterpriseId: filters.enterpriseId,
-        teamId: filters.teamId,
-        ...(tokens != null ? { tokensOp: filters.tokensOp, tokens } : {}),
-      },
+      params: listQueryParams(),
     });
     if (data.success) {
       items.value = data.data.items;
@@ -362,11 +572,12 @@ function search() {
 }
 
 function resetFilters() {
-  filters.enterpriseId = undefined;
-  filters.teamId = undefined;
+  filters.enterpriseId = null;
+  filters.teamId = null;
+  filters.employeeId = null;
   teams.value = [];
-  filters.tokensOp = "gt";
-  filters.tokens = "";
+  enterpriseEmployees.value = [];
+  teamEmployees.value = null;
   page.value = 1;
   load();
 }
@@ -392,17 +603,6 @@ onMounted(() => {
   align-items: center;
   gap: 8px;
   margin-bottom: 10px;
-}
-.metric-filter {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-.metric-filter-label {
-  color: #667085;
-  font-size: 12px;
-  font-weight: 600;
-  white-space: nowrap;
 }
 .filters :deep(.el-form-item) {
   flex: none;
@@ -460,30 +660,9 @@ onMounted(() => {
   color: #344054;
   text-overflow: ellipsis;
 }
-.channel-cell,
 .result-cell {
   display: inline-flex;
   align-items: center;
-  min-width: 0;
-  max-width: 100%;
-}
-.channel-cell {
-  gap: 4px;
-}
-.channel-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.type-chip {
-  flex: none;
-  padding: 0 5px;
-  border-radius: 4px;
-  background: #eef4ff;
-  color: #3538cd;
-  font-size: 11px;
-  line-height: 18px;
-}
-.result-cell {
   gap: 6px;
 }
 .status-pill {
@@ -540,5 +719,38 @@ onMounted(() => {
   margin-top: 10px;
   display: flex;
   justify-content: flex-end;
+}
+.detail-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.detail-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px 16px;
+  margin: 0;
+}
+.detail-grid dt {
+  color: #667085;
+  font-size: 12px;
+}
+.detail-grid dd {
+  margin: 2px 0 0;
+  color: #101828;
+  font-size: 13px;
+  word-break: break-all;
+}
+.detail-section h3 {
+  margin: 0 0 8px;
+  font-size: 14px;
+}
+.error-text {
+  margin: 0;
+  color: #b42318;
+  font-size: 13px;
+}
+.detail-body :deep(.el-alert) {
+  padding: 8px 12px;
 }
 </style>

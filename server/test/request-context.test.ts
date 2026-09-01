@@ -16,10 +16,12 @@ const {
   buildRequestContextRecord,
   findRequestContextFile,
   publicCandidate,
+  readRequestContextRecord,
   redactHeaders,
   requestContextFilePath,
   sanitizeContextValue,
   serializeRequestContext,
+  summarizeRequestContextForDetail,
   writeRequestContextFile,
 } = await import("../src/lib/relay/request-context.js");
 
@@ -206,6 +208,36 @@ test("writeRequestContextFile gzip-roundtrips under the quota day", async () => 
   const parsed = JSON.parse(unzipped) as { requestBody: { messages: unknown[] }; streamAudit: { eventCount: number } };
   assert.equal(parsed.streamAudit.eventCount, 3);
   assert.equal(parsed.requestBody.messages.length, 1);
+  const viaHelper = await readRequestContextRecord(path) as { requestBody: { messages: unknown[] } };
+  assert.equal(viaHelper.requestBody.messages.length, 1);
+});
+
+test("detail summary keeps small envelopes and strips oversized bodies", () => {
+  const small = { requestId: "threq_small", requestBody: { hello: "world" }, retryTrace: [] };
+  const kept = summarizeRequestContextForDetail(small, 1_000);
+  assert.equal(kept.omittedBodies, false);
+  assert.equal(kept.context, small);
+
+  const huge = {
+    requestId: "threq_huge",
+    requestBody: { blob: "x".repeat(4000) },
+    responseBody: { blob: "y".repeat(4000) },
+    streamAudit: { eventCount: 2, assembled: { blob: "z".repeat(4000) } },
+    retryTrace: [{ attempt: 1 }],
+  };
+  const summarized = summarizeRequestContextForDetail(huge, 1_000);
+  assert.equal(summarized.omittedBodies, true);
+  const context = summarized.context as {
+    requestBody: { omitted?: string };
+    responseBody: { omitted?: string };
+    streamAudit: { assembled: { omitted?: string }; eventCount: number };
+    retryTrace: unknown[];
+  };
+  assert.ok(context.requestBody.omitted);
+  assert.ok(context.responseBody.omitted);
+  assert.ok(context.streamAudit.assembled.omitted);
+  assert.equal(context.streamAudit.eventCount, 2);
+  assert.equal(context.retryTrace.length, 1);
 });
 
 test("findRequestContextFile locates the gzip by quota day", async () => {
