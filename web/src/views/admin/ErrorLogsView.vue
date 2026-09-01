@@ -150,32 +150,30 @@
     >
       <div v-loading="detailLoading" class="detail-body">
         <template v-if="detail">
-          <el-alert
-            v-if="detail.omittedBodies"
-            type="warning"
-            :closable="false"
-            show-icon
-            title="请求/响应正文过大，详情里已省略"
-          />
-          <el-alert
-            v-else-if="!detail.hasContextFile"
-            type="info"
-            :closable="false"
-            show-icon
-            title="该请求没有全文记录（部署前的旧日志没有文件）"
-          />
-
           <dl class="detail-grid">
             <div>
-              <dt>员工</dt>
-              <dd>{{ detail.employeeName }} · {{ detail.employeePhone }}</dd>
+              <dt>Request ID</dt>
+              <dd>
+                <el-button class="request-id-button" link @click="copyRequestId(detail.requestId)">
+                  {{ detail.requestId }}
+                </el-button>
+              </dd>
             </div>
             <div>
-              <dt>企业 / 团队</dt>
+              <dt>员工</dt>
               <dd>
-                {{ detail.enterpriseName || "—" }}
-                <template v-if="detail.teamName"> · {{ detail.teamName }}</template>
+                {{ detail.employeeName || "—" }}
+                <template v-if="detail.employeePhone"> · {{ detail.employeePhone }}</template>
+                <template v-if="detail.employeeDept"> · {{ detail.employeeDept }}</template>
               </dd>
+            </div>
+            <div>
+              <dt>企业</dt>
+              <dd>{{ detail.enterpriseName || "—" }}</dd>
+            </div>
+            <div>
+              <dt>团队</dt>
+              <dd>{{ detail.teamName || "—" }}</dd>
             </div>
             <div>
               <dt>模型</dt>
@@ -183,7 +181,7 @@
             </div>
             <div>
               <dt>渠道</dt>
-              <dd>{{ detail.providerCode || "—" }}</dd>
+              <dd>{{ providerText(detail.providerCode) }} · {{ productTypeText(detail.productType) }}</dd>
             </div>
             <div>
               <dt>状态</dt>
@@ -195,57 +193,25 @@
             </div>
             <div>
               <dt>HTTP</dt>
-              <dd>{{ detail.httpStatus ?? "—" }} / 上游 {{ detail.upstreamStatus ?? "—" }}</dd>
+              <dd>{{ detail.httpStatus ?? "—" }}</dd>
+            </div>
+            <div>
+              <dt>上游 HTTP</dt>
+              <dd>{{ detail.upstreamStatus ?? "—" }}</dd>
+            </div>
+            <div>
+              <dt>渠道凭证</dt>
+              <dd>{{ detail.credentialId ?? "—" }}</dd>
             </div>
             <div>
               <dt>时间</dt>
               <dd>{{ formatDateTime(detail.createdAt) }}</dd>
             </div>
-            <div v-if="contextRecord">
-              <dt>耗时</dt>
-              <dd>{{ contextRecord.latencyMs ?? "—" }} ms</dd>
-            </div>
-            <div v-if="contextRecord">
-              <dt>协议 / 路径</dt>
-              <dd>{{ contextRecord.protocol }} · {{ contextRecord.path }}{{ contextRecord.stream ? " · 流式" : "" }}</dd>
-            </div>
-            <div v-if="contextRecord?.candidate">
-              <dt>渠道 Key</dt>
-              <dd>•••• {{ contextRecord.candidate.credentialSuffix }} · {{ contextRecord.candidate.providerCode }}</dd>
-            </div>
           </dl>
 
           <section class="detail-section">
-            <h3>错误</h3>
+            <h3>错误信息</h3>
             <p class="error-text">{{ detail.errorMessage || "—" }}</p>
-          </section>
-
-          <section v-if="contextRecord?.retryTrace?.length" class="detail-section">
-            <h3>调度轨迹</h3>
-            <el-table :data="contextRecord.retryTrace" size="small" stripe>
-              <el-table-column prop="attempt" label="#" width="50" />
-              <el-table-column prop="credentialSuffix" label="Key" width="80" />
-              <el-table-column prop="outcome" label="结果" width="100" />
-              <el-table-column prop="status" label="HTTP" width="70" />
-              <el-table-column prop="latencyMs" label="耗时" width="80" />
-              <el-table-column prop="reason" label="原因" min-width="140" show-overflow-tooltip />
-            </el-table>
-          </section>
-
-          <section v-if="contextRecord?.headers" class="detail-section">
-            <h3>请求头</h3>
-            <StructuredJson :value="contextRecord.headers" empty-text="没有保存请求头" />
-          </section>
-          <section class="detail-section">
-            <h3>请求体</h3>
-            <StructuredJson :value="contextRecord?.requestBody" empty-text="没有保存请求体（部署前的旧日志没有全文）" />
-          </section>
-          <section class="detail-section">
-            <h3>响应</h3>
-            <StructuredJson
-              :value="contextRecord?.responseBody ?? contextRecord?.streamAudit?.assembled"
-              empty-text="没有保存响应正文"
-            />
           </section>
         </template>
       </div>
@@ -260,11 +226,12 @@
 import { computed, onMounted, reactive, ref } from "vue";
 import { ElMessage } from "element-plus";
 import { http } from "@/api/http";
-import StructuredJson from "@/components/StructuredJson.vue";
+import { copyText } from "@/lib/clipboard";
 import { formatDateTime } from "@/lib/date-time";
 import { useAuthStore } from "@/stores/auth";
 
 type LogStatus = "upstream_error" | "client_error" | "cancelled";
+type ProductType = "api" | "coding_plan";
 
 interface ErrorLogRow {
   id: number;
@@ -275,6 +242,7 @@ interface ErrorLogRow {
   teamName: string | null;
   clientModel: string;
   providerCode: string | null;
+  productType?: ProductType | null;
   status: LogStatus;
   httpStatus: number | null;
   upstreamStatus: number | null;
@@ -285,9 +253,8 @@ interface ErrorLogRow {
 
 interface ErrorLogDetail extends ErrorLogRow {
   employeePhone: string;
-  hasContextFile: boolean;
-  omittedBodies: boolean;
-  context: Record<string, unknown> | null;
+  employeeDept: string | null;
+  credentialId: number | null;
 }
 
 interface NamedOption {
@@ -319,7 +286,7 @@ const employeesLoading = ref(false);
 const items = ref<ErrorLogRow[]>([]);
 const total = ref(0);
 const page = ref(1);
-const limit = 20;
+const limit = 10;
 const loading = ref(false);
 const showDetail = ref(false);
 const detailLoading = ref(false);
@@ -339,23 +306,6 @@ const visibleEmployees = computed(() => {
   });
 });
 
-const contextRecord = computed(() => {
-  const value = detail.value?.context;
-  if (!value || typeof value !== "object") return null;
-  return value as {
-    latencyMs?: number;
-    protocol?: string;
-    path?: string;
-    stream?: boolean;
-    headers?: Record<string, string>;
-    candidate?: { credentialSuffix?: string; providerCode?: string } | null;
-    retryTrace?: Array<Record<string, unknown>>;
-    requestBody?: unknown;
-    responseBody?: unknown;
-    streamAudit?: { assembled?: unknown };
-  };
-});
-
 function statusText(status: LogStatus): string {
   return (
     {
@@ -364,6 +314,29 @@ function statusText(status: LogStatus): string {
       cancelled: "已取消",
     } as const
   )[status];
+}
+
+function productTypeText(value: ProductType | null | undefined): string {
+  if (value === "coding_plan") return "套餐";
+  if (value === "api") return "按量";
+  return "—";
+}
+
+function providerText(code: string | null | undefined): string {
+  if (!code) return "—";
+  const names: Record<string, string> = {
+    glm: "智谱/GLM",
+    kimi: "月之暗面/Kimi",
+    deepseek: "深度求索/DeepSeek",
+    minimax: "MiniMax",
+  };
+  return names[code.toLowerCase()] ?? code;
+}
+
+async function copyRequestId(requestId: string) {
+  const copied = await copyText(requestId);
+  if (copied) ElMessage.success("Request ID 已复制");
+  else ElMessage.error("复制失败");
 }
 
 async function onEnterpriseChange() {
@@ -667,7 +640,11 @@ onMounted(() => {
   font-size: 13px;
   white-space: pre-wrap;
 }
-.detail-body :deep(.el-alert) {
-  padding: 8px 12px;
+.request-id-button {
+  height: auto;
+  padding: 0;
+  color: #344054;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
 }
 </style>

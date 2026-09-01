@@ -1,7 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { and, desc, eq, inArray, sql, type SQL } from "drizzle-orm";
 import { z } from "zod";
-import { env } from "../../config.js";
 import { db } from "../../db/client.js";
 import {
   employees,
@@ -10,12 +9,7 @@ import {
   teams,
 } from "../../db/schema/index.js";
 import { listAdminTeamIds } from "../../lib/org.js";
-import {
-  findRequestContextFile,
-  readRequestContextRecord,
-  REQUEST_CONTEXT_ID_PATTERN,
-  summarizeRequestContextForDetail,
-} from "../../lib/relay/request-context.js";
+import { REQUEST_CONTEXT_ID_PATTERN } from "../../lib/relay/request-context.js";
 import {
   requirePasswordChanged,
   requireRoles,
@@ -23,7 +17,7 @@ import {
 } from "../../middleware/auth.js";
 
 const listQuerySchema = z.object({
-  limit: z.coerce.number().int().min(1).max(200).default(20),
+  limit: z.coerce.number().int().min(1).max(200).default(10),
   offset: z.coerce.number().min(0).default(0),
   requestId: z.string().trim().min(1).max(96).optional(),
   employeeId: z.coerce.number().int().positive().optional(),
@@ -120,29 +114,6 @@ async function resolveListScope(
   return input;
 }
 
-async function loadContextPayload(requestId: string, createdAt: Date) {
-  const filePath = await findRequestContextFile(
-    env.REQUEST_CONTEXT_DIR,
-    env.QUOTA_TIMEZONE,
-    requestId,
-    createdAt,
-  );
-  let context: unknown = null;
-  let omittedBodies = false;
-  if (filePath) {
-    try {
-      const summarized = summarizeRequestContextForDetail(
-        await readRequestContextRecord(filePath),
-      );
-      context = summarized.context;
-      omittedBodies = summarized.omittedBodies;
-    } catch {
-      context = null;
-    }
-  }
-  return { hasContextFile: Boolean(filePath), omittedBodies, context };
-}
-
 export async function adminErrorLogRoutes(app: FastifyInstance) {
   app.addHook("preHandler", requireSession);
   app.addHook("preHandler", requirePasswordChanged);
@@ -196,6 +167,7 @@ export async function adminErrorLogRoutes(app: FastifyInstance) {
         employeeId: employees.id,
         employeeName: employees.name,
         employeePhone: employees.phone,
+        employeeDept: employees.dept,
         enterpriseId: employees.enterpriseId,
         enterpriseName: enterprises.name,
         teamId: requestErrorLogs.teamId,
@@ -234,13 +206,9 @@ export async function adminErrorLogRoutes(app: FastifyInstance) {
       }
     }
 
-    const contextPayload = await loadContextPayload(row.requestId, row.createdAt);
     return {
       success: true,
-      data: {
-        ...row,
-        ...contextPayload,
-      },
+      data: row,
     };
   });
 }
