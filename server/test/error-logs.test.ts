@@ -113,32 +113,53 @@ test("employees cannot list error logs", async () => {
   }
 });
 
-test("error-log SQL hides employee identity for super-admin and scopes org/team", () => {
+test("error-log SQL includes employee identity and scopes org/team/request", () => {
   const superSql = buildErrorLogListQuery({
     limit: 10,
     offset: 0,
-    includeEmployee: false,
   }).toSQL().sql.replace(/\s+/g, " ");
   assert.match(superSql, /from "request_error_logs"/);
-  assert.doesNotMatch(superSql, /"employees"\."name"/);
+  assert.match(superSql, /"employees"\."name"/);
 
   const orgSql = buildErrorLogListQuery({
     limit: 10,
     offset: 0,
-    includeEmployee: true,
     enterpriseId: 9,
+    employeeId: 12,
+    requestId: "threq_abcdefgh",
   }).toSQL();
-  assert.match(orgSql.sql.replace(/\s+/g, " "), /"employees"\."name"/);
+  const orgCompiled = orgSql.sql.replace(/\s+/g, " ");
+  assert.match(orgCompiled, /"employees"\."name"/);
+  assert.match(orgCompiled, /"employee_id"/);
+  assert.match(orgCompiled, /"request_id"/);
   assert.equal(orgSql.params.includes(9), true);
+  assert.equal(orgSql.params.includes(12), true);
+  assert.equal(orgSql.params.includes("threq_abcdefgh"), true);
 
   const teamSql = buildErrorLogListQuery({
     limit: 10,
     offset: 0,
-    includeEmployee: true,
     teamIds: [3, 5],
   }).toSQL();
   const compiled = teamSql.sql.replace(/\s+/g, " ");
   assert.match(compiled, /"team_id"/);
   assert.equal(teamSql.params.includes(3), true);
   assert.equal(teamSql.params.includes(5), true);
+});
+
+test("error-log routes expose list and detail", async () => {
+  const app = Fastify();
+  await app.register(adminErrorLogRoutes);
+  await app.ready();
+  try {
+    assert.equal(app.hasRoute({ method: "GET", url: "/api/admin/error-logs" }), true);
+    assert.equal(app.hasRoute({ method: "GET", url: "/api/admin/error-logs/:requestId" }), true);
+    const unauth = await app.inject({
+      method: "GET",
+      url: "/api/admin/error-logs/threq_abcdefgh",
+    });
+    assert.equal(unauth.statusCode, 401);
+  } finally {
+    await app.close();
+  }
 });
