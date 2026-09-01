@@ -75,6 +75,10 @@ services:
       AUDIT_BODY_MAX_BYTES: "1048576"
       AUDIT_BODY_KEEP_LAST: "200"
       AUDIT_BODY_PRUNE_INTERVAL_MS: "600000"
+      REQUEST_CONTEXT_DIR: /var/lib/tokenhub/request-context
+      REQUEST_CONTEXT_MAX_BYTES: "52428800"
+    volumes:
+      - request_context:/var/lib/tokenhub/request-context
     depends_on:
       postgres:
         condition: service_healthy
@@ -122,3 +126,4 @@ volumes:
   redis_data:
   caddy_data:
   caddy_config:
+  request_context:

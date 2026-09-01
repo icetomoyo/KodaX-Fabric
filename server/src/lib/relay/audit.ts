@@ -10,6 +10,11 @@ import {
   usageCountersTeamDaily,
 } from "../../db/schema/index.js";
 import { resolveLoggedError } from "../glm-error-codes.js";
+import {
+  buildRequestContextRecord,
+  scheduleRequestContextWrite,
+  type RequestContextInput,
+} from "./request-context.js";
 import { quotaDayAt } from "../quota-time.js";
 import { extractCacheReadTokens } from "../usage-cache.js";
 import { hourStartOf } from "./credential-quota.js";
@@ -36,6 +41,7 @@ export type RelayAuditInput = {
   errorCode?: string | null;
   errorMessage?: string | null;
   upstreamPayload?: unknown;
+  context?: RequestContextInput | null;
 };
 
 function safeInteger(value: number | null | undefined): number | null {
@@ -258,4 +264,28 @@ export async function writeRelayAudit(input: RelayAuditInput): Promise<void> {
   if (recorded && credentialId != null && totalTokens > 0) {
     recordCredentialTokens(credentialId, totalTokens);
   }
+}
+
+export function emitRequestContext(
+  logger: { error: (obj: unknown, msg?: string) => void },
+  input: RelayAuditInput,
+): void {
+  if (!input.context) return;
+  scheduleRequestContextWrite(
+    logger,
+    buildRequestContextRecord({
+      requestId: input.requestId,
+      startedAt: input.startedAt ?? new Date(),
+      principal: input.principal,
+      clientModel: input.clientModel,
+      candidate: input.candidate,
+      status: input.status,
+      httpStatus: input.httpStatus,
+      upstreamStatus: input.upstreamStatus,
+      errorCode: input.errorCode,
+      errorMessage: input.errorMessage,
+      usage: input.usage,
+      context: input.context,
+    }),
+  );
 }

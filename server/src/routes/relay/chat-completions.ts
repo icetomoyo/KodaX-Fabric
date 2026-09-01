@@ -7,6 +7,7 @@ import { env } from "../../config.js";
 import {
   emptyRelayUsage,
   parseRelayUsage,
+  emitRequestContext,
   writeRelayAudit,
   type RelayAuditInput,
 } from "../../lib/relay/audit.js";
@@ -277,6 +278,7 @@ async function persistAudit(
   } catch (error) {
     app.log.error({ err: error, requestId: input.requestId }, "failed to write relay audit");
   }
+  emitRequestContext(app.log, input);
 }
 
 function originalModel(body: unknown): string {
@@ -389,28 +391,41 @@ export async function chatCompletionRoutes(app: FastifyInstance) {
       reply.header("x-tokenhub-request-id", requestId);
       reply.header("x-request-id", requestId);
 
-      const finalizeAudit = async (
-        input: {
-          candidate?: RelayCandidate | null;
-          status: RelayAuditInput["status"];
-          usage?: RelayAuditInput["usage"];
-        } & Record<string, unknown>,
-      ) => {
+      const finalizeAudit = async (input: {
+        candidate?: RelayCandidate | null;
+        status: RelayAuditInput["status"];
+        usage?: RelayAuditInput["usage"];
+        httpStatus?: number | null;
+        upstreamStatus?: number | null;
+        errorCode?: string | null;
+        errorMessage?: string | null;
+        responseBody?: unknown;
+        streamAudit?: NonNullable<RelayAuditInput["context"]>["streamAudit"];
+      }) => {
         if (auditWritten) return;
         auditWritten = true;
         await persistAudit(app, {
           requestId,
           principal,
           clientModel,
-          candidate: input.candidate as RelayCandidate | null | undefined,
+          candidate: input.candidate,
           status: input.status,
-          usage: input.usage as RelayAuditInput["usage"],
+          usage: input.usage,
           startedAt: new Date(startedAt),
-          httpStatus: typeof input.httpStatus === "number" ? input.httpStatus : null,
-          upstreamStatus: typeof input.upstreamStatus === "number" ? input.upstreamStatus : null,
-          errorCode: typeof input.errorCode === "string" ? input.errorCode : null,
-          errorMessage: typeof input.errorMessage === "string" ? input.errorMessage : null,
+          httpStatus: input.httpStatus ?? null,
+          upstreamStatus: input.upstreamStatus ?? null,
+          errorCode: input.errorCode ?? null,
+          errorMessage: input.errorMessage ?? null,
           upstreamPayload: input.responseBody,
+          context: {
+            path: req.url,
+            stream: Boolean(isStream),
+            headers: req.headers,
+            requestBody,
+            retryTrace,
+            responseBody: input.responseBody,
+            streamAudit: input.streamAudit,
+          },
         });
       };
 
@@ -778,7 +793,7 @@ export async function chatCompletionRoutes(app: FastifyInstance) {
           retryTrace.push(streamTrace);
           const passthrough = createSsePassthrough(reader, {
             initialChunks: [firstChunk.value],
-            maxAuditBytes: env.AUDIT_BODY_MAX_BYTES,
+            maxAuditBytes: env.REQUEST_CONTEXT_MAX_BYTES,
           });
 
           const cancelDownstream = () => {
@@ -834,6 +849,13 @@ export async function chatCompletionRoutes(app: FastifyInstance) {
               candidate,
               status,
               usage: completion.audit.usage,
+              httpStatus: response.status,
+              streamAudit: {
+                truncated: completion.audit.truncated,
+                doneSeen: completion.audit.doneSeen,
+                eventCount: completion.audit.eventCount,
+                assembled: completion.audit.assembled,
+              },
             });
           }).catch((error) => {
             app.log.error({ err: error, requestId }, "failed to finalize relay stream");

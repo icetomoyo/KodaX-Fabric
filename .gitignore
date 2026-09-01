@@ -1,6 +1,7 @@
 node_modules
 dist
 .tmp
+request-context
 .DS_Store
 *.log
 .env

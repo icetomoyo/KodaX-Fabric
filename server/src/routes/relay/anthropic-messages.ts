@@ -9,6 +9,7 @@ import { env } from "../../config.js";
 import {
   emptyRelayUsage,
   parseRelayUsage,
+  emitRequestContext,
   writeRelayAudit,
   type RelayAuditInput,
 } from "../../lib/relay/audit.js";
@@ -302,13 +303,20 @@ async function persistAudit(app: FastifyInstance, input: RelayAuditInput): Promi
   } catch (error) {
     app.log.error({ err: error, requestId: input.requestId }, "failed to write native relay audit");
   }
+  emitRequestContext(app.log, input);
 }
 
 type FinalizeAuditInput = {
   candidate?: RelayCandidate | null;
   status: RelayAuditInput["status"];
   usage?: RelayAuditInput["usage"];
-} & Record<string, unknown>;
+  httpStatus?: number | null;
+  upstreamStatus?: number | null;
+  errorCode?: string | null;
+  errorMessage?: string | null;
+  responseBody?: unknown;
+  streamAudit?: NonNullable<RelayAuditInput["context"]>["streamAudit"];
+};
 
 async function handleNativeRequest(
   app: FastifyInstance,
@@ -341,15 +349,24 @@ async function handleNativeRequest(
       requestId,
       principal,
       clientModel,
-      candidate: input.candidate as RelayCandidate | null | undefined,
+      candidate: input.candidate,
       status: input.status,
-      usage: input.usage as RelayAuditInput["usage"],
+      usage: input.usage,
       startedAt: new Date(startedAt),
-      httpStatus: typeof input.httpStatus === "number" ? input.httpStatus : null,
-      upstreamStatus: typeof input.upstreamStatus === "number" ? input.upstreamStatus : null,
-      errorCode: typeof input.errorCode === "string" ? input.errorCode : null,
-      errorMessage: typeof input.errorMessage === "string" ? input.errorMessage : null,
+      httpStatus: input.httpStatus ?? null,
+      upstreamStatus: input.upstreamStatus ?? null,
+      errorCode: input.errorCode ?? null,
+      errorMessage: input.errorMessage ?? null,
       upstreamPayload: input.responseBody,
+      context: {
+        path: req.url,
+        stream: Boolean(isStream),
+        headers: req.headers,
+        requestBody,
+        retryTrace,
+        responseBody: input.responseBody,
+        streamAudit: input.streamAudit,
+      },
     });
   };
 
@@ -724,7 +741,7 @@ async function handleNativeRequest(
       const passthrough = createNativeSsePassthrough(reader, {
         protocol: config.protocol,
         initialChunks: [firstChunk.value],
-        maxAuditBytes: env.AUDIT_BODY_MAX_BYTES,
+        maxAuditBytes: env.REQUEST_CONTEXT_MAX_BYTES,
       });
 
       const cancelDownstream = () => {
@@ -783,6 +800,13 @@ async function handleNativeRequest(
           candidate,
           status,
           usage: completion.audit.usage,
+          httpStatus: response.status,
+          streamAudit: {
+            truncated: completion.audit.truncated,
+            terminalSeen: completion.audit.terminalSeen,
+            eventCount: completion.audit.eventCount,
+            assembled: completion.audit.assembled,
+          },
         });
       }).catch((error) => {
         app.log.error({ err: error, requestId }, "failed to finalize native relay stream");
@@ -981,6 +1005,14 @@ async function handleNativeParsingError(
       httpStatus: status,
       errorCode: code,
       errorMessage: message,
+      context: {
+        path: req.url,
+        stream: false,
+        headers: req.headers,
+        requestBody: req.body,
+        retryTrace: [],
+        responseBody: payload,
+      },
     });
   }
   if (!clientError) {

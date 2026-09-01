@@ -27,6 +27,9 @@ RUN npm ci --omit=dev --workspace=@kodax-fabric/server
 COPY --from=build /app/server/dist ./server/dist
 COPY --from=build /app/server/drizzle ./server/drizzle
 
+RUN mkdir -p /var/lib/tokenhub/request-context \
+  && chown node:node /var/lib/tokenhub/request-context
+
 USER node
 EXPOSE 3000
 
