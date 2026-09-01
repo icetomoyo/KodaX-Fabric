@@ -2,10 +2,11 @@
  * Daily usage-tier rebind job.
  *
  * Recalculates `employees.usageTier`: 7×24h after registration stays 重度;
- * after that, the last 7 calendar days' peak `usage_counters_daily.totalTokens`
- * (same window as request-time binding). After a tier change, rebound each
- * employee onto the Key their new scope needs (heavy exclusive → standard
- * team → light enterprise) and drop bindings nobody still needs.
+ * after that, the last 7 calendar days' peak tokens and call count
+ * (same window as request-time binding). Idle (0 TokenHub calls) holds no
+ * Key. After a tier change, rebound each employee onto the Key their new
+ * scope needs (heavy exclusive → standard team → light enterprise) and drop
+ * bindings nobody still needs.
  */
 import { and, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import type { FastifyBaseLogger } from "fastify";
@@ -30,7 +31,7 @@ let timer: ReturnType<typeof setInterval> | null = null;
 let inFlight = false;
 
 function emptyIdsByTier(): Record<UsageTier, number[]> {
-  return { light: [], standard: [], heavy: [] };
+  return { idle: [], light: [], standard: [], heavy: [] };
 }
 
 export async function runTierRebindOnce(
@@ -53,6 +54,7 @@ export async function runTierRebindOnce(
       .select({
         employeeId: usageCountersDaily.employeeId,
         peakTokens: sql<number>`max(${usageCountersDaily.totalTokens})`,
+        requestCount: sql<number>`coalesce(sum(${usageCountersDaily.requestCount}), 0)`,
       })
       .from(usageCountersDaily)
       .where(and(gte(usageCountersDaily.day, usageFrom), lte(usageCountersDaily.day, today)))
@@ -62,10 +64,18 @@ export async function runTierRebindOnce(
   const peakByEmployee = new Map(
     usageRows.map((row) => [row.employeeId, Number(row.peakTokens) || 0]),
   );
+  const requestsByEmployee = new Map(
+    usageRows.map((row) => [row.employeeId, Number(row.requestCount) || 0]),
+  );
 
   const idsByNextTier = emptyIdsByTier();
   for (const row of activeRows) {
-    const next = effectiveUsageTier(peakByEmployee.get(row.id) ?? null, row.createdAt, now);
+    const next = effectiveUsageTier(
+      peakByEmployee.get(row.id) ?? null,
+      row.createdAt,
+      now,
+      requestsByEmployee.get(row.id) ?? 0,
+    );
     if (next !== row.usageTier) {
       idsByNextTier[next].push(row.id);
     }
@@ -81,7 +91,8 @@ export async function runTierRebindOnce(
     changedIds.push(...ids);
   }
 
-  const reboundCount = await rebindEmployeesToCurrentScope(changedIds, now);
+  const reboundIds = changedIds.filter((id) => !idsByNextTier.idle.includes(id));
+  const reboundCount = await rebindEmployeesToCurrentScope(reboundIds, now);
   const orphanReleased = await releaseOrphanBindings(now);
   const result: TierRebindResult = {
     employeeCount: activeRows.length,

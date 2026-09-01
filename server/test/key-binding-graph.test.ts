@@ -343,6 +343,23 @@ test("standard employee without a team uses the enterprise binding", () => {
   assert.deepEqual(useEdges(graph), ["11->21:enterprise_shared"]);
 });
 
+test("idle leftover exclusive or enterprise bindings are not drawn", () => {
+  const graph = buildKeyBindingGraph({
+    employees: [employee({ id: 1, name: "闲置", usageTier: "idle" })],
+    virtualKeys: [virtualKey({ id: 11, employeeId: 1, productLineId: 100 })],
+    credentials: [
+      credential({ id: 21, productLineId: 100 }),
+      credential({ id: 22, productLineId: 100 }),
+    ],
+    bindings: [
+      binding(21, "employee", 1),
+      binding(22, "enterprise", 1),
+    ],
+  });
+
+  assert.deepEqual(useEdges(graph), []);
+});
+
 test("enterprise binding skips standard and heavy employees in the same enterprise", () => {
   const graph = buildKeyBindingGraph({
     employees: [

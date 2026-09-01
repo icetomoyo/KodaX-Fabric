@@ -5,6 +5,7 @@ import {
   classifyUsageTierFromDays,
   effectiveUsageTier,
   isUsageTierProtected,
+  usageTierForRequest,
   USAGE_TIER_PROTECTION_MS,
 } from "../src/lib/usage-tier.js";
 
@@ -14,11 +15,25 @@ function at(iso: string): Date {
   return new Date(iso);
 }
 
-test("unused accounts classify as light", () => {
-  assert.equal(classifyUsageTier(null), "light");
-  assert.equal(classifyUsageTier(undefined), "light");
-  assert.equal(classifyUsageTier(0), "light");
-  assert.equal(classifyUsageTierFromDays([]), "light");
+test("unused accounts classify as idle", () => {
+  assert.equal(classifyUsageTier(null), "idle");
+  assert.equal(classifyUsageTier(undefined), "idle");
+  assert.equal(classifyUsageTier(0), "idle");
+  assert.equal(classifyUsageTier(0, 0), "idle");
+  assert.equal(classifyUsageTierFromDays([]), "idle");
+});
+
+test("zero tokens with TokenHub calls stay light", () => {
+  assert.equal(classifyUsageTier(0, 1), "light");
+  assert.equal(classifyUsageTier(0, 36), "light");
+  assert.equal(classifyUsageTier(null, 12), "light");
+});
+
+test("a live request promotes idle to light", () => {
+  assert.equal(usageTierForRequest("idle"), "light");
+  assert.equal(usageTierForRequest("light"), "light");
+  assert.equal(usageTierForRequest("standard"), "standard");
+  assert.equal(usageTierForRequest("heavy"), "heavy");
 });
 
 test("registration protection lasts 7 × 24 hours", () => {
@@ -36,8 +51,10 @@ test("registration protection lasts 7 × 24 hours", () => {
 
 test("after protection, the 7-day peak classifies directly", () => {
   const graduated = at("2026-08-08T00:00:00.000Z");
-  assert.equal(effectiveUsageTier(null, REGISTERED, graduated), "light");
-  assert.equal(effectiveUsageTier(0, REGISTERED, graduated), "light");
+  assert.equal(effectiveUsageTier(null, REGISTERED, graduated), "idle");
+  assert.equal(effectiveUsageTier(0, REGISTERED, graduated), "idle");
+  assert.equal(effectiveUsageTier(0, REGISTERED, graduated, 0), "idle");
+  assert.equal(effectiveUsageTier(0, REGISTERED, graduated, 36), "light");
   assert.equal(effectiveUsageTier(699_847, REGISTERED, graduated), "light");
   assert.equal(effectiveUsageTier(12_000_000, REGISTERED, graduated), "standard");
   assert.equal(effectiveUsageTier(80_000_000, REGISTERED, graduated), "heavy");

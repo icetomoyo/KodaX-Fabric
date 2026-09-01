@@ -301,8 +301,8 @@ export function usageTierForKeyBindingGraph(
  *
  * Virtual Key → credential edges follow credential_bindings, but only for
  * employees whose current usage tier would actually use that scope:
- * heavy → employee (`dedicated`); standard → team (`team_shared`), else
- * enterprise; light → enterprise (`enterprise_shared`).
+ * idle → none; heavy → employee (`dedicated`); standard → team
+ * (`team_shared`), else enterprise; light → enterprise (`enterprise_shared`).
  * Self-hosted (`custom`) channels skip usage-tier binding: every virtual Key
  * on that channel connects to every protocol-compatible credential (`open_shared`).
  * Unbound credentials stay in the graph with `bound: false`.

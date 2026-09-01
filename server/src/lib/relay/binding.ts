@@ -25,7 +25,7 @@ import {
   usageCountersDaily,
 } from "../../db/schema/index.js";
 import { addCalendarDays, quotaDayAt } from "../quota-time.js";
-import { classifyUsageTier, effectiveUsageTier } from "../usage-tier.js";
+import { classifyUsageTier, effectiveUsageTier, usageTierForRequest } from "../usage-tier.js";
 import {
   effectiveCredentialStatus,
   type CredentialStatus,
@@ -80,6 +80,12 @@ export type AcquireBindingParams = {
   protocol: RelayProtocol;
   now?: Date;
   excludeCredentialIds?: ReadonlySet<number>;
+  /**
+   * Live requests omit this (default true): idle accounts are promoted to
+   * 轻度 so the first call can bind an enterprise Key.
+   * The daily rebind job sets false so idle accounts stay unbound.
+   */
+  promoteIdle?: boolean;
 };
 
 export type AcquireBindingResult =
@@ -160,13 +166,12 @@ const credentialSnapshotSelect = {
 /**
  * Map a usage-tier employee onto the binding scope that should own a Key.
  *
- * heavy → exclusive employee Key; standard → team share, else enterprise;
- * light → enterprise share. Returns null when the required subject is missing.
- *
- * Request-time binding keeps 重度 for 7×24h after registration, then
- * classifies from the latest 7-day peak.
+ * idle → none; heavy → exclusive employee Key; standard → team share, else
+ * enterprise; light → enterprise share. Returns null when the required
+ * subject is missing. Request-time acquire may promote idle → 轻度 first.
  */
 export function resolveBindingScope(input: ResolveBindingScopeInput): BindingScope | null {
+  if (input.usageTier === "idle") return null;
   if (input.usageTier === "heavy") {
     return { scopeType: "employee", scopeId: input.employeeId };
   }
@@ -189,9 +194,7 @@ export function resolveBindingScope(input: ResolveBindingScopeInput): BindingSco
 }
 
 /**
- * Resolve scope from observed peak tokens only (no registration protection).
- * Request-time binding uses `effectiveUsageTier` so a new account stays 重度
- * for 7×24h after `employees.createdAt`.
+ * Resolve scope from observed peak tokens only (no stored-tier lookup).
  */
 export function resolveBindingScopeFromPeak(
   input: Omit<ResolveBindingScopeInput, "usageTier"> & {
@@ -231,12 +234,16 @@ export function unusedBindingIds(
     .map((row) => row.id);
 }
 
-async function loadPeakDailyTokens(employeeId: number, now: Date): Promise<number | null> {
+async function loadRecentUsage(
+  employeeId: number,
+  now: Date,
+): Promise<{ peakTokens: number | null; requestCount: number }> {
   const today = quotaDayAt(now, env.QUOTA_TIMEZONE);
   const usageFrom = addCalendarDays(today, -6);
   const [row] = await db
     .select({
       peakTokens: sql<number>`max(${usageCountersDaily.totalTokens})`,
+      requestCount: sql<number>`coalesce(sum(${usageCountersDaily.requestCount}), 0)`,
     })
     .from(usageCountersDaily)
     .where(
@@ -247,13 +254,18 @@ async function loadPeakDailyTokens(employeeId: number, now: Date): Promise<numbe
       ),
     );
   const peak = Number(row?.peakTokens);
-  return Number.isFinite(peak) && peak > 0 ? peak : null;
+  const requests = Number(row?.requestCount);
+  return {
+    peakTokens: Number.isFinite(peak) && peak > 0 ? peak : null,
+    requestCount: Number.isFinite(requests) && requests > 0 ? requests : 0,
+  };
 }
 
 type ResolvedEmployeeBinding = {
-  scope: BindingScope | null;
   liveTier: UsageTier;
   storedTier: UsageTier;
+  teamId: number | null;
+  enterpriseId: number | null;
 };
 
 /**
@@ -265,14 +277,20 @@ export async function resolveEmployeeBindingScope(
   now: Date = new Date(),
 ): Promise<BindingScope | null> {
   const resolved = await resolveEmployeeBinding(employeeId, now);
-  return resolved?.scope ?? null;
+  if (!resolved) return null;
+  return resolveBindingScope({
+    employeeId,
+    usageTier: resolved.liveTier,
+    teamId: resolved.teamId,
+    enterpriseId: resolved.enterpriseId,
+  });
 }
 
 async function resolveEmployeeBinding(
   employeeId: number,
   now: Date,
 ): Promise<ResolvedEmployeeBinding | null> {
-  const [employee, membership, peakTokens] = await Promise.all([
+  const [employee, membership, usage] = await Promise.all([
     db
       .select({
         usageTier: employees.usageTier,
@@ -289,19 +307,20 @@ async function resolveEmployeeBinding(
       .where(eq(teamMembers.employeeId, employeeId))
       .limit(1)
       .then((rows): TeamMembershipRow | undefined => rows[0]),
-    loadPeakDailyTokens(employeeId, now),
+    loadRecentUsage(employeeId, now),
   ]);
   if (!employee) return null;
-  const liveTier = effectiveUsageTier(peakTokens, employee.createdAt, now);
+  const liveTier = effectiveUsageTier(
+    usage.peakTokens,
+    employee.createdAt,
+    now,
+    usage.requestCount,
+  );
   return {
     liveTier,
     storedTier: employee.usageTier,
-    scope: resolveBindingScope({
-      employeeId,
-      usageTier: liveTier,
-      teamId: membership?.teamId ?? null,
-      enterpriseId: employee.enterpriseId,
-    }),
+    teamId: membership?.teamId ?? null,
+    enterpriseId: employee.enterpriseId,
   };
 }
 
@@ -383,15 +402,25 @@ export async function acquireBoundCredential(
     return acquireOpenPoolCredential(params, now);
   }
   const resolved = await resolveEmployeeBinding(params.employeeId, now);
-  if (!resolved?.scope) {
+  if (!resolved) {
     return { ok: false, reason: "no_scope", retryAt: null };
   }
-  const scope = resolved.scope;
-  const tierChanged = resolved.liveTier !== resolved.storedTier;
+  const liveTier =
+    params.promoteIdle === false ? resolved.liveTier : usageTierForRequest(resolved.liveTier);
+  const scope = resolveBindingScope({
+    employeeId: params.employeeId,
+    usageTier: liveTier,
+    teamId: resolved.teamId,
+    enterpriseId: resolved.enterpriseId,
+  });
+  if (!scope) {
+    return { ok: false, reason: "no_scope", retryAt: null };
+  }
+  const tierChanged = liveTier !== resolved.storedTier;
   if (tierChanged) {
     await db
       .update(employees)
-      .set({ usageTier: resolved.liveTier, updatedAt: now })
+      .set({ usageTier: liveTier, updatedAt: now })
       .where(eq(employees.id, params.employeeId));
   }
 
@@ -468,6 +497,7 @@ export async function rebindEmployeesToCurrentScope(
       productLineId: key.productLineId,
       protocol: key.protocol,
       now,
+      promoteIdle: false,
     });
     if (result.ok) bound += 1;
   }

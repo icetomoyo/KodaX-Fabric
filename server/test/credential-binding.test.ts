@@ -78,9 +78,24 @@ test("standard without a team or enterprise cannot resolve a scope", () => {
   );
 });
 
-test("unused peak and quiet usage both share the enterprise Key", () => {
-  assert.equal(classifyUsageTier(0), "light");
-  for (const peak of [null, 0, 1, 699_847]) {
+test("unused peak is idle and holds no channel Key", () => {
+  assert.equal(classifyUsageTier(0), "idle");
+  for (const peak of [null, 0]) {
+    assert.equal(
+      resolveBindingScopeFromPeak({
+        employeeId: 29,
+        peakTokens: peak,
+        teamId: 4,
+        enterpriseId: 2,
+      }),
+      null,
+      `peak=${String(peak)} classified as ${classifyUsageTier(peak)}`,
+    );
+  }
+});
+
+test("quiet usage still shares the enterprise Key", () => {
+  for (const peak of [1, 699_847]) {
     assert.deepEqual(
       resolveBindingScopeFromPeak({
         employeeId: 29,
@@ -92,6 +107,41 @@ test("unused peak and quiet usage both share the enterprise Key", () => {
       `peak=${String(peak)} classified as ${classifyUsageTier(peak)}`,
     );
   }
+});
+
+test("idle has no binding scope", () => {
+  assert.equal(
+    resolveBindingScope({
+      employeeId: 29,
+      usageTier: "idle",
+      teamId: 4,
+      enterpriseId: 2,
+    }),
+    null,
+  );
+});
+
+test("an idle light user does not keep an exclusive or enterprise Key", () => {
+  const people = [
+    {
+      id: 1,
+      usageTier: "idle" as const,
+      teamId: 10,
+      enterpriseId: 2,
+    },
+  ];
+  assert.equal(bindingStillNeeded({ scopeType: "employee", scopeId: 1 }, people), false);
+  assert.equal(bindingStillNeeded({ scopeType: "enterprise", scopeId: 2 }, people), false);
+  assert.deepEqual(
+    unusedBindingIds(
+      [
+        { id: 1, scopeType: "employee", scopeId: 1 },
+        { id: 2, scopeType: "enterprise", scopeId: 2 },
+      ],
+      people,
+    ),
+    [1, 2],
+  );
 });
 
 test("stored standard tier does not keep a low-usage employee on the team Key", () => {

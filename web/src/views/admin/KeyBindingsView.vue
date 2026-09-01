@@ -52,7 +52,7 @@ type NodeKind = "enterprise" | "team" | "employee" | "virtual_key" | "credential
 type CoolingKind = "five_hour" | "weekly" | "other";
 type CredentialLane = "bound" | "pending" | "cooling_5h" | "cooling_weekly" | "disabled";
 
-type UsageTier = "light" | "standard" | "heavy";
+type UsageTier = "idle" | "light" | "standard" | "heavy";
 
 type GraphEmployee = {
   id: number;
