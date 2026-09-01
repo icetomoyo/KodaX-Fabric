@@ -132,6 +132,18 @@
           <span class="time-text">{{ formatDateTime(row.createdAt) }}</span>
         </template>
       </el-table-column>
+      <el-table-column label="" width="72" align="right">
+        <template #default="{ row }">
+          <el-button
+            class="download-button"
+            link
+            :loading="downloadingId === row.requestId"
+            @click="downloadContext(row)"
+          >
+            下载
+          </el-button>
+        </template>
+      </el-table-column>
     </el-table>
 
     <div class="pager">
@@ -204,6 +216,7 @@ const total = ref(0);
 const page = ref(1);
 const limit = 10;
 const loading = ref(false);
+const downloadingId = ref<string | null>(null);
 
 const hasFilters = computed(() => Boolean(
   filters.enterpriseId
@@ -268,6 +281,33 @@ async function copyRequestId(requestId: string) {
   const copied = await copyText(requestId);
   if (copied) ElMessage.success("Request ID 已复制");
   else ElMessage.error("复制失败");
+}
+
+async function downloadContext(row: LogRow) {
+  if (downloadingId.value) return;
+  downloadingId.value = row.requestId;
+  try {
+    const response = await http.get(`/api/admin/logs/${encodeURIComponent(row.requestId)}/context`, {
+      responseType: "blob",
+      timeout: 120_000,
+    });
+    const blob = new Blob([response.data], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${row.requestId}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+  } catch (e: any) {
+    const status = e.response?.status;
+    if (status === 404) {
+      ElMessage.warning("该请求没有全文记录（部署前的旧日志没有）");
+    } else {
+      ElMessage.error(e.response?.data?.message || "下载失败");
+    }
+  } finally {
+    downloadingId.value = null;
+  }
 }
 
 async function load() {
@@ -490,6 +530,11 @@ onMounted(() => {
 }
 .request-id-button:hover {
   color: var(--el-color-primary);
+}
+.download-button {
+  height: auto;
+  padding: 0;
+  font-size: 12px;
 }
 .pager {
   margin-top: 10px;

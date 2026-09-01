@@ -1,6 +1,9 @@
+import { createReadStream } from "node:fs";
+import { createGunzip } from "node:zlib";
 import type { FastifyInstance } from "fastify";
 import { and, desc, eq, gt, gte, lt, lte, sql, type SQL } from "drizzle-orm";
 import { z } from "zod";
+import { env } from "../../config.js";
 import { db } from "../../db/client.js";
 import {
   employees,
@@ -8,6 +11,10 @@ import {
   requestAudits,
   teams,
 } from "../../db/schema/index.js";
+import {
+  findRequestContextFile,
+  REQUEST_CONTEXT_ID_PATTERN,
+} from "../../lib/relay/request-context.js";
 import {
   requirePasswordChanged,
   requireRoles,
@@ -108,5 +115,43 @@ export async function adminLogRoutes(app: FastifyInstance) {
         items,
       },
     };
+  });
+
+  app.get("/api/admin/logs/:requestId/context", async (req, reply) => {
+    const params = z
+      .object({ requestId: z.string().regex(REQUEST_CONTEXT_ID_PATTERN) })
+      .safeParse(req.params);
+    if (!params.success) {
+      return reply.code(400).send({ success: false, message: "参数无效" });
+    }
+
+    const [row] = await db
+      .select({
+        requestId: requestAudits.requestId,
+        createdAt: requestAudits.createdAt,
+      })
+      .from(requestAudits)
+      .where(eq(requestAudits.requestId, params.data.requestId))
+      .limit(1);
+    if (!row) {
+      return reply.code(404).send({ success: false, message: "调用记录不存在" });
+    }
+
+    const filePath = await findRequestContextFile(
+      env.REQUEST_CONTEXT_DIR,
+      env.QUOTA_TIMEZONE,
+      row.requestId,
+      row.createdAt,
+    );
+    if (!filePath) {
+      return reply.code(404).send({ success: false, message: "该请求没有全文记录" });
+    }
+
+    reply.header("content-type", "application/json; charset=utf-8");
+    reply.header(
+      "content-disposition",
+      `attachment; filename="${row.requestId}.json"`,
+    );
+    return reply.send(createReadStream(filePath).pipe(createGunzip()));
   });
 }

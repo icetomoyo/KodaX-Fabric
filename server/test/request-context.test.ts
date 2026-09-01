@@ -14,6 +14,7 @@ process.env.CREDENTIAL_ENCRYPT_KEY ??= "unit-test-credential-secret";
 const {
   assertSafeRequestId,
   buildRequestContextRecord,
+  findRequestContextFile,
   publicCandidate,
   redactHeaders,
   requestContextFilePath,
@@ -205,4 +206,43 @@ test("writeRequestContextFile gzip-roundtrips under the quota day", async () => 
   const parsed = JSON.parse(unzipped) as { requestBody: { messages: unknown[] }; streamAudit: { eventCount: number } };
   assert.equal(parsed.streamAudit.eventCount, 3);
   assert.equal(parsed.requestBody.messages.length, 1);
+});
+
+test("findRequestContextFile locates the gzip by quota day", async () => {
+  const root = await mkdtemp(join(tmpdir(), "th-context-find-"));
+  const startedAt = new Date("2026-09-01T04:00:00.000Z");
+  const record = buildRequestContextRecord({
+    requestId: "threq_dddddddddddddddddddddddddddddddd",
+    startedAt,
+    principal,
+    clientModel: "glm-5.3",
+    status: "success",
+    context: {
+      path: "/v1/chat/completions",
+      stream: false,
+      headers: {},
+      requestBody: { model: "glm-5.3" },
+      retryTrace: [],
+      responseBody: { ok: true },
+    },
+  });
+  const written = await writeRequestContextFile({
+    rootDir: root,
+    timeZone: "Asia/Shanghai",
+    maxBytes: 1_000_000,
+    record,
+  });
+  assert.equal(
+    await findRequestContextFile(root, "Asia/Shanghai", record.requestId, startedAt),
+    written,
+  );
+  assert.equal(
+    await findRequestContextFile(
+      root,
+      "Asia/Shanghai",
+      "threq_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      startedAt,
+    ),
+    null,
+  );
 });

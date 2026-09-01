@@ -6,17 +6,19 @@
  * Retention is unlimited until an operator deletes files.
  */
 import type { IncomingHttpHeaders } from "node:http";
-import { mkdir, rename, unlink, writeFile } from "node:fs/promises";
+import { constants as fsConstants } from "node:fs";
+import { access, mkdir, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { gzip } from "node:zlib";
 import { env } from "../../config.js";
-import { quotaDayAt } from "../quota-time.js";
+import { addCalendarDays, quotaDayAt } from "../quota-time.js";
 import type { RelayCandidate, RelayPrincipal, RelayRetryTraceItem, RelayUsage } from "./types.js";
 
 const gzipAsync = promisify(gzip);
 
-const SAFE_REQUEST_ID = /^[A-Za-z0-9_-]{8,96}$/;
+export const REQUEST_CONTEXT_ID_PATTERN = /^[A-Za-z0-9_-]{8,96}$/;
+const SAFE_REQUEST_ID = REQUEST_CONTEXT_ID_PATTERN;
 const REDACTED = "[redacted]";
 const HEADER_REDACT =
   /^(authorization|proxy-authorization|cookie|set-cookie|x-api-key|api-key|x-auth-token|anthropic-api-key|x-goog-api-key)$/i;
@@ -101,6 +103,28 @@ export function requestContextFilePath(
     throw new Error("invalid context day");
   }
   return join(rootDir, day, `${requestId}.json.gz`);
+}
+
+/** Look up the gzip file for a request, trying the quota day and its neighbours. */
+export async function findRequestContextFile(
+  rootDir: string,
+  timeZone: string,
+  requestId: string,
+  createdAt: Date,
+): Promise<string | null> {
+  assertSafeRequestId(requestId);
+  const day = quotaDayAt(createdAt, timeZone);
+  const days = [day, addCalendarDays(day, -1), addCalendarDays(day, 1)];
+  for (const candidate of days) {
+    const path = requestContextFilePath(rootDir, candidate, requestId);
+    try {
+      await access(path, fsConstants.R_OK);
+      return path;
+    } catch {
+      // Missing on this day; try the adjacent quota day.
+    }
+  }
+  return null;
 }
 
 export function redactHeaders(
