@@ -53,6 +53,12 @@ export function resolveUserListScope(
   actor: EnterpriseActor,
   requestedEnterpriseId?: number,
 ): UserListScope {
+  if (actor.role === SUPER_ADMIN_ROLE) {
+    return {
+      enterpriseId: requestedEnterpriseId,
+      excludeRoles: [SUPER_ADMIN_ROLE],
+    };
+  }
   if (actor.role !== ORG_ADMIN_ROLE) {
     return { forbidden: true };
   }
@@ -64,8 +70,9 @@ export function resolveUserListScope(
 }
 
 export function canAccessEmployee(actor: EnterpriseActor, target: EmployeeMembership): boolean {
-  if (actor.role !== ORG_ADMIN_ROLE) return false;
   if (target.role === SUPER_ADMIN_ROLE) return false;
+  if (actor.role === SUPER_ADMIN_ROLE) return true;
+  if (actor.role !== ORG_ADMIN_ROLE) return false;
   return target.enterpriseId === actor.enterpriseId;
 }
 
@@ -90,6 +97,8 @@ export function resolveCreatedUserFields(
 
 const ORG_ADMIN_ASSIGNABLE_ROLES: SessionRole[] = ["employee", "team_admin"];
 
+const SUPER_ADMIN_ASSIGNABLE_ROLES: SessionRole[] = ["employee", "team_admin", "org_admin"];
+
 export function resolveUpdatedUserFields(
   actor: EnterpriseActor,
   target: EmployeeMembership,
@@ -97,6 +106,16 @@ export function resolveUpdatedUserFields(
 ): { role: SessionRole; enterpriseId: number | null } | { error: string; status: 403 } {
   if (!canAccessEmployee(actor, target)) {
     return { error: "权限不足", status: 403 };
+  }
+  if (actor.role === SUPER_ADMIN_ROLE) {
+    const enterpriseId = input.enterpriseId === undefined ? target.enterpriseId : input.enterpriseId;
+    if (input.role == null || input.role === target.role) {
+      return { role: target.role, enterpriseId };
+    }
+    if (!SUPER_ADMIN_ASSIGNABLE_ROLES.includes(input.role)) {
+      return { error: "权限不足", status: 403 };
+    }
+    return { role: input.role, enterpriseId };
   }
   if (actor.role !== ORG_ADMIN_ROLE || actor.enterpriseId == null) {
     return { error: "权限不足", status: 403 };

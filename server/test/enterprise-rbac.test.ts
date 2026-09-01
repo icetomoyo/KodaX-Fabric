@@ -209,7 +209,7 @@ test("super-admin approves cooperation applications instead of assigning admins"
   }
 });
 
-test("super-admin cannot list or mutate employees", async () => {
+test("super-admin still cannot create employees", async () => {
   const app = Fastify();
   app.addHook("onRequest", async (req: { session?: Record<string, unknown>; employeeId?: number }) => {
     req.session = {
@@ -225,19 +225,13 @@ test("super-admin cannot list or mutate employees", async () => {
   await app.register(adminUserRoutes);
   await app.ready();
   try {
-    const list = await app.inject({ method: "GET", url: "/api/admin/users" });
-    const logs = await app.inject({
-      method: "GET",
-      url: "/api/admin/users/12/logs?from=2026-08-01&to=2026-08-01",
-    });
     const create = await app.inject({
       method: "POST",
       url: "/api/admin/users",
       payload: { name: "A", phone: "13800001111", password: "ChangeMe@123" },
     });
-    assert.equal(list.statusCode, 403);
-    assert.equal(logs.statusCode, 403);
     assert.equal(create.statusCode, 403);
+    assert.equal(app.hasRoute({ method: "GET", url: "/api/admin/users" }), true);
   } finally {
     await app.close();
   }
@@ -263,13 +257,43 @@ test("org_admin can assign employee and team_admin but not org_admin or super-ad
   assert.equal("error" in toSuper, true);
 });
 
-test("super-admin user list scope is forbidden and cannot access employees", () => {
-  const scope = resolveUserListScope({ role: "admin", enterpriseId: 1 });
-  assert.equal("forbidden" in scope, true);
+test("super-admin can assign org_admin but not another super-admin", () => {
+  const actor = { role: "admin" as const, enterpriseId: 1 };
+  const target = { role: "employee" as const, enterpriseId: 3 };
+  const toOrgAdmin = resolveUpdatedUserFields(actor, target, { role: "org_admin" });
+  assert.equal("error" in toOrgAdmin, false);
+  if ("error" in toOrgAdmin) return;
+  assert.equal(toOrgAdmin.role, "org_admin");
+  assert.equal(toOrgAdmin.enterpriseId, 3);
+
+  const toSuper = resolveUpdatedUserFields(actor, target, { role: "admin" });
+  assert.equal("error" in toSuper, true);
+});
+
+test("super-admin can list and access employees in any enterprise", () => {
+  const scoped = resolveUserListScope({ role: "admin", enterpriseId: 1 }, 3);
+  assert.equal("forbidden" in scoped, false);
+  if ("forbidden" in scoped) return;
+  assert.equal(scoped.enterpriseId, 3);
+  assert.deepEqual(scoped.excludeRoles, ["admin"]);
   assert.equal(
     canAccessEmployee(
       { role: "admin", enterpriseId: 1 },
       { role: "employee", enterpriseId: 3 },
+    ),
+    true,
+  );
+  assert.equal(
+    canAccessEmployee(
+      { role: "admin", enterpriseId: 1 },
+      { role: "org_admin", enterpriseId: 3 },
+    ),
+    true,
+  );
+  assert.equal(
+    canAccessEmployee(
+      { role: "admin", enterpriseId: 1 },
+      { role: "admin", enterpriseId: null },
     ),
     false,
   );

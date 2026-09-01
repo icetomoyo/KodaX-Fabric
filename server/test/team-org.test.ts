@@ -13,7 +13,13 @@ process.env.CREDENTIAL_ENCRYPT_KEY ??= "unit-test-credential-secret";
 const { adminTeamRoutes, buildTeamListQuery } = await import("../src/routes/admin/teams.js");
 const { adminEnterpriseRoutes } = await import("../src/routes/admin/enterprises.js");
 const { meRoutes } = await import("../src/routes/me.js");
-const { employeeSingleTeamConflictMessage, resolveTeamListScope } = await import("../src/lib/org.js");
+const {
+  canAdminTeam,
+  canCreateTeam,
+  canReadTeam,
+  employeeSingleTeamConflictMessage,
+  resolveTeamListScope,
+} = await import("../src/lib/org.js");
 
 const teamAdminSession = {
   sub: "11",
@@ -125,33 +131,28 @@ test("org_admin list SQL constrains teams to one enterprise", () => {
   assert.doesNotMatch(compiled.sql.replace(/\s+/g, " "), /"teams"\."id" in/i);
 });
 
-test("super-admin cannot list or create teams", async () => {
-  const app = Fastify();
-  app.addHook("onRequest", async (req: { session?: Record<string, unknown>; employeeId?: number }) => {
-    req.session = {
-      sub: "1",
-      role: "admin",
-      phone: "13800000000",
-      name: "Super",
-      mustChangePassword: false,
-      enterpriseId: 1,
-    };
-    req.employeeId = 1;
-  });
-  await app.register(adminTeamRoutes);
-  await app.ready();
-  try {
-    const list = await app.inject({ method: "GET", url: "/api/admin/teams" });
-    const create = await app.inject({
-      method: "POST",
-      url: "/api/admin/teams",
-      payload: { name: "Platform Team", enterpriseId: 1 },
-    });
-    assert.equal(list.statusCode, 403);
-    assert.equal(create.statusCode, 403);
-  } finally {
-    await app.close();
-  }
+test("super-admin can list and create teams in any enterprise", () => {
+  const actor = { role: "admin" as const, enterpriseId: 1, employeeId: 1 };
+  const scoped = resolveTeamListScope(actor, 4, []);
+  assert.equal("forbidden" in scoped, false);
+  if ("forbidden" in scoped) return;
+  assert.equal(scoped.enterpriseId, 4);
+
+  const all = resolveTeamListScope(actor, undefined, []);
+  assert.equal("forbidden" in all, false);
+  if ("forbidden" in all) return;
+  assert.equal(all.enterpriseId, undefined);
+  assert.equal(all.teamIds, undefined);
+
+  assert.equal(canCreateTeam(actor, 9), true);
+  assert.equal(
+    canAdminTeam(actor, { teamId: 2, enterpriseId: 9, memberRole: null }),
+    true,
+  );
+  assert.equal(
+    canReadTeam(actor, { teamId: 2, enterpriseId: 9, memberRole: null }),
+    true,
+  );
 });
 
 test("admin shell source includes 团队管理 for org and team admins", () => {

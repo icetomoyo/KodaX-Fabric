@@ -139,7 +139,7 @@ function actorFrom(req: { session?: { role: SessionRole; enterpriseId: number | 
 export async function adminUserRoutes(app: FastifyInstance) {
   app.addHook("preHandler", requireSession);
   app.addHook("preHandler", requirePasswordChanged);
-  app.addHook("preHandler", requireRoles("org_admin"));
+  app.addHook("preHandler", requireRoles("admin", "org_admin"));
 
   app.get("/api/admin/users", async (req, reply) => {
     const query = z

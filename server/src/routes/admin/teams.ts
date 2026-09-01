@@ -129,7 +129,7 @@ async function refreshConsoleRole(employeeId: number) {
 export async function adminTeamRoutes(app: FastifyInstance) {
   app.addHook("preHandler", requireSession);
   app.addHook("preHandler", requirePasswordChanged);
-  app.addHook("preHandler", requireRoles("org_admin", "team_admin"));
+  app.addHook("preHandler", requireRoles("admin", "org_admin", "team_admin"));
 
   app.get("/api/admin/teams", async (req, reply) => {
     const query = z
@@ -166,7 +166,9 @@ export async function adminTeamRoutes(app: FastifyInstance) {
     }
     const actor = actorFrom(req);
     const enterpriseId =
-      actor.role === "org_admin" ? actor.enterpriseId : body.data.enterpriseId ?? actor.enterpriseId;
+      actor.role === "org_admin"
+        ? actor.enterpriseId
+        : body.data.enterpriseId ?? (actor.role === "admin" ? null : actor.enterpriseId);
     if (enterpriseId == null || !canCreateTeam(actor, enterpriseId)) {
       return reply.code(403).send({ success: false, message: "权限不足" });
     }
