@@ -15,32 +15,27 @@
       <div v-loading="loading" class="split-layout">
         <aside class="list-pane">
           <div class="pane-label">
-            <span>企业列表</span>
+            <span>企业</span>
             <span class="pane-count">{{ enterprises.length }}</span>
           </div>
           <el-empty
             v-if="!loading && !enterprises.length"
             description="暂无企业"
-            :image-size="72"
+            :image-size="64"
           >
             <el-button type="primary" @click="openCreateEnterprise">新建企业</el-button>
           </el-empty>
           <div v-else class="card-list">
-            <button
+            <article
               v-for="item in enterprises"
               :key="item.id"
-              type="button"
               class="nav-card"
               :class="{ selected: selectedEnterpriseId === item.id }"
               @click="selectEnterprise(item.id)"
             >
               <div class="nav-card-top">
                 <strong>{{ item.name }}</strong>
-                <el-tag
-                  :type="statusTagType(item.status)"
-                  size="small"
-                  effect="light"
-                >
+                <el-tag :type="statusTagType(item.status)" size="small" effect="light">
                   {{ statusLabel(item.status) }}
                 </el-tag>
               </div>
@@ -51,183 +46,196 @@
               <div class="nav-card-meta">
                 {{ item.contact ? `${item.contact.name} · ${item.contact.phone}` : "暂无企业管理员" }}
               </div>
-            </button>
-          </div>
-        </aside>
-
-        <main class="detail-pane">
-          <template v-if="selectedEnterprise">
-            <div class="detail-header">
-              <div class="detail-copy">
-                <h3 class="detail-title">{{ selectedEnterprise.name }}</h3>
-                <p class="detail-subtitle">
-                  编号 {{ selectedEnterprise.code }}
-                  · {{ statusLabel(selectedEnterprise.status) }}
-                  · {{ formatDateTime(selectedEnterprise.createdAt) }}
-                </p>
-              </div>
-              <div class="detail-actions">
-                <el-button @click="openEditEnterprise(selectedEnterprise)">编辑</el-button>
+              <div v-if="selectedEnterpriseId === item.id" class="unit-card-actions" @click.stop>
+                <el-button link type="primary" size="small" @click="openEditEnterprise(item)">编辑</el-button>
                 <el-button
-                  v-if="selectedEnterprise.status === 'pending'"
+                  v-if="item.status === 'pending'"
+                  link
                   type="success"
-                  :loading="approvingId === selectedEnterprise.id"
-                  @click="approveEnterprise(selectedEnterprise)"
+                  size="small"
+                  :loading="approvingId === item.id"
+                  @click="approveEnterprise(item)"
                 >
                   审核通过
                 </el-button>
                 <el-button
-                  v-else-if="selectedEnterprise.status === 'active'"
+                  v-else-if="item.status === 'active'"
+                  link
                   type="danger"
-                  plain
-                  @click="setEnterpriseStatus(selectedEnterprise, 'disabled')"
+                  size="small"
+                  @click="setEnterpriseStatus(item, 'disabled')"
                 >
                   停用
                 </el-button>
-                <el-button
-                  v-else
-                  type="primary"
-                  @click="setEnterpriseStatus(selectedEnterprise, 'active')"
-                >
+                <el-button v-else link type="primary" size="small" @click="setEnterpriseStatus(item, 'active')">
                   启用
                 </el-button>
-                <el-button type="primary" @click="openCreateTeam">新建团队</el-button>
               </div>
-            </div>
+            </article>
+          </div>
+        </aside>
 
-            <section class="board-section">
-              <div class="section-head">
-                <h4>团队（{{ teams.length }}）</h4>
-              </div>
-              <el-empty
-                v-if="!teams.length"
-                description="该企业还没有团队"
-                :image-size="56"
-              >
-                <el-button type="primary" @click="openCreateTeam">新建团队</el-button>
-              </el-empty>
-              <div v-else class="card-grid">
-                <article
-                  v-for="team in teams"
-                  :key="team.id"
-                  class="unit-card"
-                  :class="{ selected: selectedTeamId === team.id }"
-                  @click="selectTeam(team.id)"
-                >
-                  <div class="unit-card-main">
-                    <strong>{{ team.name }}</strong>
-                    <el-tag :type="team.status === 'active' ? 'success' : 'danger'" size="small" effect="light">
-                      {{ team.status === "active" ? "正常" : "已停用" }}
-                    </el-tag>
-                  </div>
-                  <div class="unit-card-meta">
-                    <span>{{ team.memberCount }} 人</span>
-                    <span>今日 {{ formatTokenCompact(team.todayTotalTokens) }}</span>
-                    <span>本月 {{ formatTokenCompact(team.monthTotalTokens) }}</span>
-                  </div>
-                  <div class="unit-card-actions" @click.stop>
-                    <el-button link type="primary" size="small" @click="openEditTeam(team)">编辑</el-button>
-                    <el-button
-                      v-if="team.status === 'active'"
-                      link
-                      type="danger"
-                      size="small"
-                      @click="setTeamStatus(team, 'disabled')"
-                    >
-                      停用
-                    </el-button>
-                    <el-button v-else link type="primary" size="small" @click="setTeamStatus(team, 'active')">
-                      启用
-                    </el-button>
-                  </div>
-                </article>
-              </div>
-            </section>
-
-            <section class="board-section">
-              <div class="section-head">
-                <h4>{{ employeeSectionTitle }}（{{ visibleEmployees.length }}）</h4>
-                <el-button type="primary" size="small" @click="openInvite">邀请已注册员工</el-button>
-              </div>
-              <el-empty
-                v-if="!visibleEmployees.length"
-                :description="selectedTeamId ? '该团队暂无员工' : '没有未加入团队的员工'"
-                :image-size="56"
-              />
-              <div v-else class="card-grid people-grid">
-                <article v-for="person in visibleEmployees" :key="person.id" class="unit-card person-card">
-                  <div class="unit-card-main">
-                    <strong>{{ person.name }}</strong>
-                    <el-tag :type="statusTagType(person.status)" size="small" effect="light">
-                      {{ statusLabel(person.status) }}
-                    </el-tag>
-                  </div>
-                  <div class="unit-card-meta">
-                    <span>{{ person.phone }}</span>
-                    <span>{{ roleLabel(person.role) }}</span>
-                    <span v-if="person.teamName">{{ person.teamName }}</span>
-                  </div>
-                  <div class="unit-card-actions">
-                    <template v-if="person.status === 'pending'">
-                      <el-button
-                        link
-                        type="success"
-                        size="small"
-                        :loading="approvingUserId === person.id"
-                        @click="approveUser(person)"
-                      >
-                        审核通过
-                      </el-button>
-                    </template>
-                    <template v-else>
-                      <el-button link type="primary" size="small" @click="openUserDetail(person)">详情</el-button>
-                      <el-button link type="primary" size="small" @click="openEditUser(person)">编辑</el-button>
-                      <el-button
-                        v-if="person.role !== 'org_admin' && person.teamId"
-                        link
-                        type="primary"
-                        size="small"
-                        @click="toggleTeamAdmin(person)"
-                      >
-                        {{ person.teamRole === "team_admin" ? "取消团队管理" : "设为团队管理" }}
-                      </el-button>
-                      <el-button
-                        v-if="person.teamId"
-                        link
-                        type="warning"
-                        size="small"
-                        @click="removeFromTeam(person)"
-                      >
-                        移出团队
-                      </el-button>
-                      <el-button link type="warning" size="small" @click="openResetPassword(person)">
-                        重置密码
-                      </el-button>
-                      <el-button
-                        v-if="person.status === 'active'"
-                        link
-                        type="danger"
-                        size="small"
-                        @click="setUserStatus(person, 'disabled')"
-                      >
-                        停用
-                      </el-button>
-                      <el-button v-else link type="primary" size="small" @click="setUserStatus(person, 'active')">
-                        启用
-                      </el-button>
-                    </template>
-                  </div>
-                </article>
-              </div>
-            </section>
-          </template>
+        <aside class="list-pane">
+          <div class="pane-label">
+            <span>团队</span>
+            <span class="pane-count">{{ selectedEnterprise ? teams.length : 0 }}</span>
+            <el-button
+              type="primary"
+              size="small"
+              :disabled="!selectedEnterprise"
+              @click="openCreateTeam"
+            >
+              新建团队
+            </el-button>
+          </div>
           <el-empty
-            v-else-if="!loading"
-            class="detail-empty"
-            :description="enterprises.length ? '请从左侧选择一个企业' : '暂无企业'"
-            :image-size="96"
+            v-if="!selectedEnterprise"
+            description="请先选择企业"
+            :image-size="64"
           />
-        </main>
+          <el-empty
+            v-else-if="!teams.length && !unassignedCount"
+            description="该企业还没有团队"
+            :image-size="64"
+          >
+            <el-button type="primary" @click="openCreateTeam">新建团队</el-button>
+          </el-empty>
+          <div v-else class="card-list">
+            <article
+              v-for="team in teams"
+              :key="team.id"
+              class="nav-card"
+              :class="{ selected: selectedTeamId === team.id }"
+              @click="selectTeam(team.id)"
+            >
+              <div class="nav-card-top">
+                <strong>{{ team.name }}</strong>
+                <el-tag :type="team.status === 'active' ? 'success' : 'danger'" size="small" effect="light">
+                  {{ team.status === "active" ? "正常" : "已停用" }}
+                </el-tag>
+              </div>
+              <div class="nav-card-meta">
+                <span>{{ team.memberCount }} 人</span>
+                <span>今日 {{ formatTokenCompact(team.todayTotalTokens) }}</span>
+                <span>本月 {{ formatTokenCompact(team.monthTotalTokens) }}</span>
+              </div>
+              <div class="unit-card-actions" @click.stop>
+                <el-button link type="primary" size="small" @click="openEditTeam(team)">编辑</el-button>
+                <el-button
+                  v-if="team.status === 'active'"
+                  link
+                  type="danger"
+                  size="small"
+                  @click="setTeamStatus(team, 'disabled')"
+                >
+                  停用
+                </el-button>
+                <el-button v-else link type="primary" size="small" @click="setTeamStatus(team, 'active')">
+                  启用
+                </el-button>
+              </div>
+            </article>
+            <article
+              class="nav-card"
+              :class="{ selected: selectedTeamId === null }"
+              @click="selectTeam(null)"
+            >
+              <div class="nav-card-top">
+                <strong>未加入团队</strong>
+              </div>
+              <div class="nav-card-meta">{{ unassignedCount }} 人</div>
+            </article>
+          </div>
+        </aside>
+
+        <aside class="list-pane people-pane">
+          <div class="pane-label">
+            <span>{{ employeeSectionTitle }}</span>
+            <span class="pane-count">{{ visibleEmployees.length }}</span>
+            <el-button
+              type="primary"
+              size="small"
+              :disabled="!selectedEnterprise"
+              @click="openInvite"
+            >
+              邀请已注册员工
+            </el-button>
+          </div>
+          <el-empty
+            v-if="!selectedEnterprise"
+            description="请先选择企业"
+            :image-size="64"
+          />
+          <el-empty
+            v-else-if="!visibleEmployees.length"
+            :description="selectedTeamId ? '该团队暂无员工' : '没有未加入团队的员工'"
+            :image-size="64"
+          />
+          <div v-else class="card-list">
+            <article v-for="person in visibleEmployees" :key="person.id" class="nav-card person-card">
+              <div class="nav-card-top">
+                <strong>{{ person.name }}</strong>
+                <el-tag :type="statusTagType(person.status)" size="small" effect="light">
+                  {{ statusLabel(person.status) }}
+                </el-tag>
+              </div>
+              <div class="nav-card-meta">
+                <span>{{ person.phone }}</span>
+                <span>{{ roleLabel(person.role) }}</span>
+              </div>
+              <div class="unit-card-actions">
+                <template v-if="person.status === 'pending'">
+                  <el-button
+                    link
+                    type="success"
+                    size="small"
+                    :loading="approvingUserId === person.id"
+                    @click="approveUser(person)"
+                  >
+                    审核通过
+                  </el-button>
+                </template>
+                <template v-else>
+                  <el-button link type="primary" size="small" @click="openUserDetail(person)">详情</el-button>
+                  <el-button link type="primary" size="small" @click="openEditUser(person)">编辑</el-button>
+                  <el-button
+                    v-if="person.role !== 'org_admin' && person.teamId"
+                    link
+                    type="primary"
+                    size="small"
+                    @click="toggleTeamAdmin(person)"
+                  >
+                    {{ person.teamRole === "team_admin" ? "取消团队管理" : "设为团队管理" }}
+                  </el-button>
+                  <el-button
+                    v-if="person.teamId"
+                    link
+                    type="warning"
+                    size="small"
+                    @click="removeFromTeam(person)"
+                  >
+                    移出团队
+                  </el-button>
+                  <el-button link type="warning" size="small" @click="openResetPassword(person)">
+                    重置密码
+                  </el-button>
+                  <el-button
+                    v-if="person.status === 'active'"
+                    link
+                    type="danger"
+                    size="small"
+                    @click="setUserStatus(person, 'disabled')"
+                  >
+                    停用
+                  </el-button>
+                  <el-button v-else link type="primary" size="small" @click="setUserStatus(person, 'active')">
+                    启用
+                  </el-button>
+                </template>
+              </div>
+            </article>
+          </div>
+        </aside>
       </div>
     </section>
 
@@ -364,7 +372,6 @@ import { computed, onMounted, reactive, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { http } from "@/api/http";
-import { formatDateTime } from "@/lib/date-time";
 import { roleLabel } from "@/lib/roles";
 import { formatTokenCompact } from "@/lib/tokens";
 import EmployeeUsageDrawer from "./EmployeeUsageDrawer.vue";
@@ -459,6 +466,10 @@ const selectedEnterprise = computed(
   () => enterprises.value.find((row) => row.id === selectedEnterpriseId.value) ?? null,
 );
 
+const unassignedCount = computed(
+  () => employees.value.filter((row) => row.teamId == null).length,
+);
+
 const visibleEmployees = computed(() => {
   if (selectedTeamId.value == null) {
     return employees.value.filter((row) => row.teamId == null);
@@ -511,10 +522,16 @@ function selectEnterprise(id: number) {
   selectedEnterpriseId.value = id;
   selectedTeamId.value = null;
   syncQuery();
+  void loadTeamsAndPeople().then(() => {
+    if (selectedTeamId.value == null && teams.value[0]) {
+      selectedTeamId.value = teams.value[0].id;
+      syncQuery();
+    }
+  });
 }
 
-function selectTeam(id: number) {
-  selectedTeamId.value = selectedTeamId.value === id ? null : id;
+function selectTeam(id: number | null) {
+  selectedTeamId.value = id;
   syncQuery();
 }
 
@@ -605,8 +622,10 @@ async function refreshAll() {
     const requestedTeam = parseQueryId(route.query.teamId);
     selectedTeamId.value = requestedTeam;
     await loadTeamsAndPeople();
-    if (requestedTeam && !teams.value.some((team) => team.id === requestedTeam)) {
-      selectedTeamId.value = null;
+    if (requestedTeam && teams.value.some((team) => team.id === requestedTeam)) {
+      selectedTeamId.value = requestedTeam;
+    } else {
+      selectedTeamId.value = teams.value[0]?.id ?? null;
     }
     syncQuery();
   } catch (error) {
@@ -1067,15 +1086,14 @@ onMounted(() => {
 
 .split-layout {
   display: grid;
-  grid-template-columns: minmax(260px, 340px) minmax(0, 1fr);
-  gap: 16px;
+  grid-template-columns: minmax(220px, 1fr) minmax(220px, 1fr) minmax(260px, 1.2fr);
+  gap: 12px;
   flex: 1;
   min-height: 0;
   overflow: hidden;
 }
 
-.list-pane,
-.detail-pane {
+.list-pane {
   min-width: 0;
   min-height: 0;
   height: 100%;
@@ -1095,12 +1113,16 @@ onMounted(() => {
   display: flex;
   flex-shrink: 0;
   align-items: center;
-  justify-content: space-between;
+  gap: 8px;
   margin-bottom: 10px;
   padding: 0 4px;
   color: #64748b;
   font-size: 12px;
   font-weight: 600;
+}
+
+.pane-label > span:first-child {
+  margin-right: auto;
 }
 
 .pane-count {
@@ -1138,6 +1160,10 @@ onMounted(() => {
   cursor: pointer;
 }
 
+.person-card {
+  cursor: default;
+}
+
 .nav-card:hover {
   border-color: #93c5fd;
 }
@@ -1148,22 +1174,19 @@ onMounted(() => {
   box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.12);
 }
 
-.nav-card-top,
-.unit-card-main {
+.nav-card-top {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
 }
 
-.nav-card-top strong,
-.unit-card-main strong {
+.nav-card-top strong {
   color: #0f172a;
   font-size: 14px;
 }
 
 .nav-card-bottom,
-.unit-card-meta,
 .nav-card-meta {
   display: flex;
   flex-wrap: wrap;
@@ -1176,84 +1199,9 @@ onMounted(() => {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }
 
-.detail-pane {
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  padding: 18px 20px;
-  background: #fff;
-  overflow: auto;
-}
-
-.detail-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 16px;
-}
-
-.detail-title {
-  margin: 0;
-  font-size: 20px;
-}
-
-.detail-subtitle {
-  margin: 6px 0 0;
-  color: #64748b;
-  font-size: 12px;
-}
-
-.board-section + .board-section {
-  margin-top: 22px;
-}
-
-.section-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 12px;
-}
-
-.section-head h4 {
-  margin: 0;
-  font-size: 15px;
-}
-
-.card-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-  gap: 10px;
-}
-
-.unit-card {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 12px;
-  border: 1px solid #e2e8f0;
-  border-radius: 10px;
-  background: #fff;
-  cursor: pointer;
-}
-
-.unit-card.selected {
-  border-color: #3b82f6;
-  background: #eff6ff;
-}
-
-.person-card {
-  cursor: default;
-}
-
 .form-help {
   margin: 0;
   color: #94a3b8;
   font-size: 12px;
-}
-
-.detail-empty {
-  margin: auto;
 }
 </style>
