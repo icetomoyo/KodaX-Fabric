@@ -200,6 +200,35 @@ test("editing a named team can reassign it to another department in the same ent
   assert.match(enterprisesView, /departmentId: editTeamDepartmentId.value/);
 });
 
+test("editing an employee team only lists teams in the same department", () => {
+  const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+  const usersView = readFileSync(resolve(root, "web/src/views/admin/UsersView.vue"), "utf8");
+  assert.match(usersView, /editTeamOptions/);
+  assert.match(usersView, /departmentId === current.departmentId/);
+  const enterprisesView = readFileSync(resolve(root, "web/src/views/admin/EnterprisesView.vue"), "utf8");
+  assert.match(enterprisesView, /editUserTeamOptions/);
+  assert.match(enterprisesView, /departmentId === current.departmentId/);
+});
+
+test("key binding page is a full canvas with a filter drawer and unbound-key entry", () => {
+  const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+  const view = readFileSync(resolve(root, "web/src/views/admin/KeyBindingsView.vue"), "utf8");
+  assert.doesNotMatch(view, /page-title">调度画布/);
+  assert.match(view, /el-drawer/);
+  assert.match(view, /当前企业/);
+  assert.doesNotMatch(view, /展示程度/);
+  assert.doesNotMatch(view, /部门级/);
+  assert.doesNotMatch(view, /团队级/);
+  assert.match(view, /资源/);
+  assert.doesNotMatch(view, /未绑定 Key/);
+  assert.match(view, /resourceKeys/);
+  assert.match(view, /hydrateOrgChain/);
+  assert.match(view, /\/api\/admin\/departments/);
+  assert.match(view, /isScheduledUseKind/);
+  assert.match(view, /kind === "dedicated" \|\| kind === "department_shared" \|\| kind === "open_shared"/);
+  assert.match(view, /fab-stack/);
+});
+
 test("admin shell source includes 团队管理 for org and team admins", () => {
   const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
   const layout = readFileSync(resolve(root, "web/src/layouts/AdminLayout.vue"), "utf8");

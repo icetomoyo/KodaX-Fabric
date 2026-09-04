@@ -153,6 +153,7 @@ const OPS_AUDIT_VALUE_LABELS: Record<string, string> = {
   coding_plan: "Coding Plan",
   dedicated: "独占绑定",
   team_shared: "团队共享",
+  department_shared: "部门共享",
   enterprise_shared: "企业共享",
   glm: "GLM",
   kimi: "Kimi",

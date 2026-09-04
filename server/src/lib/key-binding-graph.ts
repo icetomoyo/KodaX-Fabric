@@ -6,13 +6,18 @@ import type { RelayProtocol } from "./relay/protocol.js";
 import { isRelayProtocol } from "./relay/protocol.js";
 import { DEFAULT_USAGE_TIER, type UsageTier } from "./usage-tier.js";
 
+const DEFAULT_TEAM_NODE_NAME = "默认团队";
+
 export type KeyBindingEmployeeInput = {
   id: number;
   name: string;
   enterpriseId: number | null;
   enterpriseName: string | null;
+  departmentId: number | null;
+  departmentName: string | null;
   teamId: number | null;
   teamName: string | null;
+  teamIsDefault?: boolean;
   usageTier?: UsageTier;
 };
 
@@ -43,7 +48,7 @@ export type KeyBindingCredentialInput = {
   supportedProtocols: readonly string[];
 };
 
-export type KeyBindingScopeType = "employee" | "team" | "enterprise";
+export type KeyBindingScopeType = "employee" | "team" | "enterprise" | "department";
 
 export type KeyBindingBindingInput = {
   credentialId: number;
@@ -65,6 +70,7 @@ export type KeyBindingCredential = KeyBindingCredentialInput & {
 
 export type KeyBindingNodeType =
   | "enterprise"
+  | "department"
   | "team"
   | "employee"
   | "virtual_key"
@@ -75,6 +81,7 @@ export type KeyBindingEdgeKind =
   | "owns"
   | "dedicated"
   | "team_shared"
+  | "department_shared"
   | "enterprise_shared"
   | "open_shared";
 
@@ -99,14 +106,23 @@ export type KeyBindingEnterprise = {
   name: string;
 };
 
-export type KeyBindingTeam = {
+export type KeyBindingDepartment = {
   id: number;
   name: string;
   enterpriseId: number | null;
 };
 
+export type KeyBindingTeam = {
+  id: number;
+  name: string;
+  enterpriseId: number | null;
+  departmentId: number | null;
+  isDefault?: boolean;
+};
+
 export type KeyBindingGraph = {
   employees: KeyBindingEmployee[];
+  departments: KeyBindingDepartment[];
   teams: KeyBindingTeam[];
   virtualKeys: KeyBindingVirtualKey[];
   credentials: KeyBindingCredential[];
@@ -125,10 +141,11 @@ type GraphInput = {
 
 const BINDING_EDGE_KIND: Record<
   KeyBindingScopeType,
-  Extract<KeyBindingEdgeKind, "dedicated" | "team_shared" | "enterprise_shared">
+  Extract<KeyBindingEdgeKind, "dedicated" | "team_shared" | "department_shared" | "enterprise_shared">
 > = {
   employee: "dedicated",
   team: "team_shared",
+  department: "department_shared",
   enterprise: "enterprise_shared",
 };
 
@@ -144,6 +161,7 @@ function employeeMatches(row: KeyBindingEmployeeInput, q: string): boolean {
   return (
     row.name.toLowerCase().includes(q) ||
     (row.enterpriseName?.toLowerCase().includes(q) ?? false) ||
+    (row.departmentName?.toLowerCase().includes(q) ?? false) ||
     (row.teamName?.toLowerCase().includes(q) ?? false)
   );
 }
@@ -186,14 +204,39 @@ function collectEnterprises(
   return [...byId.values()].sort((a, b) => a.id - b.id);
 }
 
+function collectDepartments(
+  employees: readonly KeyBindingEmployeeInput[],
+): KeyBindingDepartment[] {
+  const byId = new Map<number, KeyBindingDepartment>();
+  for (const row of employees) {
+    if (row.departmentId == null || !row.departmentName) continue;
+    byId.set(row.departmentId, {
+      id: row.departmentId,
+      name: row.departmentName,
+      enterpriseId: row.enterpriseId,
+    });
+  }
+  return [...byId.values()].sort((a, b) => a.id - b.id);
+}
+
+function isDefaultTeam(row: {
+  teamName?: string | null;
+  teamIsDefault?: boolean;
+  isDefault?: boolean;
+}): boolean {
+  return row.teamIsDefault === true || row.isDefault === true || row.teamName === DEFAULT_TEAM_NODE_NAME;
+}
+
 function collectTeams(employees: readonly KeyBindingEmployeeInput[]): KeyBindingTeam[] {
   const byId = new Map<number, KeyBindingTeam>();
   for (const row of employees) {
-    if (row.teamId == null || !row.teamName) continue;
+    if (row.teamId == null || !row.teamName || isDefaultTeam(row)) continue;
     byId.set(row.teamId, {
       id: row.teamId,
       name: row.teamName,
       enterpriseId: row.enterpriseId,
+      departmentId: row.departmentId,
+      isDefault: false,
     });
   }
   return [...byId.values()].sort((a, b) => a.id - b.id);
@@ -201,27 +244,68 @@ function collectTeams(employees: readonly KeyBindingEmployeeInput[]): KeyBinding
 
 function buildOrgEdges(employees: readonly KeyBindingEmployeeInput[]): KeyBindingEdge[] {
   const edges: KeyBindingEdge[] = [];
+  const seenEnterpriseDepartment = new Set<string>();
+  const seenDepartmentTeam = new Set<string>();
   const seenEnterpriseTeam = new Set<string>();
   for (const employee of employees) {
-    if (employee.teamId != null) {
-      if (employee.enterpriseId != null) {
-        const id = `org:ent:${employee.enterpriseId}:team:${employee.teamId}`;
-        if (!seenEnterpriseTeam.has(id)) {
-          seenEnterpriseTeam.add(id);
-          edges.push({
-            id,
-            sourceType: "enterprise",
-            sourceId: employee.enterpriseId,
-            targetType: "team",
-            targetId: employee.teamId,
-            kind: "org",
-          });
-        }
+    if (employee.enterpriseId != null && employee.departmentId != null) {
+      const id = `org:ent:${employee.enterpriseId}:dept:${employee.departmentId}`;
+      if (!seenEnterpriseDepartment.has(id)) {
+        seenEnterpriseDepartment.add(id);
+        edges.push({
+          id,
+          sourceType: "enterprise",
+          sourceId: employee.enterpriseId,
+          targetType: "department",
+          targetId: employee.departmentId,
+          kind: "org",
+        });
       }
+    }
+    const namedTeam = employee.teamId != null && !isDefaultTeam(employee);
+    if (employee.departmentId != null && namedTeam) {
+      const id = `org:dept:${employee.departmentId}:team:${employee.teamId}`;
+      if (!seenDepartmentTeam.has(id)) {
+        seenDepartmentTeam.add(id);
+        edges.push({
+          id,
+          sourceType: "department",
+          sourceId: employee.departmentId,
+          targetType: "team",
+          targetId: employee.teamId!,
+          kind: "org",
+        });
+      }
+    } else if (employee.enterpriseId != null && namedTeam) {
+      const id = `org:ent:${employee.enterpriseId}:team:${employee.teamId}`;
+      if (!seenEnterpriseTeam.has(id)) {
+        seenEnterpriseTeam.add(id);
+        edges.push({
+          id,
+          sourceType: "enterprise",
+          sourceId: employee.enterpriseId,
+          targetType: "team",
+          targetId: employee.teamId!,
+          kind: "org",
+        });
+      }
+    }
+    if (namedTeam) {
       edges.push({
         id: `org:team:${employee.teamId}:emp:${employee.id}`,
         sourceType: "team",
-        sourceId: employee.teamId,
+        sourceId: employee.teamId!,
+        targetType: "employee",
+        targetId: employee.id,
+        kind: "org",
+      });
+      continue;
+    }
+    if (employee.departmentId != null) {
+      edges.push({
+        id: `org:dept:${employee.departmentId}:emp:${employee.id}`,
+        sourceType: "department",
+        sourceId: employee.departmentId,
         targetType: "employee",
         targetId: employee.id,
         kind: "org",
@@ -275,6 +359,7 @@ function employeeMatchesBinding(
     employeeId: employee.id,
     usageTier: employee.usageTier ?? DEFAULT_USAGE_TIER,
     teamId: employee.teamId,
+    departmentId: employee.departmentId,
     enterpriseId: employee.enterpriseId,
   });
   return scope?.scopeType === binding.scopeType && scope.scopeId === binding.scopeId;
@@ -297,12 +382,13 @@ export function usageTierForKeyBindingGraph(
 
 /**
  * Build the super-admin graph:
- * enterprise → team → employee → virtual Key → upstream credential.
+ * enterprise → department → named team → employee → virtual Key → upstream credential.
+ * Default-team members hang on the department; the default team is not drawn.
  *
  * Virtual Key → credential edges follow credential_bindings, but only for
  * employees whose current usage tier would actually use that scope:
- * idle → none; heavy → employee (`dedicated`); standard → team
- * (`team_shared`).
+ * idle → none; heavy → employee (`dedicated`); standard → department
+ * (`department_shared`).
  * Self-hosted (`custom`) channels skip usage-tier binding: every virtual Key
  * on that channel connects to every protocol-compatible credential (`open_shared`).
  * Unbound credentials stay in the graph with `bound: false`.
@@ -455,6 +541,7 @@ export function buildKeyBindingGraph(input: GraphInput): KeyBindingGraph {
     }));
   keys = uniqueById(keys).sort((a, b) => a.id - b.id);
   credentials = uniqueById(credentials).sort((a, b) => a.id - b.id);
+  const departments = collectDepartments(employees);
   const teams = collectTeams(employees);
   const employeeIds = new Set(employees.map((row) => row.id));
   const keyIds = new Set(keys.map((row) => row.id));
@@ -471,6 +558,7 @@ export function buildKeyBindingGraph(input: GraphInput): KeyBindingGraph {
 
   return {
     employees,
+    departments,
     teams,
     virtualKeys: keys,
     credentials,

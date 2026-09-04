@@ -39,7 +39,12 @@ export const auditStatusEnum = pgEnum("audit_status", [
   "client_error",
   "cancelled",
 ]);
-export const bindingScopeTypeEnum = pgEnum("binding_scope_type", ["employee", "team", "enterprise"]);
+export const bindingScopeTypeEnum = pgEnum("binding_scope_type", [
+  "employee",
+  "team",
+  "enterprise",
+  "department",
+]);
 export const usageTierEnum = pgEnum("usage_tier", ["idle", "standard", "heavy"]);
 
 export const enterprises = pgTable(

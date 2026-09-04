@@ -21,11 +21,17 @@ import {
   productLines,
   providers,
   teamMembers,
+  teams,
   upstreamCredentials,
   usageCountersDaily,
 } from "../../db/schema/index.js";
 import { addCalendarDays, quotaDayAt } from "../quota-time.js";
-import { classifyUsageTier, effectiveUsageTier, usageTierForRequest } from "../usage-tier.js";
+import {
+  averageDailyTokensFromWindow,
+  classifyUsageTier,
+  effectiveUsageTier,
+  usageTierForRequest,
+} from "../usage-tier.js";
 import {
   effectiveCredentialStatus,
   type CredentialStatus,
@@ -41,7 +47,7 @@ import {
 import { isRelayProtocol, type RelayProtocol } from "./protocol.js";
 import { isOpenPoolProvider, OPEN_POOL_PROVIDER_CODE } from "./open-pool.js";
 
-export type BindingScopeType = "employee" | "team" | "enterprise";
+export type BindingScopeType = "employee" | "team" | "enterprise" | "department";
 
 export type BindingScope = {
   scopeType: BindingScopeType;
@@ -52,6 +58,7 @@ export type ResolveBindingScopeInput = {
   employeeId: number;
   usageTier: UsageTier;
   teamId: number | null;
+  departmentId: number | null;
   enterpriseId: number | null;
 };
 
@@ -82,7 +89,7 @@ export type AcquireBindingParams = {
   excludeCredentialIds?: ReadonlySet<number>;
   /**
    * Live requests omit this (default true): idle accounts are promoted to
-   * 标准 so the first call can bind a team-shared Key.
+   * 标准 so the first call can bind a department-shared Key.
    * The daily rebind job sets false so idle accounts stay unbound.
    */
   promoteIdle?: boolean;
@@ -104,11 +111,13 @@ export type BindingEligibilityPerson = {
   id: number;
   usageTier: UsageTier;
   teamId: number | null;
+  departmentId: number | null;
   enterpriseId: number | null;
 };
 
 type TeamMembershipRow = {
   teamId: number;
+  departmentId: number;
 };
 
 type BindingLocatorRow = {
@@ -166,33 +175,35 @@ const credentialSnapshotSelect = {
 /**
  * Map a usage-tier employee onto the binding scope that should own a Key.
  *
- * idle → none; heavy → exclusive employee Key; standard → team share.
+ * idle → none; heavy → exclusive employee Key; standard → department share.
  * Returns null when the required subject is missing (idle, or standard
- * without a team). Request-time acquire may promote idle → 标准 first.
+ * without a department). Request-time acquire may promote idle → 标准 first.
  */
 export function resolveBindingScope(input: ResolveBindingScopeInput): BindingScope | null {
   if (input.usageTier === "idle") return null;
   if (input.usageTier === "heavy") {
     return { scopeType: "employee", scopeId: input.employeeId };
   }
-  if (input.usageTier === "standard" && input.teamId != null) {
-    return { scopeType: "team", scopeId: input.teamId };
+  if (input.usageTier === "standard" && input.departmentId != null) {
+    return { scopeType: "department", scopeId: input.departmentId };
   }
   return null;
 }
 
 /**
- * Resolve scope from observed peak tokens only (no stored-tier lookup).
+ * Resolve scope from the 7-day daily average (no stored-tier lookup).
  */
 export function resolveBindingScopeFromPeak(
   input: Omit<ResolveBindingScopeInput, "usageTier"> & {
-    peakTokens: number | null | undefined;
+    peakTokens?: number | null;
+    averageDailyTokens?: number | null;
   },
 ): BindingScope | null {
   return resolveBindingScope({
     employeeId: input.employeeId,
-    usageTier: classifyUsageTier(input.peakTokens),
+    usageTier: classifyUsageTier(input.averageDailyTokens ?? input.peakTokens),
     teamId: input.teamId,
+    departmentId: input.departmentId,
     enterpriseId: input.enterpriseId,
   });
 }
@@ -207,6 +218,7 @@ export function bindingStillNeeded(
       employeeId: person.id,
       usageTier: person.usageTier,
       teamId: person.teamId,
+      departmentId: person.departmentId,
       enterpriseId: person.enterpriseId,
     });
     return scope?.scopeType === binding.scopeType && scope.scopeId === binding.scopeId;
@@ -225,12 +237,12 @@ export function unusedBindingIds(
 async function loadRecentUsage(
   employeeId: number,
   now: Date,
-): Promise<{ peakTokens: number | null; requestCount: number }> {
+): Promise<{ averageDailyTokens: number | null; requestCount: number }> {
   const today = quotaDayAt(now, env.QUOTA_TIMEZONE);
   const usageFrom = addCalendarDays(today, -6);
   const [row] = await db
     .select({
-      peakTokens: sql<number>`max(${usageCountersDaily.totalTokens})`,
+      totalTokens: sql<number>`coalesce(sum(${usageCountersDaily.totalTokens}), 0)`,
       requestCount: sql<number>`coalesce(sum(${usageCountersDaily.requestCount}), 0)`,
     })
     .from(usageCountersDaily)
@@ -241,10 +253,10 @@ async function loadRecentUsage(
         lte(usageCountersDaily.day, today),
       ),
     );
-  const peak = Number(row?.peakTokens);
+  const total = Number(row?.totalTokens);
   const requests = Number(row?.requestCount);
   return {
-    peakTokens: Number.isFinite(peak) && peak > 0 ? peak : null,
+    averageDailyTokens: Number.isFinite(total) && total > 0 ? averageDailyTokensFromWindow(total) : null,
     requestCount: Number.isFinite(requests) && requests > 0 ? requests : 0,
   };
 }
@@ -253,6 +265,7 @@ type ResolvedEmployeeBinding = {
   liveTier: UsageTier;
   storedTier: UsageTier;
   teamId: number | null;
+  departmentId: number | null;
   enterpriseId: number | null;
 };
 
@@ -270,6 +283,7 @@ export async function resolveEmployeeBindingScope(
     employeeId,
     usageTier: resolved.liveTier,
     teamId: resolved.teamId,
+    departmentId: resolved.departmentId,
     enterpriseId: resolved.enterpriseId,
   });
 }
@@ -290,8 +304,9 @@ async function resolveEmployeeBinding(
       .limit(1)
       .then((rows): EmployeeScopeRow | undefined => rows[0]),
     db
-      .select({ teamId: teamMembers.teamId })
+      .select({ teamId: teamMembers.teamId, departmentId: teams.departmentId })
       .from(teamMembers)
+      .innerJoin(teams, eq(teamMembers.teamId, teams.id))
       .where(eq(teamMembers.employeeId, employeeId))
       .limit(1)
       .then((rows): TeamMembershipRow | undefined => rows[0]),
@@ -299,7 +314,7 @@ async function resolveEmployeeBinding(
   ]);
   if (!employee) return null;
   const liveTier = effectiveUsageTier(
-    usage.peakTokens,
+    usage.averageDailyTokens,
     employee.createdAt,
     now,
     usage.requestCount,
@@ -308,6 +323,7 @@ async function resolveEmployeeBinding(
     liveTier,
     storedTier: employee.usageTier,
     teamId: membership?.teamId ?? null,
+    departmentId: membership?.departmentId ?? null,
     enterpriseId: employee.enterpriseId,
   };
 }
@@ -399,6 +415,7 @@ export async function acquireBoundCredential(
     employeeId: params.employeeId,
     usageTier: liveTier,
     teamId: resolved.teamId,
+    departmentId: resolved.departmentId,
     enterpriseId: resolved.enterpriseId,
   });
   if (!scope) {
@@ -539,15 +556,28 @@ async function loadEmployeesForEligibility(_now: Date): Promise<BindingEligibili
       })
       .from(employees)
       .where(eq(employees.status, "active")),
-    db.select({ employeeId: teamMembers.employeeId, teamId: teamMembers.teamId }).from(teamMembers),
+    db
+      .select({
+        employeeId: teamMembers.employeeId,
+        teamId: teamMembers.teamId,
+        departmentId: teams.departmentId,
+      })
+      .from(teamMembers)
+      .innerJoin(teams, eq(teamMembers.teamId, teams.id)),
   ]);
-  const teamByEmployee = new Map(memberships.map((row) => [row.employeeId, row.teamId]));
-  return people.map((row) => ({
-    id: row.id,
-    usageTier: row.usageTier,
-    enterpriseId: row.enterpriseId,
-    teamId: teamByEmployee.get(row.id) ?? null,
-  }));
+  const membershipByEmployee = new Map(
+    memberships.map((row) => [row.employeeId, { teamId: row.teamId, departmentId: row.departmentId }]),
+  );
+  return people.map((row) => {
+    const membership = membershipByEmployee.get(row.id);
+    return {
+      id: row.id,
+      usageTier: row.usageTier,
+      enterpriseId: row.enterpriseId,
+      teamId: membership?.teamId ?? null,
+      departmentId: membership?.departmentId ?? null,
+    };
+  });
 }
 
 type SnapshotVerdict =

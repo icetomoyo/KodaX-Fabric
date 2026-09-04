@@ -3,7 +3,7 @@
  *
  * Covers the three tier scopes that replaced grants / public-pool routing:
  *   a) heavy employees get an exclusive Key that others do not share
- *   b) two standard teammates share one team Key
+ *   b) two standard users in the same department share one department Key
  *   c) exhausting a bound Key's 5-hour quota cools it and rebinds from the pool
  *
  * Uses local PostgreSQL, Redis, and a temporary node:http upstream.
@@ -74,9 +74,9 @@ const {
 
 type UsageTier = "standard" | "heavy";
 
-const PEAK_TOKENS_BY_TIER: Record<UsageTier, number> = {
+const WINDOW_TOKENS_BY_TIER: Record<UsageTier, number> = {
   standard: 12_000_000,
-  heavy: 80_000_000,
+  heavy: 210_000_000,
 };
 
 type CreatedEmployee = {
@@ -101,6 +101,7 @@ const trackedRedisKeys = new Set<string>();
 const created = {
   employeeIds: [] as number[],
   teamIds: [] as number[],
+  departmentId: 0,
   providerIds: [] as number[],
   productLineIds: [] as number[],
   credentialIds: [] as number[],
@@ -233,7 +234,7 @@ async function insertEmployee(input: {
   await db.insert(usageCountersDaily).values({
     day: quotaDayAt(new Date(), env.QUOTA_TIMEZONE),
     employeeId: employee.id,
-    totalTokens: PEAK_TOKENS_BY_TIER[input.usageTier],
+    totalTokens: WINDOW_TOKENS_BY_TIER[input.usageTier],
     requestCount: 1,
   });
   return { id: employee.id, phone, apiKeyRaw: "" };
@@ -354,7 +355,7 @@ async function insertChannel(
 async function insertBinding(
   credentialId: number,
   productLineId: number,
-  scopeType: "employee" | "team" | "enterprise",
+  scopeType: "employee" | "team" | "enterprise" | "department",
   scopeId: number,
 ): Promise<void> {
   await db.insert(credentialBindings).values({
@@ -368,6 +369,7 @@ async function insertBinding(
 async function insertFixtures(upstreamBaseUrl: string): Promise<void> {
   const enterpriseId = await getDefaultEnterpriseId();
   const departmentId = await ensureDefaultDepartment(enterpriseId);
+  created.departmentId = departmentId;
 
   const [exclusiveTeam] = await db
     .insert(teams)
@@ -443,7 +445,12 @@ async function insertFixtures(upstreamBaseUrl: string): Promise<void> {
   await insertApiKey(quotaHeavy, quotaRebind.productLineId, quotaTeam.id, `quota ${marker}`);
 
   await insertBinding(exclusive.firstCredentialId, exclusive.productLineId, "employee", heavyA.id);
-  await insertBinding(teamShare.firstCredentialId, teamShare.productLineId, "team", shareTeam.id);
+  await insertBinding(
+    teamShare.firstCredentialId,
+    teamShare.productLineId,
+    "department",
+    departmentId,
+  );
   await insertBinding(
     quotaRebind.firstCredentialId,
     quotaRebind.productLineId,
@@ -511,7 +518,7 @@ async function waitForAudit(requestId: string): Promise<{ credentialId: number |
 
 async function selectBinding(
   productLineId: number,
-  scopeType: "employee" | "team" | "enterprise",
+  scopeType: "employee" | "team" | "enterprise" | "department",
   scopeId: number,
 ): Promise<number | null> {
   const [row] = await db
@@ -551,8 +558,8 @@ async function assertExclusive(baseUrl: string): Promise<void> {
   );
 }
 
-async function assertTeamShare(baseUrl: string): Promise<void> {
-  assert(teamShare && standardA && standardB && created.teamIds[1]);
+async function assertDepartmentShare(baseUrl: string): Promise<void> {
+  assert(teamShare && standardA && standardB && created.departmentId);
   const first = await callChat(baseUrl, standardA, teamShare.clientModel);
   const second = await callChat(baseUrl, standardB, teamShare.clientModel);
   assert.equal(first.status, 200);
@@ -563,9 +570,9 @@ async function assertTeamShare(baseUrl: string): Promise<void> {
     waitForAudit(second.requestId),
   ]);
   assert.equal(firstAudit.credentialId, teamShare.firstCredentialId);
-  assert.equal(secondAudit.credentialId, teamShare.firstCredentialId, "teammates must share the team Key");
+  assert.equal(secondAudit.credentialId, teamShare.firstCredentialId, "department members must share the department Key");
   assert.equal(
-    await selectBinding(teamShare.productLineId, "team", created.teamIds[1]),
+    await selectBinding(teamShare.productLineId, "department", created.departmentId),
     teamShare.firstCredentialId,
   );
   assert.equal(await selectBinding(teamShare.productLineId, "employee", standardA.id), null);
@@ -597,13 +604,13 @@ async function assertQuotaRebind(baseUrl: string): Promise<void> {
 
 async function runAssertions(baseUrl: string): Promise<void> {
   await assertExclusive(baseUrl);
-  await assertTeamShare(baseUrl);
+  await assertDepartmentShare(baseUrl);
   await assertQuotaRebind(baseUrl);
   assert.deepEqual(mockFailures, []);
   console.log(JSON.stringify({
     ok: true,
     exclusiveHeavyKeys: true,
-    standardTeamShare: true,
+    standardDepartmentShare: true,
     quotaExhaustRebind: true,
   }, null, 2));
 }

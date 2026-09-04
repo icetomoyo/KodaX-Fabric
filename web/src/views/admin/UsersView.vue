@@ -139,11 +139,16 @@
           <el-select
             v-model="editForm.teamId"
             clearable
-            placeholder="选择团队"
+            placeholder="选择本部门下的团队"
             style="width: 100%"
             :disabled="editForm.status !== 'active'"
           >
-            <el-option v-for="item in teams" :key="item.id" :label="teamLabel(item)" :value="item.id" />
+            <el-option
+              v-for="item in editTeamOptions"
+              :key="item.id"
+              :label="teamLabel(item)"
+              :value="item.id"
+            />
           </el-select>
         </el-form-item>
         <el-form-item v-if="auth.isSuperAdmin" label="所属企业">
@@ -276,7 +281,13 @@ type UserRow = {
 };
 
 type EnterpriseRow = { id: number; name: string; status: string };
-type TeamRow = { id: number; name: string; departmentName?: string; isDefault?: boolean };
+type TeamRow = {
+  id: number;
+  name: string;
+  departmentId?: number;
+  departmentName?: string;
+  isDefault?: boolean;
+};
 type TeamNavItem = {
   key: TeamNavKey;
   name: string;
@@ -329,6 +340,12 @@ const statusLabels: Record<UserRow["status"], string> = {
 function teamLabel(team: TeamRow) {
   return team.isDefault ? `${team.departmentName || "部门"}（未拆团队）` : team.name;
 }
+
+const editTeamOptions = computed(() => {
+  const current = teams.value.find((team) => team.id === editUser.value?.teamId);
+  if (current?.departmentId == null) return teams.value;
+  return teams.value.filter((team) => team.departmentId === current.departmentId);
+});
 
 const teamNav = computed<TeamNavItem[]>(() => {
   const counts = new Map<number, { count: number; pendingCount: number }>();

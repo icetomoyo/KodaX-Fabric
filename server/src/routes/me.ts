@@ -16,7 +16,6 @@ import {
   upstreamCredentials,
   usageCountersDaily,
 } from "../db/schema/index.js";
-import { insertEnterprise } from "../lib/enterprise.js";
 import { parseDateOnly, quotaDayAt, zonedDateRange, zonedMonthRange } from "../lib/quota-time.js";
 import { listEmployeeTeamUsageViews } from "../lib/team-quota.js";
 import { encryptEmployeeApiKey, generateApiKey } from "../lib/api-key.js";
@@ -57,72 +56,11 @@ export async function meRoutes(app: FastifyInstance) {
   app.addHook("preHandler", requirePasswordChanged);
   app.addHook("preHandler", requireRoles("employee", "team_admin"));
 
-  app.post("/api/me/enterprise-applications", async (req, reply) => {
-    const body = z
-      .object({ name: z.string().trim().min(1).max(100) })
-      .safeParse(req.body);
-    if (!body.success) {
-      return reply.code(400).send({ success: false, message: "请填写企业名称" });
-    }
-
-    const [current] = await db
-      .select({
-        id: employees.id,
-        role: employees.role,
-        enterpriseId: employees.enterpriseId,
-      })
-      .from(employees)
-      .where(eq(employees.id, req.employeeId!))
-      .limit(1);
-    if (!current || current.role !== "employee") {
-      return reply.code(403).send({ success: false, message: "权限不足" });
-    }
-    if (current.enterpriseId != null) {
-      return reply.code(409).send({ success: false, message: "已提交合作申请或已加入企业" });
-    }
-
-    try {
-      const enterprise = await insertEnterprise({
-        name: body.data.name,
-        status: "pending",
-      });
-      await db
-        .update(employees)
-        .set({ enterpriseId: enterprise.id, updatedAt: new Date() })
-        .where(eq(employees.id, current.id));
-
-      await db.insert(opsAuditLogs).values({
-        actorEmployeeId: req.employeeId,
-        action: "enterprise.apply",
-        targetType: "enterprise",
-        targetId: String(enterprise.id),
-        detail: { name: enterprise.name, code: enterprise.code },
-        ip: req.ip,
-      });
-
-      req.session = {
-        ...req.session!,
-        enterpriseId: enterprise.id,
-      };
-
-      return {
-        success: true,
-        data: {
-          enterprise: {
-            id: enterprise.id,
-            name: enterprise.name,
-            code: enterprise.code,
-            status: enterprise.status,
-          },
-        },
-      };
-    } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
-      if (message.includes("enterprises_name_uidx") || message.includes("unique")) {
-        return reply.code(409).send({ success: false, message: "企业名称已存在" });
-      }
-      throw e;
-    }
+  app.post("/api/me/enterprise-applications", async (_req, reply) => {
+    return reply.code(403).send({
+      success: false,
+      message: "已关闭合作企业申请，请等待团队邀请",
+    });
   });
 
   app.post("/api/me/join-enterprise", async (_req, reply) => {

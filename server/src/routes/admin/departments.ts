@@ -3,7 +3,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { db } from "../../db/client.js";
 import { count, and, desc, eq, inArray, sql } from "drizzle-orm";
-import { departments, enterprises, teamMembers, teams } from "../../db/schema/index.js";
+import { credentialBindings, departments, enterprises, teamMembers, teams } from "../../db/schema/index.js";
 import { writeOpsAudit } from "../../lib/ops-audit.js";
 import { ensureDefaultTeam } from "../../lib/enterprise.js";
 import { canCreateTeam, listAdminTeamIds, resolveTeamListScope, type OrgActor } from "../../lib/org.js";
@@ -257,6 +257,11 @@ export async function adminDepartmentRoutes(app: FastifyInstance) {
     for (const team of childTeams) {
       await detachAndDeleteTeam(team.id);
     }
+    await db
+      .delete(credentialBindings)
+      .where(
+        and(eq(credentialBindings.scopeType, "department"), eq(credentialBindings.scopeId, department.id)),
+      );
     await db.delete(departments).where(eq(departments.id, department.id));
     await writeOpsAudit({
       actorEmployeeId: actor.employeeId,

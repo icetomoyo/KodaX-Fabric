@@ -1,32 +1,14 @@
 <template>
   <div class="dashboard-page">
     <el-alert
-      v-if="pendingApplication"
-      class="join-alert"
-      :title="`合作企业「${pendingApplication.name}」审核中`"
-      type="info"
-      show-icon
-      :closable="false"
-    >
-      <p>超级管理员通过后，你将成为该企业的企业管理员。现在还是普通注册用户，没有员工权限。</p>
-    </el-alert>
-    <el-alert
-      v-else-if="!hasEnterprise"
+      v-if="!hasEnterprise"
       class="join-alert"
       title="当前是普通注册用户，没有员工权限"
       type="warning"
       show-icon
       :closable="false"
     >
-      <p>可申请成为合作企业，或等待已有企业的团队管理员用你的注册手机号邀请进团队。</p>
-      <el-form inline @submit.prevent="onApply">
-        <el-form-item>
-          <el-input v-model="applyName" placeholder="合作企业名称" maxlength="100" />
-        </el-form-item>
-        <el-form-item>
-          <el-button type="primary" :loading="applying" native-type="submit">申请合作企业</el-button>
-        </el-form-item>
-      </el-form>
+      <p>等待已有企业的团队管理员用你的注册手机号邀请进团队。</p>
     </el-alert>
     <el-alert
       v-else-if="hasEnterprise && !hasTeam"
@@ -180,7 +162,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
-import { ElMessage } from "element-plus";
 import { http } from "@/api/http";
 import { formatTokenCompact, formatTokenMillion } from "@/lib/tokens";
 import { useAuthStore } from "@/stores/auth";
@@ -213,8 +194,6 @@ const auth = useAuthStore();
 const router = useRouter();
 const loading = ref(false);
 const keyCount = ref(0);
-const applyName = ref("");
-const applying = ref(false);
 const orgEnterprise = ref<{
   id: number;
   name: string;
@@ -231,9 +210,6 @@ const orgTeams = ref<
 const usage = ref<UsageResponse | null>(null);
 
 const teamUsage = computed(() => usage.value?.teams ?? []);
-const pendingApplication = computed(() =>
-  orgEnterprise.value?.status === "pending" ? orgEnterprise.value : null,
-);
 const hasEnterprise = computed(() => orgEnterprise.value?.status === "active");
 const hasTeam = computed(() => teamUsage.value.length > 0 || orgTeams.value.length > 0);
 const membershipName = computed(
@@ -276,28 +252,6 @@ async function loadUsage() {
     keyCount.value = keys.data.success ? (keys.data.data as unknown[]).length : 0;
   } finally {
     loading.value = false;
-  }
-}
-
-async function onApply() {
-  const name = applyName.value.trim();
-  if (!name) {
-    ElMessage.warning("请填写企业名称");
-    return;
-  }
-  applying.value = true;
-  try {
-    const enterprise = await auth.applyEnterprise(name);
-    ElMessage.success(`已提交「${enterprise.name}」合作申请，请等待超级管理员审核`);
-    applyName.value = "";
-    await loadUsage();
-  } catch (e: unknown) {
-    const message = (e as { response?: { data?: { message?: string } } }).response?.data?.message
-      || (e as Error).message
-      || "提交失败";
-    ElMessage.error(message);
-  } finally {
-    applying.value = false;
   }
 }
 

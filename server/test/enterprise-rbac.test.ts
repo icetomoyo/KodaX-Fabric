@@ -204,6 +204,11 @@ test("super-admin approves cooperation applications instead of assigning admins"
     assert.equal(app.hasRoute({ method: "POST", url: "/api/admin/enterprises/:id/approve" }), true);
     assert.equal(app.hasRoute({ method: "POST", url: "/api/admin/enterprises/:id/admins" }), false);
     assert.equal(app.hasRoute({ method: "POST", url: "/api/me/enterprise-applications" }), true);
+    const meRoute = readFileSync(
+      resolve(dirname(fileURLToPath(import.meta.url)), "../src/routes/me.ts"),
+      "utf8",
+    );
+    assert.match(meRoute, /已关闭合作企业申请/);
   } finally {
     await app.close();
   }
@@ -328,13 +333,15 @@ test("admin shell source includes 企业管理 and org_admin lands on workbench"
   assert.doesNotMatch(register, /企业注册/);
   assert.doesNotMatch(register, /Hz@123456/);
   const meHome = readFileSync(resolve(root, "web/src/views/me/HomeView.vue"), "utf8");
-  assert.match(meHome, /申请合作企业/);
+  assert.doesNotMatch(meHome, /申请合作企业/);
   assert.match(meHome, /普通注册用户/);
+  assert.match(meHome, /邀请进团队/);
   const enterprisesView = readFileSync(
     resolve(root, "web/src/views/admin/EnterprisesView.vue"),
     "utf8",
   );
-  assert.match(enterprisesView, /审核通过/);
+  assert.doesNotMatch(enterprisesView, /\/enterprises\/\$\{.*\}\/approve/);
+  assert.doesNotMatch(enterprisesView, /合作申请/);
   assert.doesNotMatch(enterprisesView, /分配套餐/);
   assert.doesNotMatch(enterprisesView, /ENTERPRISE_PACKAGES/);
   assert.doesNotMatch(enterprisesView, /指定企业管理员/);

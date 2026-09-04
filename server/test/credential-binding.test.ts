@@ -21,12 +21,13 @@ test("custom self-hosted channels skip usage-tier Key binding", () => {
   assert.equal(isOpenPoolProvider(null), false);
 });
 
-test("heavy always binds to the employee, ignoring team and enterprise", () => {
+test("heavy always binds to the employee, ignoring team and department", () => {
   assert.deepEqual(
     resolveBindingScope({
       employeeId: 11,
       usageTier: "heavy",
       teamId: 22,
+      departmentId: 44,
       enterpriseId: 33,
     }),
     { scopeType: "employee", scopeId: 11 },
@@ -36,75 +37,81 @@ test("heavy always binds to the employee, ignoring team and enterprise", () => {
       employeeId: 11,
       usageTier: "heavy",
       teamId: null,
+      departmentId: null,
       enterpriseId: null,
     }),
     { scopeType: "employee", scopeId: 11 },
   );
 });
 
-test("standard with a team shares the team Key", () => {
+test("standard with a department shares the department Key", () => {
   assert.deepEqual(
     resolveBindingScope({
       employeeId: 11,
       usageTier: "standard",
       teamId: 22,
+      departmentId: 44,
       enterpriseId: 33,
     }),
-    { scopeType: "team", scopeId: 22 },
+    { scopeType: "department", scopeId: 44 },
   );
 });
 
-test("standard without a team cannot resolve a scope", () => {
+test("standard without a department cannot resolve a scope", () => {
   assert.equal(
     resolveBindingScope({
       employeeId: 11,
       usageTier: "standard",
-      teamId: null,
+      teamId: 22,
+      departmentId: null,
       enterpriseId: 33,
     }),
     null,
   );
 });
 
-test("standard without a team or enterprise cannot resolve a scope", () => {
+test("standard without a department or enterprise cannot resolve a scope", () => {
   assert.equal(
     resolveBindingScope({
       employeeId: 11,
       usageTier: "standard",
       teamId: null,
+      departmentId: null,
       enterpriseId: null,
     }),
     null,
   );
 });
 
-test("unused peak is idle and holds no channel Key", () => {
+test("unused average is idle and holds no channel Key", () => {
   assert.equal(classifyUsageTier(0), "idle");
-  for (const peak of [null, 0]) {
+  for (const average of [null, 0]) {
     assert.equal(
       resolveBindingScopeFromPeak({
         employeeId: 29,
-        peakTokens: peak,
+        averageDailyTokens: average,
         teamId: 4,
+        departmentId: 8,
         enterpriseId: 2,
       }),
       null,
-      `peak=${String(peak)} classified as ${classifyUsageTier(peak)}`,
+      `average=${String(average)} classified as ${classifyUsageTier(average)}`,
     );
   }
 });
 
-test("quiet usage shares the team Key", () => {
-  for (const peak of [1, 699_847]) {
+test("quiet usage shares the department Key", () => {
+  for (const average of [1, 699_847]) {
     assert.deepEqual(
       resolveBindingScopeFromPeak({
         employeeId: 29,
-        peakTokens: peak,
+        averageDailyTokens: average,
         teamId: 4,
+        departmentId: 8,
         enterpriseId: 2,
       }),
-      { scopeType: "team", scopeId: 4 },
-      `peak=${String(peak)} classified as ${classifyUsageTier(peak)}`,
+      { scopeType: "department", scopeId: 8 },
+      `average=${String(average)} classified as ${classifyUsageTier(average)}`,
     );
   }
 });
@@ -115,28 +122,30 @@ test("idle has no binding scope", () => {
       employeeId: 29,
       usageTier: "idle",
       teamId: 4,
+      departmentId: 8,
       enterpriseId: 2,
     }),
     null,
   );
 });
 
-test("an idle user does not keep an exclusive or team Key", () => {
+test("an idle user does not keep an exclusive or department Key", () => {
   const people = [
     {
       id: 1,
       usageTier: "idle" as const,
       teamId: 10,
+      departmentId: 8,
       enterpriseId: 2,
     },
   ];
   assert.equal(bindingStillNeeded({ scopeType: "employee", scopeId: 1 }, people), false);
-  assert.equal(bindingStillNeeded({ scopeType: "team", scopeId: 10 }, people), false);
+  assert.equal(bindingStillNeeded({ scopeType: "department", scopeId: 8 }, people), false);
   assert.deepEqual(
     unusedBindingIds(
       [
         { id: 1, scopeType: "employee", scopeId: 1 },
-        { id: 2, scopeType: "team", scopeId: 10 },
+        { id: 2, scopeType: "department", scopeId: 8 },
       ],
       people,
     ),
@@ -144,24 +153,26 @@ test("an idle user does not keep an exclusive or team Key", () => {
   );
 });
 
-test("low usage still shares the team Key", () => {
+test("low usage still shares the department Key", () => {
   assert.deepEqual(
     resolveBindingScopeFromPeak({
       employeeId: 29,
-      peakTokens: 66_797,
+      averageDailyTokens: 66_797,
       teamId: 4,
+      departmentId: 8,
       enterpriseId: 2,
     }),
-    { scopeType: "team", scopeId: 4 },
+    { scopeType: "department", scopeId: 8 },
   );
   assert.deepEqual(
     resolveBindingScope({
       employeeId: 29,
       usageTier: "standard",
       teamId: 4,
+      departmentId: 8,
       enterpriseId: 2,
     }),
-    { scopeType: "team", scopeId: 4 },
+    { scopeType: "department", scopeId: 8 },
   );
 });
 
@@ -171,12 +182,14 @@ test("enterprise binding is unused after light tier is removed", () => {
       id: 1,
       usageTier: "standard" as const,
       teamId: 10,
+      departmentId: 8,
       enterpriseId: 2,
     },
     {
       id: 2,
       usageTier: "heavy" as const,
       teamId: 10,
+      departmentId: 8,
       enterpriseId: 2,
     },
   ];
@@ -190,26 +203,42 @@ test("enterprise binding is unused after light tier is removed", () => {
   );
 });
 
-test("team binding is unused after the last standard member becomes heavy", () => {
+test("department binding is unused after the last standard member becomes heavy", () => {
   const people = [
     {
       id: 1,
       usageTier: "heavy" as const,
       teamId: 10,
+      departmentId: 8,
       enterpriseId: 2,
     },
     {
       id: 2,
       usageTier: "idle" as const,
       teamId: 10,
+      departmentId: 8,
       enterpriseId: 2,
     },
   ];
-  assert.equal(bindingStillNeeded({ scopeType: "team", scopeId: 10 }, people), false);
+  assert.equal(bindingStillNeeded({ scopeType: "department", scopeId: 8 }, people), false);
   assert.equal(
     bindingStillNeeded({ scopeType: "employee", scopeId: 1 }, people),
     true,
   );
+});
+
+test("leftover team bindings are unused after department share", () => {
+  const people = [
+    {
+      id: 2,
+      usageTier: "standard" as const,
+      teamId: 10,
+      departmentId: 8,
+      enterpriseId: 2,
+    },
+  ];
+  assert.equal(bindingStillNeeded({ scopeType: "team", scopeId: 10 }, people), false);
+  assert.equal(bindingStillNeeded({ scopeType: "department", scopeId: 8 }, people), true);
 });
 
 test("shared bindings stay when someone still resolves onto them", () => {
@@ -218,12 +247,14 @@ test("shared bindings stay when someone still resolves onto them", () => {
       id: 1,
       usageTier: "idle" as const,
       teamId: 10,
+      departmentId: 8,
       enterpriseId: 2,
     },
     {
       id: 2,
       usageTier: "standard" as const,
       teamId: 10,
+      departmentId: 8,
       enterpriseId: 2,
     },
   ];
@@ -231,12 +262,12 @@ test("shared bindings stay when someone still resolves onto them", () => {
     bindingStillNeeded({ scopeType: "enterprise", scopeId: 2 }, people),
     false,
   );
-  assert.equal(bindingStillNeeded({ scopeType: "team", scopeId: 10 }, people), true);
+  assert.equal(bindingStillNeeded({ scopeType: "department", scopeId: 8 }, people), true);
   assert.deepEqual(
     unusedBindingIds(
       [
         { id: 1, scopeType: "enterprise", scopeId: 2 },
-        { id: 2, scopeType: "team", scopeId: 10 },
+        { id: 2, scopeType: "department", scopeId: 8 },
       ],
       people,
     ),

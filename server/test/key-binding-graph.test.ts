@@ -23,8 +23,11 @@ function employee(
   return {
     enterpriseId: 1,
     enterpriseName: "海致",
+    departmentId: 5,
+    departmentName: "研发",
     teamId: 10,
     teamName: "平台",
+    teamIsDefault: false,
     ...partial,
   };
 }
@@ -75,6 +78,7 @@ function useEdges(graph: ReturnType<typeof buildKeyBindingGraph>) {
       (edge) =>
         edge.kind === "dedicated" ||
         edge.kind === "team_shared" ||
+        edge.kind === "department_shared" ||
         edge.kind === "enterprise_shared" ||
         edge.kind === "open_shared",
     )
@@ -89,7 +93,7 @@ function orgEdges(graph: ReturnType<typeof buildKeyBindingGraph>) {
     .sort();
 }
 
-test("org chain links enterprise to team to employee", () => {
+test("org chain links enterprise to department to team to employee", () => {
   const graph = buildKeyBindingGraph({
     employees: [employee({ id: 1, name: "张三" })],
     virtualKeys: [virtualKey({ id: 11, employeeId: 1, productLineId: 100 })],
@@ -98,16 +102,44 @@ test("org chain links enterprise to team to employee", () => {
   });
 
   assert.deepEqual(orgEdges(graph), [
-    "enterprise:1->team:10",
+    "department:5->team:10",
+    "enterprise:1->department:5",
     "team:10->employee:1",
   ]);
+  assert.deepEqual(
+    graph.departments.map((row) => row.id),
+    [5],
+  );
   assert.deepEqual(
     graph.teams.map((row) => row.id),
     [10],
   );
 });
 
-test("employee without a team hangs directly under the enterprise", () => {
+test("default-team members hang directly under the department", () => {
+  const graph = buildKeyBindingGraph({
+    employees: [
+      employee({
+        id: 1,
+        name: "张三",
+        teamId: 10,
+        teamName: "默认团队",
+        teamIsDefault: true,
+      }),
+    ],
+    virtualKeys: [virtualKey({ id: 11, employeeId: 1, productLineId: 100 })],
+    credentials: [credential({ id: 21, productLineId: 100 })],
+    bindings: [],
+  });
+
+  assert.deepEqual(orgEdges(graph), [
+    "department:5->employee:1",
+    "enterprise:1->department:5",
+  ]);
+  assert.deepEqual(graph.teams, []);
+});
+
+test("employee without a team hangs directly under the department", () => {
   const graph = buildKeyBindingGraph({
     employees: [employee({ id: 1, name: "张三", teamId: null, teamName: null })],
     virtualKeys: [virtualKey({ id: 11, employeeId: 1, productLineId: 100 })],
@@ -115,7 +147,32 @@ test("employee without a team hangs directly under the enterprise", () => {
     bindings: [],
   });
 
+  assert.deepEqual(orgEdges(graph), [
+    "department:5->employee:1",
+    "enterprise:1->department:5",
+  ]);
+  assert.deepEqual(graph.teams, []);
+});
+
+test("employee without a team or department hangs directly under the enterprise", () => {
+  const graph = buildKeyBindingGraph({
+    employees: [
+      employee({
+        id: 1,
+        name: "张三",
+        teamId: null,
+        teamName: null,
+        departmentId: null,
+        departmentName: null,
+      }),
+    ],
+    virtualKeys: [virtualKey({ id: 11, employeeId: 1, productLineId: 100 })],
+    credentials: [credential({ id: 21, productLineId: 100 })],
+    bindings: [],
+  });
+
   assert.deepEqual(orgEdges(graph), ["enterprise:1->employee:1"]);
+  assert.deepEqual(graph.departments, []);
   assert.deepEqual(graph.teams, []);
 });
 
@@ -288,12 +345,20 @@ test("quiet first-day usage must not hide an exclusive Key still bound at stored
   assert.deepEqual(useEdges(graph), ["74->94:dedicated"]);
 });
 
-test("team binding links every team member's virtual keys as team_shared", () => {
+test("department binding links every department member's virtual keys as department_shared", () => {
   const graph = buildKeyBindingGraph({
     employees: [
       employee({ id: 1, name: "张三", teamId: 10, teamName: "平台", usageTier: "standard" }),
-      employee({ id: 2, name: "李四", teamId: 10, teamName: "平台", usageTier: "standard" }),
-      employee({ id: 3, name: "王五", teamId: 20, teamName: "销售", usageTier: "standard" }),
+      employee({ id: 2, name: "李四", teamId: 11, teamName: "后端", usageTier: "standard" }),
+      employee({
+        id: 3,
+        name: "王五",
+        departmentId: 6,
+        departmentName: "销售",
+        teamId: 20,
+        teamName: "销售",
+        usageTier: "standard",
+      }),
     ],
     virtualKeys: [
       virtualKey({ id: 11, employeeId: 1, productLineId: 100 }),
@@ -301,10 +366,23 @@ test("team binding links every team member's virtual keys as team_shared", () =>
       virtualKey({ id: 13, employeeId: 3, productLineId: 100 }),
     ],
     credentials: [credential({ id: 21, productLineId: 100 })],
+    bindings: [binding(21, "department", 5)],
+  });
+
+  assert.deepEqual(useEdges(graph), ["11->21:department_shared", "12->21:department_shared"]);
+});
+
+test("leftover team bindings are not drawn after department share", () => {
+  const graph = buildKeyBindingGraph({
+    employees: [
+      employee({ id: 1, name: "张三", teamId: 10, teamName: "平台", usageTier: "standard" }),
+    ],
+    virtualKeys: [virtualKey({ id: 11, employeeId: 1, productLineId: 100 })],
+    credentials: [credential({ id: 21, productLineId: 100 })],
     bindings: [binding(21, "team", 10)],
   });
 
-  assert.deepEqual(useEdges(graph), ["11->21:team_shared", "12->21:team_shared"]);
+  assert.deepEqual(useEdges(graph), []);
 });
 
 test("enterprise leftover bindings are not drawn", () => {
@@ -324,12 +402,14 @@ test("enterprise leftover bindings are not drawn", () => {
   assert.deepEqual(useEdges(graph), []);
 });
 
-test("standard employee without a team has no binding", () => {
+test("standard employee without a department has no binding", () => {
   const graph = buildKeyBindingGraph({
     employees: [
       employee({
         id: 1,
-        name: "无团队标准",
+        name: "无部门标准",
+        departmentId: null,
+        departmentName: null,
         teamId: null,
         teamName: null,
         usageTier: "standard",
@@ -360,7 +440,7 @@ test("idle leftover exclusive or enterprise bindings are not drawn", () => {
   assert.deepEqual(useEdges(graph), []);
 });
 
-test("team binding skips idle and heavy teammates", () => {
+test("department binding skips idle and heavy teammates", () => {
   const graph = buildKeyBindingGraph({
     employees: [
       employee({ id: 1, name: "标准", teamId: 10, teamName: "平台", usageTier: "standard" }),
@@ -373,10 +453,10 @@ test("team binding skips idle and heavy teammates", () => {
       virtualKey({ id: 13, employeeId: 3, productLineId: 100 }),
     ],
     credentials: [credential({ id: 21, productLineId: 100 })],
-    bindings: [binding(21, "team", 10)],
+    bindings: [binding(21, "department", 5)],
   });
 
-  assert.deepEqual(useEdges(graph), ["11->21:team_shared"]);
+  assert.deepEqual(useEdges(graph), ["11->21:department_shared"]);
 });
 
 test("a binding on another product line does not connect this channel", () => {
@@ -540,7 +620,8 @@ test("search by team name keeps the org path", () => {
     [10],
   );
   assert.deepEqual(orgEdges(graph), [
-    "enterprise:1->team:10",
+    "department:5->team:10",
+    "enterprise:1->department:5",
     "team:10->employee:1",
   ]);
 });

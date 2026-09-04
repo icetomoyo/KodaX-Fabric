@@ -2,10 +2,10 @@
  * Daily usage-tier rebind job.
  *
  * Recalculates `employees.usageTier`: 7×24h after registration stays 重度;
- * after that, the last 7 calendar days' peak tokens and call count
+ * after that, the last 7 calendar days' average daily tokens and call count
  * (same window as request-time binding). Idle (0 TokenHub calls) holds no
  * Key. After a tier change, rebound each employee onto the Key their new
- * scope needs (heavy exclusive → standard team share) and drop
+ * scope needs (heavy exclusive → standard department share) and drop
  * bindings nobody still needs.
  */
 import { and, eq, gte, inArray, lte, sql } from "drizzle-orm";
@@ -18,7 +18,12 @@ import {
   rebindEmployeesToCurrentScope,
   releaseOrphanBindings,
 } from "./relay/binding.js";
-import { effectiveUsageTier, USAGE_TIERS, type UsageTier } from "./usage-tier.js";
+import {
+  averageDailyTokensFromWindow,
+  effectiveUsageTier,
+  USAGE_TIERS,
+  type UsageTier,
+} from "./usage-tier.js";
 
 export type TierRebindResult = {
   employeeCount: number;
@@ -53,7 +58,7 @@ export async function runTierRebindOnce(
     db
       .select({
         employeeId: usageCountersDaily.employeeId,
-        peakTokens: sql<number>`max(${usageCountersDaily.totalTokens})`,
+        totalTokens: sql<number>`coalesce(sum(${usageCountersDaily.totalTokens}), 0)`,
         requestCount: sql<number>`coalesce(sum(${usageCountersDaily.requestCount}), 0)`,
       })
       .from(usageCountersDaily)
@@ -61,8 +66,8 @@ export async function runTierRebindOnce(
       .groupBy(usageCountersDaily.employeeId),
   ]);
 
-  const peakByEmployee = new Map(
-    usageRows.map((row) => [row.employeeId, Number(row.peakTokens) || 0]),
+  const averageByEmployee = new Map(
+    usageRows.map((row) => [row.employeeId, averageDailyTokensFromWindow(Number(row.totalTokens) || 0)]),
   );
   const requestsByEmployee = new Map(
     usageRows.map((row) => [row.employeeId, Number(row.requestCount) || 0]),
@@ -71,7 +76,7 @@ export async function runTierRebindOnce(
   const idsByNextTier = emptyIdsByTier();
   for (const row of activeRows) {
     const next = effectiveUsageTier(
-      peakByEmployee.get(row.id) ?? null,
+      averageByEmployee.get(row.id) ?? null,
       row.createdAt,
       now,
       requestsByEmployee.get(row.id) ?? 0,

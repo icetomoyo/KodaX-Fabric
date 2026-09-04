@@ -218,6 +218,13 @@
       "when": 1788502000000,
       "tag": "0030_default_department_team",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1788503000000,
+      "tag": "0031_binding_scope_department",
+      "breakpoints": true
     }
   ]
 }

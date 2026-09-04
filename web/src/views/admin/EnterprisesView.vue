@@ -49,17 +49,7 @@
               <div v-if="selectedEnterpriseId === item.id" class="unit-card-actions" @click.stop>
                 <el-button link type="primary" size="small" @click="openEditEnterprise(item)">编辑</el-button>
                 <el-button
-                  v-if="item.status === 'pending'"
-                  link
-                  type="success"
-                  size="small"
-                  :loading="approvingId === item.id"
-                  @click="approveEnterprise(item)"
-                >
-                  审核通过
-                </el-button>
-                <el-button
-                  v-else-if="item.status === 'active'"
+                  v-if="item.status === 'active'"
                   link
                   type="danger"
                   size="small"
@@ -416,8 +406,13 @@
         <el-form-item label="姓名" required><el-input v-model="editUserForm.name" /></el-form-item>
         <el-form-item label="手机号" required><el-input v-model="editUserForm.phone" /></el-form-item>
         <el-form-item v-if="editUserForm.role !== 'org_admin'" label="团队">
-          <el-select v-model="editUserForm.teamId" clearable placeholder="选择团队" style="width: 100%">
-            <el-option v-for="item in teamOptions" :key="item.id" :label="item.name" :value="item.id" />
+          <el-select v-model="editUserForm.teamId" clearable placeholder="选择本部门下的团队" style="width: 100%">
+            <el-option
+              v-for="item in editUserTeamOptions"
+              :key="item.id"
+              :label="item.name"
+              :value="item.id"
+            />
           </el-select>
         </el-form-item>
         <el-form-item label="角色">
@@ -554,7 +549,6 @@ const updatingTeam = ref(false);
 const inviting = ref(false);
 const updatingUser = ref(false);
 const resetting = ref(false);
-const approvingId = ref<number | null>(null);
 const approvingUserId = ref<number | null>(null);
 
 const createEnterpriseName = ref("");
@@ -604,6 +598,20 @@ const teamOptions = computed(() =>
       : team.name,
   })),
 );
+
+const editUserTeamOptions = computed(() => {
+  const current = teams.value.find((team) => team.id === editUser.value?.teamId);
+  const scoped =
+    current?.departmentId == null
+      ? teams.value
+      : teams.value.filter((team) => team.departmentId === current.departmentId);
+  return scoped.map((team) => ({
+    id: team.id,
+    name: team.isDefault
+      ? `${departments.value.find((row) => row.id === team.departmentId)?.name ?? "部门"}（未拆团队）`
+      : team.name,
+  }));
+});
 
 const unassignedCount = computed(
   () => employees.value.filter((row) => row.teamId == null).length,
@@ -857,29 +865,6 @@ async function updateEnterprise() {
     ElMessage.error(requestMessage(error, "更新失败"));
   } finally {
     updatingEnterprise.value = false;
-  }
-}
-
-async function approveEnterprise(row: EnterpriseRow) {
-  try {
-    await ElMessageBox.confirm(
-      `确认通过「${row.name}」的合作申请？申请人将同时成为企业管理员。`,
-      "审核通过",
-      { confirmButtonText: "确认", cancelButtonText: "取消", type: "info" },
-    );
-  } catch {
-    return;
-  }
-  approvingId.value = row.id;
-  try {
-    const { data } = await http.post(`/api/admin/enterprises/${row.id}/approve`);
-    if (!data.success) throw new Error(data.message);
-    ElMessage.success("已通过，申请人已成为企业管理员");
-    await refreshAll();
-  } catch (error) {
-    ElMessage.error(requestMessage(error, "审核失败"));
-  } finally {
-    approvingId.value = null;
   }
 }
 

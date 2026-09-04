@@ -68,20 +68,6 @@ export const useAuthStore = defineStore("auth", () => {
     return data.data;
   }
 
-  async function applyEnterprise(name: string) {
-    const { data } = await http.post("/api/me/enterprise-applications", { name });
-    if (!data.success) throw new Error(data.message || "提交合作申请失败");
-    if (user.value) {
-      user.value = {
-        ...user.value,
-        enterpriseId: data.data.enterprise.id,
-        enterprise: data.data.enterprise,
-      };
-      localStorage.setItem(USER_KEY, JSON.stringify(user.value));
-    }
-    return data.data.enterprise as UserEnterprise;
-  }
-
   async function changePassword(oldPassword: string, newPassword: string) {
     const { data } = await http.post("/api/auth/change-password", {
       oldPassword,
@@ -112,7 +98,6 @@ export const useAuthStore = defineStore("auth", () => {
     logout,
     login,
     register,
-    applyEnterprise,
     changePassword,
     fetchMe,
   };

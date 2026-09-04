@@ -20,27 +20,36 @@
         <KeyBindingTrafficEdge v-bind="edgeProps" />
       </template>
       <template #node-enterprise="{ data }">
-        <div class="graph-node enterprise" :class="{ dimmed: data.dimmed, active: data.active }">
+        <div class="graph-node org enterprise" :class="{ dimmed: data.dimmed, active: data.active }">
           <Handle type="source" :position="Position.Right" :connectable="false" />
+          <span class="kind">企业</span>
           <strong>{{ data.name }}</strong>
-          <span>企业</span>
+        </div>
+      </template>
+      <template #node-department="{ data }">
+        <div class="graph-node org department" :class="{ dimmed: data.dimmed, active: data.active }">
+          <Handle type="target" :position="Position.Left" :connectable="false" />
+          <Handle type="source" :position="Position.Right" :connectable="false" />
+          <span class="kind">部门</span>
+          <strong>{{ data.name }}</strong>
         </div>
       </template>
       <template #node-team="{ data }">
-        <div class="graph-node team" :class="{ dimmed: data.dimmed, active: data.active }">
+        <div class="graph-node org team" :class="{ dimmed: data.dimmed, active: data.active }">
           <Handle type="target" :position="Position.Left" :connectable="false" />
           <Handle type="source" :position="Position.Right" :connectable="false" />
+          <span class="kind">团队</span>
           <strong>{{ data.name }}</strong>
-          <span>团队</span>
         </div>
       </template>
       <template #node-employee="{ data }">
         <div
-          class="graph-node employee"
+          class="graph-node org employee"
           :class="{ dimmed: data.dimmed, active: data.active, working: data.working }"
         >
           <Handle type="target" :position="Position.Left" :connectable="false" />
           <Handle type="source" :position="Position.Right" :connectable="false" />
+          <span class="kind">员工</span>
           <strong>{{ data.name }}</strong>
           <span class="tier" :class="data.usageTier">{{ usageTierLabel(data.usageTier) }}</span>
         </div>
@@ -286,8 +295,23 @@ function credentialCaption(data: {
   color: #334155;
 }
 
+.graph-node.org {
+  gap: 2px;
+}
+
+.graph-node .kind {
+  color: #94a3b8;
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+}
+
 .graph-node.enterprise {
   border-left: 3px solid #4338ca;
+}
+
+.graph-node.department {
+  border-left: 3px solid #7c3aed;
 }
 
 .graph-node.team {

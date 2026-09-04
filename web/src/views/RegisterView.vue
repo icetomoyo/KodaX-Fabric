@@ -2,7 +2,7 @@
   <AuthShell>
     <p class="kicker">新账号</p>
     <h2>申请注册</h2>
-    <p class="lead">设置登录密码后即可使用。合作企业需审核；员工权限由团队邀请开通。</p>
+    <p class="lead">设置登录密码后即可使用。员工权限由团队邀请开通。</p>
 
     <el-form class="auth-form" label-position="top" @submit.prevent="onRegister">
       <el-form-item label="姓名" required>

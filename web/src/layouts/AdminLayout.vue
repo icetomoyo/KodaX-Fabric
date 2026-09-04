@@ -41,7 +41,7 @@
           <el-button link type="primary" @click="onLogout">退出</el-button>
         </div>
       </el-header>
-      <el-main>
+      <el-main :class="{ 'is-canvas': route.path === '/admin/key-bindings' }">
         <router-view />
       </el-main>
     </el-container>
@@ -136,6 +136,11 @@ function onLogout() {
   flex-direction: column;
   min-height: 0;
   overflow: auto;
+}
+.shell :deep(.el-main.is-canvas) {
+  padding: 0;
+  overflow: hidden;
+  background: #f8fafc;
 }
 .account-link {
   color: inherit;

@@ -4,6 +4,7 @@ import { z } from "zod";
 import { db } from "../../db/client.js";
 import {
   credentialBindings,
+  departments,
   employeeApiKeys,
   employees,
   enterprises,
@@ -60,6 +61,9 @@ export async function adminKeyBindingRoutes(app: FastifyInstance) {
           productLineName: productLines.name,
           teamId: employeeApiKeys.teamId,
           teamName: teams.name,
+          teamIsDefault: teams.isDefault,
+          departmentId: teams.departmentId,
+          departmentName: departments.name,
           status: employeeApiKeys.status,
           employeeName: employees.name,
           usageTier: employees.usageTier,
@@ -70,6 +74,7 @@ export async function adminKeyBindingRoutes(app: FastifyInstance) {
         .innerJoin(employees, eq(employeeApiKeys.employeeId, employees.id))
         .innerJoin(productLines, eq(employeeApiKeys.productLineId, productLines.id))
         .leftJoin(teams, eq(employeeApiKeys.teamId, teams.id))
+        .leftJoin(departments, eq(teams.departmentId, departments.id))
         .leftJoin(enterprises, eq(employees.enterpriseId, enterprises.id)),
       db
         .select({
@@ -101,9 +106,13 @@ export async function adminKeyBindingRoutes(app: FastifyInstance) {
           employeeId: teamMembers.employeeId,
           teamId: teams.id,
           teamName: teams.name,
+          teamIsDefault: teams.isDefault,
+          departmentId: teams.departmentId,
+          departmentName: departments.name,
         })
         .from(teamMembers)
-        .innerJoin(teams, eq(teamMembers.teamId, teams.id)),
+        .innerJoin(teams, eq(teamMembers.teamId, teams.id))
+        .leftJoin(departments, eq(teams.departmentId, departments.id)),
     ]);
 
     const membershipByEmployee = new Map(
@@ -116,8 +125,11 @@ export async function adminKeyBindingRoutes(app: FastifyInstance) {
         name: string;
         enterpriseId: number | null;
         enterpriseName: string | null;
+        departmentId: number | null;
+        departmentName: string | null;
         teamId: number | null;
         teamName: string | null;
+        teamIsDefault: boolean;
         usageTier: ReturnType<typeof usageTierForKeyBindingGraph>;
       }
     >();
@@ -129,8 +141,11 @@ export async function adminKeyBindingRoutes(app: FastifyInstance) {
         name: row.employeeName,
         enterpriseId: row.enterpriseId,
         enterpriseName: row.enterpriseName,
+        departmentId: membership?.departmentId ?? row.departmentId,
+        departmentName: membership?.departmentName ?? row.departmentName,
         teamId: membership?.teamId ?? row.teamId,
         teamName: membership?.teamName ?? row.teamName,
+        teamIsDefault: membership?.teamIsDefault ?? row.teamIsDefault ?? false,
         usageTier: usageTierForKeyBindingGraph(row.usageTier),
       });
     }

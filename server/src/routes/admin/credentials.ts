@@ -4,6 +4,7 @@ import { z } from "zod";
 import { db } from "../../db/client.js";
 import {
   credentialBindings,
+  departments,
   employees,
   enterprises,
   opsAuditLogs,
@@ -102,7 +103,7 @@ function serializeCreditLimit(value: number | null | undefined): string | null {
 }
 
 type CredentialBindingView = {
-  scopeType: "employee" | "team" | "enterprise";
+  scopeType: "employee" | "team" | "enterprise" | "department";
   scopeId: number;
   scopeName: string;
 };
@@ -120,6 +121,7 @@ async function loadCredentialBindingViews(
       scopeId: credentialBindings.scopeId,
       employeeName: employees.name,
       teamName: teams.name,
+      departmentName: departments.name,
       enterpriseName: enterprises.name,
     })
     .from(credentialBindings)
@@ -138,6 +140,13 @@ async function loadCredentialBindingViews(
       ),
     )
     .leftJoin(
+      departments,
+      and(
+        eq(credentialBindings.scopeType, "department"),
+        eq(departments.id, credentialBindings.scopeId),
+      ),
+    )
+    .leftJoin(
       enterprises,
       and(
         eq(credentialBindings.scopeType, "enterprise"),
@@ -150,7 +159,7 @@ async function loadCredentialBindingViews(
     views.set(row.credentialId, {
       scopeType: row.scopeType,
       scopeId: row.scopeId,
-      scopeName: row.employeeName ?? row.teamName ?? row.enterpriseName ?? "",
+      scopeName: row.employeeName ?? row.departmentName ?? row.teamName ?? row.enterpriseName ?? "",
     });
   }
   return views;
