@@ -113,7 +113,7 @@ import "@vue-flow/core/dist/style.css";
 import "@vue-flow/core/dist/theme-default.css";
 import "@vue-flow/controls/dist/style.css";
 
-type UsageTier = "idle" | "light" | "standard" | "heavy";
+type UsageTier = "idle" | "standard" | "heavy";
 type CoolingKind = "five_hour" | "weekly" | "other";
 type CredentialLane = "bound" | "pending" | "cooling_5h" | "cooling_weekly" | "disabled";
 
@@ -169,7 +169,6 @@ function protocolLabel(protocol: string) {
 
 function usageTierLabel(tier: UsageTier | undefined) {
   if (tier === "idle") return "闲置用户";
-  if (tier === "light") return "轻度用户";
   if (tier === "heavy") return "重度用户";
   return "标准用户";
 }
@@ -311,11 +310,6 @@ function credentialCaption(data: {
 .graph-node .tier.idle {
   color: #94a3b8;
   background: #f8fafc;
-}
-
-.graph-node .tier.light {
-  color: #475569;
-  background: #f1f5f9;
 }
 
 .graph-node .tier.standard {

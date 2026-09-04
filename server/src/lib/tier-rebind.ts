@@ -5,7 +5,7 @@
  * after that, the last 7 calendar days' peak tokens and call count
  * (same window as request-time binding). Idle (0 TokenHub calls) holds no
  * Key. After a tier change, rebound each employee onto the Key their new
- * scope needs (heavy exclusive → standard team → light enterprise) and drop
+ * scope needs (heavy exclusive → standard team share) and drop
  * bindings nobody still needs.
  */
 import { and, eq, gte, inArray, lte, sql } from "drizzle-orm";
@@ -31,7 +31,7 @@ let timer: ReturnType<typeof setInterval> | null = null;
 let inFlight = false;
 
 function emptyIdsByTier(): Record<UsageTier, number[]> {
-  return { idle: [], light: [], standard: [], heavy: [] };
+  return { idle: [], standard: [], heavy: [] };
 }
 
 export async function runTierRebindOnce(

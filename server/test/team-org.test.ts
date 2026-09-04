@@ -37,6 +37,27 @@ function attachSession(session: typeof teamAdminSession) {
   };
 }
 
+test("unauthenticated department calls return 401", async () => {
+  const { adminDepartmentRoutes } = await import("../src/routes/admin/departments.js");
+  const app = Fastify();
+  await app.register(adminDepartmentRoutes);
+  await app.ready();
+  try {
+    const list = await app.inject({ method: "GET", url: "/api/admin/departments" });
+    const create = await app.inject({
+      method: "POST",
+      url: "/api/admin/departments",
+      payload: { name: "研发中心" },
+    });
+    const removed = await app.inject({ method: "DELETE", url: "/api/admin/departments/1" });
+    assert.equal(list.statusCode, 401);
+    assert.equal(create.statusCode, 401);
+    assert.equal(removed.statusCode, 401);
+  } finally {
+    await app.close();
+  }
+});
+
 test("unauthenticated team calls return 401", async () => {
   const app = Fastify();
   await app.register(adminTeamRoutes);
@@ -49,9 +70,11 @@ test("unauthenticated team calls return 401", async () => {
       payload: { name: "研发" },
     });
     const members = await app.inject({ method: "GET", url: "/api/admin/teams/1/members" });
+    const removed = await app.inject({ method: "DELETE", url: "/api/admin/teams/1" });
     assert.equal(list.statusCode, 401);
     assert.equal(create.statusCode, 401);
     assert.equal(members.statusCode, 401);
+    assert.equal(removed.statusCode, 401);
   } finally {
     await app.close();
   }
@@ -88,7 +111,7 @@ test("team_admin cannot create teams or call super-admin enterprise APIs", async
     const create = await app.inject({
       method: "POST",
       url: "/api/admin/teams",
-      payload: { name: "Forbidden Team", enterpriseId: 3 },
+      payload: { name: "Forbidden Team", enterpriseId: 3, departmentId: 1 },
     });
     const enterprises = await app.inject({ method: "GET", url: "/api/admin/enterprises" });
     assert.equal(create.statusCode, 403);
@@ -160,12 +183,15 @@ test("admin shell source includes 团队管理 for org and team admins", () => {
   const layout = readFileSync(resolve(root, "web/src/layouts/AdminLayout.vue"), "utf8");
   const home = readFileSync(resolve(root, "web/src/lib/home.ts"), "utf8");
   const router = readFileSync(resolve(root, "web/src/router/index.ts"), "utf8");
+  assert.match(layout, /部门管理/);
+  assert.match(layout, /v-if="auth.isOrgAdmin" index="\/admin\/departments"/);
   assert.match(layout, /团队管理/);
   assert.match(layout, /v-if="!auth.isSuperAdmin" index="\/admin\/teams"/);
+  assert.match(router, /admin-departments/);
   assert.match(layout, /团队成员/);
   assert.match(layout, /v-if="auth.isTeamAdmin" index="\/admin\/members"/);
-  assert.match(layout, /项目管理/);
-  assert.match(layout, /v-if="auth.isTeamAdmin" index="\/admin\/projects"/);
+  assert.doesNotMatch(layout, /项目管理/);
+  assert.doesNotMatch(layout, /\/admin\/projects/);
   assert.match(layout, /API Key/);
   assert.match(layout, /v-if="auth.isTeamAdmin" index="\/admin\/keys"/);
   assert.doesNotMatch(layout, /index="\/me\/keys"/);
@@ -173,7 +199,7 @@ test("admin shell source includes 团队管理 for org and team admins", () => {
   assert.match(home, /return \"\/admin\"/);
   assert.match(router, /admin-teams/);
   assert.match(router, /admin-members/);
-  assert.match(router, /admin-projects/);
+  assert.doesNotMatch(router, /admin-projects/);
   assert.match(router, /admin-keys/);
   assert.match(router, /team_admin/);
   assert.doesNotMatch(router, /admin-team-detail/);

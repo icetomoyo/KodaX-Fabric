@@ -84,6 +84,12 @@ export const router = createRouter({
           meta: { roles: ["admin"] },
         },
         {
+          path: "departments",
+          name: "admin-departments",
+          component: () => import("@/views/admin/DepartmentsView.vue"),
+          meta: { roles: ["org_admin"] },
+        },
+        {
           path: "teams",
           name: "admin-teams",
           component: () => import("@/views/admin/TeamsView.vue"),
@@ -97,12 +103,6 @@ export const router = createRouter({
           path: "members",
           name: "admin-members",
           component: () => import("@/views/admin/MembersView.vue"),
-          meta: { roles: ["team_admin"] },
-        },
-        {
-          path: "projects",
-          name: "admin-projects",
-          component: () => import("@/views/admin/ProjectsView.vue"),
           meta: { roles: ["team_admin"] },
         },
         {

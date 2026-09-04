@@ -38,7 +38,7 @@
         <template #default="{ row }">{{ row.teamName || "—" }}</template>
       </el-table-column>
       <el-table-column v-if="auth.isOrgAdmin" prop="employeeName" label="提交员工" width="130" />
-      <el-table-column v-if="auth.isOrgAdmin" label="部门" width="160">
+      <el-table-column v-if="auth.isOrgAdmin" label="团队" width="160">
         <template #default="{ row }">{{ row.employeeDept || "—" }}</template>
       </el-table-column>
       <el-table-column label="提交时间" width="190">
@@ -85,7 +85,7 @@
             <el-descriptions-item v-if="auth.isOrgAdmin" label="手机号">
               {{ selectedTicket.employeePhone }}
             </el-descriptions-item>
-            <el-descriptions-item v-if="auth.isOrgAdmin" label="部门">
+            <el-descriptions-item v-if="auth.isOrgAdmin" label="团队">
               {{ selectedTicket.employeeDept || "—" }}
             </el-descriptions-item>
             <el-descriptions-item label="标题">

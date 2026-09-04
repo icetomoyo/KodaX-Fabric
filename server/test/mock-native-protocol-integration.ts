@@ -29,7 +29,7 @@ const [
   { encryptEmployeeApiKey, generateApiKey },
   { encryptSecret, secretSuffix },
   { redis },
-  { getDefaultEnterpriseId },
+  { getDefaultEnterpriseId, ensureDefaultDepartment },
   { env },
   { quotaDayAt },
 ] = await Promise.all([
@@ -305,6 +305,7 @@ async function insertFixtures(upstreamBaseUrl: string): Promise<void> {
     .insert(teams)
     .values({
       enterpriseId,
+      departmentId: await ensureDefaultDepartment(enterpriseId),
       name: `Native Mock Team ${marker}`,
       status: "active",
 

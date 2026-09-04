@@ -29,7 +29,7 @@ const [
   { hashPassword },
   { signSession },
   { redis },
-  { getDefaultEnterpriseId },
+  { getDefaultEnterpriseId, ensureDefaultDepartment },
 ] = await Promise.all([
   import("../src/app.js"),
   import("../src/db/client.js"),
@@ -288,7 +288,12 @@ async function createUsers(): Promise<void> {
     if (role === "employee") {
       const [team] = await db
         .insert(teams)
-        .values({ enterpriseId, name: `team-${marker}`, status: "active" })
+        .values({
+          enterpriseId,
+          departmentId: await ensureDefaultDepartment(enterpriseId),
+          name: `team-${marker}`,
+          status: "active",
+        })
         .returning({ id: teams.id });
       created.teamIds.push(team.id);
       employeeTeamId = team.id;

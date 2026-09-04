@@ -23,15 +23,14 @@ test("unused accounts classify as idle", () => {
   assert.equal(classifyUsageTierFromDays([]), "idle");
 });
 
-test("zero tokens with TokenHub calls stay light", () => {
-  assert.equal(classifyUsageTier(0, 1), "light");
-  assert.equal(classifyUsageTier(0, 36), "light");
-  assert.equal(classifyUsageTier(null, 12), "light");
+test("zero tokens with TokenHub calls stay standard", () => {
+  assert.equal(classifyUsageTier(0, 1), "standard");
+  assert.equal(classifyUsageTier(0, 36), "standard");
+  assert.equal(classifyUsageTier(null, 12), "standard");
 });
 
-test("a live request promotes idle to light", () => {
-  assert.equal(usageTierForRequest("idle"), "light");
-  assert.equal(usageTierForRequest("light"), "light");
+test("a live request promotes idle to standard", () => {
+  assert.equal(usageTierForRequest("idle"), "standard");
   assert.equal(usageTierForRequest("standard"), "standard");
   assert.equal(usageTierForRequest("heavy"), "heavy");
 });
@@ -54,18 +53,15 @@ test("after protection, the 7-day peak classifies directly", () => {
   assert.equal(effectiveUsageTier(null, REGISTERED, graduated), "idle");
   assert.equal(effectiveUsageTier(0, REGISTERED, graduated), "idle");
   assert.equal(effectiveUsageTier(0, REGISTERED, graduated, 0), "idle");
-  assert.equal(effectiveUsageTier(0, REGISTERED, graduated, 36), "light");
-  assert.equal(effectiveUsageTier(699_847, REGISTERED, graduated), "light");
+  assert.equal(effectiveUsageTier(0, REGISTERED, graduated, 36), "standard");
+  assert.equal(effectiveUsageTier(699_847, REGISTERED, graduated), "standard");
   assert.equal(effectiveUsageTier(12_000_000, REGISTERED, graduated), "standard");
   assert.equal(effectiveUsageTier(80_000_000, REGISTERED, graduated), "heavy");
 });
 
-test("daily usage below 3 million is light", () => {
-  assert.equal(classifyUsageTier(1), "light");
-  assert.equal(classifyUsageTier(2_999_999), "light");
-});
-
-test("daily usage from 3 million through 50 million is standard", () => {
+test("daily usage through 50 million is standard", () => {
+  assert.equal(classifyUsageTier(1), "standard");
+  assert.equal(classifyUsageTier(2_999_999), "standard");
   assert.equal(classifyUsageTier(3_000_000), "standard");
   assert.equal(classifyUsageTier(12_000_000), "standard");
   assert.equal(classifyUsageTier(50_000_000), "standard");
@@ -79,5 +75,5 @@ test("daily usage above 50 million is heavy", () => {
 test("recent-window classification uses the peak day", () => {
   assert.equal(classifyUsageTierFromDays([800_000, 12_000_000]), "standard");
   assert.equal(classifyUsageTierFromDays([800_000, 80_000_000]), "heavy");
-  assert.equal(classifyUsageTierFromDays([200_000, 900_000]), "light");
+  assert.equal(classifyUsageTierFromDays([200_000, 900_000]), "standard");
 });

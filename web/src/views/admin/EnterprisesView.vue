@@ -4,7 +4,7 @@
       <div class="page-head">
         <div>
           <h2 class="page-title">企业管理</h2>
-          <p class="page-subtitle">企业 → 团队 → 员工，每张卡片都可以直接操作</p>
+          <p class="page-subtitle">企业 → 部门 → 团队 → 员工，每张卡片都可以直接操作</p>
         </div>
         <div class="head-actions">
           <el-button :loading="loading" @click="refreshAll">刷新</el-button>
@@ -41,7 +41,7 @@
               </div>
               <div class="nav-card-bottom">
                 <span class="mono">{{ item.code }}</span>
-                <span>{{ teamCount(item.id) }} 个团队</span>
+                <span>{{ departmentCount(item.id) }} 个部门</span>
               </div>
               <div class="nav-card-meta">
                 {{ item.contact ? `${item.contact.name} · ${item.contact.phone}` : "暂无企业管理员" }}
@@ -77,15 +77,15 @@
 
         <aside class="list-pane">
           <div class="pane-label">
-            <span>团队</span>
-            <span class="pane-count">{{ selectedEnterprise ? teams.length : 0 }}</span>
+            <span>部门</span>
+            <span class="pane-count">{{ selectedEnterprise ? departments.length : 0 }}</span>
             <el-button
               type="primary"
               size="small"
               :disabled="!selectedEnterprise"
-              @click="openCreateTeam"
+              @click="openCreateDepartment"
             >
-              新建团队
+              新建部门
             </el-button>
           </div>
           <el-empty
@@ -94,15 +94,71 @@
             :image-size="64"
           />
           <el-empty
-            v-else-if="!teams.length && !unassignedCount"
-            description="该企业还没有团队"
+            v-else-if="!departments.length"
+            description="该企业还没有部门"
             :image-size="64"
           >
-            <el-button type="primary" @click="openCreateTeam">新建团队</el-button>
+            <el-button type="primary" @click="openCreateDepartment">新建部门</el-button>
           </el-empty>
           <div v-else class="card-list">
             <article
-              v-for="team in teams"
+              v-for="department in departments"
+              :key="department.id"
+              class="nav-card"
+              :class="{ selected: selectedDepartmentId === department.id }"
+              @click="selectDepartment(department.id)"
+            >
+              <div class="nav-card-top">
+                <strong>{{ department.name }}</strong>
+                <el-tag :type="department.status === 'active' ? 'success' : 'danger'" size="small" effect="light">
+                  {{ department.status === "active" ? "正常" : "已停用" }}
+                </el-tag>
+              </div>
+              <div class="nav-card-meta">
+                <span>{{ department.teamCount }} 个团队</span>
+              </div>
+              <div class="unit-card-actions" @click.stop>
+                <el-button link type="primary" size="small" @click="openEditDepartment(department)">编辑</el-button>
+                <el-button
+                  v-if="department.status === 'active'"
+                  link
+                  type="danger"
+                  size="small"
+                  @click="setDepartmentStatus(department, 'disabled')"
+                >
+                  停用
+                </el-button>
+                <el-button v-else link type="primary" size="small" @click="setDepartmentStatus(department, 'active')">
+                  启用
+                </el-button>
+                <el-button link type="danger" size="small" @click="deleteDepartment(department)">删除</el-button>
+              </div>
+            </article>
+          </div>
+        </aside>
+
+        <aside class="list-pane">
+          <div class="pane-label">
+            <span>团队</span>
+            <span class="pane-count">{{ selectedDepartment ? visibleTeams.length : 0 }}</span>
+            <el-button
+              type="primary"
+              size="small"
+              :disabled="!selectedDepartment"
+              @click="openCreateTeam"
+            >
+              新建团队
+            </el-button>
+          </div>
+          <el-empty
+            v-if="!selectedDepartment"
+            description="请先选择部门"
+            :image-size="64"
+          />
+          <div v-else class="card-list">
+            <p v-if="!visibleTeams.length" class="pane-hint">没有拆团队时，人直接挂在部门下</p>
+            <article
+              v-for="team in visibleTeams"
               :key="team.id"
               class="nav-card"
               :class="{ selected: selectedTeamId === team.id }"
@@ -133,6 +189,7 @@
                 <el-button v-else link type="primary" size="small" @click="setTeamStatus(team, 'active')">
                   启用
                 </el-button>
+                <el-button link type="danger" size="small" @click="deleteTeam(team)">删除</el-button>
               </div>
             </article>
             <article
@@ -263,10 +320,40 @@
       </template>
     </el-dialog>
 
+    <el-dialog v-model="showCreateDepartment" title="新建部门" width="440px">
+      <el-form label-width="90px">
+        <el-form-item label="所属企业">
+          <el-input :model-value="selectedEnterprise?.name" disabled />
+        </el-form-item>
+        <el-form-item label="部门名称" required>
+          <el-input v-model="createDepartmentName" maxlength="100" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showCreateDepartment = false">取消</el-button>
+        <el-button type="primary" :loading="savingDepartment" @click="createDepartment">创建</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="showEditDepartment" :title="`编辑部门 · ${editDepartment?.name || ''}`" width="440px">
+      <el-form label-width="90px">
+        <el-form-item label="部门名称" required>
+          <el-input v-model="editDepartmentName" maxlength="100" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showEditDepartment = false">取消</el-button>
+        <el-button type="primary" :loading="updatingDepartment" @click="updateDepartment">保存</el-button>
+      </template>
+    </el-dialog>
+
     <el-dialog v-model="showCreateTeam" title="新建团队" width="440px">
       <el-form label-width="90px">
         <el-form-item label="所属企业">
           <el-input :model-value="selectedEnterprise?.name" disabled />
+        </el-form-item>
+        <el-form-item label="所属部门">
+          <el-input :model-value="selectedDepartment?.name" disabled />
         </el-form-item>
         <el-form-item label="团队名称" required>
           <el-input v-model="createTeamName" maxlength="100" />
@@ -297,7 +384,7 @@
         </el-form-item>
         <el-form-item label="加入团队" required>
           <el-select v-model="inviteTeamId" style="width: 100%" placeholder="选择团队">
-            <el-option v-for="item in teams" :key="item.id" :label="item.name" :value="item.id" />
+            <el-option v-for="item in teamOptions" :key="item.id" :label="item.name" :value="item.id" />
           </el-select>
         </el-form-item>
         <el-form-item label="角色">
@@ -320,7 +407,7 @@
         <el-form-item label="手机号" required><el-input v-model="editUserForm.phone" /></el-form-item>
         <el-form-item v-if="editUserForm.role !== 'org_admin'" label="团队">
           <el-select v-model="editUserForm.teamId" clearable placeholder="选择团队" style="width: 100%">
-            <el-option v-for="item in teams" :key="item.id" :label="item.name" :value="item.id" />
+            <el-option v-for="item in teamOptions" :key="item.id" :label="item.name" :value="item.id" />
           </el-select>
         </el-form-item>
         <el-form-item label="角色">
@@ -389,11 +476,24 @@ type EnterpriseRow = {
   contact: { employeeId: number; name: string; phone: string; role: string } | null;
 };
 
+type DepartmentRow = {
+  id: number;
+  name: string;
+  status: "active" | "disabled";
+  isDefault?: boolean;
+  enterpriseId: number;
+  teamCount: number;
+  memberCount?: number;
+  defaultTeamId: number | null;
+};
+
 type TeamRow = {
   id: number;
   name: string;
   status: "active" | "disabled";
   enterpriseId: number;
+  departmentId: number;
+  isDefault?: boolean;
   memberCount: number;
   todayTotalTokens: number;
   monthTotalTokens: number;
@@ -416,14 +516,18 @@ const route = useRoute();
 const router = useRouter();
 const loading = ref(false);
 const enterprises = ref<EnterpriseRow[]>([]);
+const departments = ref<DepartmentRow[]>([]);
 const teams = ref<TeamRow[]>([]);
 const employees = ref<EmployeeRow[]>([]);
-const teamCounts = ref<Record<number, number>>({});
+const departmentCounts = ref<Record<number, number>>({});
 const selectedEnterpriseId = ref<number | null>(null);
+const selectedDepartmentId = ref<number | null>(null);
 const selectedTeamId = ref<number | null>(null);
 
 const showCreateEnterprise = ref(false);
 const showEditEnterprise = ref(false);
+const showCreateDepartment = ref(false);
+const showEditDepartment = ref(false);
 const showCreateTeam = ref(false);
 const showEditTeam = ref(false);
 const showInvite = ref(false);
@@ -433,6 +537,8 @@ const showUserDetail = ref(false);
 
 const savingEnterprise = ref(false);
 const updatingEnterprise = ref(false);
+const savingDepartment = ref(false);
+const updatingDepartment = ref(false);
 const savingTeam = ref(false);
 const updatingTeam = ref(false);
 const inviting = ref(false);
@@ -444,6 +550,9 @@ const approvingUserId = ref<number | null>(null);
 const createEnterpriseName = ref("");
 const editEnterpriseName = ref("");
 const editEnterprise = ref<EnterpriseRow | null>(null);
+const createDepartmentName = ref("");
+const editDepartmentName = ref("");
+const editDepartment = ref<DepartmentRow | null>(null);
 const createTeamName = ref("");
 const editTeamName = ref("");
 const editTeam = ref<TeamRow | null>(null);
@@ -465,6 +574,25 @@ const editUserForm = reactive({
 const selectedEnterprise = computed(
   () => enterprises.value.find((row) => row.id === selectedEnterpriseId.value) ?? null,
 );
+const selectedDepartment = computed(
+  () => departments.value.find((row) => row.id === selectedDepartmentId.value) ?? null,
+);
+const visibleTeams = computed(() =>
+  selectedDepartmentId.value == null
+    ? []
+    : teams.value.filter((row) => row.departmentId === selectedDepartmentId.value && !row.isDefault),
+);
+
+const selectedDepartmentDefaultTeamId = computed(() => selectedDepartment.value?.defaultTeamId ?? null);
+
+const teamOptions = computed(() =>
+  teams.value.map((team) => ({
+    id: team.id,
+    name: team.isDefault
+      ? `${departments.value.find((row) => row.id === team.departmentId)?.name ?? "部门"}（未拆团队）`
+      : team.name,
+  })),
+);
 
 const unassignedCount = computed(
   () => employees.value.filter((row) => row.teamId == null).length,
@@ -479,6 +607,9 @@ const visibleEmployees = computed(() => {
 
 const employeeSectionTitle = computed(() => {
   if (selectedTeamId.value == null) return "未加入团队";
+  if (selectedTeamId.value === selectedDepartmentDefaultTeamId.value) {
+    return selectedDepartment.value?.name ?? "部门成员";
+  }
   return teams.value.find((team) => team.id === selectedTeamId.value)?.name ?? "员工";
 });
 
@@ -500,8 +631,8 @@ function statusTagType(status: string) {
   return "danger";
 }
 
-function teamCount(enterpriseId: number) {
-  return teamCounts.value[enterpriseId] ?? 0;
+function departmentCount(enterpriseId: number) {
+  return departmentCounts.value[enterpriseId] ?? 0;
 }
 
 function requestMessage(error: unknown, fallback: string) {
@@ -513,6 +644,8 @@ function syncQuery() {
   const query = { ...route.query };
   if (selectedEnterpriseId.value == null) delete query.enterpriseId;
   else query.enterpriseId = String(selectedEnterpriseId.value);
+  if (selectedDepartmentId.value == null) delete query.departmentId;
+  else query.departmentId = String(selectedDepartmentId.value);
   if (selectedTeamId.value == null) delete query.teamId;
   else query.teamId = String(selectedTeamId.value);
   void router.replace({ query });
@@ -520,14 +653,23 @@ function syncQuery() {
 
 function selectEnterprise(id: number) {
   selectedEnterpriseId.value = id;
+  selectedDepartmentId.value = null;
   selectedTeamId.value = null;
   syncQuery();
   void loadTeamsAndPeople().then(() => {
-    if (selectedTeamId.value == null && teams.value[0]) {
-      selectedTeamId.value = teams.value[0].id;
-      syncQuery();
+    if (selectedDepartmentId.value == null && departments.value[0]) {
+      selectedDepartmentId.value = departments.value[0].id;
     }
+    selectedTeamId.value = selectedDepartmentDefaultTeamId.value;
+    syncQuery();
   });
+}
+
+function selectDepartment(id: number) {
+  selectedDepartmentId.value = id;
+  selectedTeamId.value =
+    departments.value.find((row) => row.id === id)?.defaultTeamId ?? null;
+  syncQuery();
 }
 
 function selectTeam(id: number | null) {
@@ -538,26 +680,29 @@ function selectTeam(id: number | null) {
 async function loadEnterprises() {
   const { data } = await http.get("/api/admin/enterprises");
   if (data.success) enterprises.value = data.data;
-  const teamsRes = await http.get("/api/admin/teams");
+  const deptRes = await http.get("/api/admin/departments");
   const counts: Record<number, number> = {};
-  if (teamsRes.data.success) {
-    for (const team of teamsRes.data.data as TeamRow[]) {
-      counts[team.enterpriseId] = (counts[team.enterpriseId] ?? 0) + 1;
+  if (deptRes.data.success) {
+    for (const department of deptRes.data.data as DepartmentRow[]) {
+      counts[department.enterpriseId] = (counts[department.enterpriseId] ?? 0) + 1;
     }
   }
-  teamCounts.value = counts;
+  departmentCounts.value = counts;
 }
 
 async function loadTeamsAndPeople() {
   if (selectedEnterpriseId.value == null) {
+    departments.value = [];
     teams.value = [];
     employees.value = [];
     return;
   }
-  const [teamRes, userRes] = await Promise.all([
+  const [deptRes, teamRes, userRes] = await Promise.all([
+    http.get("/api/admin/departments", { params: { enterpriseId: selectedEnterpriseId.value } }),
     http.get("/api/admin/teams", { params: { enterpriseId: selectedEnterpriseId.value } }),
     http.get("/api/admin/users", { params: { enterpriseId: selectedEnterpriseId.value, limit: 200 } }),
   ]);
+  departments.value = deptRes.data.success ? deptRes.data.data : [];
   teams.value = teamRes.data.success ? teamRes.data.data : [];
   const users = (userRes.data.success ? userRes.data.data : []) as Array<{
     id: number;
@@ -601,8 +746,15 @@ async function loadTeamsAndPeople() {
         lastLoginAt: row.lastLoginAt,
       };
     });
-  if (selectedTeamId.value != null && !teams.value.some((team) => team.id === selectedTeamId.value)) {
-    selectedTeamId.value = null;
+  if (
+    selectedDepartmentId.value != null &&
+    !departments.value.some((row) => row.id === selectedDepartmentId.value)
+  ) {
+    selectedDepartmentId.value = departments.value[0]?.id ?? null;
+  }
+  const teamIds = new Set(teams.value.map((team) => team.id));
+  if (selectedTeamId.value != null && !teamIds.has(selectedTeamId.value)) {
+    selectedTeamId.value = selectedDepartmentDefaultTeamId.value;
   }
 }
 
@@ -619,13 +771,20 @@ async function refreshAll() {
     ) {
       selectedEnterpriseId.value = enterprises.value[0]?.id ?? null;
     }
+    const requestedDepartment = parseQueryId(route.query.departmentId);
     const requestedTeam = parseQueryId(route.query.teamId);
+    selectedDepartmentId.value = requestedDepartment;
     selectedTeamId.value = requestedTeam;
     await loadTeamsAndPeople();
-    if (requestedTeam && teams.value.some((team) => team.id === requestedTeam)) {
+    if (requestedDepartment && departments.value.some((row) => row.id === requestedDepartment)) {
+      selectedDepartmentId.value = requestedDepartment;
+    } else {
+      selectedDepartmentId.value = departments.value[0]?.id ?? null;
+    }
+    if (requestedTeam && visibleTeams.value.some((team) => team.id === requestedTeam)) {
       selectedTeamId.value = requestedTeam;
     } else {
-      selectedTeamId.value = teams.value[0]?.id ?? null;
+      selectedTeamId.value = selectedDepartmentDefaultTeamId.value;
     }
     syncQuery();
   } catch (error) {
@@ -729,13 +888,120 @@ async function setEnterpriseStatus(row: EnterpriseRow, status: "active" | "disab
   await loadEnterprises();
 }
 
+function openCreateDepartment() {
+  createDepartmentName.value = "";
+  showCreateDepartment.value = true;
+}
+
+async function createDepartment() {
+  if (!selectedEnterpriseId.value) return;
+  const name = createDepartmentName.value.trim();
+  if (!name) {
+    ElMessage.warning("请填写部门名称");
+    return;
+  }
+  savingDepartment.value = true;
+  try {
+    const { data } = await http.post("/api/admin/departments", {
+      name,
+      enterpriseId: selectedEnterpriseId.value,
+    });
+    if (!data.success) throw new Error(data.message);
+    ElMessage.success("已创建");
+    showCreateDepartment.value = false;
+    await loadEnterprises();
+    await loadTeamsAndPeople();
+    selectedDepartmentId.value = data.data.id;
+    selectedTeamId.value = data.data.defaultTeamId ?? null;
+    syncQuery();
+  } catch (error) {
+    ElMessage.error(requestMessage(error, "创建失败"));
+  } finally {
+    savingDepartment.value = false;
+  }
+}
+
+function openEditDepartment(department: DepartmentRow) {
+  editDepartment.value = department;
+  editDepartmentName.value = department.name;
+  showEditDepartment.value = true;
+}
+
+async function updateDepartment() {
+  if (!editDepartment.value) return;
+  const name = editDepartmentName.value.trim();
+  if (!name) {
+    ElMessage.warning("请填写部门名称");
+    return;
+  }
+  updatingDepartment.value = true;
+  try {
+    const { data } = await http.patch(`/api/admin/departments/${editDepartment.value.id}`, { name });
+    if (!data.success) throw new Error(data.message);
+    ElMessage.success("已更新");
+    showEditDepartment.value = false;
+    await loadEnterprises();
+    await loadTeamsAndPeople();
+  } catch (error) {
+    ElMessage.error(requestMessage(error, "更新失败"));
+  } finally {
+    updatingDepartment.value = false;
+  }
+}
+
+async function setDepartmentStatus(department: DepartmentRow, status: "active" | "disabled") {
+  const action = status === "disabled" ? "停用" : "启用";
+  try {
+    await ElMessageBox.confirm(`确认${action}部门「${department.name}」？`, action, {
+      confirmButtonText: "确认",
+      cancelButtonText: "取消",
+      type: status === "disabled" ? "warning" : "info",
+    });
+  } catch {
+    return;
+  }
+  await http.patch(`/api/admin/departments/${department.id}`, { status });
+  ElMessage.success("已更新");
+  await loadTeamsAndPeople();
+}
+
+async function deleteDepartment(department: DepartmentRow) {
+  if (department.teamCount > 0) {
+    ElMessage.warning("部门下已绑定团队，无法删除");
+    return;
+  }
+  const departmentTeamIds = new Set(
+    teams.value.filter((team) => team.departmentId === department.id).map((team) => team.id),
+  );
+  const hasMembers =
+    (department.memberCount ?? 0) > 0 ||
+    employees.value.some((person) => person.teamId != null && departmentTeamIds.has(person.teamId));
+  if (hasMembers) {
+    ElMessage.warning("部门下已绑定员工，无法删除");
+    return;
+  }
+  try {
+    await http.delete(`/api/admin/departments/${department.id}`);
+    ElMessage.success("已删除");
+    if (selectedDepartmentId.value === department.id) {
+      selectedDepartmentId.value = null;
+      selectedTeamId.value = null;
+    }
+    await loadEnterprises();
+    await loadTeamsAndPeople();
+    syncQuery();
+  } catch (error) {
+    ElMessage.error(requestMessage(error, "删除失败"));
+  }
+}
+
 function openCreateTeam() {
   createTeamName.value = "";
   showCreateTeam.value = true;
 }
 
 async function createTeam() {
-  if (!selectedEnterpriseId.value) return;
+  if (!selectedEnterpriseId.value || !selectedDepartmentId.value) return;
   const name = createTeamName.value.trim();
   if (!name) {
     ElMessage.warning("请填写团队名称");
@@ -746,6 +1012,7 @@ async function createTeam() {
     const { data } = await http.post("/api/admin/teams", {
       name,
       enterpriseId: selectedEnterpriseId.value,
+      departmentId: selectedDepartmentId.value,
     });
     if (!data.success) throw new Error(data.message);
     ElMessage.success("已创建");
@@ -804,6 +1071,25 @@ async function setTeamStatus(team: TeamRow, status: "active" | "disabled") {
   await loadTeamsAndPeople();
 }
 
+async function deleteTeam(team: TeamRow) {
+  if (team.memberCount > 0) {
+    ElMessage.warning("团队下已绑定员工，无法删除");
+    return;
+  }
+  try {
+    await http.delete(`/api/admin/teams/${team.id}`);
+    ElMessage.success("已删除");
+    if (selectedTeamId.value === team.id) {
+      selectedTeamId.value = selectedDepartmentDefaultTeamId.value;
+    }
+    await loadEnterprises();
+    await loadTeamsAndPeople();
+    syncQuery();
+  } catch (error) {
+    ElMessage.error(requestMessage(error, "删除失败"));
+  }
+}
+
 function openInvite() {
   invitePhone.value = "";
   inviteRole.value = "member";
@@ -818,7 +1104,7 @@ async function inviteMember() {
     return;
   }
   if (!inviteTeamId.value) {
-    ElMessage.warning(teams.value.length ? "请选择要加入的团队" : "请先创建团队，再邀请员工入团");
+    ElMessage.warning(teams.value.length ? "请选择要加入的团队" : "请先创建团队，再邀请员工入团队");
     return;
   }
   inviting.value = true;
@@ -828,7 +1114,7 @@ async function inviteMember() {
       role: inviteRole.value,
     });
     if (!data.success) throw new Error(data.message);
-    ElMessage.success("已邀请入团");
+    ElMessage.success("已邀请进团队");
     showInvite.value = false;
     selectedTeamId.value = inviteTeamId.value;
     await loadTeamsAndPeople();
@@ -1086,7 +1372,7 @@ onMounted(() => {
 
 .split-layout {
   display: grid;
-  grid-template-columns: minmax(220px, 1fr) minmax(220px, 1fr) minmax(260px, 1.2fr);
+  grid-template-columns: minmax(180px, 0.9fr) minmax(180px, 0.9fr) minmax(180px, 0.9fr) minmax(240px, 1.2fr);
   gap: 12px;
   flex: 1;
   min-height: 0;
@@ -1197,6 +1483,13 @@ onMounted(() => {
 
 .mono {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.pane-hint {
+  margin: 0 0 8px;
+  color: #94a3b8;
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .form-help {

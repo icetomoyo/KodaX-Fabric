@@ -18,7 +18,7 @@
       show-icon
       :closable="false"
     >
-      <p>可申请成为合作企业，或等待已有企业的团队管理员用你的注册手机号邀请入团。</p>
+      <p>可申请成为合作企业，或等待已有企业的团队管理员用你的注册手机号邀请进团队。</p>
       <el-form inline @submit.prevent="onApply">
         <el-form-item>
           <el-input v-model="applyName" placeholder="合作企业名称" maxlength="100" />
@@ -62,12 +62,12 @@
         </div>
         <div class="kpi-card accent">
           <span class="kpi-label">今日 Tokens</span>
-          <strong class="kpi-value">{{ formatCompact(usage?.today?.totalTokens) }}</strong>
+          <strong class="kpi-value">{{ formatTokenCompact(usage?.today?.totalTokens) }}</strong>
           <span class="kpi-foot">本人合计消耗</span>
         </div>
         <div class="kpi-card">
           <span class="kpi-label">本月 Tokens</span>
-          <strong class="kpi-value">{{ formatCompact(usage?.month?.totalTokens) }}</strong>
+          <strong class="kpi-value">{{ formatTokenCompact(usage?.month?.totalTokens) }}</strong>
           <span class="kpi-foot">本月请求 {{ formatNumber(usage?.month?.requestCount) }}</span>
         </div>
         <div class="kpi-card success">
@@ -255,16 +255,6 @@ function formatNumber(value: unknown): string {
   const n = Number(value ?? 0);
   if (!Number.isFinite(n)) return "0";
   return new Intl.NumberFormat("zh-CN").format(n);
-}
-
-function formatCompact(value: unknown): string {
-  const n = Number(value ?? 0);
-  if (!Number.isFinite(n)) return "0";
-  if (Math.abs(n) < 1000) return formatNumber(n);
-  return new Intl.NumberFormat("zh-CN", {
-    notation: "compact",
-    maximumFractionDigits: 1,
-  }).format(n);
 }
 
 async function loadUsage() {

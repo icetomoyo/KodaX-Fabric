@@ -54,8 +54,7 @@ export function usageProgressStatus(
 }
 
 function trimFraction(value: number): string {
-  const rounded = Math.round(value * 10) / 10;
-  return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
+  return (Math.round(value * 100) / 100).toFixed(2);
 }
 
 /** Display CNY as ¥12.35. Accepts API decimal strings. */

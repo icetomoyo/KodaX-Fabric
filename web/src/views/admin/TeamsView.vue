@@ -7,6 +7,7 @@
 
     <el-table :data="rows" stripe>
       <el-table-column prop="name" label="团队" min-width="160" />
+      <el-table-column prop="departmentName" label="部门" min-width="140" />
       <el-table-column v-if="auth.isSuperAdmin" prop="enterpriseName" label="企业" min-width="140" />
       <el-table-column prop="memberCount" label="成员" width="90" />
       <el-table-column label="本月 Tokens" min-width="130">
@@ -30,6 +31,7 @@
         <template #default="{ row }">
           <el-button link type="primary" @click="openDetail(row)">详情</el-button>
           <el-button v-if="canCreate" link type="primary" @click="openEdit(row)">编辑</el-button>
+          <el-button v-if="canCreate" link type="danger" @click="removeOne(row)">删除</el-button>
         </template>
       </el-table-column>
     </el-table>
@@ -37,9 +39,19 @@
     <el-dialog v-model="showCreate" title="新建团队" width="440px">
       <el-form label-width="90px">
         <el-form-item v-if="auth.isSuperAdmin" label="所属企业" required>
-          <el-select v-model="createEnterpriseId" style="width: 100%">
+          <el-select v-model="createEnterpriseId" style="width: 100%" @change="loadDepartments">
             <el-option
               v-for="item in enterprises"
+              :key="item.id"
+              :label="item.name"
+              :value="item.id"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="所属部门" required>
+          <el-select v-model="createDepartmentId" style="width: 100%" placeholder="选择部门">
+            <el-option
+              v-for="item in departmentOptions"
               :key="item.id"
               :label="item.name"
               :value="item.id"
@@ -159,6 +171,9 @@ type TeamRow = {
   status: "active" | "disabled";
   enterpriseId: number;
   enterpriseName: string;
+  departmentId: number;
+  departmentName: string;
+  isDefault?: boolean;
   memberCount: number;
   todayTotalTokens: number;
   monthTotalTokens: number;
@@ -188,6 +203,8 @@ const saving = ref(false);
 const updating = ref(false);
 const createName = ref("");
 const createEnterpriseId = ref<number | undefined>();
+const createDepartmentId = ref<number | undefined>();
+const departmentOptions = ref<Array<{ id: number; name: string }>>([]);
 const editName = ref("");
 const editRow = ref<TeamRow | null>(null);
 const showDetail = ref(false);
@@ -202,7 +219,9 @@ const canCreate = computed(() => auth.isOrgAdmin);
 
 async function load() {
   const { data } = await http.get("/api/admin/teams");
-  if (data.success) rows.value = data.data;
+  if (data.success) {
+    rows.value = (data.data as TeamRow[]).filter((row) => !row.isDefault);
+  }
 }
 
 async function loadEnterprises() {
@@ -211,10 +230,22 @@ async function loadEnterprises() {
   if (data.success) enterprises.value = data.data;
 }
 
+async function loadDepartments() {
+  const params = auth.isSuperAdmin && createEnterpriseId.value
+    ? { enterpriseId: createEnterpriseId.value }
+    : {};
+  const { data } = await http.get("/api/admin/departments", { params });
+  departmentOptions.value = data.success ? data.data : [];
+  if (!departmentOptions.value.some((row) => row.id === createDepartmentId.value)) {
+    createDepartmentId.value = departmentOptions.value[0]?.id;
+  }
+}
+
 function openCreate() {
   createName.value = "";
   createEnterpriseId.value = auth.user?.enterpriseId ?? enterprises.value[0]?.id;
   showCreate.value = true;
+  void loadDepartments();
 }
 
 function openEdit(row: TeamRow) {
@@ -315,6 +346,20 @@ const usageChartOption = computed<EChartsCoreOption>(() => ({
   ],
 }));
 
+async function removeOne(row: TeamRow) {
+  if (row.memberCount > 0) {
+    ElMessage.warning("团队下已绑定员工，无法删除");
+    return;
+  }
+  try {
+    await http.delete(`/api/admin/teams/${row.id}`);
+    ElMessage.success("已删除");
+    await load();
+  } catch (error: unknown) {
+    ElMessage.error(requestMessage(error, "删除失败"));
+  }
+}
+
 async function createOne() {
   const name = createName.value.trim();
   if (!name) {
@@ -325,10 +370,15 @@ async function createOne() {
     ElMessage.warning("请选择企业");
     return;
   }
+  if (!createDepartmentId.value) {
+    ElMessage.warning("请选择部门");
+    return;
+  }
   saving.value = true;
   try {
     const { data } = await http.post("/api/admin/teams", {
       name,
+      departmentId: createDepartmentId.value,
       ...(auth.isOrgAdmin ? {} : { enterpriseId: createEnterpriseId.value }),
     });
     if (!data.success) throw new Error(data.message);

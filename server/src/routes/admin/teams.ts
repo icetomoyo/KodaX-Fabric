@@ -1,11 +1,17 @@
 import type { FastifyInstance } from "fastify";
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, count, desc, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import { env } from "../../config.js";
+import { DEFAULT_TEAM_NAME } from "../../lib/enterprise.js";
 import { db } from "../../db/client.js";
 import {
+  credentialBindings,
+  departments,
+  employeeApiKeys,
   employees,
   enterprises,
+  requestAudits,
+  requestErrorLogs,
   teamMembers,
   teams,
   usageCountersTeamDaily,
@@ -29,7 +35,6 @@ import {
   resolveTeamListScope,
   type OrgActor,
 } from "../../lib/org.js";
-import { removeEmployeeFromTeamProjects } from "./projects.js";
 import type { SessionRole } from "../../lib/jwt.js";
 import {
   requirePasswordChanged,
@@ -39,6 +44,7 @@ import {
 
 type TeamListQuery = {
   enterpriseId?: number;
+  departmentId?: number;
   teamIds?: number[];
 };
 
@@ -68,6 +74,9 @@ export function buildTeamListQuery(query: TeamListQuery) {
       status: teams.status,
       enterpriseId: teams.enterpriseId,
       enterpriseName: enterprises.name,
+      departmentId: teams.departmentId,
+      departmentName: departments.name,
+      isDefault: teams.isDefault,
       memberCount,
       todayTotalTokens,
       monthTotalTokens,
@@ -76,9 +85,11 @@ export function buildTeamListQuery(query: TeamListQuery) {
     })
     .from(teams)
     .innerJoin(enterprises, eq(teams.enterpriseId, enterprises.id))
+    .innerJoin(departments, eq(teams.departmentId, departments.id))
     .where(
       and(
         query.enterpriseId != null ? eq(teams.enterpriseId, query.enterpriseId) : sql`true`,
+        query.departmentId != null ? eq(teams.departmentId, query.departmentId) : sql`true`,
         query.teamIds?.length ? inArray(teams.id, query.teamIds) : sql`true`,
       ),
     )
@@ -126,6 +137,17 @@ async function refreshConsoleRole(employeeId: number) {
   }
 }
 
+export async function detachAndDeleteTeam(teamId: number): Promise<void> {
+  await db
+    .delete(credentialBindings)
+    .where(and(eq(credentialBindings.scopeType, "team"), eq(credentialBindings.scopeId, teamId)));
+  await db.delete(usageCountersTeamDaily).where(eq(usageCountersTeamDaily.teamId, teamId));
+  await db.update(requestAudits).set({ teamId: null }).where(eq(requestAudits.teamId, teamId));
+  await db.update(requestErrorLogs).set({ teamId: null }).where(eq(requestErrorLogs.teamId, teamId));
+  await db.update(employeeApiKeys).set({ teamId: null }).where(eq(employeeApiKeys.teamId, teamId));
+  await db.delete(teams).where(eq(teams.id, teamId));
+}
+
 export async function adminTeamRoutes(app: FastifyInstance) {
   app.addHook("preHandler", requireSession);
   app.addHook("preHandler", requirePasswordChanged);
@@ -135,6 +157,7 @@ export async function adminTeamRoutes(app: FastifyInstance) {
     const query = z
       .object({
         enterpriseId: z.coerce.number().int().positive().optional(),
+        departmentId: z.coerce.number().int().positive().optional(),
       })
       .parse(req.query);
     const actor = actorFrom(req);
@@ -143,7 +166,7 @@ export async function adminTeamRoutes(app: FastifyInstance) {
     if ("forbidden" in scope) {
       return reply.code(403).send({ success: false, message: "权限不足" });
     }
-    const rows = await buildTeamListQuery(scope);
+    const rows = await buildTeamListQuery({ ...scope, departmentId: query.departmentId });
     return {
       success: true,
       data: rows.map((row) => ({
@@ -158,6 +181,7 @@ export async function adminTeamRoutes(app: FastifyInstance) {
     const body = z
       .object({
         name: z.string().trim().min(1).max(100),
+        departmentId: z.number().int().positive(),
         enterpriseId: z.number().int().positive().optional(),
       })
       .safeParse(req.body);
@@ -165,11 +189,30 @@ export async function adminTeamRoutes(app: FastifyInstance) {
       return reply.code(400).send({ success: false, message: "参数无效" });
     }
     const actor = actorFrom(req);
+    if (actor.role !== "admin" && actor.role !== "org_admin") {
+      return reply.code(403).send({ success: false, message: "权限不足" });
+    }
+    const [department] = await db
+      .select({
+        id: departments.id,
+        enterpriseId: departments.enterpriseId,
+        status: departments.status,
+      })
+      .from(departments)
+      .where(eq(departments.id, body.data.departmentId))
+      .limit(1);
+    if (!department || department.status !== "active") {
+      return reply.code(404).send({ success: false, message: "部门不存在或未启用" });
+    }
     const enterpriseId =
       actor.role === "org_admin"
         ? actor.enterpriseId
-        : body.data.enterpriseId ?? (actor.role === "admin" ? null : actor.enterpriseId);
-    if (enterpriseId == null || !canCreateTeam(actor, enterpriseId)) {
+        : body.data.enterpriseId ?? department.enterpriseId;
+    if (
+      enterpriseId == null ||
+      enterpriseId !== department.enterpriseId ||
+      !canCreateTeam(actor, enterpriseId)
+    ) {
       return reply.code(403).send({ success: false, message: "权限不足" });
     }
     const [enterprise] = await db
@@ -180,15 +223,25 @@ export async function adminTeamRoutes(app: FastifyInstance) {
     if (!enterprise || enterprise.status !== "active") {
       return reply.code(404).send({ success: false, message: "企业不存在或未启用" });
     }
+    if (body.data.name === DEFAULT_TEAM_NAME) {
+      return reply.code(409).send({ success: false, message: "默认团队由系统创建，请换一个团队名" });
+    }
     try {
       const [row] = await db
         .insert(teams)
-        .values({ enterpriseId, name: body.data.name, status: "active" })
+        .values({
+          enterpriseId,
+          departmentId: department.id,
+          name: body.data.name,
+          status: "active",
+          isDefault: false,
+        })
         .returning({
           id: teams.id,
           name: teams.name,
           status: teams.status,
           enterpriseId: teams.enterpriseId,
+          departmentId: teams.departmentId,
           createdAt: teams.createdAt,
         });
       await writeOpsAudit({
@@ -196,13 +249,13 @@ export async function adminTeamRoutes(app: FastifyInstance) {
         action: "team.create",
         targetType: "team",
         targetId: String(row.id),
-        detail: { name: row.name, enterpriseId },
+        detail: { name: row.name, enterpriseId, departmentId: department.id },
         ip: req.ip,
       });
       return { success: true, data: row };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      if (message.includes("teams_enterprise_name_uidx") || message.includes("unique")) {
+      if (message.includes("teams_department_name_uidx") || message.includes("unique")) {
         return reply.code(409).send({ success: false, message: "团队名称已存在" });
       }
       throw error;
@@ -226,6 +279,14 @@ export async function adminTeamRoutes(app: FastifyInstance) {
     if (!access) return reply.code(404).send({ success: false, message: "团队不存在" });
     if (!canCreateTeam(actor, access.enterpriseId)) {
       return reply.code(403).send({ success: false, message: "权限不足" });
+    }
+    const [current] = await db
+      .select({ isDefault: teams.isDefault })
+      .from(teams)
+      .where(eq(teams.id, access.teamId))
+      .limit(1);
+    if (current?.isDefault) {
+      return reply.code(400).send({ success: false, message: "默认团队不能改名或停用" });
     }
     try {
       const [row] = await db
@@ -261,6 +322,46 @@ export async function adminTeamRoutes(app: FastifyInstance) {
       }
       throw error;
     }
+  });
+
+  app.delete("/api/admin/teams/:id", async (req, reply) => {
+    const params = z.object({ id: z.coerce.number().int().positive() }).safeParse(req.params);
+    if (!params.success) return reply.code(400).send({ success: false, message: "参数无效" });
+    const actor = actorFrom(req);
+    if (actor.role !== "admin" && actor.role !== "org_admin") {
+      return reply.code(403).send({ success: false, message: "权限不足" });
+    }
+    const access = await loadTeamAccessForActor(actor, params.data.id);
+    if (!access) return reply.code(404).send({ success: false, message: "团队不存在" });
+    if (!canCreateTeam(actor, access.enterpriseId)) {
+      return reply.code(403).send({ success: false, message: "权限不足" });
+    }
+    const [current] = await db
+      .select({ isDefault: teams.isDefault, name: teams.name })
+      .from(teams)
+      .where(eq(teams.id, access.teamId))
+      .limit(1);
+    if (!current) return reply.code(404).send({ success: false, message: "团队不存在" });
+    if (current.isDefault) {
+      return reply.code(400).send({ success: false, message: "默认团队不能单独删除，没有人时请删除部门" });
+    }
+    const [members] = await db
+      .select({ n: count() })
+      .from(teamMembers)
+      .where(eq(teamMembers.teamId, access.teamId));
+    if (Number(members?.n ?? 0) > 0) {
+      return reply.code(409).send({ success: false, message: "团队下已绑定员工，无法删除" });
+    }
+    await detachAndDeleteTeam(access.teamId);
+    await writeOpsAudit({
+      actorEmployeeId: actor.employeeId,
+      action: "team.delete",
+      targetType: "team",
+      targetId: String(access.teamId),
+      detail: { name: current.name },
+      ip: req.ip,
+    });
+    return { success: true };
   });
 
   app.get("/api/admin/teams/:id/members", async (req, reply) => {
@@ -539,7 +640,6 @@ export async function adminTeamRoutes(app: FastifyInstance) {
       )
       .returning({ employeeId: teamMembers.employeeId });
     if (!deleted.length) return reply.code(404).send({ success: false, message: "成员不存在" });
-    await removeEmployeeFromTeamProjects(access.teamId, params.data.employeeId);
     await refreshConsoleRole(params.data.employeeId);
     await writeOpsAudit({
       actorEmployeeId: actor.employeeId,

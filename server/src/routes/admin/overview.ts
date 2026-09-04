@@ -1,12 +1,12 @@
 import type { FastifyInstance } from "fastify";
-import { and, count, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, count, desc, eq, gte, inArray, lt, sql } from "drizzle-orm";
+import { env } from "../../config.js";
 import { db } from "../../db/client.js";
 import {
   employees,
   enterprises,
   modelRoutes,
   productLines,
-  projects,
   providers,
   requestAudits,
   teamMembers,
@@ -15,13 +15,91 @@ import {
 } from "../../db/schema/index.js";
 import { getChannelOverviewStats } from "../../lib/channel-overview.js";
 import { listAdminTeamIds } from "../../lib/org.js";
+import { quotaDayAt, zonedDateRange } from "../../lib/quota-time.js";
 import {
   requirePasswordChanged,
   requireRoles,
   requireSession,
 } from "../../middleware/auth.js";
 
-const todayExpr = sql`${requestAudits.createdAt}::date = current_date`;
+type TodayQueryOptions = {
+  now?: Date;
+  enterpriseId?: number;
+  teamIds?: number[];
+};
+
+function quotaToday(now = new Date()) {
+  return quotaDayAt(now, env.QUOTA_TIMEZONE);
+}
+
+export function todayAuditFilter(now = new Date()) {
+  const today = quotaToday(now);
+  const { start, endExclusive } = zonedDateRange(today, today, env.QUOTA_TIMEZONE);
+  return and(
+    gte(requestAudits.createdAt, start),
+    lt(requestAudits.createdAt, endExclusive),
+  )!;
+}
+
+export function buildTodayAuditWhere(now = new Date()) {
+  return db.select({ n: count() }).from(requestAudits).where(todayAuditFilter(now));
+}
+
+export function buildTodayTeamTokensQuery(options: TodayQueryOptions = {}) {
+  const today = quotaToday(options.now);
+  const dayFilter = sql`${usageCountersTeamDaily.day} = ${today}`;
+  if (options.enterpriseId != null) {
+    return db
+      .select({
+        tokens: sql<number>`coalesce(sum(${usageCountersTeamDaily.totalTokens}), 0)`,
+      })
+      .from(usageCountersTeamDaily)
+      .innerJoin(teams, eq(usageCountersTeamDaily.teamId, teams.id))
+      .where(
+        and(
+          dayFilter,
+          eq(teams.enterpriseId, options.enterpriseId),
+          options.teamIds ? inArray(usageCountersTeamDaily.teamId, options.teamIds) : undefined,
+        ),
+      );
+  }
+  return db
+    .select({
+      tokens: sql<number>`coalesce(sum(${usageCountersTeamDaily.totalTokens}), 0)`,
+    })
+    .from(usageCountersTeamDaily)
+    .where(
+      and(
+        dayFilter,
+        options.teamIds ? inArray(usageCountersTeamDaily.teamId, options.teamIds) : undefined,
+      ),
+    );
+}
+
+export function buildTopTeamsTodayQuery(options: TodayQueryOptions = {}) {
+  const today = quotaToday(options.now);
+  return db
+    .select({
+      teamId: usageCountersTeamDaily.teamId,
+      teamName: teams.name,
+      enterpriseName: enterprises.name,
+      totalTokens: sql<number>`coalesce(sum(${usageCountersTeamDaily.totalTokens}), 0)`,
+      requestCount: sql<number>`coalesce(sum(${usageCountersTeamDaily.requestCount}), 0)`,
+    })
+    .from(usageCountersTeamDaily)
+    .innerJoin(teams, eq(usageCountersTeamDaily.teamId, teams.id))
+    .innerJoin(enterprises, eq(teams.enterpriseId, enterprises.id))
+    .where(
+      and(
+        sql`${usageCountersTeamDaily.day} = ${today}`,
+        options.enterpriseId != null ? eq(teams.enterpriseId, options.enterpriseId) : undefined,
+        options.teamIds ? inArray(usageCountersTeamDaily.teamId, options.teamIds) : undefined,
+      ),
+    )
+    .groupBy(usageCountersTeamDaily.teamId, teams.name, enterprises.name)
+    .orderBy(sql`sum(${usageCountersTeamDaily.totalTokens}) desc`)
+    .limit(10);
+}
 
 async function todayStats(whereClause: ReturnType<typeof and> | undefined) {
   const [todayReqs] = await db
@@ -40,7 +118,7 @@ async function todayStats(whereClause: ReturnType<typeof and> | undefined) {
     .where(
       whereClause
         ? and(whereClause, sql`${requestAudits.status} <> 'success'`)
-        : sql`${requestAudits.status} <> 'success' and ${todayExpr}`,
+        : and(todayAuditFilter(), sql`${requestAudits.status} <> 'success'`),
     );
   return {
     requests: Number(todayReqs?.n ?? 0),
@@ -106,24 +184,11 @@ async function platformOverview() {
     .select({ n: count() })
     .from(modelRoutes)
     .where(eq(modelRoutes.enabled, true));
-  const todayWhere = and(todayExpr);
-  const [today, topTeams, byProvider, errors] = await Promise.all([
+  const todayWhere = todayAuditFilter(now);
+  const [today, tokenRow, topTeams, byProvider, errors] = await Promise.all([
     todayStats(todayWhere),
-    db
-      .select({
-        teamId: usageCountersTeamDaily.teamId,
-        teamName: teams.name,
-        enterpriseName: enterprises.name,
-        totalTokens: sql<number>`coalesce(sum(${usageCountersTeamDaily.totalTokens}), 0)`,
-        requestCount: sql<number>`coalesce(sum(${usageCountersTeamDaily.requestCount}), 0)`,
-      })
-      .from(usageCountersTeamDaily)
-      .innerJoin(teams, eq(usageCountersTeamDaily.teamId, teams.id))
-      .innerJoin(enterprises, eq(teams.enterpriseId, enterprises.id))
-      .where(sql`${usageCountersTeamDaily.day} = current_date`)
-      .groupBy(usageCountersTeamDaily.teamId, teams.name, enterprises.name)
-      .orderBy(sql`sum(${usageCountersTeamDaily.totalTokens}) desc`)
-      .limit(10),
+    buildTodayTeamTokensQuery({ now }).then((rows) => rows[0]),
+    buildTopTeamsTodayQuery({ now }),
     byProviderToday(todayWhere),
     recentErrors(undefined),
   ]);
@@ -133,7 +198,11 @@ async function platformOverview() {
     channels,
     providers: providerCount.n,
     modelRoutesEnabled: routeCount.n,
-    today,
+    today: {
+      requests: today.requests,
+      tokens: Number(tokenRow?.tokens ?? 0),
+      errors: today.errors,
+    },
     topTeamsToday: topTeams,
     byProviderToday: byProvider,
     recentErrors: errors,
@@ -156,12 +225,12 @@ async function enterpriseOverview(enterpriseId: number) {
     .select({ n: count() })
     .from(employees)
     .where(eq(employees.enterpriseId, enterpriseId));
-  const todayWhere = and(todayExpr, eq(employees.enterpriseId, enterpriseId));
-  const [today, topTeams, byProvider, errors] = await Promise.all([
+  const now = new Date();
+  const todayWhere = and(todayAuditFilter(now), eq(employees.enterpriseId, enterpriseId));
+  const [today, tokenRow, topTeams, byProvider, errors] = await Promise.all([
     db
       .select({
         requests: sql<number>`count(*)::int`,
-        tokens: sql<number>`coalesce(sum(${requestAudits.totalTokens}), 0)`,
         errors: sql<number>`count(*) filter (where ${requestAudits.status} <> 'success')::int`,
       })
       .from(requestAudits)
@@ -169,26 +238,10 @@ async function enterpriseOverview(enterpriseId: number) {
       .where(todayWhere)
       .then((rows) => ({
         requests: Number(rows[0]?.requests ?? 0),
-        tokens: Number(rows[0]?.tokens ?? 0),
         errors: Number(rows[0]?.errors ?? 0),
       })),
-    db
-      .select({
-        teamId: usageCountersTeamDaily.teamId,
-        teamName: teams.name,
-        enterpriseName: enterprises.name,
-        totalTokens: sql<number>`coalesce(sum(${usageCountersTeamDaily.totalTokens}), 0)`,
-        requestCount: sql<number>`coalesce(sum(${usageCountersTeamDaily.requestCount}), 0)`,
-      })
-      .from(usageCountersTeamDaily)
-      .innerJoin(teams, eq(usageCountersTeamDaily.teamId, teams.id))
-      .innerJoin(enterprises, eq(teams.enterpriseId, enterprises.id))
-      .where(
-        and(eq(teams.enterpriseId, enterpriseId), sql`${usageCountersTeamDaily.day} = current_date`),
-      )
-      .groupBy(usageCountersTeamDaily.teamId, teams.name, enterprises.name)
-      .orderBy(sql`sum(${usageCountersTeamDaily.totalTokens}) desc`)
-      .limit(10),
+    buildTodayTeamTokensQuery({ now, enterpriseId }).then((rows) => rows[0]),
+    buildTopTeamsTodayQuery({ now, enterpriseId }),
     byProviderToday(todayWhere),
     db
       .select({
@@ -216,7 +269,11 @@ async function enterpriseOverview(enterpriseId: number) {
       teamCount: Number(teamCount?.n ?? 0),
       employeeCount: Number(employeeCount?.n ?? 0),
     },
-    today,
+    today: {
+      requests: today.requests,
+      tokens: Number(tokenRow?.tokens ?? 0),
+      errors: today.errors,
+    },
     topTeamsToday: topTeams,
     byProviderToday: byProvider,
     recentErrors: errors,
@@ -227,7 +284,7 @@ async function teamScopeOverview(teamIds: number[]) {
   if (teamIds.length === 0) {
     return {
       role: "team_admin" as const,
-      team: { teamCount: 0, memberCount: 0, projectCount: 0 },
+      team: { teamCount: 0, memberCount: 0 },
       today: { requests: 0, tokens: 0, errors: 0 },
       topMembersToday: [],
       byProviderToday: [],
@@ -238,13 +295,11 @@ async function teamScopeOverview(teamIds: number[]) {
     .select({ n: count() })
     .from(teamMembers)
     .where(inArray(teamMembers.teamId, teamIds));
-  const [projectCount] = await db
-    .select({ n: count() })
-    .from(projects)
-    .where(inArray(projects.teamId, teamIds));
-  const todayWhere = and(todayExpr, inArray(requestAudits.teamId, teamIds));
-  const [today, topMembers, byProvider, errors] = await Promise.all([
+  const now = new Date();
+  const todayWhere = and(todayAuditFilter(now), inArray(requestAudits.teamId, teamIds));
+  const [today, tokenRow, topMembers, byProvider, errors] = await Promise.all([
     todayStats(todayWhere),
+    buildTodayTeamTokensQuery({ now, teamIds }).then((rows) => rows[0]),
     db
       .select({
         employeeId: usageCountersTeamDaily.employeeId,
@@ -257,7 +312,7 @@ async function teamScopeOverview(teamIds: number[]) {
       .where(
         and(
           inArray(usageCountersTeamDaily.teamId, teamIds),
-          sql`${usageCountersTeamDaily.day} = current_date`,
+          sql`${usageCountersTeamDaily.day} = ${quotaToday(now)}`,
         ),
       )
       .groupBy(usageCountersTeamDaily.employeeId, employees.name)
@@ -271,9 +326,12 @@ async function teamScopeOverview(teamIds: number[]) {
     team: {
       teamCount: teamIds.length,
       memberCount: Number(memberCount?.n ?? 0),
-      projectCount: Number(projectCount?.n ?? 0),
     },
-    today,
+    today: {
+      requests: today.requests,
+      tokens: Number(tokenRow?.tokens ?? 0),
+      errors: today.errors,
+    },
     topMembersToday: topMembers,
     byProviderToday: byProvider,
     recentErrors: errors,

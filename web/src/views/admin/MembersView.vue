@@ -126,7 +126,7 @@ async function inviteMember() {
       role: "member",
     });
     if (!data.success) throw new Error(data.message);
-    ElMessage.success("已邀请入团");
+    ElMessage.success("已邀请进团队");
     showInvite.value = false;
     await loadMembers();
   } catch (e: unknown) {

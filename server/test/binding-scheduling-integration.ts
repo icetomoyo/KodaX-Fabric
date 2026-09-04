@@ -35,7 +35,7 @@ const [
   { encryptEmployeeApiKey, generateApiKey },
   { encryptSecret, secretSuffix },
   { redis },
-  { getDefaultEnterpriseId },
+  { getDefaultEnterpriseId, ensureDefaultDepartment },
   { hourStartOf },
   { env },
   { quotaDayAt },
@@ -72,10 +72,9 @@ const {
   usageCountersTeamDaily,
 } = schema;
 
-type UsageTier = "light" | "standard" | "heavy";
+type UsageTier = "standard" | "heavy";
 
 const PEAK_TOKENS_BY_TIER: Record<UsageTier, number> = {
-  light: 100_000,
   standard: 12_000_000,
   heavy: 80_000_000,
 };
@@ -368,11 +367,13 @@ async function insertBinding(
 
 async function insertFixtures(upstreamBaseUrl: string): Promise<void> {
   const enterpriseId = await getDefaultEnterpriseId();
+  const departmentId = await ensureDefaultDepartment(enterpriseId);
 
   const [exclusiveTeam] = await db
     .insert(teams)
     .values({
       enterpriseId,
+      departmentId,
       name: `exclusive-${marker}`,
       status: "active",
 
@@ -382,6 +383,7 @@ async function insertFixtures(upstreamBaseUrl: string): Promise<void> {
     .insert(teams)
     .values({
       enterpriseId,
+      departmentId,
       name: `share-${marker}`,
       status: "active",
 
@@ -391,6 +393,7 @@ async function insertFixtures(upstreamBaseUrl: string): Promise<void> {
     .insert(teams)
     .values({
       enterpriseId,
+      departmentId,
       name: `quota-${marker}`,
       status: "active",
 

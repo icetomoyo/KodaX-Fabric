@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import {
   bigint,
   boolean,
@@ -39,7 +40,7 @@ export const auditStatusEnum = pgEnum("audit_status", [
   "cancelled",
 ]);
 export const bindingScopeTypeEnum = pgEnum("binding_scope_type", ["employee", "team", "enterprise"]);
-export const usageTierEnum = pgEnum("usage_tier", ["idle", "light", "standard", "heavy"]);
+export const usageTierEnum = pgEnum("usage_tier", ["idle", "standard", "heavy"]);
 
 export const enterprises = pgTable(
   "enterprises",
@@ -85,8 +86,8 @@ export const employees = pgTable(
   ],
 );
 
-export const teams = pgTable(
-  "teams",
+export const departments = pgTable(
+  "departments",
   {
     id: bigint("id", { mode: "number" }).generatedAlwaysAsIdentity().primaryKey(),
     enterpriseId: bigint("enterprise_id", { mode: "number" })
@@ -94,12 +95,38 @@ export const teams = pgTable(
       .references(() => enterprises.id, { onDelete: "restrict", onUpdate: "no action" }),
     name: varchar("name", { length: 100 }).notNull(),
     status: orgUnitStatusEnum("status").notNull().default("active"),
+    isDefault: boolean("is_default").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
-    uniqueIndex("teams_enterprise_name_uidx").on(t.enterpriseId, t.name),
+    uniqueIndex("departments_enterprise_name_uidx").on(t.enterpriseId, t.name),
+    uniqueIndex("departments_enterprise_default_uidx").on(t.enterpriseId).where(sql`${t.isDefault}`),
+    index("departments_enterprise_idx").on(t.enterpriseId),
+  ],
+);
+
+export const teams = pgTable(
+  "teams",
+  {
+    id: bigint("id", { mode: "number" }).generatedAlwaysAsIdentity().primaryKey(),
+    enterpriseId: bigint("enterprise_id", { mode: "number" })
+      .notNull()
+      .references(() => enterprises.id, { onDelete: "restrict", onUpdate: "no action" }),
+    departmentId: bigint("department_id", { mode: "number" })
+      .notNull()
+      .references(() => departments.id, { onDelete: "restrict", onUpdate: "no action" }),
+    name: varchar("name", { length: 100 }).notNull(),
+    status: orgUnitStatusEnum("status").notNull().default("active"),
+    isDefault: boolean("is_default").notNull().default(false),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("teams_department_name_uidx").on(t.departmentId, t.name),
+    uniqueIndex("teams_department_default_uidx").on(t.departmentId).where(sql`${t.isDefault}`),
     index("teams_enterprise_idx").on(t.enterpriseId),
+    index("teams_department_idx").on(t.departmentId),
   ],
 );
 
@@ -120,42 +147,6 @@ export const teamMembers = pgTable(
     uniqueIndex("team_members_team_employee_uidx").on(t.teamId, t.employeeId),
     // One employee belongs to at most one team at a time.
     uniqueIndex("team_members_employee_uidx").on(t.employeeId),
-  ],
-);
-
-export const projects = pgTable(
-  "projects",
-  {
-    id: bigint("id", { mode: "number" }).generatedAlwaysAsIdentity().primaryKey(),
-    teamId: bigint("team_id", { mode: "number" })
-      .notNull()
-      .references(() => teams.id, { onDelete: "cascade", onUpdate: "no action" }),
-    name: varchar("name", { length: 100 }).notNull(),
-    status: orgUnitStatusEnum("status").notNull().default("active"),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-  },
-  (t) => [
-    uniqueIndex("projects_team_name_uidx").on(t.teamId, t.name),
-    index("projects_team_idx").on(t.teamId),
-  ],
-);
-
-export const projectMembers = pgTable(
-  "project_members",
-  {
-    id: bigint("id", { mode: "number" }).generatedAlwaysAsIdentity().primaryKey(),
-    projectId: bigint("project_id", { mode: "number" })
-      .notNull()
-      .references(() => projects.id, { onDelete: "cascade", onUpdate: "no action" }),
-    employeeId: bigint("employee_id", { mode: "number" })
-      .notNull()
-      .references(() => employees.id, { onDelete: "cascade", onUpdate: "no action" }),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  },
-  (t) => [
-    uniqueIndex("project_members_project_employee_uidx").on(t.projectId, t.employeeId),
-    index("project_members_employee_idx").on(t.employeeId),
   ],
 );
 

@@ -1,11 +1,9 @@
-export const USAGE_TIERS = ["idle", "light", "standard", "heavy"] as const;
+export const USAGE_TIERS = ["idle", "standard", "heavy"] as const;
 export type UsageTier = (typeof USAGE_TIERS)[number];
 
 /** Stored default for a new account (also the 7×24h protection tier). */
 export const DEFAULT_USAGE_TIER: UsageTier = "heavy";
 
-/** Daily tokens strictly below this are 轻度. */
-export const LIGHT_DAILY_TOKEN_LIMIT = 3_000_000;
 /** Daily tokens strictly above this are 重度. */
 export const HEAVY_DAILY_TOKEN_LIMIT = 50_000_000;
 
@@ -19,7 +17,7 @@ function asNonNegative(value: number | null | undefined): number {
 /**
  * Classify observed usage from a window peak and call count.
  * No TokenHub calls (0 tokens and 0 requests) is 闲置 — they hold no channel Key.
- * Failed calls with 0 tokens still count as 轻度 so the Key stays available.
+ * Failed calls with 0 tokens still count as 标准 so the Key stays available.
  */
 export function classifyUsageTier(
   dailyTokens: number | null | undefined,
@@ -28,7 +26,6 @@ export function classifyUsageTier(
   const tokens = asNonNegative(dailyTokens);
   const requests = asNonNegative(requestCount);
   if (tokens <= 0 && requests <= 0) return "idle";
-  if (tokens < LIGHT_DAILY_TOKEN_LIMIT) return "light";
   if (tokens > HEAVY_DAILY_TOKEN_LIMIT) return "heavy";
   return "standard";
 }
@@ -53,11 +50,11 @@ export function effectiveUsageTier(
 }
 
 /**
- * Idle accounts hold no Key. A live request promotes them to 轻度 so they
- * can bind an enterprise-shared Key immediately.
+ * Idle accounts hold no Key. A live request promotes them to 标准 so they
+ * can bind a team-shared Key immediately.
  */
 export function usageTierForRequest(tier: UsageTier): UsageTier {
-  return tier === "idle" ? "light" : tier;
+  return tier === "idle" ? "standard" : tier;
 }
 
 /**

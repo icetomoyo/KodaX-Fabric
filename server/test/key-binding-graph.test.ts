@@ -205,7 +205,7 @@ test("self-hosted custom credentials connect every virtual key on the channel", 
   const graph = buildKeyBindingGraph({
     employees: [
       employee({ id: 1, name: "甲", usageTier: "heavy" }),
-      employee({ id: 2, name: "乙", usageTier: "light" }),
+      employee({ id: 2, name: "乙", usageTier: "standard" }),
     ],
     virtualKeys: [
       virtualKey({
@@ -256,7 +256,7 @@ test("employee binding links that employee's virtual keys as dedicated", () => {
 test("quiet first-day usage must not hide an exclusive Key still bound at stored heavy", () => {
   // 144: 张闯 created VK cc during the 7×24h protection window; first request
   // bound GLM Key 01 at employee scope. Live classification of 33_060 tokens
-  // is light, but the canvas must follow the committed heavy row.
+  // is standard, but the canvas must follow the committed heavy row.
   const peakTokens = 33_060;
   const createdAt = new Date();
   assert.equal(effectiveUsageTier(peakTokens, createdAt, createdAt), "heavy");
@@ -307,11 +307,11 @@ test("team binding links every team member's virtual keys as team_shared", () =>
   assert.deepEqual(useEdges(graph), ["11->21:team_shared", "12->21:team_shared"]);
 });
 
-test("enterprise binding links that enterprise's employee virtual keys", () => {
+test("enterprise leftover bindings are not drawn", () => {
   const graph = buildKeyBindingGraph({
     employees: [
-      employee({ id: 1, name: "张三", enterpriseId: 1, enterpriseName: "海致", usageTier: "light" }),
-      employee({ id: 2, name: "王五", enterpriseId: 2, enterpriseName: "星图", usageTier: "light" }),
+      employee({ id: 1, name: "张三", enterpriseId: 1, enterpriseName: "海致", usageTier: "standard" }),
+      employee({ id: 2, name: "王五", enterpriseId: 2, enterpriseName: "星图", usageTier: "standard" }),
     ],
     virtualKeys: [
       virtualKey({ id: 11, employeeId: 1, productLineId: 100 }),
@@ -321,10 +321,10 @@ test("enterprise binding links that enterprise's employee virtual keys", () => {
     bindings: [binding(21, "enterprise", 1)],
   });
 
-  assert.deepEqual(useEdges(graph), ["11->21:enterprise_shared"]);
+  assert.deepEqual(useEdges(graph), []);
 });
 
-test("standard employee without a team uses the enterprise binding", () => {
+test("standard employee without a team has no binding", () => {
   const graph = buildKeyBindingGraph({
     employees: [
       employee({
@@ -340,7 +340,7 @@ test("standard employee without a team uses the enterprise binding", () => {
     bindings: [binding(21, "enterprise", 1)],
   });
 
-  assert.deepEqual(useEdges(graph), ["11->21:enterprise_shared"]);
+  assert.deepEqual(useEdges(graph), []);
 });
 
 test("idle leftover exclusive or enterprise bindings are not drawn", () => {
@@ -360,30 +360,11 @@ test("idle leftover exclusive or enterprise bindings are not drawn", () => {
   assert.deepEqual(useEdges(graph), []);
 });
 
-test("enterprise binding skips standard and heavy employees in the same enterprise", () => {
-  const graph = buildKeyBindingGraph({
-    employees: [
-      employee({ id: 1, name: "轻度", usageTier: "light" }),
-      employee({ id: 2, name: "标准", usageTier: "standard" }),
-      employee({ id: 3, name: "重度", usageTier: "heavy" }),
-    ],
-    virtualKeys: [
-      virtualKey({ id: 11, employeeId: 1, productLineId: 100 }),
-      virtualKey({ id: 12, employeeId: 2, productLineId: 100 }),
-      virtualKey({ id: 13, employeeId: 3, productLineId: 100 }),
-    ],
-    credentials: [credential({ id: 21, productLineId: 100 })],
-    bindings: [binding(21, "enterprise", 1)],
-  });
-
-  assert.deepEqual(useEdges(graph), ["11->21:enterprise_shared"]);
-});
-
-test("team binding skips light and heavy teammates", () => {
+test("team binding skips idle and heavy teammates", () => {
   const graph = buildKeyBindingGraph({
     employees: [
       employee({ id: 1, name: "标准", teamId: 10, teamName: "平台", usageTier: "standard" }),
-      employee({ id: 2, name: "轻度", teamId: 10, teamName: "平台", usageTier: "light" }),
+      employee({ id: 2, name: "闲置", teamId: 10, teamName: "平台", usageTier: "idle" }),
       employee({ id: 3, name: "重度", teamId: 10, teamName: "平台", usageTier: "heavy" }),
     ],
     virtualKeys: [

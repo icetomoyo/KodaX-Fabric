@@ -82,7 +82,7 @@ export type AcquireBindingParams = {
   excludeCredentialIds?: ReadonlySet<number>;
   /**
    * Live requests omit this (default true): idle accounts are promoted to
-   * 轻度 so the first call can bind an enterprise Key.
+   * 标准 so the first call can bind a team-shared Key.
    * The daily rebind job sets false so idle accounts stay unbound.
    */
   promoteIdle?: boolean;
@@ -166,29 +166,17 @@ const credentialSnapshotSelect = {
 /**
  * Map a usage-tier employee onto the binding scope that should own a Key.
  *
- * idle → none; heavy → exclusive employee Key; standard → team share, else
- * enterprise; light → enterprise share. Returns null when the required
- * subject is missing. Request-time acquire may promote idle → 轻度 first.
+ * idle → none; heavy → exclusive employee Key; standard → team share.
+ * Returns null when the required subject is missing (idle, or standard
+ * without a team). Request-time acquire may promote idle → 标准 first.
  */
 export function resolveBindingScope(input: ResolveBindingScopeInput): BindingScope | null {
   if (input.usageTier === "idle") return null;
   if (input.usageTier === "heavy") {
     return { scopeType: "employee", scopeId: input.employeeId };
   }
-  if (input.usageTier === "standard") {
-    if (input.teamId != null) {
-      return { scopeType: "team", scopeId: input.teamId };
-    }
-    if (input.enterpriseId != null) {
-      return { scopeType: "enterprise", scopeId: input.enterpriseId };
-    }
-    return null;
-  }
-  if (input.usageTier === "light") {
-    if (input.enterpriseId != null) {
-      return { scopeType: "enterprise", scopeId: input.enterpriseId };
-    }
-    return null;
+  if (input.usageTier === "standard" && input.teamId != null) {
+    return { scopeType: "team", scopeId: input.teamId };
   }
   return null;
 }

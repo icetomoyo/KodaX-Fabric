@@ -143,7 +143,7 @@
             style="width: 100%"
             :disabled="editForm.status !== 'active'"
           >
-            <el-option v-for="item in teams" :key="item.id" :label="item.name" :value="item.id" />
+            <el-option v-for="item in teams" :key="item.id" :label="teamLabel(item)" :value="item.id" />
           </el-select>
         </el-form-item>
         <el-form-item v-if="auth.isSuperAdmin" label="所属企业">
@@ -199,7 +199,7 @@
         </el-form-item>
         <el-form-item label="团队" required>
           <el-select v-model="inviteTeamId" style="width: 100%" placeholder="选择团队">
-            <el-option v-for="item in teams" :key="item.id" :label="item.name" :value="item.id" />
+            <el-option v-for="item in teams" :key="item.id" :label="teamLabel(item)" :value="item.id" />
           </el-select>
         </el-form-item>
         <el-form-item label="角色">
@@ -276,7 +276,7 @@ type UserRow = {
 };
 
 type EnterpriseRow = { id: number; name: string; status: string };
-type TeamRow = { id: number; name: string };
+type TeamRow = { id: number; name: string; departmentName?: string; isDefault?: boolean };
 type TeamNavItem = {
   key: TeamNavKey;
   name: string;
@@ -326,6 +326,10 @@ const statusLabels: Record<UserRow["status"], string> = {
   disabled: "已停用",
 };
 
+function teamLabel(team: TeamRow) {
+  return team.isDefault ? `${team.departmentName || "部门"}（未拆团队）` : team.name;
+}
+
 const teamNav = computed<TeamNavItem[]>(() => {
   const counts = new Map<number, { count: number; pendingCount: number }>();
   let unassignedCount = 0;
@@ -345,7 +349,7 @@ const teamNav = computed<TeamNavItem[]>(() => {
     const current = counts.get(team.id) ?? { count: 0, pendingCount: 0 };
     return {
       key: team.id,
-      name: team.name,
+      name: teamLabel(team),
       count: current.count,
       pendingCount: current.pendingCount,
     };
@@ -382,7 +386,8 @@ const pagedRows = computed(() => {
 
 const currentGroupTitle = computed(() => {
   if (selectedKey.value === UNASSIGNED_KEY) return "未加入团队";
-  return teams.value.find((team) => team.id === selectedKey.value)?.name || "员工";
+  const team = teams.value.find((row) => row.id === selectedKey.value);
+  return team ? teamLabel(team) : "员工";
 });
 
 const emptyText = computed(() => {
@@ -432,7 +437,7 @@ async function inviteMember() {
     return;
   }
   if (!inviteTeamId.value) {
-    ElMessage.warning(teams.value.length ? "请选择要加入的团队" : "请先创建团队，再邀请员工入团");
+    ElMessage.warning(teams.value.length ? "请选择要加入的团队" : "请先创建团队，再邀请员工入团队");
     return;
   }
   inviting.value = true;
@@ -442,7 +447,7 @@ async function inviteMember() {
       role: inviteRole.value,
     });
     if (!data.success) throw new Error(data.message);
-    ElMessage.success("已邀请入团");
+    ElMessage.success("已邀请进团队");
     showInvite.value = false;
     selectedKey.value = inviteTeamId.value;
     await load();

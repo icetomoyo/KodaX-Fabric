@@ -1,10 +1,12 @@
 import { randomInt } from "node:crypto";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { db } from "../db/client.js";
-import { enterprises } from "../db/schema/index.js";
+import { departments, enterprises, teams } from "../db/schema/index.js";
 import type { SessionRole } from "./jwt.js";
 
 export const DEFAULT_ENTERPRISE_NAME = "海致集团";
+export const DEFAULT_DEPARTMENT_NAME = "默认部门";
+export const DEFAULT_TEAM_NAME = "默认团队";
 export const ENTERPRISE_CODE_PATTERN = /^E[A-HJ-NP-Z2-9]{8}$/;
 const ENTERPRISE_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
@@ -153,6 +155,7 @@ export async function insertEnterprise(input: {
           createdAt: enterprises.createdAt,
           updatedAt: enterprises.updatedAt,
         });
+      await ensureDefaultDepartment(row.id);
       return row;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -161,6 +164,49 @@ export async function insertEnterprise(input: {
     }
   }
   throw new Error("failed to allocate enterprise code");
+}
+
+export async function ensureDefaultTeam(departmentId: number, enterpriseId: number): Promise<number> {
+  const [existing] = await db
+    .select({ id: teams.id })
+    .from(teams)
+    .where(and(eq(teams.departmentId, departmentId), eq(teams.isDefault, true)))
+    .limit(1);
+  if (existing) return existing.id;
+  const [row] = await db
+    .insert(teams)
+    .values({
+      enterpriseId,
+      departmentId,
+      name: DEFAULT_TEAM_NAME,
+      status: "active",
+      isDefault: true,
+    })
+    .returning({ id: teams.id });
+  return row.id;
+}
+
+export async function ensureDefaultDepartment(enterpriseId: number): Promise<number> {
+  const [existing] = await db
+    .select({ id: departments.id })
+    .from(departments)
+    .where(and(eq(departments.enterpriseId, enterpriseId), eq(departments.isDefault, true)))
+    .limit(1);
+  const departmentId =
+    existing?.id ??
+    (
+      await db
+        .insert(departments)
+        .values({
+          enterpriseId,
+          name: DEFAULT_DEPARTMENT_NAME,
+          status: "active",
+          isDefault: true,
+        })
+        .returning({ id: departments.id })
+    )[0].id;
+  await ensureDefaultTeam(departmentId, enterpriseId);
+  return departmentId;
 }
 
 export async function getDefaultEnterpriseId(): Promise<number> {
