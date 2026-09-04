@@ -367,6 +367,16 @@
 
     <el-dialog v-model="showEditTeam" :title="`编辑团队 · ${editTeam?.name || ''}`" width="440px">
       <el-form label-width="90px">
+        <el-form-item label="所属部门" required>
+          <el-select v-model="editTeamDepartmentId" style="width: 100%" placeholder="选择部门">
+            <el-option
+              v-for="item in departments"
+              :key="item.id"
+              :label="item.name"
+              :value="item.id"
+            />
+          </el-select>
+        </el-form-item>
         <el-form-item label="团队名称" required>
           <el-input v-model="editTeamName" maxlength="100" />
         </el-form-item>
@@ -555,6 +565,7 @@ const editDepartmentName = ref("");
 const editDepartment = ref<DepartmentRow | null>(null);
 const createTeamName = ref("");
 const editTeamName = ref("");
+const editTeamDepartmentId = ref<number | undefined>();
 const editTeam = ref<TeamRow | null>(null);
 const invitePhone = ref("");
 const inviteTeamId = ref<number | undefined>();
@@ -1031,6 +1042,7 @@ async function createTeam() {
 function openEditTeam(team: TeamRow) {
   editTeam.value = team;
   editTeamName.value = team.name;
+  editTeamDepartmentId.value = team.departmentId;
   showEditTeam.value = true;
 }
 
@@ -1041,13 +1053,23 @@ async function updateTeam() {
     ElMessage.warning("请填写团队名称");
     return;
   }
+  if (!editTeamDepartmentId.value) {
+    ElMessage.warning("请选择部门");
+    return;
+  }
   updatingTeam.value = true;
   try {
-    const { data } = await http.patch(`/api/admin/teams/${editTeam.value.id}`, { name });
+    const { data } = await http.patch(`/api/admin/teams/${editTeam.value.id}`, {
+      name,
+      departmentId: editTeamDepartmentId.value,
+    });
     if (!data.success) throw new Error(data.message);
     ElMessage.success("已更新");
     showEditTeam.value = false;
+    selectedDepartmentId.value = editTeamDepartmentId.value;
+    selectedTeamId.value = editTeam.value.id;
     await loadTeamsAndPeople();
+    syncQuery();
   } catch (error) {
     ElMessage.error(requestMessage(error, "更新失败"));
   } finally {

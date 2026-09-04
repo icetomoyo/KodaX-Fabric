@@ -268,6 +268,7 @@ export async function adminTeamRoutes(app: FastifyInstance) {
       .object({
         name: z.string().trim().min(1).max(100).optional(),
         status: z.enum(["active", "disabled"]).optional(),
+        departmentId: z.number().int().positive().optional(),
       })
       .refine((data) => Object.keys(data).length > 0)
       .safeParse(req.body);
@@ -286,7 +287,27 @@ export async function adminTeamRoutes(app: FastifyInstance) {
       .where(eq(teams.id, access.teamId))
       .limit(1);
     if (current?.isDefault) {
-      return reply.code(400).send({ success: false, message: "默认团队不能改名或停用" });
+      return reply.code(400).send({ success: false, message: "默认团队不能改名、停用或更换部门" });
+    }
+    if (body.data.name === DEFAULT_TEAM_NAME) {
+      return reply.code(409).send({ success: false, message: "默认团队由系统创建，请换一个团队名" });
+    }
+    if (body.data.departmentId != null) {
+      const [department] = await db
+        .select({
+          id: departments.id,
+          enterpriseId: departments.enterpriseId,
+          status: departments.status,
+        })
+        .from(departments)
+        .where(eq(departments.id, body.data.departmentId))
+        .limit(1);
+      if (!department || department.status !== "active") {
+        return reply.code(404).send({ success: false, message: "部门不存在或未启用" });
+      }
+      if (department.enterpriseId !== access.enterpriseId) {
+        return reply.code(403).send({ success: false, message: "不能把团队调到其他企业的部门" });
+      }
     }
     try {
       const [row] = await db
@@ -294,6 +315,7 @@ export async function adminTeamRoutes(app: FastifyInstance) {
         .set({
           ...(body.data.name != null ? { name: body.data.name } : {}),
           ...(body.data.status != null ? { status: body.data.status } : {}),
+          ...(body.data.departmentId != null ? { departmentId: body.data.departmentId } : {}),
           updatedAt: new Date(),
         })
         .where(eq(teams.id, access.teamId))
@@ -302,6 +324,7 @@ export async function adminTeamRoutes(app: FastifyInstance) {
           name: teams.name,
           status: teams.status,
           enterpriseId: teams.enterpriseId,
+          departmentId: teams.departmentId,
         });
       await writeOpsAudit({
         actorEmployeeId: actor.employeeId,
@@ -311,13 +334,18 @@ export async function adminTeamRoutes(app: FastifyInstance) {
         detail: {
           fields: Object.keys(body.data),
           name: row.name,
+          departmentId: row.departmentId,
         },
         ip: req.ip,
       });
       return { success: true, data: row };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      if (message.includes("teams_enterprise_name_uidx") || message.includes("unique")) {
+      if (
+        message.includes("teams_department_name_uidx")
+        || message.includes("teams_enterprise_name_uidx")
+        || message.includes("unique")
+      ) {
         return reply.code(409).send({ success: false, message: "团队名称已存在" });
       }
       throw error;

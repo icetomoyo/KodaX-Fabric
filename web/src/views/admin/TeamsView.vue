@@ -39,7 +39,7 @@
     <el-dialog v-model="showCreate" title="新建团队" width="440px">
       <el-form label-width="90px">
         <el-form-item v-if="auth.isSuperAdmin" label="所属企业" required>
-          <el-select v-model="createEnterpriseId" style="width: 100%" @change="loadDepartments">
+          <el-select v-model="createEnterpriseId" style="width: 100%" @change="onCreateEnterpriseChange">
             <el-option
               v-for="item in enterprises"
               :key="item.id"
@@ -70,6 +70,16 @@
 
     <el-dialog v-model="showEdit" :title="`编辑团队 · ${editRow?.name || ''}`" width="440px">
       <el-form label-width="90px">
+        <el-form-item label="所属部门" required>
+          <el-select v-model="editDepartmentId" style="width: 100%" placeholder="选择部门">
+            <el-option
+              v-for="item in departmentOptions"
+              :key="item.id"
+              :label="item.name"
+              :value="item.id"
+            />
+          </el-select>
+        </el-form-item>
         <el-form-item label="团队名称" required>
           <el-input v-model="editName" maxlength="100" />
         </el-form-item>
@@ -206,6 +216,7 @@ const createEnterpriseId = ref<number | undefined>();
 const createDepartmentId = ref<number | undefined>();
 const departmentOptions = ref<Array<{ id: number; name: string }>>([]);
 const editName = ref("");
+const editDepartmentId = ref<number | undefined>();
 const editRow = ref<TeamRow | null>(null);
 const showDetail = ref(false);
 const detailLoading = ref(false);
@@ -230,14 +241,19 @@ async function loadEnterprises() {
   if (data.success) enterprises.value = data.data;
 }
 
-async function loadDepartments() {
-  const params = auth.isSuperAdmin && createEnterpriseId.value
-    ? { enterpriseId: createEnterpriseId.value }
+async function loadDepartments(enterpriseId?: number) {
+  const params = auth.isSuperAdmin && enterpriseId
+    ? { enterpriseId }
     : {};
   const { data } = await http.get("/api/admin/departments", { params });
   departmentOptions.value = data.success ? data.data : [];
-  if (!departmentOptions.value.some((row) => row.id === createDepartmentId.value)) {
-    createDepartmentId.value = departmentOptions.value[0]?.id;
+  return departmentOptions.value;
+}
+
+async function onCreateEnterpriseChange(enterpriseId: number) {
+  const options = await loadDepartments(enterpriseId);
+  if (!options.some((row) => row.id === createDepartmentId.value)) {
+    createDepartmentId.value = options[0]?.id;
   }
 }
 
@@ -245,13 +261,19 @@ function openCreate() {
   createName.value = "";
   createEnterpriseId.value = auth.user?.enterpriseId ?? enterprises.value[0]?.id;
   showCreate.value = true;
-  void loadDepartments();
+  void loadDepartments(createEnterpriseId.value).then((options) => {
+    if (!options.some((row) => row.id === createDepartmentId.value)) {
+      createDepartmentId.value = options[0]?.id;
+    }
+  });
 }
 
 function openEdit(row: TeamRow) {
   editRow.value = row;
   editName.value = row.name;
+  editDepartmentId.value = row.departmentId;
   showEdit.value = true;
+  void loadDepartments(row.enterpriseId);
 }
 
 function padDatePart(value: number): string {
@@ -399,9 +421,16 @@ async function updateOne() {
     ElMessage.warning("请填写团队名称");
     return;
   }
+  if (!editDepartmentId.value) {
+    ElMessage.warning("请选择部门");
+    return;
+  }
   updating.value = true;
   try {
-    const { data } = await http.patch(`/api/admin/teams/${editRow.value.id}`, { name });
+    const { data } = await http.patch(`/api/admin/teams/${editRow.value.id}`, {
+      name,
+      departmentId: editDepartmentId.value,
+    });
     if (!data.success) throw new Error(data.message);
     ElMessage.success("已更新");
     showEdit.value = false;

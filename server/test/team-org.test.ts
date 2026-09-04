@@ -178,6 +178,28 @@ test("super-admin can list and create teams in any enterprise", () => {
   );
 });
 
+test("editing a named team can reassign it to another department in the same enterprise", () => {
+  const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+  const teamsRoute = readFileSync(resolve(root, "server/src/routes/admin/teams.ts"), "utf8");
+  const patchStart = teamsRoute.indexOf('app.patch("/api/admin/teams/:id"');
+  const patch = teamsRoute.slice(
+    patchStart,
+    teamsRoute.indexOf('app.delete("/api/admin/teams/:id"', patchStart),
+  );
+  assert.match(patch, /departmentId: z.number\(\)\.int\(\)\.positive\(\)\.optional\(\)/);
+  assert.match(patch, /不能把团队调到其他企业的部门/);
+  assert.match(patch, /默认团队不能改名、停用或更换部门/);
+  const teamsView = readFileSync(resolve(root, "web/src/views/admin/TeamsView.vue"), "utf8");
+  const teamsEdit = teamsView.slice(teamsView.indexOf('v-model="showEdit"'));
+  assert.match(teamsEdit, /所属部门/);
+  assert.match(teamsEdit, /editDepartmentId/);
+  assert.match(teamsView, /departmentId: editDepartmentId.value/);
+  const enterprisesView = readFileSync(resolve(root, "web/src/views/admin/EnterprisesView.vue"), "utf8");
+  const enterpriseEdit = enterprisesView.slice(enterprisesView.indexOf('v-model="showEditTeam"'));
+  assert.match(enterpriseEdit, /所属部门/);
+  assert.match(enterprisesView, /departmentId: editTeamDepartmentId.value/);
+});
+
 test("admin shell source includes 团队管理 for org and team admins", () => {
   const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
   const layout = readFileSync(resolve(root, "web/src/layouts/AdminLayout.vue"), "utf8");
