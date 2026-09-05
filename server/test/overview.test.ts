@@ -106,6 +106,9 @@ test("workbench analytics hourly trend buckets request audits in the quota timez
   assert.match(sql, /at time zone/);
   assert.match(sql, /HH24:00/);
   assert.doesNotMatch(sql, /current_date/);
+  assert.match(sql, /group by 1/);
+  assert.match(sql, /order by 1/);
+  assert.doesNotMatch(sql, /group by to_char/);
 });
 
 test("workbench analytics model ranks group client_model in the created_at window", () => {

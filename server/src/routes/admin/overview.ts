@@ -248,8 +248,8 @@ export function buildAnalyticsHourlyTrendQuery(start: Date, endExclusive: Date, 
       gte(requestAudits.createdAt, start),
       lt(requestAudits.createdAt, endExclusive),
     ))
-    .groupBy(bucket)
-    .orderBy(bucket);
+    .groupBy(sql`1`)
+    .orderBy(sql`1`);
 }
 
 export function buildAnalyticsByModelQuery(start: Date, endExclusive: Date) {
