@@ -116,7 +116,7 @@ type Employee = {
   id: number;
   name: string;
   phone: string;
-  role: "employee" | "admin" | "org_admin" | "team_admin";
+  role: "employee" | "admin" | "org_admin" | "dept_admin" | "team_admin";
   teamName?: string | null;
 };
 

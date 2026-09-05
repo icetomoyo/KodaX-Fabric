@@ -14,7 +14,7 @@ import {
   usageCountersTeamDaily,
 } from "../../db/schema/index.js";
 import { getChannelOverviewStats } from "../../lib/channel-overview.js";
-import { listAdminTeamIds } from "../../lib/org.js";
+import { listAdminDepartmentIds, listAdminTeamIds, listTeamIdsInDepartments } from "../../lib/org.js";
 import { quotaDayAt, zonedDateRange } from "../../lib/quota-time.js";
 import {
   requirePasswordChanged,
@@ -341,7 +341,7 @@ async function teamScopeOverview(teamIds: number[]) {
 export async function adminOverviewRoutes(app: FastifyInstance) {
   app.addHook("preHandler", requireSession);
   app.addHook("preHandler", requirePasswordChanged);
-  app.addHook("preHandler", requireRoles("admin", "org_admin", "team_admin"));
+  app.addHook("preHandler", requireRoles("admin", "org_admin", "dept_admin", "team_admin"));
 
   app.get("/api/admin/overview", async (req, reply) => {
     const role = req.session!.role;
@@ -350,6 +350,12 @@ export async function adminOverviewRoutes(app: FastifyInstance) {
         return reply.code(403).send({ success: false, message: "权限不足" });
       }
       return { success: true, data: await enterpriseOverview(req.session!.enterpriseId) };
+    }
+    if (role === "dept_admin") {
+      const teamIds = await listTeamIdsInDepartments(
+        await listAdminDepartmentIds(req.employeeId!),
+      );
+      return { success: true, data: { ...(await teamScopeOverview(teamIds)), role: "dept_admin" } };
     }
     if (role === "team_admin") {
       const teamIds = await listAdminTeamIds(req.employeeId!);

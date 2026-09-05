@@ -225,6 +225,20 @@
       "when": 1788503000000,
       "tag": "0031_binding_scope_department",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1788504000000,
+      "tag": "0032_drop_tickets",
+      "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1788505000000,
+      "tag": "0033_dept_admin_role",
+      "breakpoints": true
     }
   ]
 }

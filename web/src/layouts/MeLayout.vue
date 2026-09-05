@@ -11,7 +11,6 @@
         <el-menu-item index="/me/models">模型</el-menu-item>
         <el-menu-item index="/me/guide">接入教程</el-menu-item>
         <el-menu-item index="/me/logs">我的调用</el-menu-item>
-        <el-menu-item index="/me/tickets">我的工单</el-menu-item>
       </el-menu>
     </el-aside>
     <el-container>

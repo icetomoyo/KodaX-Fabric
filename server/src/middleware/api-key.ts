@@ -141,7 +141,11 @@ async function authenticateRelayApiKey(
     )
     .limit(1);
 
-  const relayRoles = principal?.employeeRole === "employee" || principal?.employeeRole === "team_admin";
+  const relayRoles =
+    principal?.employeeRole === "employee" ||
+    principal?.employeeRole === "team_admin" ||
+    principal?.employeeRole === "dept_admin" ||
+    principal?.employeeRole === "org_admin";
   if (
     !principal ||
     principal.employeeStatus !== "active" ||

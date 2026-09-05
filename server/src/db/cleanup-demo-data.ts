@@ -1,7 +1,7 @@
 /**
  * 清理业务演示/联调数据。
  * 保留：employees、system_settings
- * 删除：员工 API Key、渠道配置、凭证绑定、调用审计、用量计数、操作审计、工单
+ * 删除：员工 API Key、渠道配置、凭证绑定、调用审计、用量计数、操作审计
  *
  * 员工 Key 强制引用 ProductLine，因此 Key 与渠道必须在同一事务中清理。
  */
@@ -22,7 +22,6 @@ async function main() {
     await tx`delete from product_lines`;
     await tx`delete from providers`;
     await tx`delete from ops_audit_logs`;
-    await tx`delete from tickets`;
 
     return tx`
       select
@@ -30,8 +29,7 @@ async function main() {
         (select count(*)::int from employee_api_keys) as api_keys,
         (select count(*)::int from providers) as providers,
         (select count(*)::int from upstream_credentials) as credentials,
-        (select count(*)::int from model_routes) as model_routes,
-        (select count(*)::int from tickets) as tickets
+        (select count(*)::int from model_routes) as model_routes
     `;
   });
 

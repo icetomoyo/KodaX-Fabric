@@ -98,13 +98,6 @@
             <small>请求与消耗明细</small>
           </span>
         </button>
-        <button type="button" class="quick-link" @click="router.push('/me/tickets')">
-          <span class="quick-dot amber" />
-          <span>
-            <strong>我的工单</strong>
-            <small>问题反馈</small>
-          </span>
-        </button>
       </div>
     </section>
 

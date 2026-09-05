@@ -8,17 +8,14 @@
       <el-menu :default-active="route.path" router>
         <el-menu-item index="/admin">工作台</el-menu-item>
         <el-menu-item v-if="auth.isSuperAdmin" index="/admin/enterprises">企业管理</el-menu-item>
-        <el-menu-item v-if="auth.isOrgAdmin" index="/admin/users">员工管理</el-menu-item>
-        <el-menu-item v-if="auth.isOrgAdmin" index="/admin/departments">部门管理</el-menu-item>
-        <el-menu-item v-if="!auth.isSuperAdmin" index="/admin/teams">团队管理</el-menu-item>
-        <el-menu-item v-if="auth.isTeamAdmin" index="/admin/members">团队成员</el-menu-item>
-        <el-menu-item v-if="auth.isTeamAdmin" index="/admin/keys">API Key</el-menu-item>
+        <el-menu-item v-if="auth.isOrgAdmin" index="/admin/enterprises">本企业编制</el-menu-item>
+        <el-menu-item v-if="auth.isDeptAdmin" index="/admin/enterprises">本部门编制</el-menu-item>
+        <el-menu-item v-if="auth.isTeamAdmin" index="/admin/enterprises">员工</el-menu-item>
         <el-menu-item v-if="auth.isSuperAdmin" index="/admin/credentials">上游渠道</el-menu-item>
         <el-menu-item v-if="auth.isSuperAdmin" index="/admin/key-bindings">调度画布</el-menu-item>
         <el-menu-item v-if="auth.isSuperAdmin" index="/admin/model-prices">模型列表</el-menu-item>
         <el-menu-item v-if="auth.isSuperAdmin" index="/admin/logs">调用日志</el-menu-item>
         <el-menu-item index="/admin/error-logs">报错日志</el-menu-item>
-        <el-menu-item v-if="auth.isSuperAdmin || auth.isOrgAdmin" index="/admin/tickets">工单管理</el-menu-item>
         <el-menu-item v-if="auth.isSuperAdmin" index="/admin/ops-audit">操作审计</el-menu-item>
         <el-menu-item index="/admin/profile">个人中心</el-menu-item>
       </el-menu>
@@ -29,7 +26,15 @@
           <router-link to="/admin/profile" class="account-link">
             <strong>{{ auth.user?.name }}</strong>
             <span class="muted">
-              · {{ auth.isTeamAdmin ? "团队管理" : auth.isOrgAdmin ? "本企业管理" : "管理后台" }}
+              · {{
+                auth.isTeamAdmin
+                  ? "团队管理"
+                  : auth.isDeptAdmin
+                    ? "本部门管理"
+                    : auth.isOrgAdmin
+                      ? "本企业管理"
+                      : "管理后台"
+              }}
               <template v-if="auth.user?.enterprise?.code">
                 · 编号 {{ auth.user.enterprise.code }}
               </template>

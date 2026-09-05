@@ -57,7 +57,7 @@ export async function requireSession(req: FastifyRequest, reply: FastifyReply) {
   }
 
   if (
-    (user.role === "org_admin" || user.role === "team_admin") &&
+    (user.role === "org_admin" || user.role === "dept_admin" || user.role === "team_admin") &&
     (user.enterpriseId == null || user.enterpriseStatus !== "active")
   ) {
     return reply.code(401).send({ success: false, message: "用户不可用" });

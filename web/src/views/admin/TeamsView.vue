@@ -226,7 +226,7 @@ const usage = ref<TeamUsage | null>(null);
 const usageLoading = ref(false);
 const usageRange = ref<[string, string]>(defaultUsageRange());
 const chartReady = ref(false);
-const canCreate = computed(() => auth.isOrgAdmin);
+const canCreate = computed(() => auth.isOrgAdmin || auth.isDeptAdmin);
 
 async function load() {
   const { data } = await http.get("/api/admin/teams");
@@ -401,7 +401,7 @@ async function createOne() {
     const { data } = await http.post("/api/admin/teams", {
       name,
       departmentId: createDepartmentId.value,
-      ...(auth.isOrgAdmin ? {} : { enterpriseId: createEnterpriseId.value }),
+      ...(auth.isSuperAdmin ? { enterpriseId: createEnterpriseId.value } : {}),
     });
     if (!data.success) throw new Error(data.message);
     ElMessage.success("已创建");

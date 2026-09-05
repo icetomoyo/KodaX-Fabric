@@ -62,6 +62,16 @@
 
     <el-divider />
 
+    <section v-if="auth.isOrgAdmin || auth.isDeptAdmin || auth.isTeamAdmin" class="profile-section">
+      <div class="section-heading">
+        <h3 class="section-title">API Key</h3>
+        <p class="section-desc">自己调用模型用的凭据，和编制管理分开。</p>
+      </div>
+      <el-button type="primary" @click="goKeys">管理我的 API Key</el-button>
+    </section>
+
+    <el-divider v-if="auth.isOrgAdmin || auth.isDeptAdmin || auth.isTeamAdmin" />
+
     <section class="profile-section">
       <div class="section-heading">
         <h3 class="section-title">修改密码</h3>
@@ -104,11 +114,13 @@
 
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from "vue";
+import { useRouter } from "vue-router";
 import { ElMessage } from "element-plus";
 import { http } from "@/api/http";
 import { roleLabel as formatRoleLabel } from "@/lib/roles";
 import { useAuthStore } from "@/stores/auth";
 
+const router = useRouter();
 const auth = useAuthStore();
 const profileSaving = ref(false);
 const passwordSaving = ref(false);
@@ -136,6 +148,10 @@ watch(
   () => resetProfile(),
   { immediate: true },
 );
+
+function goKeys() {
+  void router.push("/admin/keys");
+}
 
 function resetProfile() {
   profileForm.name = auth.user?.name ?? "";

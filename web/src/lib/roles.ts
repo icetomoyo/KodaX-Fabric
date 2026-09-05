@@ -1,9 +1,10 @@
-export type UserRole = "employee" | "admin" | "org_admin" | "team_admin";
+export type UserRole = "employee" | "admin" | "org_admin" | "dept_admin" | "team_admin";
 
 export const ROLE_LABELS: Record<UserRole, string> = {
   employee: "员工",
   admin: "超级管理员",
   org_admin: "企业管理员",
+  dept_admin: "部门管理员",
   team_admin: "团队管理员",
 };
 
@@ -21,5 +22,5 @@ export function isOrgAdminRole(role: string | null | undefined): boolean {
 }
 
 export function canUseAdminConsoleRole(role: string | null | undefined): boolean {
-  return role === "admin" || role === "org_admin" || role === "team_admin";
+  return role === "admin" || role === "org_admin" || role === "dept_admin" || role === "team_admin";
 }

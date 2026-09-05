@@ -3,17 +3,17 @@
     <section class="page-card org-shell">
       <div class="page-head">
         <div>
-          <h2 class="page-title">企业管理</h2>
-          <p class="page-subtitle">企业 → 部门 → 团队 → 员工，每张卡片都可以直接操作</p>
+          <h2 class="page-title">{{ pageTitle }}</h2>
+          <p class="page-subtitle">{{ pageSubtitle }}</p>
         </div>
         <div class="head-actions">
           <el-button :loading="loading" @click="refreshAll">刷新</el-button>
-          <el-button type="primary" @click="openCreateEnterprise">新建企业</el-button>
+          <el-button v-if="canCreateEnterprise" type="primary" @click="openCreateEnterprise">新建企业</el-button>
         </div>
       </div>
 
-      <div v-loading="loading" class="split-layout">
-        <aside class="list-pane">
+      <div v-loading="loading" class="split-layout" :class="layoutClass">
+        <aside v-if="showEnterprisePane" class="list-pane">
           <div class="pane-label">
             <span>企业</span>
             <span class="pane-count">{{ enterprises.length }}</span>
@@ -65,11 +65,12 @@
           </div>
         </aside>
 
-        <aside class="list-pane">
+        <aside v-if="showDepartmentPane" class="list-pane">
           <div class="pane-label">
             <span>部门</span>
             <span class="pane-count">{{ selectedEnterprise ? departments.length : 0 }}</span>
             <el-button
+              v-if="canManageDepartments"
               type="primary"
               size="small"
               :disabled="!selectedEnterprise"
@@ -107,7 +108,7 @@
               <div class="nav-card-meta">
                 <span>{{ department.teamCount }} 个团队</span>
               </div>
-              <div class="unit-card-actions" @click.stop>
+              <div v-if="canManageDepartments" class="unit-card-actions" @click.stop>
                 <el-button link type="primary" size="small" @click="openEditDepartment(department)">编辑</el-button>
                 <el-button
                   v-if="department.status === 'active'"
@@ -127,11 +128,12 @@
           </div>
         </aside>
 
-        <aside class="list-pane">
+        <aside v-if="showTeamPane" class="list-pane">
           <div class="pane-label">
             <span>团队</span>
             <span class="pane-count">{{ selectedDepartment ? visibleTeams.length : 0 }}</span>
             <el-button
+              v-if="canManageTeams"
               type="primary"
               size="small"
               :disabled="!selectedDepartment"
@@ -165,7 +167,7 @@
                 <span>今日 {{ formatTokenCompact(team.todayTotalTokens) }}</span>
                 <span>本月 {{ formatTokenCompact(team.monthTotalTokens) }}</span>
               </div>
-              <div class="unit-card-actions" @click.stop>
+              <div v-if="canManageTeams" class="unit-card-actions" @click.stop>
                 <el-button link type="primary" size="small" @click="openEditTeam(team)">编辑</el-button>
                 <el-button
                   v-if="team.status === 'active'"
@@ -183,6 +185,7 @@
               </div>
             </article>
             <article
+              v-if="canSeeUnassigned"
               class="nav-card"
               :class="{ selected: selectedTeamId === null }"
               @click="selectTeam(null)"
@@ -202,20 +205,20 @@
             <el-button
               type="primary"
               size="small"
-              :disabled="!selectedEnterprise"
+              :disabled="!canInvite"
               @click="openInvite"
             >
               邀请已注册员工
             </el-button>
           </div>
           <el-empty
-            v-if="!selectedEnterprise"
+            v-if="showEnterprisePane && !selectedEnterprise"
             description="请先选择企业"
             :image-size="64"
           />
           <el-empty
             v-else-if="!visibleEmployees.length"
-            :description="selectedTeamId ? '该团队暂无员工' : '没有未加入团队的员工'"
+            :description="auth.isTeamAdmin ? '本团队暂无员工' : selectedTeamId ? '该团队暂无员工' : '没有未加入团队的员工'"
             :image-size="64"
           />
           <div v-else class="card-list">
@@ -419,7 +422,8 @@
           <el-select v-model="editUserForm.role" style="width: 100%">
             <el-option label="员工" value="employee" />
             <el-option label="团队管理员" value="team_admin" />
-            <el-option label="企业管理员" value="org_admin" />
+            <el-option v-if="canAppointDeptAdmin" label="部门管理员" value="dept_admin" />
+            <el-option v-if="canAppointOrgAdmin" label="企业管理员" value="org_admin" />
           </el-select>
         </el-form-item>
         <el-form-item label="状态">
@@ -466,11 +470,12 @@ import { ElMessage, ElMessageBox } from "element-plus";
 import { http } from "@/api/http";
 import { roleLabel } from "@/lib/roles";
 import { formatTokenCompact } from "@/lib/tokens";
+import { useAuthStore } from "@/stores/auth";
 import EmployeeUsageDrawer from "./EmployeeUsageDrawer.vue";
 
 type EnterpriseStatus = "pending" | "active" | "disabled";
 type UserStatus = "pending" | "active" | "disabled";
-type UserRole = "employee" | "admin" | "org_admin" | "team_admin";
+type UserRole = "employee" | "admin" | "org_admin" | "dept_admin" | "team_admin";
 
 type EnterpriseRow = {
   id: number;
@@ -519,6 +524,34 @@ type EmployeeRow = {
 
 const route = useRoute();
 const router = useRouter();
+const auth = useAuthStore();
+const showEnterprisePane = computed(() => auth.isSuperAdmin);
+const showDepartmentPane = computed(() => auth.isSuperAdmin || auth.isOrgAdmin);
+const showTeamPane = computed(() => auth.isSuperAdmin || auth.isOrgAdmin || auth.isDeptAdmin);
+const canCreateEnterprise = computed(() => auth.isSuperAdmin);
+const canManageDepartments = computed(() => auth.isSuperAdmin || auth.isOrgAdmin);
+const canManageTeams = computed(() => auth.isSuperAdmin || auth.isOrgAdmin || auth.isDeptAdmin);
+const canAppointOrgAdmin = computed(() => auth.isSuperAdmin);
+const canAppointDeptAdmin = computed(() => auth.isSuperAdmin || auth.isOrgAdmin);
+const canSeeUnassigned = computed(() => showTeamPane.value);
+const pageTitle = computed(() => {
+  if (auth.isSuperAdmin) return "企业管理";
+  if (auth.isOrgAdmin) return "本企业编制";
+  if (auth.isDeptAdmin) return "本部门编制";
+  return "员工";
+});
+const pageSubtitle = computed(() => {
+  if (auth.isSuperAdmin) return "企业 → 部门 → 团队 → 员工，每张卡片都可以直接操作";
+  if (auth.isOrgAdmin) return "部门 → 团队 → 员工";
+  if (auth.isDeptAdmin) return "团队 → 员工";
+  return "本团队成员，邀请和日常操作都在列表上完成";
+});
+const layoutClass = computed(() => {
+  if (auth.isTeamAdmin) return "layout-people";
+  if (auth.isDeptAdmin) return "layout-team-people";
+  if (auth.isOrgAdmin) return "layout-dept-team-people";
+  return "layout-full";
+});
 const loading = ref(false);
 const enterprises = ref<EnterpriseRow[]>([]);
 const departments = ref<DepartmentRow[]>([]);
@@ -576,6 +609,10 @@ const editUserForm = reactive({
   teamId: undefined as number | undefined,
 });
 
+const canInvite = computed(() => {
+  if (auth.isTeamAdmin) return teams.value.length > 0;
+  return selectedEnterpriseId.value != null;
+});
 const selectedEnterprise = computed(
   () => enterprises.value.find((row) => row.id === selectedEnterpriseId.value) ?? null,
 );
@@ -618,6 +655,7 @@ const unassignedCount = computed(
 );
 
 const visibleEmployees = computed(() => {
+  if (auth.isTeamAdmin) return employees.value;
   if (selectedTeamId.value == null) {
     return employees.value.filter((row) => row.teamId == null);
   }
@@ -625,6 +663,7 @@ const visibleEmployees = computed(() => {
 });
 
 const employeeSectionTitle = computed(() => {
+  if (auth.isTeamAdmin) return "员工";
   if (selectedTeamId.value == null) return "未加入团队";
   if (selectedTeamId.value === selectedDepartmentDefaultTeamId.value) {
     return selectedDepartment.value?.name ?? "部门成员";
@@ -697,8 +736,24 @@ function selectTeam(id: number | null) {
 }
 
 async function loadEnterprises() {
-  const { data } = await http.get("/api/admin/enterprises");
-  if (data.success) enterprises.value = data.data;
+  if (auth.isSuperAdmin) {
+    const { data } = await http.get("/api/admin/enterprises");
+    if (data.success) enterprises.value = data.data;
+  } else if (auth.user?.enterprise) {
+    enterprises.value = [
+      {
+        id: auth.user.enterprise.id,
+        name: auth.user.enterprise.name,
+        code: auth.user.enterprise.code,
+        status: auth.user.enterprise.status as EnterpriseStatus,
+        createdAt: "",
+        contact: null,
+      },
+    ];
+    selectedEnterpriseId.value = auth.user.enterprise.id;
+  } else {
+    enterprises.value = [];
+  }
   const deptRes = await http.get("/api/admin/departments");
   const counts: Record<number, number> = {};
   if (deptRes.data.success) {
@@ -1183,8 +1238,10 @@ async function updateUser() {
     ElMessage.warning("请填写姓名和手机号");
     return;
   }
-  if (editUserForm.role === "team_admin" && !editUserForm.teamId) {
-    ElMessage.warning("团队管理员必须选择所属团队");
+  if ((editUserForm.role === "team_admin" || editUserForm.role === "dept_admin") && !editUserForm.teamId) {
+    ElMessage.warning(
+      editUserForm.role === "dept_admin" ? "部门管理员必须选择所属团队" : "团队管理员必须选择所属团队",
+    );
     return;
   }
   updatingUser.value = true;
@@ -1379,11 +1436,22 @@ onMounted(() => {
 
 .split-layout {
   display: grid;
-  grid-template-columns: minmax(180px, 0.9fr) minmax(180px, 0.9fr) minmax(180px, 0.9fr) minmax(240px, 1.2fr);
   gap: 12px;
   flex: 1;
   min-height: 0;
   overflow: hidden;
+}
+.split-layout.layout-full {
+  grid-template-columns: minmax(180px, 0.9fr) minmax(180px, 0.9fr) minmax(180px, 0.9fr) minmax(240px, 1.2fr);
+}
+.split-layout.layout-dept-team-people {
+  grid-template-columns: minmax(180px, 0.9fr) minmax(180px, 0.9fr) minmax(240px, 1.3fr);
+}
+.split-layout.layout-team-people {
+  grid-template-columns: minmax(220px, 1fr) minmax(280px, 1.4fr);
+}
+.split-layout.layout-people {
+  grid-template-columns: 1fr;
 }
 
 .list-pane {

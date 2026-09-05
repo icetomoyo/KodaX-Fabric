@@ -242,7 +242,7 @@ test("super-admin still cannot create employees", async () => {
   }
 });
 
-test("org_admin can assign employee and team_admin but not org_admin or super-admin", () => {
+test("org_admin can assign employee, dept_admin and team_admin but not org_admin or super-admin", () => {
   const actor = { role: "org_admin" as const, enterpriseId: 3 };
   const target = { role: "employee" as const, enterpriseId: 3 };
   const keep = resolveUpdatedUserFields(actor, target, {});
@@ -254,6 +254,15 @@ test("org_admin can assign employee and team_admin but not org_admin or super-ad
   assert.equal("error" in toTeamAdmin, false);
   if ("error" in toTeamAdmin) return;
   assert.equal(toTeamAdmin.role, "team_admin");
+
+  const toDeptAdmin = resolveUpdatedUserFields(actor, target, { role: "dept_admin" });
+  assert.equal("error" in toDeptAdmin, false);
+  if ("error" in toDeptAdmin) return;
+  assert.equal(toDeptAdmin.role, "dept_admin");
+
+  const deptActor = { role: "dept_admin" as const, enterpriseId: 3 };
+  const deptToPeer = resolveUpdatedUserFields(deptActor, target, { role: "dept_admin" });
+  assert.equal("error" in deptToPeer, true);
 
   const toOrgAdmin = resolveUpdatedUserFields(actor, target, { role: "org_admin" });
   assert.equal("error" in toOrgAdmin, true);
@@ -313,11 +322,11 @@ test("admin shell source includes 企业管理 and org_admin lands on workbench"
   assert.match(layout, /企业管理/);
   assert.match(layout, /isSuperAdmin/);
   assert.match(layout, /\/admin\/enterprises/);
-  assert.match(layout, /员工管理/);
+  assert.match(layout, /本企业编制/);
   assert.match(layout, /isOrgAdmin/);
   assert.match(layout, /上游渠道/);
-  assert.doesNotMatch(layout, /v-if="!auth.isTeamAdmin" index="\/admin\/users"/);
-  assert.match(layout, /v-if="!auth.isSuperAdmin" index="\/admin\/teams"/);
+  assert.doesNotMatch(layout, /员工管理/);
+  assert.doesNotMatch(layout, /index="\/admin\/teams"/);
   assert.match(home, /org_admin/);
   assert.match(home, /return \"\/admin\"/);
   assert.doesNotMatch(home, /org_admin.*\/me/);

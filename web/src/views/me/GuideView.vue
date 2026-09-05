@@ -97,7 +97,7 @@
         </ol>
         <div class="key-safety-card">
           <strong>Key 安全</strong>
-          <p>不要把完整 Key 放进截图、工单、聊天记录或代码仓库。怀疑泄漏时，请立即删除旧 Key 并重新创建。</p>
+          <p>不要把完整 Key 放进截图、聊天记录或代码仓库。怀疑泄漏时，请立即删除旧 Key 并重新创建。</p>
           <el-button type="primary" @click="router.push('/me/keys')">前往 API Key</el-button>
         </div>
       </div>
@@ -266,7 +266,7 @@
         <span class="step-index">5</span>
         <div>
           <h3>常见问题排查</h3>
-          <p>先按错误类型检查；仍无法解决时，到“我的调用”复制 Request ID 后提交工单。</p>
+          <p>先按错误类型检查；仍无法解决时，到“我的调用”复制 Request ID 排查。</p>
         </div>
       </div>
 
@@ -280,8 +280,7 @@
         </article>
       </div>
       <div class="section-actions">
-        <el-button @click="router.push('/me/logs')">查看我的调用</el-button>
-        <el-button type="primary" @click="router.push('/me/tickets')">提交工单</el-button>
+        <el-button type="primary" @click="router.push('/me/logs')">查看我的调用</el-button>
       </div>
     </section>
   </div>

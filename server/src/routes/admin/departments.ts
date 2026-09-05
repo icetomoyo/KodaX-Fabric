@@ -6,7 +6,13 @@ import { count, and, desc, eq, inArray, sql } from "drizzle-orm";
 import { credentialBindings, departments, enterprises, teamMembers, teams } from "../../db/schema/index.js";
 import { writeOpsAudit } from "../../lib/ops-audit.js";
 import { ensureDefaultTeam } from "../../lib/enterprise.js";
-import { canCreateTeam, listAdminTeamIds, resolveTeamListScope, type OrgActor } from "../../lib/org.js";
+import {
+  canCreateTeam,
+  listAdminTeamIds,
+  loadOrgActor,
+  resolveTeamListScope,
+  type OrgActor,
+} from "../../lib/org.js";
 import { detachAndDeleteTeam } from "./teams.js";
 import type { SessionRole } from "../../lib/jwt.js";
 import {
@@ -15,21 +21,21 @@ import {
   requireSession,
 } from "../../middleware/auth.js";
 
-function actorFrom(req: {
+async function actorFrom(req: {
   session?: { role: SessionRole; enterpriseId: number | null };
   employeeId?: number;
-}): OrgActor {
-  return {
+}): Promise<OrgActor> {
+  return loadOrgActor({
     role: req.session!.role,
     enterpriseId: req.session!.enterpriseId ?? null,
     employeeId: req.employeeId!,
-  };
+  });
 }
 
 export async function adminDepartmentRoutes(app: FastifyInstance) {
   app.addHook("preHandler", requireSession);
   app.addHook("preHandler", requirePasswordChanged);
-  app.addHook("preHandler", requireRoles("admin", "org_admin", "team_admin"));
+  app.addHook("preHandler", requireRoles("admin", "org_admin", "dept_admin", "team_admin"));
 
   app.get("/api/admin/departments", async (req, reply) => {
     const query = z
@@ -38,14 +44,16 @@ export async function adminDepartmentRoutes(app: FastifyInstance) {
       })
       .safeParse(req.query);
     if (!query.success) return reply.code(400).send({ success: false, message: "参数无效" });
-    const actor = actorFrom(req);
+    const actor = await actorFrom(req);
     const adminTeamIds = actor.role === "team_admin" ? await listAdminTeamIds(actor.employeeId) : [];
     const scope = resolveTeamListScope(actor, query.data.enterpriseId, adminTeamIds);
     if ("forbidden" in scope) {
       return reply.code(403).send({ success: false, message: "权限不足" });
     }
     let departmentIds: number[] | undefined;
-    if (scope.teamIds?.length) {
+    if (scope.departmentIds?.length) {
+      departmentIds = scope.departmentIds;
+    } else if (scope.teamIds?.length) {
       const teamRows = await db
         .select({ departmentId: teams.departmentId })
         .from(teams)
@@ -109,7 +117,7 @@ export async function adminDepartmentRoutes(app: FastifyInstance) {
       })
       .safeParse(req.body);
     if (!body.success) return reply.code(400).send({ success: false, message: "参数无效" });
-    const actor = actorFrom(req);
+    const actor = await actorFrom(req);
     if (actor.role !== "admin" && actor.role !== "org_admin") {
       return reply.code(403).send({ success: false, message: "权限不足" });
     }
@@ -171,7 +179,7 @@ export async function adminDepartmentRoutes(app: FastifyInstance) {
     if (!params.success || !body.success) {
       return reply.code(400).send({ success: false, message: "参数无效" });
     }
-    const actor = actorFrom(req);
+    const actor = await actorFrom(req);
     const [department] = await db
       .select({
         id: departments.id,
@@ -220,7 +228,7 @@ export async function adminDepartmentRoutes(app: FastifyInstance) {
   app.delete("/api/admin/departments/:id", async (req, reply) => {
     const params = z.object({ id: z.coerce.number().int().positive() }).safeParse(req.params);
     if (!params.success) return reply.code(400).send({ success: false, message: "参数无效" });
-    const actor = actorFrom(req);
+    const actor = await actorFrom(req);
     if (actor.role !== "admin" && actor.role !== "org_admin") {
       return reply.code(403).send({ success: false, message: "权限不足" });
     }

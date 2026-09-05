@@ -173,6 +173,7 @@
           >
             <el-option label="员工" value="employee" />
             <el-option label="团队管理员" value="team_admin" />
+            <el-option label="部门管理员" value="dept_admin" />
             <el-option v-if="auth.isSuperAdmin" label="企业管理员" value="org_admin" />
             <el-option v-if="auth.isSuperAdmin" label="超级管理员" value="admin" />
           </el-select>
@@ -271,7 +272,7 @@ type UserRow = {
   name: string;
   phone: string;
   dept: string | null;
-  role: "employee" | "admin" | "org_admin" | "team_admin";
+  role: "employee" | "admin" | "org_admin" | "dept_admin" | "team_admin";
   status: "pending" | "active" | "disabled";
   enterpriseId: number | null;
   createdAt: string;
@@ -609,8 +610,10 @@ async function updateUser() {
     return;
   }
 
-  if (editForm.role === "team_admin" && !editForm.teamId) {
-    ElMessage.warning("团队管理员必须选择所属团队");
+  if ((editForm.role === "team_admin" || editForm.role === "dept_admin") && !editForm.teamId) {
+    ElMessage.warning(
+      editForm.role === "dept_admin" ? "部门管理员必须选择所属团队" : "团队管理员必须选择所属团队",
+    );
     return;
   }
 
@@ -634,9 +637,8 @@ async function updateUser() {
       name: editForm.name.trim(),
       phone: editForm.phone.trim(),
       status: editForm.status,
-      ...(auth.isSuperAdmin
-        ? { enterpriseId: editForm.enterpriseId, role: editForm.role }
-        : {}),
+      role: editForm.role,
+      ...(auth.isSuperAdmin ? { enterpriseId: editForm.enterpriseId } : {}),
     });
     if (!data.success) throw new Error(data.message);
     if (editUser.value.id === auth.user?.id) await auth.fetchMe();

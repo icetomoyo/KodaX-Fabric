@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import { and, asc, desc, eq, gte, lt, lte, notInArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, lt, lte, notInArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import { env } from "../../config.js";
 import { db } from "../../db/client.js";
@@ -18,6 +18,11 @@ import {
   resolveUpdatedUserFields,
   resolveUserListScope,
 } from "../../lib/enterprise.js";
+import {
+  listAdminDepartmentIds,
+  listAdminTeamIds,
+  listTeamIdsInDepartments,
+} from "../../lib/org.js";
 import type { SessionRole } from "../../lib/jwt.js";
 import {
   hashPassword,
@@ -45,7 +50,7 @@ import {
   requireSession,
 } from "../../middleware/auth.js";
 
-const updateRoleSchema = z.enum(["employee", "admin", "org_admin", "team_admin"]);
+const updateRoleSchema = z.enum(["employee", "admin", "org_admin", "dept_admin", "team_admin"]);
 
 const updateUserSchema = z
   .object({
@@ -64,6 +69,7 @@ type AdminUserListQuery = {
   q?: string;
   status?: "pending" | "active" | "disabled";
   enterpriseId?: number;
+  teamIds?: number[];
   excludeRoles?: SessionRole[];
 };
 
@@ -92,6 +98,7 @@ export function buildAdminUserListQuery(query: AdminUserListQuery) {
           : sql`true`,
         query.status ? eq(employees.status, query.status) : sql`true`,
         query.enterpriseId != null ? eq(employees.enterpriseId, query.enterpriseId) : sql`true`,
+        query.teamIds?.length ? inArray(teamMembers.teamId, query.teamIds) : sql`true`,
         query.excludeRoles?.length ? notInArray(employees.role, query.excludeRoles) : sql`true`,
       ),
     )
@@ -136,10 +143,36 @@ function actorFrom(req: { session?: { role: SessionRole; enterpriseId: number | 
   return { role: req.session!.role, enterpriseId: req.session!.enterpriseId ?? null };
 }
 
+async function actorTeamScopeIds(role: SessionRole, employeeId: number): Promise<number[] | null> {
+  if (role === "dept_admin") {
+    return listTeamIdsInDepartments(await listAdminDepartmentIds(employeeId));
+  }
+  if (role === "team_admin") {
+    return listAdminTeamIds(employeeId);
+  }
+  return null;
+}
+
+async function canManageScopedUser(
+  req: { session?: { role: SessionRole; enterpriseId: number | null }; employeeId?: number },
+  target: { role: SessionRole; enterpriseId: number | null; id: number },
+): Promise<boolean> {
+  if (!canAccessEmployee(actorFrom(req), target)) return false;
+  const teamIds = await actorTeamScopeIds(req.session!.role, req.employeeId!);
+  if (teamIds == null) return true;
+  if (teamIds.length === 0) return false;
+  const [membership] = await db
+    .select({ teamId: teamMembers.teamId })
+    .from(teamMembers)
+    .where(and(eq(teamMembers.employeeId, target.id), inArray(teamMembers.teamId, teamIds)))
+    .limit(1);
+  return Boolean(membership);
+}
+
 export async function adminUserRoutes(app: FastifyInstance) {
   app.addHook("preHandler", requireSession);
   app.addHook("preHandler", requirePasswordChanged);
-  app.addHook("preHandler", requireRoles("admin", "org_admin"));
+  app.addHook("preHandler", requireRoles("admin", "org_admin", "dept_admin", "team_admin"));
 
   app.get("/api/admin/users", async (req, reply) => {
     const query = z
@@ -159,6 +192,12 @@ export async function adminUserRoutes(app: FastifyInstance) {
     if ("forbidden" in scope) {
       return reply.code(403).send({ success: false, message: "权限不足" });
     }
+    let teamIds = scope.teamIds;
+    if (req.session!.role === "dept_admin") {
+      teamIds = await listTeamIdsInDepartments(await listAdminDepartmentIds(req.employeeId!));
+    } else if (req.session!.role === "team_admin") {
+      teamIds = await listAdminTeamIds(req.employeeId!);
+    }
 
     const rows = await buildAdminUserListQuery({
       limit: query.limit,
@@ -166,6 +205,7 @@ export async function adminUserRoutes(app: FastifyInstance) {
       q: query.q,
       status: query.status,
       enterpriseId: scope.enterpriseId,
+      teamIds,
       excludeRoles: scope.excludeRoles,
     });
 
@@ -207,7 +247,7 @@ export async function adminUserRoutes(app: FastifyInstance) {
     if (!employee) {
       return reply.code(404).send({ success: false, message: "用户不存在" });
     }
-    if (!canAccessEmployee(actorFrom(req), employee)) {
+    if (!(await canManageScopedUser(req, employee))) {
       return reply.code(403).send({ success: false, message: "权限不足" });
     }
 
@@ -367,7 +407,7 @@ export async function adminUserRoutes(app: FastifyInstance) {
     if (!employee) {
       return reply.code(404).send({ success: false, message: "用户不存在" });
     }
-    if (!canAccessEmployee(actorFrom(req), employee)) {
+    if (!(await canManageScopedUser(req, employee))) {
       return reply.code(403).send({ success: false, message: "权限不足" });
     }
 
@@ -515,6 +555,9 @@ export async function adminUserRoutes(app: FastifyInstance) {
         if (!targetUser) {
           return { outcome: "not_found" } as const;
         }
+        if (!(await canManageScopedUser(req, targetUser))) {
+          return { outcome: "forbidden" } as const;
+        }
 
         const membership = resolveUpdatedUserFields(actorFrom(req), targetUser, {
           role: body.data.role,
@@ -655,7 +698,7 @@ export async function adminUserRoutes(app: FastifyInstance) {
     if (!targetUser) {
       return reply.code(404).send({ success: false, message: "用户不存在" });
     }
-    if (!canAccessEmployee(actorFrom(req), targetUser)) {
+    if (!(await canManageScopedUser(req, targetUser))) {
       return reply.code(403).send({ success: false, message: "权限不足" });
     }
     if (targetUser.status === "pending") {
@@ -716,7 +759,7 @@ export async function adminUserRoutes(app: FastifyInstance) {
     if (!targetUser) {
       return reply.code(404).send({ success: false, message: "用户不存在" });
     }
-    if (!canAccessEmployee(actorFrom(req), targetUser)) {
+    if (!(await canManageScopedUser(req, targetUser))) {
       return reply.code(403).send({ success: false, message: "权限不足" });
     }
 

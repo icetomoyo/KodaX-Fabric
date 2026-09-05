@@ -14,7 +14,7 @@ export type User = {
   name: string;
   phone: string;
   dept?: string | null;
-  role: "employee" | "admin" | "org_admin" | "team_admin";
+  role: "employee" | "admin" | "org_admin" | "dept_admin" | "team_admin";
   status: string;
   enterpriseId?: number | null;
   enterprise?: UserEnterprise | null;
@@ -34,8 +34,11 @@ export const useAuthStore = defineStore("auth", () => {
   const isLoggedIn = computed(() => Boolean(token.value));
   const isSuperAdmin = computed(() => user.value?.role === "admin");
   const isOrgAdmin = computed(() => user.value?.role === "org_admin");
+  const isDeptAdmin = computed(() => user.value?.role === "dept_admin");
   const isTeamAdmin = computed(() => user.value?.role === "team_admin");
-  const isAdmin = computed(() => isSuperAdmin.value || isOrgAdmin.value || isTeamAdmin.value);
+  const isAdmin = computed(
+    () => isSuperAdmin.value || isOrgAdmin.value || isDeptAdmin.value || isTeamAdmin.value,
+  );
 
   function setSession(nextToken: string, nextUser: User) {
     token.value = nextToken;
@@ -93,6 +96,7 @@ export const useAuthStore = defineStore("auth", () => {
     isAdmin,
     isSuperAdmin,
     isOrgAdmin,
+    isDeptAdmin,
     isTeamAdmin,
     setSession,
     logout,

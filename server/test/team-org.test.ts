@@ -169,12 +169,47 @@ test("super-admin can list and create teams in any enterprise", () => {
 
   assert.equal(canCreateTeam(actor, 9), true);
   assert.equal(
-    canAdminTeam(actor, { teamId: 2, enterpriseId: 9, memberRole: null }),
+    canAdminTeam(actor, { teamId: 2, enterpriseId: 9, departmentId: 1, memberRole: null }),
     true,
   );
   assert.equal(
-    canReadTeam(actor, { teamId: 2, enterpriseId: 9, memberRole: null }),
+    canReadTeam(actor, { teamId: 2, enterpriseId: 9, departmentId: 1, memberRole: null }),
     true,
+  );
+});
+
+test("dept_admin list SQL is constrained to administered departments", () => {
+  const scope = resolveTeamListScope(
+    { role: "dept_admin", enterpriseId: 3, employeeId: 11, departmentIds: [5] },
+    undefined,
+    [],
+  );
+  assert.equal("forbidden" in scope, false);
+  if ("forbidden" in scope) return;
+  const compiled = buildTeamListQuery(scope).toSQL();
+  const compiledSql = compiled.sql.replace(/\s+/g, " ");
+  assert.match(compiledSql, /"teams"\."department_id" in/i);
+  assert.equal(compiled.params.includes(5), true);
+  assert.doesNotMatch(compiledSql, /"teams"\."id" in/i);
+});
+
+test("dept_admin can create teams only in their department", () => {
+  const actor = {
+    role: "dept_admin" as const,
+    enterpriseId: 3,
+    employeeId: 11,
+    departmentIds: [5],
+  };
+  assert.equal(canCreateTeam(actor, 3, 5), true);
+  assert.equal(canCreateTeam(actor, 3, 6), false);
+  assert.equal(canCreateTeam(actor, 4, 5), false);
+  assert.equal(
+    canAdminTeam(actor, { teamId: 2, enterpriseId: 3, departmentId: 5, memberRole: null }),
+    true,
+  );
+  assert.equal(
+    canAdminTeam(actor, { teamId: 9, enterpriseId: 3, departmentId: 6, memberRole: null }),
+    false,
   );
 });
 
@@ -210,6 +245,7 @@ test("editing an employee team only lists teams in the same department", () => {
   assert.match(enterprisesView, /departmentId === current.departmentId/);
 });
 
+
 test("key binding page is a full canvas with a filter drawer and unbound-key entry", () => {
   const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
   const view = readFileSync(resolve(root, "web/src/views/admin/KeyBindingsView.vue"), "utf8");
@@ -229,37 +265,33 @@ test("key binding page is a full canvas with a filter drawer and unbound-key ent
   assert.match(view, /fab-stack/);
 });
 
-test("admin shell source includes 团队管理 for org and team admins", () => {
+test("admin shell uses org board for all console roles", () => {
   const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
   const layout = readFileSync(resolve(root, "web/src/layouts/AdminLayout.vue"), "utf8");
   const home = readFileSync(resolve(root, "web/src/lib/home.ts"), "utf8");
   const router = readFileSync(resolve(root, "web/src/router/index.ts"), "utf8");
-  assert.match(layout, /部门管理/);
-  assert.match(layout, /v-if="auth.isOrgAdmin" index="\/admin\/departments"/);
-  assert.match(layout, /团队管理/);
-  assert.match(layout, /v-if="!auth.isSuperAdmin" index="\/admin\/teams"/);
-  assert.match(router, /admin-departments/);
-  assert.match(layout, /团队成员/);
-  assert.match(layout, /v-if="auth.isTeamAdmin" index="\/admin\/members"/);
+  assert.match(layout, /企业管理/);
+  assert.match(layout, /本企业编制/);
+  assert.match(layout, /本部门编制/);
+  assert.match(layout, /v-if="auth.isTeamAdmin" index="\/admin\/enterprises">员工/);
+  assert.doesNotMatch(layout, /index="\/admin\/departments"/);
+  assert.doesNotMatch(layout, /index="\/admin\/teams"/);
+  assert.doesNotMatch(layout, /index="\/admin\/members"/);
+  assert.doesNotMatch(layout, /index="\/admin\/keys"/);
+  assert.match(home, /dept_admin/);
+  assert.match(router, /dept_admin/);
   assert.doesNotMatch(layout, /项目管理/);
   assert.doesNotMatch(layout, /\/admin\/projects/);
-  assert.match(layout, /API Key/);
-  assert.match(layout, /v-if="auth.isTeamAdmin" index="\/admin\/keys"/);
-  assert.doesNotMatch(layout, /index="\/me\/keys"/);
   assert.match(home, /team_admin/);
   assert.match(home, /return \"\/admin\"/);
-  assert.match(router, /admin-teams/);
-  assert.match(router, /admin-members/);
   assert.doesNotMatch(router, /admin-projects/);
   assert.match(router, /admin-keys/);
   assert.match(router, /team_admin/);
-  assert.doesNotMatch(router, /admin-team-detail/);
-  const teamsView = readFileSync(resolve(root, "web/src/views/admin/TeamsView.vue"), "utf8");
-  assert.match(teamsView, />详情</);
-  assert.match(teamsView, /el-drawer/);
-  const membersView = readFileSync(resolve(root, "web/src/views/admin/MembersView.vue"), "utf8");
-  assert.match(membersView, /邀请已注册员工/);
-  assert.match(membersView, /已注册用户的手机号/);
+  const orgView = readFileSync(resolve(root, "web/src/views/admin/EnterprisesView.vue"), "utf8");
+  assert.match(orgView, /showEnterprisePane/);
+  assert.match(orgView, /showDepartmentPane/);
+  assert.match(orgView, /showTeamPane/);
+  assert.match(orgView, /邀请已注册员工/);
 });
 
 test("joining a second team is rejected with a named 409 message", () => {

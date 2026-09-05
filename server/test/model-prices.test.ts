@@ -105,7 +105,7 @@ test("unauthenticated team usage calls return 401", async () => {
   }
 });
 
-test("employee model list is unauthenticated 401 and forbidden to admin/org_admin", async () => {
+test("employee model list is unauthenticated 401 and forbidden to super-admin", async () => {
   const anonymous = Fastify();
   await anonymous.register(meRoutes);
   await anonymous.ready();
@@ -116,17 +116,15 @@ test("employee model list is unauthenticated 401 and forbidden to admin/org_admi
     await anonymous.close();
   }
 
-  for (const session of [adminSession, orgAdminSession]) {
-    const app = Fastify();
-    app.addHook("onRequest", attachSession(session));
-    await app.register(meRoutes);
-    await app.ready();
-    try {
-      const response = await app.inject({ method: "GET", url: "/api/me/models" });
-      assert.equal(response.statusCode, 403);
-    } finally {
-      await app.close();
-    }
+  const app = Fastify();
+  app.addHook("onRequest", attachSession(adminSession));
+  await app.register(meRoutes);
+  await app.ready();
+  try {
+    const response = await app.inject({ method: "GET", url: "/api/me/models" });
+    assert.equal(response.statusCode, 403);
+  } finally {
+    await app.close();
   }
 });
 

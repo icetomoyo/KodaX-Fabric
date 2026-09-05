@@ -15,7 +15,13 @@ import {
   varchar,
 } from "drizzle-orm/pg-core";
 
-export const employeeRoleEnum = pgEnum("employee_role", ["employee", "admin", "org_admin", "team_admin"]);
+export const employeeRoleEnum = pgEnum("employee_role", [
+  "employee",
+  "admin",
+  "org_admin",
+  "team_admin",
+  "dept_admin",
+]);
 export const employeeStatusEnum = pgEnum("employee_status", ["pending", "active", "disabled"]);
 export const enterpriseStatusEnum = pgEnum("enterprise_status", ["pending", "active", "disabled"]);
 export const orgUnitStatusEnum = pgEnum("org_unit_status", ["active", "disabled"]);
@@ -152,25 +158,6 @@ export const teamMembers = pgTable(
     uniqueIndex("team_members_team_employee_uidx").on(t.teamId, t.employeeId),
     // One employee belongs to at most one team at a time.
     uniqueIndex("team_members_employee_uidx").on(t.employeeId),
-  ],
-);
-
-export const tickets = pgTable(
-  "tickets",
-  {
-    id: bigint("id", { mode: "number" }).generatedAlwaysAsIdentity().primaryKey(),
-    ticketNo: varchar("ticket_no", { length: 32 }).notNull(),
-    employeeId: bigint("employee_id", { mode: "number" })
-      .notNull()
-      .references(() => employees.id),
-    subject: varchar("subject", { length: 100 }).notNull(),
-    content: text("content").notNull(),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  },
-  (t) => [
-    uniqueIndex("tickets_ticket_no_uidx").on(t.ticketNo),
-    index("tickets_employee_created_idx").on(t.employeeId, t.createdAt),
-    index("tickets_created_idx").on(t.createdAt),
   ],
 );
 

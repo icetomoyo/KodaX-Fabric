@@ -8,7 +8,7 @@ import {
   requestErrorLogs,
   teams,
 } from "../../db/schema/index.js";
-import { listAdminTeamIds } from "../../lib/org.js";
+import { listAdminDepartmentIds, listAdminTeamIds, listTeamIdsInDepartments } from "../../lib/org.js";
 import { REQUEST_CONTEXT_ID_PATTERN } from "../../lib/relay/request-context.js";
 import {
   requirePasswordChanged,
@@ -105,6 +105,10 @@ async function resolveListScope(
     if (query.teamId != null) input.teamIds = [query.teamId];
     return input;
   }
+  if (role === "dept_admin") {
+    input.teamIds = await listTeamIdsInDepartments(await listAdminDepartmentIds(employeeId!));
+    return input;
+  }
   if (role === "team_admin") {
     input.teamIds = await listAdminTeamIds(employeeId!);
     return input;
@@ -117,7 +121,7 @@ async function resolveListScope(
 export async function adminErrorLogRoutes(app: FastifyInstance) {
   app.addHook("preHandler", requireSession);
   app.addHook("preHandler", requirePasswordChanged);
-  app.addHook("preHandler", requireRoles("admin", "org_admin", "team_admin"));
+  app.addHook("preHandler", requireRoles("admin", "org_admin", "dept_admin", "team_admin"));
 
   app.get("/api/admin/error-logs", async (req, reply) => {
     const parsed = listQuerySchema.safeParse(req.query);

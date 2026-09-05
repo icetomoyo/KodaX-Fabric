@@ -24,7 +24,7 @@ export type EmployeeMembership = {
 };
 
 export type UserListScope =
-  | { enterpriseId?: number; excludeRoles?: SessionRole[] }
+  | { enterpriseId?: number; teamIds?: number[]; excludeRoles?: SessionRole[] }
   | { forbidden: true };
 
 export function isSuperAdmin(role: SessionRole): boolean {
@@ -36,7 +36,12 @@ export function isOrgAdmin(role: SessionRole): boolean {
 }
 
 export function canUseAdminConsole(role: SessionRole): boolean {
-  return role === SUPER_ADMIN_ROLE || role === ORG_ADMIN_ROLE || role === "team_admin";
+  return (
+    role === SUPER_ADMIN_ROLE ||
+    role === ORG_ADMIN_ROLE ||
+    role === "dept_admin" ||
+    role === "team_admin"
+  );
 }
 
 export function generateEnterpriseCode(randomDigit = randomInt): string {
@@ -61,21 +66,36 @@ export function resolveUserListScope(
       excludeRoles: [SUPER_ADMIN_ROLE],
     };
   }
-  if (actor.role !== ORG_ADMIN_ROLE) {
-    return { forbidden: true };
+  if (actor.role === ORG_ADMIN_ROLE) {
+    if (actor.enterpriseId == null) return { forbidden: true };
+    if (requestedEnterpriseId != null && requestedEnterpriseId !== actor.enterpriseId) {
+      return { forbidden: true };
+    }
+    return { enterpriseId: actor.enterpriseId, excludeRoles: [SUPER_ADMIN_ROLE, ORG_ADMIN_ROLE] };
   }
-  if (actor.enterpriseId == null) return { forbidden: true };
-  if (requestedEnterpriseId != null && requestedEnterpriseId !== actor.enterpriseId) {
-    return { forbidden: true };
+  if (actor.role === "dept_admin" || actor.role === "team_admin") {
+    if (actor.enterpriseId == null) return { forbidden: true };
+    return {
+      enterpriseId: actor.enterpriseId,
+      excludeRoles:
+        actor.role === "team_admin"
+          ? [SUPER_ADMIN_ROLE, ORG_ADMIN_ROLE, "dept_admin"]
+          : [SUPER_ADMIN_ROLE, ORG_ADMIN_ROLE],
+    };
   }
-  return { enterpriseId: actor.enterpriseId, excludeRoles: [SUPER_ADMIN_ROLE, ORG_ADMIN_ROLE] };
+  return { forbidden: true };
 }
 
 export function canAccessEmployee(actor: EnterpriseActor, target: EmployeeMembership): boolean {
   if (target.role === SUPER_ADMIN_ROLE) return false;
   if (actor.role === SUPER_ADMIN_ROLE) return true;
-  if (actor.role !== ORG_ADMIN_ROLE) return false;
-  return target.enterpriseId === actor.enterpriseId;
+  if (actor.enterpriseId == null || target.enterpriseId !== actor.enterpriseId) return false;
+  if (actor.role === ORG_ADMIN_ROLE) return true;
+  if (actor.role === "dept_admin") return target.role !== ORG_ADMIN_ROLE;
+  if (actor.role === "team_admin") {
+    return target.role === "employee" || target.role === "team_admin";
+  }
+  return false;
 }
 
 export function resolveCreatedUserFields(
@@ -97,9 +117,16 @@ export function resolveCreatedUserFields(
   return { error: "权限不足", status: 403 };
 }
 
-const ORG_ADMIN_ASSIGNABLE_ROLES: SessionRole[] = ["employee", "team_admin"];
+const ORG_ADMIN_ASSIGNABLE_ROLES: SessionRole[] = ["employee", "dept_admin", "team_admin"];
+const DEPT_ADMIN_ASSIGNABLE_ROLES: SessionRole[] = ["employee", "team_admin"];
+const TEAM_ADMIN_ASSIGNABLE_ROLES: SessionRole[] = ["employee", "team_admin"];
 
-const SUPER_ADMIN_ASSIGNABLE_ROLES: SessionRole[] = ["employee", "team_admin", "org_admin"];
+const SUPER_ADMIN_ASSIGNABLE_ROLES: SessionRole[] = [
+  "employee",
+  "dept_admin",
+  "team_admin",
+  "org_admin",
+];
 
 export function resolveUpdatedUserFields(
   actor: EnterpriseActor,
@@ -119,16 +146,27 @@ export function resolveUpdatedUserFields(
     }
     return { role: input.role, enterpriseId };
   }
-  if (actor.role !== ORG_ADMIN_ROLE || actor.enterpriseId == null) {
+  if (actor.enterpriseId == null) {
     return { error: "权限不足", status: 403 };
   }
   if (input.enterpriseId != null && input.enterpriseId !== actor.enterpriseId) {
     return { error: "权限不足", status: 403 };
   }
+  const assignable =
+    actor.role === ORG_ADMIN_ROLE
+      ? ORG_ADMIN_ASSIGNABLE_ROLES
+      : actor.role === "dept_admin"
+        ? DEPT_ADMIN_ASSIGNABLE_ROLES
+        : actor.role === "team_admin"
+          ? TEAM_ADMIN_ASSIGNABLE_ROLES
+          : null;
+  if (!assignable) {
+    return { error: "权限不足", status: 403 };
+  }
   if (input.role == null || input.role === target.role) {
     return { role: target.role, enterpriseId: actor.enterpriseId };
   }
-  if (!ORG_ADMIN_ASSIGNABLE_ROLES.includes(input.role)) {
+  if (!assignable.includes(input.role)) {
     return { error: "权限不足", status: 403 };
   }
   return { role: input.role, enterpriseId: actor.enterpriseId };

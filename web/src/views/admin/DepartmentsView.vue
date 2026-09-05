@@ -2,7 +2,7 @@
   <div class="page-card">
     <div class="head">
       <h2 class="page-title" style="margin: 0">部门管理</h2>
-      <el-button type="primary" @click="openCreate">新建部门</el-button>
+      <el-button v-if="canManage" type="primary" @click="openCreate">新建部门</el-button>
     </div>
 
     <el-table :data="rows" stripe>
@@ -17,8 +17,8 @@
       </el-table-column>
       <el-table-column label="操作" width="220">
         <template #default="{ row }">
-          <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
-          <el-button link type="danger" @click="removeOne(row)">删除</el-button>
+          <el-button v-if="canManage" link type="primary" @click="openEdit(row)">编辑</el-button>
+          <el-button v-if="canManage" link type="danger" @click="removeOne(row)">删除</el-button>
         </template>
       </el-table-column>
     </el-table>
@@ -50,9 +50,10 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { ElMessage } from "element-plus";
 import { http } from "@/api/http";
+import { useAuthStore } from "@/stores/auth";
 
 type DepartmentRow = {
   id: number;
@@ -62,6 +63,8 @@ type DepartmentRow = {
   memberCount?: number;
 };
 
+const auth = useAuthStore();
+const canManage = computed(() => auth.isOrgAdmin);
 const rows = ref<DepartmentRow[]>([]);
 const showCreate = ref(false);
 const showEdit = ref(false);

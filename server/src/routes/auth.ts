@@ -152,7 +152,7 @@ export async function authRoutes(app: FastifyInstance) {
       return reply.code(401).send({ success: false, message: "手机号或密码错误" });
     }
 
-    if (user.role === "org_admin" || user.role === "team_admin") {
+    if (user.role === "org_admin" || user.role === "dept_admin" || user.role === "team_admin") {
       const enterprise = await loadEnterprise(user.enterpriseId);
       if (!enterprise || enterprise.status !== "active") {
         return reply.code(401).send({ success: false, message: "用户不可用" });

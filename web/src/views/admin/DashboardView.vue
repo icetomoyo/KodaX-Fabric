@@ -196,7 +196,7 @@ import { formatTokenCompact } from "@/lib/tokens";
 import { useAuthStore } from "@/stores/auth";
 
 type OverviewData = {
-  role?: "admin" | "org_admin" | "team_admin";
+  role?: "admin" | "org_admin" | "dept_admin" | "team_admin";
   enterprises?: { total: number; active: number };
   channels?: { total: number; enabled: number; unavailable: number };
   providers?: number;
@@ -259,13 +259,15 @@ const role = computed(() => data.value?.role ?? auth.user?.role ?? "admin");
 
 const subtitle = computed(() => {
   if (role.value === "org_admin") return "本企业今日用量与团队情况";
+  if (role.value === "dept_admin") return "本部门今日用量与团队情况";
   if (role.value === "team_admin") return "本团队今日用量与成员情况";
   return "今日运行概况 · 渠道与企业用量一目了然";
 });
 
 const primaryAction = computed(() => {
-  if (role.value === "org_admin") return { to: "/admin/users", label: "员工管理" };
-  if (role.value === "team_admin") return { to: "/admin/members", label: "团队成员" };
+  if (role.value === "org_admin") return { to: "/admin/enterprises", label: "本企业编制" };
+  if (role.value === "dept_admin") return { to: "/admin/enterprises", label: "本部门编制" };
+  if (role.value === "team_admin") return { to: "/admin/enterprises", label: "员工" };
   return { to: "/admin/credentials", label: "管理渠道" };
 });
 
@@ -325,12 +327,12 @@ const kpis = computed((): KpiCard[] => {
       },
     ];
   }
-  if (role.value === "team_admin") {
+  if (role.value === "dept_admin" || role.value === "team_admin") {
     return [
       {
         label: "今日 Tokens",
         value: formatTokenCompact(today?.tokens),
-        foot: "所管团队今日消耗",
+        foot: role.value === "dept_admin" ? "本部门今日消耗" : "所管团队今日消耗",
         tone: "accent",
       },
       {
@@ -385,17 +387,25 @@ const kpis = computed((): KpiCard[] => {
 const quickLinks = computed(() => {
   if (role.value === "org_admin") {
     return [
-      { to: "/admin/users", title: "员工管理", desc: "审核注册 · 分配团队", dot: "blue" },
-      { to: "/admin/teams", title: "团队管理", desc: "用量与消耗", dot: "violet" },
-      { to: "/admin/tickets", title: "工单管理", desc: "企业内工单", dot: "teal" },
+      { to: "/admin/enterprises", title: "本企业编制", desc: "部门 · 团队 · 员工", dot: "blue" },
+      { to: "/admin/error-logs", title: "报错日志", desc: "本企业异常", dot: "violet" },
+      { to: "/admin/keys", title: "API Key", desc: "我的调用凭据", dot: "teal" },
+      { to: "/admin/profile", title: "个人中心", desc: "账号与密码", dot: "amber" },
+    ];
+  }
+  if (role.value === "dept_admin") {
+    return [
+      { to: "/admin/enterprises", title: "本部门编制", desc: "团队 · 员工", dot: "blue" },
+      { to: "/admin/error-logs", title: "报错日志", desc: "本部门异常", dot: "violet" },
+      { to: "/admin/keys", title: "API Key", desc: "我的调用凭据", dot: "teal" },
       { to: "/admin/profile", title: "个人中心", desc: "账号与密码", dot: "amber" },
     ];
   }
   if (role.value === "team_admin") {
     return [
-      { to: "/admin/teams", title: "团队管理", desc: "用量与消耗", dot: "blue" },
-      { to: "/admin/members", title: "团队成员", desc: "邀请与成员角色", dot: "violet" },
-      { to: "/admin/keys", title: "API Key", desc: "创建员工 Key", dot: "teal" },
+      { to: "/admin/enterprises", title: "员工", desc: "本团队成员", dot: "blue" },
+      { to: "/admin/error-logs", title: "报错日志", desc: "本团队异常", dot: "violet" },
+      { to: "/admin/keys", title: "API Key", desc: "我的调用凭据", dot: "teal" },
       { to: "/admin/profile", title: "个人中心", desc: "账号与密码", dot: "amber" },
     ];
   }
@@ -408,19 +418,24 @@ const quickLinks = computed(() => {
 });
 
 const rankTitle = computed(() =>
-  role.value === "team_admin" ? "今日消耗 Top 成员" : "今日消耗 Top 团队",
+  role.value === "team_admin" || role.value === "dept_admin"
+    ? "今日消耗 Top 成员"
+    : "今日消耗 Top 团队",
 );
 const rankDesc = computed(() =>
-  role.value === "team_admin" ? "按今日 Tokens 排序，所管团队成员" : "按 Tokens 排序，记账到团队",
+  role.value === "team_admin" || role.value === "dept_admin"
+    ? "按今日 Tokens 排序，所管范围内的成员"
+    : "按 Tokens 排序，记账到团队",
 );
 const rankLink = computed(() => {
-  if (role.value === "org_admin") return { to: "/admin/teams", label: "团队" };
-  if (role.value === "team_admin") return { to: "/admin/members", label: "成员" };
+  if (role.value === "org_admin") return { to: "/admin/enterprises", label: "编制" };
+  if (role.value === "dept_admin") return { to: "/admin/enterprises", label: "编制" };
+  if (role.value === "team_admin") return { to: "/admin/enterprises", label: "员工" };
   return { to: "/admin/logs", label: "查看日志" };
 });
 
 const rankRows = computed(() => {
-  if (role.value === "team_admin") {
+  if (role.value === "team_admin" || role.value === "dept_admin") {
     return (data.value?.topMembersToday ?? []).map((row, index) => ({
       key: String(row.employeeId ?? index),
       name: row.employeeName || "—",
@@ -513,7 +528,7 @@ async function loadScopedWorkbench() {
     employeeCount = usersRes.data.success ? (usersRes.data.data as unknown[]).length : 0;
   }
   let topMembers: NonNullable<OverviewData["topMembersToday"]> = [];
-  if (auth.isTeamAdmin) {
+  if (auth.isTeamAdmin || auth.isDeptAdmin) {
     const memberLists = await Promise.all(
       teams.map(async (team) => {
         try {
@@ -547,7 +562,7 @@ async function loadScopedWorkbench() {
       requestCount: 0,
     }));
   data.value = {
-    role: auth.isOrgAdmin ? "org_admin" : "team_admin",
+    role: auth.isOrgAdmin ? "org_admin" : auth.isDeptAdmin ? "dept_admin" : "team_admin",
     org: {
       teamCount: teams.length,
       employeeCount,
