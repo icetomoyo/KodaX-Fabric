@@ -1,5 +1,6 @@
 <template>
-  <div class="dashboard-page">
+  <AdminUsageDashboard v-if="auth.isSuperAdmin" />
+  <div v-else class="dashboard-page">
     <section class="page-card hero-card">
       <div class="page-head">
         <div class="head-actions">
@@ -46,10 +47,21 @@
     <div class="panels-grid" :class="{ single: !auth.isSuperAdmin }">
       <section class="page-card panel-card">
         <div class="panel-head">
-          <h3 class="panel-title">{{ rankTitle }}</h3>
-          <el-button v-if="rankLink" link type="primary" @click="router.push(rankLink.to)">
-            {{ rankLink.label }}
-          </el-button>
+          <h3 class="panel-title">今日消耗</h3>
+          <div class="rank-tools">
+            <el-radio-group v-if="rankLevels.length > 1" v-model="rankLevel" size="small">
+              <el-radio-button
+                v-for="level in rankLevels"
+                :key="level.value"
+                :value="level.value"
+              >
+                {{ level.label }}
+              </el-radio-button>
+            </el-radio-group>
+            <el-button v-if="rankLink" link type="primary" @click="router.push(rankLink.to)">
+              {{ rankLink.label }}
+            </el-button>
+          </div>
         </div>
         <el-empty
           v-if="!loading && !rankRows.length"
@@ -65,7 +77,7 @@
             <span class="rank-index" :class="{ top: index < 3 }">{{ index + 1 }}</span>
             <div class="rank-main">
               <div class="rank-name">{{ row.name }}</div>
-              <div class="rank-sub">{{ row.sub }}</div>
+              <div v-if="row.sub" class="rank-sub">{{ row.sub }}</div>
             </div>
             <div class="rank-metrics">
               <strong>{{ formatTokenCompact(row.totalTokens) }}</strong>
@@ -148,11 +160,11 @@
             <span class="mono-cell">{{ formatDateTime(row.createdAt) }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="企业 / 团队" min-width="160">
-          <template #default="{ row }">
-            {{ row.enterpriseName || "—" }}
-            <span v-if="row.teamName"> · {{ row.teamName }}</span>
-          </template>
+        <el-table-column label="员工" min-width="110">
+          <template #default="{ row }">{{ row.employeeName || "—" }}</template>
+        </el-table-column>
+        <el-table-column label="组织" min-width="200">
+          <template #default="{ row }">{{ orgPath(row) }}</template>
         </el-table-column>
         <el-table-column prop="clientModel" label="模型" min-width="120" show-overflow-tooltip />
         <el-table-column label="上游" min-width="100">
@@ -173,12 +185,19 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { ElMessage } from "element-plus";
+import AdminUsageDashboard from "@/views/admin/AdminUsageDashboard.vue";
 import { http } from "@/api/http";
 import { formatDateTime } from "@/lib/date-time";
 import { formatTokenCompact } from "@/lib/tokens";
+import {
+  ranksFromMemberUsage,
+  ranksFromTeamUsage,
+  type MemberUsageRow,
+  type TeamUsageRow,
+} from "@/lib/workbench-ranks";
 
 import { useAuthStore } from "@/stores/auth";
 
@@ -200,9 +219,23 @@ type OverviewData = {
     monthUsedTokens?: number;
   };
   today?: { requests: number; tokens: number; errors: number };
+  topEnterprisesToday?: Array<{
+    enterpriseId?: number;
+    enterpriseName?: string;
+    totalTokens?: number;
+    requestCount?: number;
+  }>;
+  topDepartmentsToday?: Array<{
+    departmentId?: number;
+    departmentName?: string;
+    enterpriseName?: string;
+    totalTokens?: number;
+    requestCount?: number;
+  }>;
   topTeamsToday?: Array<{
     teamId?: number;
     teamName?: string;
+    departmentName?: string;
     enterpriseName?: string;
     totalTokens?: number;
     requestCount?: number;
@@ -210,7 +243,10 @@ type OverviewData = {
   topMembersToday?: Array<{
     employeeId?: number;
     employeeName?: string;
-    sub?: string;
+    teamName?: string;
+    teamIsDefault?: boolean;
+    departmentName?: string;
+    enterpriseName?: string;
     totalTokens?: number;
     requestCount?: number;
   }>;
@@ -222,7 +258,9 @@ type OverviewData = {
   recentErrors?: Array<{
     requestId?: string;
     enterpriseName?: string;
+    departmentName?: string;
     teamName?: string;
+    teamIsDefault?: boolean;
     employeeName?: string;
     clientModel?: string;
     providerCode?: string | null;
@@ -230,6 +268,8 @@ type OverviewData = {
     createdAt?: string;
   }>;
 };
+
+type RankLevel = "enterprise" | "department" | "team" | "employee";
 
 const PROVIDER_META: Record<string, { label: string; color: string }> = {
   glm: { label: "智谱/GLM", color: "#2563eb" },
@@ -391,17 +431,48 @@ const quickLinks = computed(() => {
   }
   return [
     { to: "/admin/credentials", title: "上游渠道", desc: "凭证池 · 连通测试 · 启停", dot: "blue" },
-    { to: "/admin/enterprises", title: "企业管理", desc: "启停企业", dot: "violet" },
-    { to: "/admin/logs", title: "调用日志", desc: "按企业 / 团队 / 员工排障", dot: "teal" },
+    { to: "/admin/enterprises", title: "企业管理", desc: "企业 · 部门 · 团队 · 员工", dot: "violet" },
+    { to: "/admin/logs", title: "调用日志", desc: "按企业 / 部门 / 团队 / 员工排障", dot: "teal" },
     { to: "/admin/model-prices", title: "模型列表", desc: "渠道可用模型", dot: "amber" },
   ];
 });
 
-const rankTitle = computed(() =>
-  role.value === "team_admin" || role.value === "dept_admin"
-    ? "今日消耗 Top 成员"
-    : "今日消耗 Top 团队",
+const rankLevels = computed(() => {
+  if (role.value === "admin") {
+    return [
+      { value: "enterprise" as const, label: "企业" },
+      { value: "department" as const, label: "部门" },
+      { value: "team" as const, label: "团队" },
+      { value: "employee" as const, label: "员工" },
+    ];
+  }
+  if (role.value === "org_admin") {
+    return [
+      { value: "department" as const, label: "部门" },
+      { value: "team" as const, label: "团队" },
+      { value: "employee" as const, label: "员工" },
+    ];
+  }
+  if (role.value === "dept_admin") {
+    return [
+      { value: "team" as const, label: "团队" },
+      { value: "employee" as const, label: "员工" },
+    ];
+  }
+  return [{ value: "employee" as const, label: "员工" }];
+});
+
+const rankLevel = ref<RankLevel>("enterprise");
+watch(
+  rankLevels,
+  (levels) => {
+    if (!levels.some((level) => level.value === rankLevel.value)) {
+      rankLevel.value = levels[0]?.value ?? "employee";
+    }
+  },
+  { immediate: true },
 );
+
 const rankLink = computed(() => {
   if (role.value === "org_admin") return { to: "/admin/enterprises", label: "编制" };
   if (role.value === "dept_admin") return { to: "/admin/enterprises", label: "编制" };
@@ -409,20 +480,48 @@ const rankLink = computed(() => {
   return { to: "/admin/logs", label: "查看日志" };
 });
 
+function rowsFor(level: RankLevel) {
+  if (level === "enterprise") return data.value?.topEnterprisesToday ?? [];
+  if (level === "department") return data.value?.topDepartmentsToday ?? [];
+  if (level === "team") return data.value?.topTeamsToday ?? [];
+  return data.value?.topMembersToday ?? [];
+}
+
 const rankRows = computed(() => {
-  if (role.value === "team_admin" || role.value === "dept_admin") {
-    return (data.value?.topMembersToday ?? []).map((row, index) => ({
-      key: String(row.employeeId ?? index),
-      name: row.employeeName || "—",
-      sub: row.sub || "成员",
+  if (rankLevel.value === "enterprise") {
+    return (data.value?.topEnterprisesToday ?? []).map((row, index) => ({
+      key: String(row.enterpriseId ?? index),
+      name: row.enterpriseName || "—",
+      sub: "",
       totalTokens: Number(row.totalTokens) || 0,
       requestCount: Number(row.requestCount) || 0,
     }));
   }
-  return (data.value?.topTeamsToday ?? []).map((row, index) => ({
-    key: String(row.teamId ?? index),
-    name: row.teamName || "—",
-    sub: row.enterpriseName || "—",
+  if (rankLevel.value === "department") {
+    return (data.value?.topDepartmentsToday ?? []).map((row, index) => ({
+      key: String(row.departmentId ?? index),
+      name: row.departmentName || "—",
+      sub: row.enterpriseName || "",
+      totalTokens: Number(row.totalTokens) || 0,
+      requestCount: Number(row.requestCount) || 0,
+    }));
+  }
+  if (rankLevel.value === "team") {
+    return (data.value?.topTeamsToday ?? []).map((row, index) => ({
+      key: String(row.teamId ?? index),
+      name: row.teamName || "—",
+      sub: orgPath({
+        enterpriseName: row.enterpriseName,
+        departmentName: row.departmentName,
+      }),
+      totalTokens: Number(row.totalTokens) || 0,
+      requestCount: Number(row.requestCount) || 0,
+    }));
+  }
+  return (data.value?.topMembersToday ?? []).map((row, index) => ({
+    key: String(row.employeeId ?? index),
+    name: row.employeeName || "—",
+    sub: orgPath(row),
     totalTokens: Number(row.totalTokens) || 0,
     requestCount: Number(row.requestCount) || 0,
   }));
@@ -437,6 +536,17 @@ const maxProviderRequests = computed(() => {
   const list = data.value?.byProviderToday ?? [];
   return Math.max(1, ...list.map((row) => Number(row.requests) || 0));
 });
+
+function orgPath(row: {
+  enterpriseName?: string;
+  departmentName?: string;
+  teamName?: string;
+  teamIsDefault?: boolean;
+}): string {
+  const parts = [row.enterpriseName, row.departmentName];
+  if (row.teamName && !row.teamIsDefault) parts.push(row.teamName);
+  return parts.filter(Boolean).join(" · ");
+}
 
 function formatNumber(value: unknown): string {
   const n = Number(value ?? 0);
@@ -474,101 +584,92 @@ function statusLabel(status: string): string {
   );
 }
 
-type TeamListRow = {
-  id: number;
-  name: string;
-  enterpriseName?: string;
+type TeamListRow = TeamUsageRow & {
   memberCount?: number;
   todayTotalTokens?: number;
-  monthTotalTokens?: number;
 };
 
 type TeamMemberRow = {
   employeeId: number;
   name: string;
-  role?: "member" | "team_admin";
   todayTotalTokens?: number;
 };
 
-function sumNumber(rows: TeamListRow[], pick: (row: TeamListRow) => unknown): number {
-  return rows.reduce((total, row) => total + (Number(pick(row)) || 0), 0);
+async function loadTeamUsage(): Promise<TeamListRow[]> {
+  const res = await http.get("/api/admin/teams");
+  return (res.data.success ? res.data.data : []) as TeamListRow[];
 }
 
-async function loadScopedWorkbench() {
-  const teamsRes = await http.get("/api/admin/teams");
-  const teams = (teamsRes.data.success ? teamsRes.data.data : []) as TeamListRow[];
-  let employeeCount = 0;
-  if (auth.isOrgAdmin) {
-    const usersRes = await http.get("/api/admin/users", { params: { limit: 200 } });
-    employeeCount = usersRes.data.success ? (usersRes.data.data as unknown[]).length : 0;
-  }
-  let topMembers: NonNullable<OverviewData["topMembersToday"]> = [];
-  if (auth.isTeamAdmin || auth.isDeptAdmin) {
-    const memberLists = await Promise.all(
-      teams.map(async (team) => {
-        try {
-          const res = await http.get(`/api/admin/teams/${team.id}/members`);
-          const members = (res.data.success ? res.data.data : []) as TeamMemberRow[];
-          return members.map((member) => ({
-            employeeId: member.employeeId,
-            employeeName: member.name,
-            sub: `${team.name} · ${member.role === "team_admin" ? "团队管理员" : "成员"}`,
-            totalTokens: Number(member.todayTotalTokens) || 0,
-            requestCount: 0,
-          }));
-        } catch {
-          return [];
-        }
-      }),
-    );
-    topMembers = memberLists
-      .flat()
-      .sort((left, right) => (right.totalTokens || 0) - (left.totalTokens || 0))
-      .slice(0, 10);
-  }
-  const topTeams = [...teams]
-    .sort((left, right) => (Number(right.todayTotalTokens) || 0) - (Number(left.todayTotalTokens) || 0))
-    .slice(0, 10)
-    .map((row) => ({
-      teamId: row.id,
-      teamName: row.name,
-      enterpriseName: row.enterpriseName,
-      totalTokens: Number(row.todayTotalTokens) || 0,
-      requestCount: 0,
-    }));
-  data.value = {
-    role: auth.isOrgAdmin ? "org_admin" : auth.isDeptAdmin ? "dept_admin" : "team_admin",
-    org: {
-      teamCount: teams.length,
-      employeeCount,
-      monthUsedTokens: sumNumber(teams, (row) => row.monthTotalTokens),
-    },
-    team: {
-      teamCount: teams.length,
-      memberCount: sumNumber(teams, (row) => row.memberCount),
-      monthUsedTokens: sumNumber(teams, (row) => row.monthTotalTokens),
-    },
-    today: {
-      requests: 0,
-      tokens: sumNumber(teams, (row) => row.todayTotalTokens),
-      errors: 0,
-    },
-    topTeamsToday: topTeams,
-    topMembersToday: topMembers,
-    byProviderToday: [],
-    recentErrors: [],
-  };
+async function loadMemberUsage(teams: TeamListRow[]): Promise<MemberUsageRow[]> {
+  const active = teams.filter((row) => (Number(row.todayTotalTokens) || 0) > 0);
+  const groups = await Promise.all(
+    active.map(async (team) => {
+      try {
+        const res = await http.get(`/api/admin/teams/${team.id}/members`);
+        const members = (res.data.success ? res.data.data : []) as TeamMemberRow[];
+        return members.map((member) => ({
+          employeeId: member.employeeId,
+          name: member.name,
+          todayTotalTokens: member.todayTotalTokens,
+          teamId: team.id,
+          teamName: team.name,
+          teamIsDefault: team.isDefault,
+          departmentName: team.departmentName,
+          enterpriseName: team.enterpriseName,
+        }));
+      } catch {
+        return [];
+      }
+    }),
+  );
+  return groups.flat();
+}
+
+function withRequestCounts(
+  teams: ReturnType<typeof ranksFromTeamUsage>["topTeamsToday"],
+  source: NonNullable<OverviewData["topTeamsToday"]>,
+) {
+  const requests = new Map(
+    source.map((row) => [row.teamId, Number(row.requestCount) || 0]),
+  );
+  return teams.map((row) => ({
+    ...row,
+    requestCount: requests.get(row.teamId) || row.requestCount,
+  }));
 }
 
 async function load() {
   loading.value = true;
   try {
-    if (auth.isSuperAdmin) {
-      const res = await http.get("/api/admin/overview");
-      if (res.data.success) data.value = res.data.data;
-      return;
+    const res = await http.get("/api/admin/overview");
+    if (!res.data.success) return;
+    const overview = res.data.data as OverviewData;
+    let next = overview;
+    const needsOrgRanks = !Array.isArray(overview.topEnterprisesToday)
+      || !Array.isArray(overview.topDepartmentsToday);
+    const needsMembers = !Array.isArray(overview.topMembersToday);
+    if (needsOrgRanks || needsMembers) {
+      const teams = await loadTeamUsage();
+      if (needsOrgRanks) {
+        const ranks = ranksFromTeamUsage(teams);
+        next = {
+          ...next,
+          ...ranks,
+          topTeamsToday: withRequestCounts(ranks.topTeamsToday, overview.topTeamsToday ?? []),
+        };
+      }
+      if (needsMembers) {
+        next = {
+          ...next,
+          topMembersToday: ranksFromMemberUsage(await loadMemberUsage(teams)),
+        };
+      }
     }
-    await loadScopedWorkbench();
+    data.value = next;
+    if (!rowsFor(rankLevel.value).length) {
+      const fallback = rankLevels.value.find((level) => rowsFor(level.value).length);
+      if (fallback) rankLevel.value = fallback.value;
+    }
   } catch (error) {
     const status = (error as { response?: { status?: number } }).response?.status;
     if (status === 403) return;
@@ -580,7 +681,9 @@ async function load() {
   }
 }
 
-onMounted(load);
+onMounted(() => {
+  if (!auth.isSuperAdmin) void load();
+});
 </script>
 
 <style scoped>
@@ -767,6 +870,14 @@ onMounted(load);
   color: #0f172a;
   font-size: 16px;
   font-weight: 650;
+}
+
+.rank-tools {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .rank-list,

@@ -287,6 +287,40 @@ test("live console pages do not repeat sidebar titles or tutorial subtitles", ()
   assert.doesNotMatch(meHome, /按团队统计 Token 消耗/);
 });
 
+test("admin workbench ranks today usage across the org chain", () => {
+  const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+  const dashboard = readFileSync(resolve(root, "web/src/views/admin/DashboardView.vue"), "utf8");
+  assert.match(dashboard, /今日消耗/);
+  assert.doesNotMatch(dashboard, /今日消耗 Top 团队/);
+  assert.match(dashboard, /label: "企业"/);
+  assert.match(dashboard, /label: "部门"/);
+  assert.match(dashboard, /label: "团队"/);
+  assert.match(dashboard, /label: "员工"/);
+  assert.match(dashboard, /topEnterprisesToday/);
+  assert.match(dashboard, /topDepartmentsToday/);
+  assert.match(dashboard, /departmentName/);
+  assert.match(dashboard, /ranksFromTeamUsage/);
+  assert.match(dashboard, /\/api\/admin\/teams/);
+});
+
+test("super-admin workbench is a usage chart board", () => {
+  const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+  const dashboard = readFileSync(resolve(root, "web/src/views/admin/DashboardView.vue"), "utf8");
+  const charts = readFileSync(resolve(root, "web/src/views/admin/AdminUsageDashboard.vue"), "utf8");
+  assert.match(dashboard, /AdminUsageDashboard/);
+  assert.match(charts, /UsageChart/);
+  assert.match(charts, /Token 趋势/);
+  assert.match(charts, /调用趋势/);
+  assert.match(charts, /模型消耗/);
+  assert.match(charts, /渠道消耗/);
+  assert.match(charts, /组织消耗/);
+  assert.match(charts, /失败分布/);
+  assert.match(charts, /\/api\/admin\/overview\/analytics/);
+  assert.doesNotMatch(charts, /quick-links/);
+  assert.doesNotMatch(charts, /kpi-grid/);
+  assert.doesNotMatch(charts, /el-table/);
+});
+
 test("key binding page is a full canvas with a filter drawer and unbound-key entry", () => {
   const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
   const view = readFileSync(resolve(root, "web/src/views/admin/KeyBindingsView.vue"), "utf8");
