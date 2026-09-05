@@ -1,7 +1,5 @@
 <template>
   <div class="page-card logs-page">
-    <h2 class="page-title">调用日志</h2>
-
     <el-form :inline="true" size="small" class="filters" @keyup.enter="search">
       <el-form-item>
         <el-select
@@ -593,9 +591,6 @@ onMounted(() => {
   padding: 16px 20px 14px;
   border: 1px solid #e9edf3;
   overflow-x: auto;
-}
-.logs-page .page-title {
-  margin-bottom: 12px;
 }
 .filters {
   display: flex;

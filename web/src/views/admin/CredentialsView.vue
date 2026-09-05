@@ -2,10 +2,6 @@
   <div class="credentials-page">
     <section class="page-card credentials-shell">
       <div class="page-head">
-        <div>
-          <h2 class="page-title">上游渠道</h2>
-          <p class="page-subtitle">按渠道集中管理多个 API Key，并独立观察每个 Key 的状态与健康度</p>
-        </div>
         <div class="head-actions">
           <el-button :loading="loading" @click="refreshAll">刷新</el-button>
           <el-button v-if="canWrite" type="primary" @click="openCreateChannel">
@@ -90,9 +86,6 @@
                     </span>
                     <span class="board-stat">已停用 <strong>{{ boardStats.disabled }}</strong></span>
                   </div>
-                  <p v-if="canWrite" class="board-hint">
-                    拖到「使用中」启用，拖到「停用」关闭。冷却与自动停用由系统判定。
-                  </p>
                 </div>
                 <div v-if="canWrite" class="batch-actions">
                   <el-button
@@ -111,7 +104,7 @@
               <el-empty
                 v-if="!selectedChannel.keys.length"
                 class="empty-keys"
-                description="该渠道还没有 Key，点右上角「添加 Key」导入"
+                description="暂无 Key"
                 :image-size="64"
               />
               <div v-else class="kanban-board">
@@ -2379,21 +2372,9 @@ onMounted(refreshAll);
 .page-head {
   display: flex;
   flex-shrink: 0;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 20px;
-  margin-bottom: 16px;
-}
-
-.page-title {
-  margin: 0;
-  font-size: 22px;
-}
-
-.page-subtitle {
-  margin: 6px 0 0;
-  color: #94a3b8;
-  font-size: 13px;
+  align-items: center;
+  justify-content: flex-end;
+  margin-bottom: 12px;
 }
 
 .head-actions,
@@ -2607,12 +2588,6 @@ onMounted(refreshAll);
   font-weight: 650;
 }
 
-.detail-subtitle {
-  margin-top: 5px;
-  color: #64748b;
-  font-size: 12px;
-}
-
 .channel-protocols {
   display: flex;
   align-items: center;
@@ -2753,12 +2728,6 @@ onMounted(refreshAll);
   justify-content: flex-end;
   flex-wrap: wrap;
   gap: 6px;
-}
-
-.board-hint {
-  margin: 4px 0 0;
-  color: #94a3b8;
-  font-size: 12px;
 }
 
 .board-stats {

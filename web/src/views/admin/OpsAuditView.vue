@@ -1,7 +1,5 @@
 <template>
   <div class="page-card">
-    <h2 class="page-title">操作审计</h2>
-
     <el-form inline class="filters">
       <el-form-item label="动作">
         <el-select

@@ -1,17 +1,13 @@
 <template>
   <div class="page-card logs-page">
     <div class="page-head">
-      <div>
-        <h2 class="page-title">报错日志</h2>
-        <p class="page-subtitle">{{ subtitle }}</p>
-      </div>
       <a
         class="doc-link"
         href="https://docs.bigmodel.cn/cn/faq/api-code"
         target="_blank"
         rel="noopener noreferrer"
       >
-        智谱错误码说明
+        智谱错误码
       </a>
     </div>
 
@@ -263,12 +259,6 @@ interface NamedOption {
 }
 
 const auth = useAuthStore();
-
-const subtitle = computed(() => {
-  if (auth.isOrgAdmin) return "按团队 / 员工查看本企业失败调用。";
-  if (auth.isTeamAdmin) return "按员工查看本团队失败调用。";
-  return "按 Request ID / 企业 / 团队 / 员工查看失败调用。";
-});
 
 const filters = reactive({
   requestId: "",
@@ -533,18 +523,9 @@ onMounted(() => {
 }
 .page-head {
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
+  align-items: center;
+  justify-content: flex-end;
   margin-bottom: 12px;
-}
-.page-title {
-  margin: 0 0 4px;
-}
-.page-subtitle {
-  margin: 0;
-  color: #667085;
-  font-size: 13px;
 }
 .doc-link {
   flex: none;

@@ -2,10 +2,6 @@
   <div class="dashboard-page">
     <section class="page-card hero-card">
       <div class="page-head">
-        <div>
-          <h2 class="page-title">工作台</h2>
-          <p class="page-subtitle">{{ subtitle }}</p>
-        </div>
         <div class="head-actions">
           <el-button :loading="loading" @click="load">刷新</el-button>
           <el-button type="primary" @click="router.push(primaryAction.to)">
@@ -50,10 +46,7 @@
     <div class="panels-grid" :class="{ single: !auth.isSuperAdmin }">
       <section class="page-card panel-card">
         <div class="panel-head">
-          <div>
-            <h3 class="panel-title">{{ rankTitle }}</h3>
-            <p class="panel-desc">{{ rankDesc }}</p>
-          </div>
+          <h3 class="panel-title">{{ rankTitle }}</h3>
           <el-button v-if="rankLink" link type="primary" @click="router.push(rankLink.to)">
             {{ rankLink.label }}
           </el-button>
@@ -88,10 +81,7 @@
 
       <section v-if="auth.isSuperAdmin" class="page-card panel-card">
         <div class="panel-head">
-          <div>
-            <h3 class="panel-title">今日按接入平台</h3>
-            <p class="panel-desc">请求量与 Tokens 分布</p>
-          </div>
+          <h3 class="panel-title">今日按接入平台</h3>
           <el-button v-if="auth.isSuperAdmin" link type="primary" @click="router.push('/admin/credentials')">
             渠道
           </el-button>
@@ -134,10 +124,7 @@
 
     <section class="page-card panel-card errors-card">
       <div class="panel-head">
-        <div>
-          <h3 class="panel-title">最近失败请求</h3>
-          <p class="panel-desc">上游返回的业务错误码、HTTP 状态码和错误信息原文</p>
-        </div>
+        <h3 class="panel-title">最近失败请求</h3>
         <el-button link type="primary" @click="router.push('/admin/error-logs')">
           报错日志
         </el-button>
@@ -256,13 +243,6 @@ const auth = useAuthStore();
 const loading = ref(false);
 const data = ref<OverviewData | null>(null);
 const role = computed(() => data.value?.role ?? auth.user?.role ?? "admin");
-
-const subtitle = computed(() => {
-  if (role.value === "org_admin") return "本企业今日用量与团队情况";
-  if (role.value === "dept_admin") return "本部门今日用量与团队情况";
-  if (role.value === "team_admin") return "本团队今日用量与成员情况";
-  return "今日运行概况 · 渠道与企业用量一目了然";
-});
 
 const primaryAction = computed(() => {
   if (role.value === "org_admin") return { to: "/admin/enterprises", label: "本企业编制" };
@@ -421,11 +401,6 @@ const rankTitle = computed(() =>
   role.value === "team_admin" || role.value === "dept_admin"
     ? "今日消耗 Top 成员"
     : "今日消耗 Top 团队",
-);
-const rankDesc = computed(() =>
-  role.value === "team_admin" || role.value === "dept_admin"
-    ? "按今日 Tokens 排序，所管范围内的成员"
-    : "按 Tokens 排序，记账到团队",
 );
 const rankLink = computed(() => {
   if (role.value === "org_admin") return { to: "/admin/enterprises", label: "编制" };
@@ -622,23 +597,9 @@ onMounted(load);
 
 .page-head {
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
+  align-items: center;
+  justify-content: flex-end;
   margin-bottom: 18px;
-}
-
-.page-title {
-  margin: 0;
-  font-size: 22px;
-  font-weight: 650;
-  color: #0f172a;
-}
-
-.page-subtitle {
-  margin: 6px 0 0;
-  color: #94a3b8;
-  font-size: 13px;
 }
 
 .head-actions {
@@ -795,7 +756,7 @@ onMounted(load);
 
 .panel-head {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 12px;
   margin-bottom: 14px;
@@ -806,12 +767,6 @@ onMounted(load);
   color: #0f172a;
   font-size: 16px;
   font-weight: 650;
-}
-
-.panel-desc {
-  margin: 4px 0 0;
-  color: #94a3b8;
-  font-size: 12px;
 }
 
 .rank-list,

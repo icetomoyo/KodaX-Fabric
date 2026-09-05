@@ -246,6 +246,47 @@ test("editing an employee team only lists teams in the same department", () => {
 });
 
 
+test("live console pages do not repeat sidebar titles or tutorial subtitles", () => {
+  const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+  const credentials = readFileSync(resolve(root, "web/src/views/admin/CredentialsView.vue"), "utf8");
+  const dashboard = readFileSync(resolve(root, "web/src/views/admin/DashboardView.vue"), "utf8");
+  const enterprises = readFileSync(resolve(root, "web/src/views/admin/EnterprisesView.vue"), "utf8");
+  const prices = readFileSync(resolve(root, "web/src/views/admin/ModelPricesView.vue"), "utf8");
+  const logs = readFileSync(resolve(root, "web/src/views/admin/LogsView.vue"), "utf8");
+  const errorLogs = readFileSync(resolve(root, "web/src/views/admin/ErrorLogsView.vue"), "utf8");
+  const opsAudit = readFileSync(resolve(root, "web/src/views/admin/OpsAuditView.vue"), "utf8");
+  const profile = readFileSync(resolve(root, "web/src/views/admin/ProfileView.vue"), "utf8");
+  const meHome = readFileSync(resolve(root, "web/src/views/me/HomeView.vue"), "utf8");
+  const meKeys = readFileSync(resolve(root, "web/src/views/me/KeysView.vue"), "utf8");
+  const meModels = readFileSync(resolve(root, "web/src/views/me/ModelsView.vue"), "utf8");
+  const meLogs = readFileSync(resolve(root, "web/src/views/me/LogsView.vue"), "utf8");
+
+  for (const view of [
+    credentials,
+    dashboard,
+    enterprises,
+    prices,
+    logs,
+    errorLogs,
+    opsAudit,
+    profile,
+    meHome,
+    meKeys,
+    meModels,
+    meLogs,
+  ]) {
+    assert.doesNotMatch(view, /class="page-title"/);
+    assert.doesNotMatch(view, /class="page-subtitle"/);
+  }
+
+  assert.doesNotMatch(credentials, /拖到「使用中」/);
+  assert.doesNotMatch(credentials, /按渠道集中管理/);
+  assert.doesNotMatch(enterprises, /每张卡片都可以直接操作/);
+  assert.doesNotMatch(dashboard, /请求量与 Tokens 分布/);
+  assert.doesNotMatch(prices, /请先到上游渠道测试 Key/);
+  assert.doesNotMatch(meHome, /按团队统计 Token 消耗/);
+});
+
 test("key binding page is a full canvas with a filter drawer and unbound-key entry", () => {
   const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
   const view = readFileSync(resolve(root, "web/src/views/admin/KeyBindingsView.vue"), "utf8");

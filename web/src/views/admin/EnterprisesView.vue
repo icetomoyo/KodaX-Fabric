@@ -2,10 +2,6 @@
   <div class="org-page">
     <section class="page-card org-shell">
       <div class="page-head">
-        <div>
-          <h2 class="page-title">{{ pageTitle }}</h2>
-          <p class="page-subtitle">{{ pageSubtitle }}</p>
-        </div>
         <div class="head-actions">
           <el-button :loading="loading" @click="refreshAll">刷新</el-button>
           <el-button v-if="canCreateEnterprise" type="primary" @click="openCreateEnterprise">新建企业</el-button>
@@ -148,7 +144,6 @@
             :image-size="64"
           />
           <div v-else class="card-list">
-            <p v-if="!visibleTeams.length" class="pane-hint">没有拆团队时，人直接挂在部门下</p>
             <article
               v-for="team in visibleTeams"
               :key="team.id"
@@ -534,18 +529,6 @@ const canManageTeams = computed(() => auth.isSuperAdmin || auth.isOrgAdmin || au
 const canAppointOrgAdmin = computed(() => auth.isSuperAdmin);
 const canAppointDeptAdmin = computed(() => auth.isSuperAdmin || auth.isOrgAdmin);
 const canSeeUnassigned = computed(() => showTeamPane.value);
-const pageTitle = computed(() => {
-  if (auth.isSuperAdmin) return "企业管理";
-  if (auth.isOrgAdmin) return "本企业编制";
-  if (auth.isDeptAdmin) return "本部门编制";
-  return "员工";
-});
-const pageSubtitle = computed(() => {
-  if (auth.isSuperAdmin) return "企业 → 部门 → 团队 → 员工，每张卡片都可以直接操作";
-  if (auth.isOrgAdmin) return "部门 → 团队 → 员工";
-  if (auth.isDeptAdmin) return "团队 → 员工";
-  return "本团队成员，邀请和日常操作都在列表上完成";
-});
 const layoutClass = computed(() => {
   if (auth.isTeamAdmin) return "layout-people";
   if (auth.isDeptAdmin) return "layout-team-people";
@@ -1408,21 +1391,9 @@ onMounted(() => {
 .page-head {
   display: flex;
   flex-shrink: 0;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 20px;
-  margin-bottom: 16px;
-}
-
-.page-title {
-  margin: 0;
-  font-size: 22px;
-}
-
-.page-subtitle {
-  margin: 6px 0 0;
-  color: #94a3b8;
-  font-size: 13px;
+  align-items: center;
+  justify-content: flex-end;
+  margin-bottom: 12px;
 }
 
 .head-actions,
@@ -1558,13 +1529,6 @@ onMounted(() => {
 
 .mono {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-}
-
-.pane-hint {
-  margin: 0 0 8px;
-  color: #94a3b8;
-  font-size: 12px;
-  line-height: 1.5;
 }
 
 .form-help {

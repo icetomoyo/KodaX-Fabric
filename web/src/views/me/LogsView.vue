@@ -1,13 +1,6 @@
 <template>
   <div class="logs-page">
     <section class="page-card">
-      <div class="page-head">
-        <div>
-          <h2 class="page-title">我的调用</h2>
-          <p class="page-subtitle">查看自己的调用用量</p>
-        </div>
-      </div>
-
       <el-form inline class="filters" @keyup.enter="search">
         <el-form-item>
           <el-select
@@ -327,27 +320,6 @@ onMounted(() => {
   min-width: 0;
 }
 
-.page-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 16px;
-}
-
-.page-title {
-  margin: 0;
-  font-size: 20px;
-  font-weight: 650;
-  color: #0f172a;
-}
-
-.page-subtitle {
-  margin: 6px 0 0;
-  color: #94a3b8;
-  font-size: 13px;
-}
-
 .filters {
   margin-bottom: 8px;
 }
@@ -364,10 +336,4 @@ onMounted(() => {
   margin-top: 16px;
 }
 
-@media (max-width: 640px) {
-  .page-head {
-    align-items: stretch;
-    flex-direction: column;
-  }
-}
 </style>

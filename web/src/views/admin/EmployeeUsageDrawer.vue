@@ -33,7 +33,7 @@
       <div class="range-head">
         <div>
           <h3>Token 消耗</h3>
-          <p>按 {{ usage?.range.timezone || "Asia/Shanghai" }} 自然日统计</p>
+          <p>{{ usage?.range.timezone || "Asia/Shanghai" }}</p>
         </div>
         <el-radio-group v-model="rangePreset" size="small" @change="applyPreset">
           <el-radio-button value="today">今天</el-radio-button>

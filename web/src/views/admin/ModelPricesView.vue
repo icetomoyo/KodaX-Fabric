@@ -1,14 +1,5 @@
 <template>
   <div class="models-page">
-    <div class="head">
-      <div>
-        <h2 class="page-title" style="margin: 0">模型列表</h2>
-        <p class="page-subtitle">
-          按渠道查看可用模型与积分消耗。智谱按官方系数计量，高峰工作日 14:00–18:00（UTC+8）×1，其余时段 ×0.5
-        </p>
-      </div>
-    </div>
-
     <div class="split">
       <aside class="page-card channel-pane">
         <div class="pane-title">渠道</div>
@@ -43,7 +34,7 @@
           type="info"
           :closable="false"
           show-icon
-          title="该渠道还没有从 Key 测试带回模型。请先到上游渠道测试 Key。"
+          title="该渠道还没有发现模型"
         />
 
         <el-table :data="catalog" stripe empty-text="该渠道暂无已发现模型">
@@ -176,19 +167,6 @@ onMounted(load);
   flex-direction: column;
   gap: 16px;
   min-height: calc(100vh - 100px);
-}
-
-.head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.page-subtitle {
-  margin: 6px 0 0;
-  color: #94a3b8;
-  font-size: 13px;
 }
 
 .split {

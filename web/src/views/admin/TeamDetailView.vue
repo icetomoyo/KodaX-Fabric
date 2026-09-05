@@ -17,7 +17,6 @@
       <div class="range-head">
         <div>
           <h3 class="section-title">用量</h3>
-          <p class="section-desc">按日统计 Token 消耗</p>
         </div>
         <el-date-picker
           v-model="usageRange"
@@ -367,11 +366,6 @@ watch(teamId, async () => {
 .section-title {
   margin: 0;
   font-size: 16px;
-}
-.section-desc {
-  margin: 6px 0 0;
-  color: #94a3b8;
-  font-size: 12px;
 }
 .range-head {
   display: flex;

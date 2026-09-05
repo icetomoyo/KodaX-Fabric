@@ -2,10 +2,6 @@
   <div class="keys-page">
     <section class="page-card">
       <div class="page-head">
-        <div>
-          <h2 class="page-title">API Key</h2>
-          <p class="page-subtitle">明文仅在创建完成时显示一次</p>
-        </div>
         <el-button type="primary" :disabled="!canIssueKey" @click="openCreate">创建 Key</el-button>
       </div>
       <el-alert
@@ -588,27 +584,13 @@ onMounted(load);
 
 .page-head {
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
+  align-items: center;
+  justify-content: flex-end;
   margin-bottom: 16px;
 }
 
 .join-alert {
   margin-bottom: 16px;
-}
-
-.page-title {
-  margin: 0;
-  font-size: 20px;
-  font-weight: 650;
-  color: #0f172a;
-}
-
-.page-subtitle {
-  margin: 6px 0 0;
-  color: #94a3b8;
-  font-size: 13px;
 }
 
 .key-name {

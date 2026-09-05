@@ -1,11 +1,8 @@
 <template>
   <div class="page-card profile-page">
-    <h2 class="page-title">个人中心</h2>
-
     <section class="profile-section">
       <div class="section-heading">
         <h3 class="section-title">基本信息</h3>
-        <p class="section-desc">手机号同时用于登录，请确保填写准确。</p>
       </div>
 
       <el-form
@@ -65,7 +62,6 @@
     <section v-if="auth.isOrgAdmin || auth.isDeptAdmin || auth.isTeamAdmin" class="profile-section">
       <div class="section-heading">
         <h3 class="section-title">API Key</h3>
-        <p class="section-desc">自己调用模型用的凭据，和编制管理分开。</p>
       </div>
       <el-button type="primary" @click="goKeys">管理我的 API Key</el-button>
     </section>
@@ -75,7 +71,6 @@
     <section class="profile-section">
       <div class="section-heading">
         <h3 class="section-title">修改密码</h3>
-        <p class="section-desc">定期更新密码有助于保护账号安全。</p>
       </div>
       <el-form label-position="top" class="password-form" @submit.prevent="submitPassword">
         <el-form-item label="原密码" required>
@@ -239,12 +234,6 @@ async function submitPassword() {
 .section-title {
   margin: 0;
   font-size: 17px;
-}
-
-.section-desc {
-  margin: 6px 0 0;
-  color: #64748b;
-  font-size: 13px;
 }
 
 .profile-form {

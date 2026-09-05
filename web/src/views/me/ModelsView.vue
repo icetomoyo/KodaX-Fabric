@@ -1,22 +1,5 @@
 <template>
   <div class="models-page">
-    <div class="head">
-      <div>
-        <h2 class="page-title">模型</h2>
-        <p class="page-subtitle">
-          以上游渠道返回的模型为准。智谱文本请用 glm-5.3，多模态请用 glm-5.3-flash。配置客户端时请复制模型名称，不要手打。
-        </p>
-      </div>
-    </div>
-
-    <el-alert
-      class="copy-alert"
-      title="模型名称请用复制。客户端里的模型 ID 必须与这里完全一致。"
-      type="info"
-      :closable="false"
-      show-icon
-    />
-
     <div class="split">
       <aside class="page-card channel-pane">
         <div class="pane-title">渠道</div>
@@ -154,31 +137,6 @@ onMounted(load);
   flex-direction: column;
   gap: 16px;
   min-height: calc(100vh - 100px);
-}
-
-.head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.page-title {
-  margin: 0;
-  font-size: 20px;
-  font-weight: 650;
-  color: #0f172a;
-}
-
-.page-subtitle {
-  margin: 6px 0 0;
-  color: #94a3b8;
-  font-size: 13px;
-  line-height: 1.6;
-}
-
-.copy-alert :deep(.el-alert__content) {
-  min-width: 0;
 }
 
 .split {

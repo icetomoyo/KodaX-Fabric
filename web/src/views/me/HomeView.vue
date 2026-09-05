@@ -21,10 +21,6 @@
 
     <section class="page-card hero-card">
       <div class="page-head">
-        <div>
-          <h2 class="page-title">工作台</h2>
-          <p class="page-subtitle">今日用量、配额与接入入口</p>
-        </div>
         <div class="head-actions">
           <el-button :loading="loading" @click="loadUsage">刷新</el-button>
           <el-button type="primary" @click="router.push('/me/keys')">创建 Key</el-button>
@@ -103,10 +99,7 @@
 
     <section v-if="teamUsage.length" class="page-card panel-card">
       <div class="panel-head">
-        <div>
-          <h3 class="panel-title">我的用量</h3>
-          <p class="panel-desc">按团队统计 Token 消耗</p>
-        </div>
+        <h3 class="panel-title">我的用量</h3>
       </div>
       <div class="team-quota-grid">
         <article v-for="team in teamUsage" :key="team.teamId" class="team-quota-card">
@@ -130,10 +123,7 @@
 
     <section class="page-card panel-card">
       <div class="panel-head">
-        <div>
-          <h3 class="panel-title">接入说明</h3>
-          <p class="panel-desc">员工 Key 绑定渠道与协议，原生转发三种协议</p>
-        </div>
+        <h3 class="panel-title">接入</h3>
         <router-link class="guide-link" to="/me/guide">完整教程 →</router-link>
       </div>
       <el-descriptions :column="1" border>
@@ -263,21 +253,9 @@ onMounted(loadUsage);
 }
 .page-head {
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
+  align-items: center;
+  justify-content: flex-end;
   margin-bottom: 18px;
-}
-.page-title {
-  margin: 0;
-  font-size: 22px;
-  font-weight: 650;
-  color: #0f172a;
-}
-.page-subtitle {
-  margin: 6px 0 0;
-  color: #94a3b8;
-  font-size: 13px;
 }
 .head-actions {
   display: flex;
@@ -386,7 +364,7 @@ onMounted(loadUsage);
 .panel-card { min-width: 0; }
 .panel-head {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 12px;
   margin-bottom: 14px;
@@ -396,11 +374,6 @@ onMounted(loadUsage);
   color: #0f172a;
   font-size: 16px;
   font-weight: 650;
-}
-.panel-desc {
-  margin: 4px 0 0;
-  color: #94a3b8;
-  font-size: 12px;
 }
 .guide-link {
   color: #2563eb;
