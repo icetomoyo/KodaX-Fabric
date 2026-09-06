@@ -1,16 +1,16 @@
 <template>
-  <div class="page-card">
+  <el-card shadow="never">
     <div class="head">
       <h2 class="page-title" style="margin: 0">部门管理</h2>
       <el-button v-if="canManage" type="primary" @click="openCreate">新建部门</el-button>
     </div>
 
-    <el-table :data="rows" stripe>
+    <el-table :data="pagedRows" stripe>
       <el-table-column prop="name" label="部门" min-width="160" />
       <el-table-column prop="teamCount" label="团队" width="90" />
       <el-table-column label="状态" width="100">
         <template #default="{ row }">
-          <el-tag :type="row.status === 'active' ? 'success' : 'danger'" size="small">
+          <el-tag :type="row.status === 'active' ? 'success' : 'danger'">
             {{ row.status === "active" ? "正常" : "已停用" }}
           </el-tag>
         </template>
@@ -22,6 +22,15 @@
         </template>
       </el-table-column>
     </el-table>
+    <div class="pager">
+      <el-pagination
+        v-model:current-page="page"
+        background
+        layout="total, prev, pager, next"
+        :total="total"
+        :page-size="pageSize"
+      />
+    </div>
 
     <el-dialog v-model="showCreate" title="新建部门" width="440px">
       <el-form label-width="90px">
@@ -46,13 +55,14 @@
         <el-button type="primary" :loading="updating" @click="updateOne">保存</el-button>
       </template>
     </el-dialog>
-  </div>
+  </el-card>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 import { ElMessage } from "element-plus";
 import { http } from "@/api/http";
+import { useTablePage } from "@/lib/table-page";
 import { useAuthStore } from "@/stores/auth";
 
 type DepartmentRow = {
@@ -66,6 +76,7 @@ type DepartmentRow = {
 const auth = useAuthStore();
 const canManage = computed(() => auth.isOrgAdmin);
 const rows = ref<DepartmentRow[]>([]);
+const { page, paged: pagedRows, total, pageSize } = useTablePage(rows);
 const showCreate = ref(false);
 const showEdit = ref(false);
 const saving = ref(false);

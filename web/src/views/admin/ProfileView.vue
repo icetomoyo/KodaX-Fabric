@@ -1,5 +1,5 @@
 <template>
-  <div class="page-card profile-page">
+  <el-card class="profile-page" shadow="never">
     <section class="profile-section">
       <div class="section-heading">
         <h3 class="section-title">基本信息</h3>
@@ -104,7 +104,7 @@
         </el-button>
       </el-form>
     </section>
-  </div>
+  </el-card>
 </template>
 
 <script setup lang="ts">
@@ -233,7 +233,6 @@ async function submitPassword() {
 
 .section-title {
   margin: 0;
-  font-size: 17px;
 }
 
 .profile-form {

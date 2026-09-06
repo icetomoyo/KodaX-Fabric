@@ -1,12 +1,12 @@
 <template>
-  <div class="page-card">
+  <el-card shadow="never">
     <div class="head">
       <h2 class="page-title" style="margin: 0">模型路由</h2>
       <el-button type="primary" @click="openCreate">新增路由</el-button>
     </div>
     <p class="muted">将员工请求的 client model 映射到具体产品线与上游模型名。</p>
 
-    <el-table :data="rows" stripe>
+    <el-table :data="pagedRows" stripe>
       <el-table-column prop="clientModel" label="对外模型" width="160" />
       <el-table-column prop="providerName" label="供应商" width="120" />
       <el-table-column prop="productLineCode" label="产品线" width="100" />
@@ -16,7 +16,7 @@
       <el-table-column prop="weight" label="权重" width="70" />
       <el-table-column prop="enabled" label="启用" width="80">
         <template #default="{ row }">
-          <el-tag :type="row.enabled ? 'success' : 'info'" size="small">
+          <el-tag :type="row.enabled ? 'success' : 'info'">
             {{ row.enabled ? "是" : "否" }}
           </el-tag>
         </template>
@@ -28,6 +28,15 @@
         </template>
       </el-table-column>
     </el-table>
+    <div class="pager">
+      <el-pagination
+        v-model:current-page="page"
+        background
+        layout="total, prev, pager, next"
+        :total="total"
+        :page-size="pageSize"
+      />
+    </div>
 
     <el-dialog v-model="show" :title="form.id ? '编辑路由' : '新增路由'" width="560px">
       <el-form label-width="110px">
@@ -62,15 +71,17 @@
         <el-button type="primary" :loading="saving" @click="save">保存</el-button>
       </template>
     </el-dialog>
-  </div>
+  </el-card>
 </template>
 
 <script setup lang="ts">
 import { onMounted, reactive, ref } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { http } from "@/api/http";
+import { useTablePage } from "@/lib/table-page";
 
 const rows = ref<any[]>([]);
+const { page, paged: pagedRows, total, pageSize } = useTablePage(rows);
 const productLines = ref<any[]>([]);
 const show = ref(false);
 const saving = ref(false);

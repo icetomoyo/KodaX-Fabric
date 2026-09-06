@@ -49,7 +49,7 @@
         <div class="panel-head">
           <h3 class="panel-title">今日消耗</h3>
           <div class="rank-tools">
-            <el-radio-group v-if="rankLevels.length > 1" v-model="rankLevel" size="small">
+            <el-radio-group v-if="rankLevels.length > 1" v-model="rankLevel">
               <el-radio-button
                 v-for="level in rankLevels"
                 :key="level.value"
@@ -150,8 +150,7 @@
       <el-table
         v-else
         v-loading="loading"
-        :data="data?.recentErrors ?? []"
-        size="small"
+        :data="pagedErrors"
         class="errors-table"
         empty-text="暂无失败记录"
       >
@@ -174,12 +173,21 @@
         </el-table-column>
         <el-table-column label="状态" width="120">
           <template #default="{ row }">
-            <el-tag type="danger" size="small" effect="light">
+            <el-tag type="danger" effect="light">
               {{ statusLabel(String(row.status ?? "")) }}
             </el-tag>
           </template>
         </el-table-column>
       </el-table>
+      <div v-if="errorTotal" class="pager">
+        <el-pagination
+          v-model:current-page="errorPage"
+          background
+          layout="total, prev, pager, next"
+          :total="errorTotal"
+          :page-size="errorPageSize"
+        />
+      </div>
     </section>
   </div>
 </template>
@@ -199,6 +207,7 @@ import {
   type TeamUsageRow,
 } from "@/lib/workbench-ranks";
 
+import { useTablePage } from "@/lib/table-page";
 import { useAuthStore } from "@/stores/auth";
 
 type OverviewData = {
@@ -282,6 +291,12 @@ const router = useRouter();
 const auth = useAuthStore();
 const loading = ref(false);
 const data = ref<OverviewData | null>(null);
+const {
+  page: errorPage,
+  paged: pagedErrors,
+  total: errorTotal,
+  pageSize: errorPageSize,
+} = useTablePage(() => data.value?.recentErrors ?? []);
 const role = computed(() => data.value?.role ?? auth.user?.role ?? "admin");
 
 const primaryAction = computed(() => {

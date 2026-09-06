@@ -31,7 +31,7 @@
             >
               <div class="nav-card-top">
                 <strong>{{ item.name }}</strong>
-                <el-tag :type="statusTagType(item.status)" size="small" effect="light">
+                <el-tag :type="statusTagType(item.status)" effect="light">
                   {{ statusLabel(item.status) }}
                 </el-tag>
               </div>
@@ -43,17 +43,16 @@
                 {{ item.contact ? `${item.contact.name} · ${item.contact.phone}` : "暂无企业管理员" }}
               </div>
               <div v-if="selectedEnterpriseId === item.id" class="unit-card-actions" @click.stop>
-                <el-button link type="primary" size="small" @click="openEditEnterprise(item)">编辑</el-button>
+                <el-button link type="primary" @click="openEditEnterprise(item)">编辑</el-button>
                 <el-button
                   v-if="item.status === 'active'"
                   link
                   type="danger"
-                  size="small"
                   @click="setEnterpriseStatus(item, 'disabled')"
                 >
                   停用
                 </el-button>
-                <el-button v-else link type="primary" size="small" @click="setEnterpriseStatus(item, 'active')">
+                <el-button v-else link type="primary" @click="setEnterpriseStatus(item, 'active')">
                   启用
                 </el-button>
               </div>
@@ -68,7 +67,6 @@
             <el-button
               v-if="canManageDepartments"
               type="primary"
-              size="small"
               :disabled="!selectedEnterprise"
               @click="openCreateDepartment"
             >
@@ -97,7 +95,7 @@
             >
               <div class="nav-card-top">
                 <strong>{{ department.name }}</strong>
-                <el-tag :type="department.status === 'active' ? 'success' : 'danger'" size="small" effect="light">
+                <el-tag :type="department.status === 'active' ? 'success' : 'danger'" effect="light">
                   {{ department.status === "active" ? "正常" : "已停用" }}
                 </el-tag>
               </div>
@@ -105,20 +103,19 @@
                 <span>{{ department.teamCount }} 个团队</span>
               </div>
               <div v-if="canManageDepartments" class="unit-card-actions" @click.stop>
-                <el-button link type="primary" size="small" @click="openEditDepartment(department)">编辑</el-button>
+                <el-button link type="primary" @click="openEditDepartment(department)">编辑</el-button>
                 <el-button
                   v-if="department.status === 'active'"
                   link
                   type="danger"
-                  size="small"
                   @click="setDepartmentStatus(department, 'disabled')"
                 >
                   停用
                 </el-button>
-                <el-button v-else link type="primary" size="small" @click="setDepartmentStatus(department, 'active')">
+                <el-button v-else link type="primary" @click="setDepartmentStatus(department, 'active')">
                   启用
                 </el-button>
-                <el-button link type="danger" size="small" @click="deleteDepartment(department)">删除</el-button>
+                <el-button link type="danger" @click="deleteDepartment(department)">删除</el-button>
               </div>
             </article>
           </div>
@@ -131,7 +128,6 @@
             <el-button
               v-if="canManageTeams"
               type="primary"
-              size="small"
               :disabled="!selectedDepartment"
               @click="openCreateTeam"
             >
@@ -153,7 +149,7 @@
             >
               <div class="nav-card-top">
                 <strong>{{ team.name }}</strong>
-                <el-tag :type="team.status === 'active' ? 'success' : 'danger'" size="small" effect="light">
+                <el-tag :type="team.status === 'active' ? 'success' : 'danger'" effect="light">
                   {{ team.status === "active" ? "正常" : "已停用" }}
                 </el-tag>
               </div>
@@ -163,20 +159,19 @@
                 <span>本月 {{ formatTokenCompact(team.monthTotalTokens) }}</span>
               </div>
               <div v-if="canManageTeams" class="unit-card-actions" @click.stop>
-                <el-button link type="primary" size="small" @click="openEditTeam(team)">编辑</el-button>
+                <el-button link type="primary" @click="openEditTeam(team)">编辑</el-button>
                 <el-button
                   v-if="team.status === 'active'"
                   link
                   type="danger"
-                  size="small"
                   @click="setTeamStatus(team, 'disabled')"
                 >
                   停用
                 </el-button>
-                <el-button v-else link type="primary" size="small" @click="setTeamStatus(team, 'active')">
+                <el-button v-else link type="primary" @click="setTeamStatus(team, 'active')">
                   启用
                 </el-button>
-                <el-button link type="danger" size="small" @click="deleteTeam(team)">删除</el-button>
+                <el-button link type="danger" @click="deleteTeam(team)">删除</el-button>
               </div>
             </article>
             <article
@@ -199,7 +194,6 @@
             <span class="pane-count">{{ visibleEmployees.length }}</span>
             <el-button
               type="primary"
-              size="small"
               :disabled="!canInvite"
               @click="openInvite"
             >
@@ -220,7 +214,7 @@
             <article v-for="person in visibleEmployees" :key="person.id" class="nav-card person-card">
               <div class="nav-card-top">
                 <strong>{{ person.name }}</strong>
-                <el-tag :type="statusTagType(person.status)" size="small" effect="light">
+                <el-tag :type="statusTagType(person.status)" effect="light">
                   {{ statusLabel(person.status) }}
                 </el-tag>
               </div>
@@ -233,7 +227,6 @@
                   <el-button
                     link
                     type="success"
-                    size="small"
                     :loading="approvingUserId === person.id"
                     @click="approveUser(person)"
                   >
@@ -241,13 +234,12 @@
                   </el-button>
                 </template>
                 <template v-else>
-                  <el-button link type="primary" size="small" @click="openUserDetail(person)">详情</el-button>
-                  <el-button link type="primary" size="small" @click="openEditUser(person)">编辑</el-button>
+                  <el-button link type="primary" @click="openUserDetail(person)">详情</el-button>
+                  <el-button link type="primary" @click="openEditUser(person)">编辑</el-button>
                   <el-button
                     v-if="person.role !== 'org_admin' && person.teamId"
                     link
                     type="primary"
-                    size="small"
                     @click="toggleTeamAdmin(person)"
                   >
                     {{ person.teamRole === "team_admin" ? "取消团队管理" : "设为团队管理" }}
@@ -256,24 +248,22 @@
                     v-if="person.teamId"
                     link
                     type="warning"
-                    size="small"
                     @click="removeFromTeam(person)"
                   >
                     移出团队
                   </el-button>
-                  <el-button link type="warning" size="small" @click="openResetPassword(person)">
+                  <el-button link type="warning" @click="openResetPassword(person)">
                     重置密码
                   </el-button>
                   <el-button
                     v-if="person.status === 'active'"
                     link
                     type="danger"
-                    size="small"
                     @click="setUserStatus(person, 'disabled')"
                   >
                     停用
                   </el-button>
-                  <el-button v-else link type="primary" size="small" @click="setUserStatus(person, 'active')">
+                  <el-button v-else link type="primary" @click="setUserStatus(person, 'active')">
                     启用
                   </el-button>
                 </template>

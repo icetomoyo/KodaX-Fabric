@@ -35,7 +35,7 @@
           <h3>Token 消耗</h3>
           <p>{{ usage?.range.timezone || "Asia/Shanghai" }}</p>
         </div>
-        <el-radio-group v-model="rangePreset" size="small" @change="applyPreset">
+        <el-radio-group v-model="rangePreset" @change="applyPreset">
           <el-radio-button value="today">今天</el-radio-button>
           <el-radio-button value="7d">近 7 天</el-radio-button>
           <el-radio-button value="30d">近 30 天</el-radio-button>
@@ -72,7 +72,7 @@
         <h3>消耗记录</h3>
         <p>{{ logTotal }} 条</p>
       </div>
-      <el-table v-loading="logsLoading" :data="logItems" stripe size="small" empty-text="暂无消耗记录">
+      <el-table v-loading="logsLoading" :data="logItems" stripe empty-text="暂无消耗记录">
         <el-table-column label="时间" width="170">
           <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
         </el-table-column>
@@ -84,7 +84,7 @@
         </el-table-column>
         <el-table-column label="状态" width="100">
           <template #default="{ row }">
-            <el-tag :type="statusTagType(row.status)" size="small">{{ statusText(row.status) }}</el-tag>
+            <el-tag :type="statusTagType(row.status)">{{ statusText(row.status) }}</el-tag>
           </template>
         </el-table-column>
       </el-table>
@@ -92,7 +92,6 @@
         <el-pagination
           v-model:current-page="logPage"
           background
-          size="small"
           layout="total, prev, pager, next"
           :total="logTotal"
           :page-size="logPageSize"
@@ -110,6 +109,7 @@ import { http } from "@/api/http";
 import UsageChart from "@/components/UsageChart.vue";
 import { formatDateTime } from "@/lib/date-time";
 import { roleLabel as formatRoleLabel } from "@/lib/roles";
+import { TABLE_PAGE_SIZE } from "@/lib/table-page";
 import { formatTokenCount } from "@/lib/tokens";
 
 type Employee = {
@@ -165,7 +165,7 @@ const chartReady = ref(false);
 const logItems = ref<LogRow[]>([]);
 const logTotal = ref(0);
 const logPage = ref(1);
-const logPageSize = 10;
+const logPageSize = TABLE_PAGE_SIZE;
 let usageSequence = 0;
 let logsSequence = 0;
 

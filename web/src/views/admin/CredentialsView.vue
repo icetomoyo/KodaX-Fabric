@@ -46,7 +46,7 @@
               </div>
               <div class="channel-card-bottom">
                 <span>{{ channel.totalCount }} 个 Key</span>
-                <el-tag :type="channelStatusType(channel)" size="small" effect="light">
+                <el-tag :type="channelStatusType(channel)" effect="light">
                   {{ channelStatusText(channel) }}
                 </el-tag>
               </div>
@@ -61,7 +61,7 @@
                 <h3 class="detail-title">{{ channelDisplayName(selectedChannel) }}</h3>
               </div>
               <div class="detail-actions">
-                <el-tag v-if="!canWrite" type="info" effect="plain" size="small">只读查看</el-tag>
+                <el-tag v-if="!canWrite" type="info" effect="plain">只读查看</el-tag>
                 <template v-if="canWrite">
                   <el-button @click="openEditChannel(selectedChannel)">编辑渠道</el-button>
                   <el-button type="primary" @click="openAddKeys(selectedChannel)">
@@ -89,7 +89,6 @@
                 </div>
                 <div v-if="canWrite" class="batch-actions">
                   <el-button
-                    size="small"
                     type="primary"
                     plain
                     :loading="batchTesting"
@@ -138,17 +137,16 @@
                       <div class="key-card-main">
                         <div class="key-card-id">
                           <strong class="key-card-label">{{ row.label }}</strong>
-                          <el-tag v-if="row.tag" size="small" effect="plain" class="key-note-tag">
+                          <el-tag v-if="row.tag" effect="plain" class="key-note-tag">
                             {{ row.tag }}
                           </el-tag>
                           <span class="key-suffix">•••• {{ row.secretSuffix }}</span>
-                          <span
+                          <el-tag
                             v-if="statusPill(row)"
-                            class="status-pill"
-                            :class="statusPill(row)?.tone"
+                            :type="statusPill(row)?.type"
                           >
                             {{ statusPill(row)?.text }}
-                          </span>
+                          </el-tag>
                         </div>
                         <span
                           class="latency"
@@ -209,7 +207,6 @@
                           <el-button
                             link
                             type="primary"
-                            size="small"
                             :disabled="isTesting(row.id)"
                             @click="testCredential(row)"
                           >
@@ -218,7 +215,6 @@
                           <el-button
                             link
                             type="danger"
-                            size="small"
                             :loading="isDeleting(row.id)"
                             @click="removeCredential(row)"
                           >
@@ -349,6 +345,7 @@
               type="info"
               :closable="false"
               show-icon
+              style="flex: 1; min-width: 0"
             />
             <el-button type="primary" plain @click="useConfiguredVariant">
               向现有渠道添加 Key
@@ -446,7 +443,6 @@
             <el-tag
               v-for="protocol in bulkForm.supportedProtocols"
               :key="protocol"
-              size="small"
               effect="plain"
             >
               {{ relayProtocolLabel(protocol, true) }}
@@ -573,7 +569,7 @@
           <div>
             <div class="detail-title-row">
               <h3 class="drawer-title">{{ detailRow.label }}</h3>
-              <el-tag :type="statusTagType(visibleStatus(detailRow))" size="small">
+              <el-tag :type="statusTagType(visibleStatus(detailRow))">
                 {{ statusText(visibleStatus(detailRow)) }}
               </el-tag>
             </div>
@@ -585,14 +581,13 @@
           <div v-if="canWrite" class="drawer-actions">
             <el-button
               v-if="detailRow.status === 'active'"
-              size="small"
               type="warning"
               plain
               @click="setStatus(detailRow, 'disabled')"
             >
               停用
             </el-button>
-            <el-button v-else size="small" type="success" plain @click="setStatus(detailRow, 'active')">
+            <el-button v-else type="success" plain @click="setStatus(detailRow, 'active')">
               启用
             </el-button>
           </div>
@@ -637,7 +632,6 @@
               <el-button
                 v-if="canWrite"
                 type="primary"
-                size="small"
                 :loading="quotaSaving"
                 @click="saveQuotaLimits"
               >
@@ -703,7 +697,6 @@
               <div v-if="canWrite" class="test-controls">
                 <el-button
                   type="primary"
-                  size="small"
                   :loading="isTesting(detailRow.id)"
                   @click="testCredential(detailRow)"
                 >
@@ -723,7 +716,7 @@
                 <div class="info-item">
                   <dt>上次测试结果</dt>
                   <dd>
-                    <el-tag :type="lastTest(detailRow)?.ok ? 'success' : 'danger'" size="small">
+                    <el-tag :type="lastTest(detailRow)?.ok ? 'success' : 'danger'">
                       {{ lastTest(detailRow)?.ok ? "上次测试正常" : "测试失败" }}
                     </el-tag>
                   </dd>
@@ -746,7 +739,7 @@
               <div v-if="discoveredModels(detailRow).length" class="models-block">
                 <div class="models-heading">已发现 {{ discoveredModels(detailRow).length }} 个模型</div>
                 <div class="model-tags">
-                  <el-tag v-for="model in discoveredModels(detailRow)" :key="model" size="small">
+                  <el-tag v-for="model in discoveredModels(detailRow)" :key="model">
                     {{ model }}
                   </el-tag>
                 </div>
@@ -1468,11 +1461,11 @@ function visibleStatus(row: CredentialRow): CredentialStatus {
   return row.status;
 }
 
-function statusPill(row: CredentialRow): { text: string; tone: string } | null {
+function statusPill(row: CredentialRow): { text: string; type: "warning" | "danger" | "info" } | null {
   const status = visibleStatus(row);
-  if (status === "cooling") return { text: "冷却", tone: "warning" };
-  if (status === "auto_disabled") return { text: "自动停用", tone: "danger" };
-  if (status === "disabled") return { text: "已停用", tone: "muted" };
+  if (status === "cooling") return { text: "冷却", type: "warning" };
+  if (status === "auto_disabled") return { text: "自动停用", type: "danger" };
+  if (status === "disabled") return { text: "已停用", type: "info" };
   return null;
 }
 
@@ -2948,31 +2941,6 @@ onMounted(refreshAll);
   to { transform: rotate(360deg); }
 }
 
-.status-pill {
-  flex: 0 0 auto;
-  padding: 1px 6px;
-  border-radius: 999px;
-  font-size: 11px;
-  font-weight: 650;
-  line-height: 1.4;
-  white-space: nowrap;
-}
-
-.status-pill.warning {
-  background: #fffbeb;
-  color: #d97706;
-}
-
-.status-pill.danger {
-  background: #fff1f2;
-  color: #be123c;
-}
-
-.status-pill.muted {
-  background: #f1f5f9;
-  color: #64748b;
-}
-
 .key-card-meta {
   display: flex;
   flex-direction: column;
@@ -3265,11 +3233,6 @@ onMounted(refreshAll);
   margin: -2px 0 18px;
 }
 
-.configured-variant-notice :deep(.el-alert) {
-  flex: 1;
-  min-width: 0;
-}
-
 .cell-secondary {
   margin-top: 3px;
   color: #94a3b8;
@@ -3283,10 +3246,6 @@ onMounted(refreshAll);
 .credential-dialog :deep(.el-dialog__body) {
   max-height: calc(100vh - 180px);
   overflow-y: auto;
-}
-
-.protocol-form-item :deep(.el-form-item__content) {
-  display: block;
 }
 
 .channel-protocol-summary {

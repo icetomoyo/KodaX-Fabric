@@ -24,9 +24,11 @@
           placeholder="至少 8 位，需包含字母和数字"
         />
       </el-form-item>
-      <el-button type="primary" native-type="submit" :loading="registering">
-        提交注册
-      </el-button>
+      <el-form-item>
+        <el-button type="primary" native-type="submit" :loading="registering" style="width: 100%">
+          提交注册
+        </el-button>
+      </el-form-item>
     </el-form>
 
     <p class="switch">
@@ -101,11 +103,6 @@ h2 {
   color: #64748b;
   font-size: 14px;
   line-height: 1.6;
-}
-
-.auth-form :deep(.el-button) {
-  width: 100%;
-  margin-top: 8px;
 }
 
 .switch {

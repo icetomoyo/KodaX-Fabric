@@ -147,40 +147,6 @@
   width: min(420px, 100%);
 }
 
-.form-card :deep(.el-form-item__label) {
-  color: #334155;
-  font-weight: 600;
-}
-
-.form-card :deep(.el-input__wrapper) {
-  min-height: 44px;
-  padding-left: 14px;
-  padding-right: 14px;
-  border-radius: 10px;
-  box-shadow: 0 0 0 1px #e2e8f0 inset;
-}
-
-.form-card :deep(.el-input__wrapper:hover) {
-  box-shadow: 0 0 0 1px #cbd5e1 inset;
-}
-
-.form-card :deep(.el-input__wrapper.is-focus) {
-  box-shadow: 0 0 0 1px #2563eb inset, 0 0 0 4px rgba(37, 99, 235, 0.12);
-}
-
-.form-card :deep(.el-button--primary) {
-  height: 44px;
-  border: none;
-  border-radius: 10px;
-  background: #0f172a;
-  font-weight: 600;
-}
-
-.form-card :deep(.el-button--primary:hover),
-.form-card :deep(.el-button--primary:focus) {
-  background: #1e293b;
-}
-
 @media (max-width: 860px) {
   .auth-shell {
     align-content: start;

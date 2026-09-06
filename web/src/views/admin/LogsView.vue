@@ -1,6 +1,6 @@
 <template>
-  <div class="page-card logs-page">
-    <el-form :inline="true" size="small" class="filters" @keyup.enter="search">
+  <el-card class="logs-page" shadow="never">
+    <el-form :inline="true" class="filters" @keyup.enter="search">
       <el-form-item>
         <el-select
           v-model="filters.enterpriseId"
@@ -67,69 +67,58 @@
     <el-table
       :data="items"
       stripe
-      size="small"
-      class="logs-table"
       empty-text="暂无日志"
       v-loading="loading"
     >
       <el-table-column label="Request ID" min-width="220">
         <template #default="{ row }">
-          <el-button class="request-id-button" link @click="copyRequestId(row.requestId)">
+          <el-button link type="primary" @click="copyRequestId(row.requestId)">
             {{ row.requestId }}
           </el-button>
         </template>
       </el-table-column>
       <el-table-column label="企业 / 团队" min-width="160" show-overflow-tooltip>
         <template #default="{ row }">
-          <span class="employee-text">
-            {{ row.enterpriseName || "—" }}
-            <template v-if="row.teamName"> · {{ row.teamName }}</template>
-          </span>
+          {{ row.enterpriseName || "—" }}
+          <template v-if="row.teamName"> · {{ row.teamName }}</template>
         </template>
       </el-table-column>
-      <el-table-column label="员工" width="100" show-overflow-tooltip>
+      <el-table-column label="员工" width="120" show-overflow-tooltip>
         <template #default="{ row }">
-          <span class="employee-text">{{ row.employeeName || "—" }}</span>
+          {{ row.employeeName || "—" }}
         </template>
       </el-table-column>
-      <el-table-column label="模型" width="140" show-overflow-tooltip>
-        <template #default="{ row }">
-          <span class="model-text">{{ row.clientModel }}</span>
-        </template>
-      </el-table-column>
-      <el-table-column label="Tokens" width="96" align="right" header-align="right">
+      <el-table-column prop="clientModel" label="模型" width="140" show-overflow-tooltip />
+      <el-table-column label="Tokens" width="110" align="right" header-align="right">
         <template #default="{ row }">
           <el-tooltip :content="tokenTooltip(row)" placement="top" :show-after="300">
-            <span class="metric-text">{{ formatNumber(row.totalTokens) }}</span>
+            <span>{{ formatNumber(row.totalTokens) }}</span>
           </el-tooltip>
         </template>
       </el-table-column>
-      <el-table-column label="积分" width="88" align="right" header-align="right">
+      <el-table-column label="积分" width="100" align="right" header-align="right">
         <template #default="{ row }">
-          <span class="metric-text">{{ formatCredits(row.credits) }}</span>
+          {{ formatCredits(row.credits) }}
         </template>
       </el-table-column>
-      <el-table-column label="状态" width="112">
+      <el-table-column label="状态" width="120">
         <template #default="{ row }">
-          <span class="result-cell">
-            <span class="status-pill" :class="`is-${row.status}`">
-              <i class="status-dot" />
-              {{ statusText(row.status) }}
-            </span>
-          </span>
+          <el-tag :type="statusTagType(row.status)">
+            {{ statusText(row.status) }}
+          </el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="时间" width="156">
+      <el-table-column label="时间" width="180">
         <template #default="{ row }">
-          <span class="time-text">{{ formatDateTime(row.createdAt) }}</span>
+          {{ formatDateTime(row.createdAt) }}
         </template>
       </el-table-column>
       <el-table-column label="操作" width="120" align="right">
         <template #default="{ row }">
-          <el-button class="download-button" link @click="openDetail(row)">详情</el-button>
+          <el-button link type="primary" @click="openDetail(row)">详情</el-button>
           <el-button
-            class="download-button"
             link
+            type="primary"
             :loading="downloadingId === row.requestId"
             @click="downloadContext(row)"
           >
@@ -142,7 +131,6 @@
     <div class="pager">
       <el-pagination
         background
-        size="small"
         layout="total, prev, pager, next"
         :total="total"
         :page-size="limit"
@@ -174,68 +162,47 @@
             title="该请求没有全文记录（部署前的旧日志没有文件）"
           />
 
-          <dl class="detail-grid">
-            <div>
-              <dt>员工</dt>
-              <dd>{{ detail.employeeName }} · {{ detail.employeePhone }}</dd>
-            </div>
-            <div>
-              <dt>企业 / 团队</dt>
-              <dd>{{ detail.enterpriseName || "—" }}<template v-if="detail.teamName"> · {{ detail.teamName }}</template></dd>
-            </div>
-            <div>
-              <dt>模型</dt>
-              <dd>{{ detail.clientModel }}</dd>
-            </div>
-            <div>
-              <dt>渠道</dt>
-              <dd>{{ detail.providerCode || "—" }} · {{ productTypeText(detail.productType) }}</dd>
-            </div>
-            <div>
-              <dt>状态</dt>
-              <dd>{{ statusText(detail.status) }}</dd>
-            </div>
-            <div>
-              <dt>Tokens</dt>
-              <dd>{{ tokenTooltip(detail) }}</dd>
-            </div>
-            <div>
-              <dt>积分</dt>
-              <dd>{{ formatCredits(detail.credits) }}</dd>
-            </div>
-            <div>
-              <dt>时间</dt>
-              <dd>{{ formatDateTime(detail.createdAt) }}</dd>
-            </div>
-            <div v-if="contextRecord">
-              <dt>耗时</dt>
-              <dd>{{ contextRecord.latencyMs ?? "—" }} ms</dd>
-            </div>
-            <div v-if="contextRecord">
-              <dt>协议 / 路径</dt>
-              <dd>{{ contextRecord.protocol }} · {{ contextRecord.path }}{{ contextRecord.stream ? " · 流式" : "" }}</dd>
-            </div>
-            <div v-if="contextRecord?.candidate">
-              <dt>渠道 Key</dt>
-              <dd>•••• {{ contextRecord.candidate.credentialSuffix }} · {{ contextRecord.candidate.providerCode }}</dd>
-            </div>
-            <div v-if="detail.error">
-              <dt>HTTP</dt>
-              <dd>{{ detail.error.httpStatus ?? "—" }} / 上游 {{ detail.error.upstreamStatus ?? "—" }}</dd>
-            </div>
-          </dl>
+          <el-descriptions :column="2" border>
+            <el-descriptions-item label="员工">
+              {{ detail.employeeName }} · {{ detail.employeePhone }}
+            </el-descriptions-item>
+            <el-descriptions-item label="企业 / 团队">
+              {{ detail.enterpriseName || "—" }}<template v-if="detail.teamName"> · {{ detail.teamName }}</template>
+            </el-descriptions-item>
+            <el-descriptions-item label="模型">{{ detail.clientModel }}</el-descriptions-item>
+            <el-descriptions-item label="渠道">
+              {{ detail.providerCode || "—" }} · {{ productTypeText(detail.productType) }}
+            </el-descriptions-item>
+            <el-descriptions-item label="状态">{{ statusText(detail.status) }}</el-descriptions-item>
+            <el-descriptions-item label="Tokens">{{ tokenTooltip(detail) }}</el-descriptions-item>
+            <el-descriptions-item label="积分">{{ formatCredits(detail.credits) }}</el-descriptions-item>
+            <el-descriptions-item label="时间">{{ formatDateTime(detail.createdAt) }}</el-descriptions-item>
+            <el-descriptions-item v-if="contextRecord" label="耗时">
+              {{ contextRecord.latencyMs ?? "—" }} ms
+            </el-descriptions-item>
+            <el-descriptions-item v-if="contextRecord" label="协议 / 路径">
+              {{ contextRecord.protocol }} · {{ contextRecord.path }}{{ contextRecord.stream ? " · 流式" : "" }}
+            </el-descriptions-item>
+            <el-descriptions-item v-if="contextRecord?.candidate" label="渠道 Key">
+              •••• {{ contextRecord.candidate.credentialSuffix }} · {{ contextRecord.candidate.providerCode }}
+            </el-descriptions-item>
+            <el-descriptions-item v-if="detail.error" label="HTTP">
+              {{ detail.error.httpStatus ?? "—" }} / 上游 {{ detail.error.upstreamStatus ?? "—" }}
+            </el-descriptions-item>
+          </el-descriptions>
 
-          <section v-if="detail.error" class="detail-section">
-            <h3>错误</h3>
-            <p class="error-text">
-              {{ detail.error.errorCode || "—" }}
-              {{ detail.error.errorMessage }}
-            </p>
-          </section>
+          <el-alert
+            v-if="detail.error"
+            type="error"
+            :closable="false"
+            :title="detail.error.errorCode || '错误'"
+            :description="detail.error.errorMessage || ''"
+            show-icon
+          />
 
-          <section v-if="contextRecord?.retryTrace?.length" class="detail-section">
-            <h3>调度轨迹</h3>
-            <el-table :data="contextRecord.retryTrace" size="small" stripe>
+          <section v-if="contextRecord?.retryTrace?.length">
+            <el-divider content-position="left">调度轨迹</el-divider>
+            <el-table :data="contextRecord.retryTrace" stripe>
               <el-table-column prop="attempt" label="#" width="50" />
               <el-table-column prop="credentialSuffix" label="Key" width="80" />
               <el-table-column prop="outcome" label="结果" width="100" />
@@ -245,16 +212,16 @@
             </el-table>
           </section>
 
-          <section v-if="contextRecord?.headers" class="detail-section">
-            <h3>请求头</h3>
+          <section v-if="contextRecord?.headers">
+            <el-divider content-position="left">请求头</el-divider>
             <StructuredJson :value="contextRecord.headers" empty-text="没有保存请求头" />
           </section>
-          <section class="detail-section">
-            <h3>请求体</h3>
+          <section>
+            <el-divider content-position="left">请求体</el-divider>
             <StructuredJson :value="contextRecord?.requestBody" empty-text="没有保存请求体（部署前的旧日志没有全文）" />
           </section>
-          <section class="detail-section">
-            <h3>响应</h3>
+          <section>
+            <el-divider content-position="left">响应</el-divider>
             <StructuredJson
               :value="contextRecord?.responseBody ?? contextRecord?.streamAudit?.assembled"
               empty-text="没有保存响应正文"
@@ -274,7 +241,7 @@
         </el-button>
       </template>
     </el-drawer>
-  </div>
+  </el-card>
 </template>
 
 <script setup lang="ts">
@@ -284,6 +251,7 @@ import { http } from "@/api/http";
 import StructuredJson from "@/components/StructuredJson.vue";
 import { copyText } from "@/lib/clipboard";
 import { formatDateTime } from "@/lib/date-time";
+import { TABLE_PAGE_SIZE } from "@/lib/table-page";
 
 type LogStatus = "success" | "upstream_error" | "client_error" | "cancelled";
 type ProductType = "api" | "coding_plan";
@@ -346,7 +314,7 @@ const employeesLoading = ref(false);
 const items = ref<LogRow[]>([]);
 const total = ref(0);
 const page = ref(1);
-const limit = 10;
+const limit = TABLE_PAGE_SIZE;
 const loading = ref(false);
 const downloadingId = ref<string | null>(null);
 const showDetail = ref(false);
@@ -393,6 +361,16 @@ function statusText(status: LogStatus): string {
       cancelled: "已取消",
     } as const
   )[status];
+}
+
+function statusTagType(status: LogStatus): "success" | "danger" | "warning" | "info" {
+  const tags: Record<LogStatus, "success" | "danger" | "warning" | "info"> = {
+    success: "success",
+    upstream_error: "danger",
+    client_error: "warning",
+    cancelled: "info",
+  };
+  return tags[status];
 }
 
 function productTypeText(value: ProductType | null | undefined): string {
@@ -587,131 +565,11 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.logs-page {
-  padding: 16px 20px 14px;
-  border: 1px solid #e9edf3;
-  overflow-x: auto;
-}
 .filters {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 10px;
-}
-.filters :deep(.el-form-item) {
-  flex: none;
-  margin-right: 0;
-  margin-bottom: 0;
-}
-.filters :deep(.el-input__wrapper),
-.filters :deep(.el-select__wrapper) {
-  border-radius: 6px;
-}
-.logs-table {
-  --el-table-border-color: #edf0f5;
-  --el-table-header-bg-color: #f8fafc;
-  --el-table-row-hover-bg-color: #f3f7fc;
-  width: 100%;
-  color: #344054;
-}
-.logs-table :deep(.cell) {
-  padding: 0 8px;
-  white-space: nowrap;
-}
-.logs-table :deep(th.el-table__cell) {
-  padding: 7px 0;
-  color: #667085;
-  font-size: 12px;
-  font-weight: 600;
-}
-.logs-table :deep(td.el-table__cell) {
-  padding: 6px 0;
-}
-.logs-table :deep(.el-table__row--striped td.el-table__cell) {
-  background: #fafbfc;
-}
-.logs-table :deep(.el-table__inner-wrapper::before) {
-  display: none;
-}
-.time-text,
-.metric-text,
-.request-id-button {
-  font-variant-numeric: tabular-nums;
-}
-.time-text {
-  color: #475467;
-}
-.employee-text {
-  display: block;
-  overflow: hidden;
-  color: #344054;
-  font-weight: 500;
-  text-overflow: ellipsis;
-}
-.model-text {
-  display: block;
-  overflow: hidden;
-  color: #344054;
-  text-overflow: ellipsis;
-}
-.result-cell {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-.status-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  height: 22px;
-  padding: 0 7px;
-  border-radius: 999px;
-  font-size: 12px;
-  font-weight: 500;
-}
-.status-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: currentColor;
-}
-.status-pill.is-success {
-  background: #ecfdf3;
-  color: #027a48;
-}
-.status-pill.is-upstream_error {
-  background: #fef3f2;
-  color: #b42318;
-}
-.status-pill.is-client_error {
-  background: #fffaeb;
-  color: #b54708;
-}
-.status-pill.is-cancelled {
-  background: #f2f4f7;
-  color: #475467;
-}
-.metric-text {
-  color: #344054;
-}
-.request-id-button {
-  height: auto;
-  padding: 0;
-  color: #667085;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 11px;
-}
-.request-id-button:hover {
-  color: var(--el-color-primary);
-}
-.download-button {
-  height: auto;
-  padding: 0;
-  font-size: 12px;
+  margin-bottom: 12px;
 }
 .pager {
-  margin-top: 10px;
+  margin-top: 16px;
   display: flex;
   justify-content: flex-end;
 }
@@ -719,33 +577,5 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   gap: 16px;
-}
-.detail-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px 16px;
-  margin: 0;
-}
-.detail-grid dt {
-  color: #667085;
-  font-size: 12px;
-}
-.detail-grid dd {
-  margin: 2px 0 0;
-  color: #101828;
-  font-size: 13px;
-  word-break: break-all;
-}
-.detail-section h3 {
-  margin: 0 0 8px;
-  font-size: 14px;
-}
-.error-text {
-  margin: 0;
-  color: #b42318;
-  font-size: 13px;
-}
-.detail-body :deep(.el-alert) {
-  padding: 8px 12px;
 }
 </style>

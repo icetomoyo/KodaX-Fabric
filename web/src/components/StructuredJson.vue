@@ -9,7 +9,7 @@
       <div v-if="oversized && !expanded" class="large-json-summary">
         <strong>{{ valueSummary }}</strong>
         <span>单个 JSON 节点较大，已暂缓渲染以保持页面流畅。</span>
-        <el-button size="small" @click="expanded = true">展开原始 JSON</el-button>
+        <el-button @click="expanded = true">展开原始 JSON</el-button>
       </div>
       <pre v-else class="json-code">{{ serialized }}</pre>
     </template>

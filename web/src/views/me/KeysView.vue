@@ -1,6 +1,5 @@
 <template>
-  <div class="keys-page">
-    <section class="page-card">
+  <el-card shadow="never">
       <div class="page-head">
         <el-button type="primary" :disabled="!canIssueKey" @click="openCreate">创建 Key</el-button>
       </div>
@@ -13,7 +12,7 @@
         :closable="false"
       />
 
-      <el-table v-loading="loading" :data="keys" stripe empty-text="暂无 API Key">
+      <el-table v-loading="loading" :data="pagedKeys" stripe empty-text="暂无 API Key">
         <el-table-column label="团队" min-width="140">
           <template #default="{ row }">
             {{ row.teamName || "未绑定团队" }}
@@ -21,7 +20,7 @@
         </el-table-column>
         <el-table-column label="名称" min-width="140">
           <template #default="{ row }">
-            <span class="key-name">{{ row.name }}</span>
+            {{ row.name }}
           </template>
         </el-table-column>
         <el-table-column label="协议" min-width="140">
@@ -38,7 +37,6 @@
           <template #default="{ row }">
             <el-tag
               :type="row.status === 'active' ? 'success' : 'info'"
-              size="small"
               effect="light"
             >
               {{ keyStatusLabel(row.status) }}
@@ -58,7 +56,16 @@
           </template>
         </el-table-column>
       </el-table>
-    </section>
+      <div class="pager">
+        <el-pagination
+          v-model:current-page="keyPage"
+          background
+          layout="total, prev, pager, next"
+          :total="keyTotal"
+          :page-size="keyPageSize"
+        />
+      </div>
+  </el-card>
 
     <el-dialog
       v-model="showCreate"
@@ -78,20 +85,13 @@
           show-icon
         />
 
-        <dl class="result-meta">
-          <div>
-            <dt>名称</dt>
-            <dd>{{ createdResult.name }}</dd>
-          </div>
-          <div>
-            <dt>上游渠道</dt>
-            <dd>{{ channelLabel({ providerName: createdResult.providerName, productLineName: createdResult.productLineName }) }}</dd>
-          </div>
-          <div>
-            <dt>协议</dt>
-            <dd>{{ relayProtocolLabel(createdResult.protocol) }}</dd>
-          </div>
-        </dl>
+        <el-descriptions :column="1" border>
+          <el-descriptions-item label="名称">{{ createdResult.name }}</el-descriptions-item>
+          <el-descriptions-item label="上游渠道">
+            {{ channelLabel({ providerName: createdResult.providerName, productLineName: createdResult.productLineName }) }}
+          </el-descriptions-item>
+          <el-descriptions-item label="协议">{{ relayProtocolLabel(createdResult.protocol) }}</el-descriptions-item>
+        </el-descriptions>
 
         <div class="secret-label">API Key（仅显示一次）</div>
         <div class="secret-box">
@@ -157,35 +157,28 @@
               />
             </el-select>
           </el-form-item>
-          <el-form-item v-if="selectedChannel" label="协议" required class="protocol-form-item">
-            <div
+          <el-form-item v-if="selectedChannel" label="协议" required>
+            <el-radio-group
               v-if="compatibleProtocolOptions.length > 0"
-              class="protocol-choice-list"
-              role="radiogroup"
-              aria-label="协议"
+              v-model="createForm.protocol"
+              :disabled="creating"
             >
-              <button
+              <el-radio
                 v-for="option in compatibleProtocolOptions"
                 :key="option.value"
-                type="button"
-                role="radio"
-                class="protocol-choice"
-                :class="{ 'is-selected': createForm.protocol === option.value }"
-                :aria-checked="createForm.protocol === option.value"
-                :disabled="creating"
-                @click="createForm.protocol = option.value"
+                :value="option.value"
+                border
               >
-                <span class="protocol-choice-mark" aria-hidden="true" />
-                <strong>{{ option.shortLabel }}</strong>
-              </button>
-            </div>
+                {{ option.shortLabel }}
+              </el-radio>
+            </el-radio-group>
             <div v-else class="form-help">
               该渠道暂无可用协议
             </div>
           </el-form-item>
 
           <div v-if="submitError" class="submit-error">
-            <el-alert :title="submitError" type="error" :closable="false" show-icon />
+            <el-alert :title="submitError" type="error" :closable="false" show-icon style="flex: 1" />
             <el-button link type="primary" @click="loadChannels">刷新渠道列表</el-button>
           </div>
         </el-form>
@@ -213,7 +206,6 @@
         </template>
       </template>
     </el-dialog>
-  </div>
 </template>
 
 <script setup lang="ts">
@@ -222,6 +214,7 @@ import { ElMessage, ElMessageBox } from "element-plus";
 import { http } from "@/api/http";
 import { useAuthStore } from "@/stores/auth";
 import { copyText } from "@/lib/clipboard";
+import { useTablePage } from "@/lib/table-page";
 import {
   relayProtocolLabel,
   relayProtocolOptions,
@@ -273,6 +266,12 @@ type CreatedKeyResult = {
 };
 
 const keys = ref<KeyRow[]>([]);
+const {
+  page: keyPage,
+  paged: pagedKeys,
+  total: keyTotal,
+  pageSize: keyPageSize,
+} = useTablePage(keys);
 const loading = ref(false);
 const creating = ref(false);
 const deletingId = ref<number | null>(null);
@@ -578,10 +577,6 @@ onMounted(load);
 </script>
 
 <style scoped>
-.keys-page {
-  min-width: 0;
-}
-
 .page-head {
   display: flex;
   align-items: center;
@@ -591,11 +586,6 @@ onMounted(load);
 
 .join-alert {
   margin-bottom: 16px;
-}
-
-.key-name {
-  color: #0f172a;
-  font-weight: 600;
 }
 
 .create-form-state {
@@ -609,95 +599,9 @@ onMounted(load);
   padding: 12px 0;
 }
 
-.protocol-form-item :deep(.el-form-item__content) {
-  display: block;
-}
-
-.protocol-choice-list {
-  display: grid;
-  width: 100%;
-  gap: 8px;
-}
-
-.protocol-choice {
-  display: flex;
-  align-items: center;
-  box-sizing: border-box;
-  width: 100%;
-  margin: 0;
-  padding: 11px 14px;
-  border: 1px solid #e2e8f0;
-  border-radius: 10px;
-  background: #fff;
-  color: inherit;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-  transition:
-    border-color 0.15s ease,
-    background-color 0.15s ease,
-    box-shadow 0.15s ease;
-}
-
-.protocol-choice:hover:not(:disabled):not(.is-selected) {
-  border-color: #cbd5e1;
-  background: #f8fafc;
-}
-
-.protocol-choice:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 3px rgb(64 158 255 / 22%);
-}
-
-.protocol-choice.is-selected {
-  border-color: var(--el-color-primary);
-  background: #f0f7ff;
-  box-shadow: 0 0 0 1px var(--el-color-primary) inset;
-}
-
-.protocol-choice.is-selected:hover:not(:disabled) {
-  background: #e8f3ff;
-}
-
-.protocol-choice:disabled {
-  cursor: not-allowed;
-  opacity: 0.65;
-}
-
-.protocol-choice-mark {
-  flex: none;
-  box-sizing: border-box;
-  width: 16px;
-  height: 16px;
-  margin-right: 10px;
-  border: 1.5px solid #cbd5e1;
-  border-radius: 50%;
-  background: #fff;
-}
-
-.protocol-choice.is-selected .protocol-choice-mark {
-  border-color: var(--el-color-primary);
-  background: var(--el-color-primary);
-  box-shadow: inset 0 0 0 3.5px #fff;
-}
-
-.protocol-choice strong {
-  min-width: 0;
-  color: #0f172a;
-  font-size: 13px;
-  font-weight: 600;
-  line-height: 1.4;
-}
-
-.protocol-choice.is-selected strong {
-  color: var(--el-color-primary);
-}
-
 .form-help {
   margin-top: 8px;
-  color: #64748b;
-  font-size: 12px;
-  line-height: 1.5;
+  color: var(--el-text-color-secondary);
 }
 
 .submit-error {
@@ -706,46 +610,13 @@ onMounted(load);
   gap: 8px;
 }
 
-.submit-error :deep(.el-alert) {
-  flex: 1;
-}
-
 .create-result {
   display: grid;
   gap: 16px;
 }
 
-.result-meta {
-  display: grid;
-  gap: 8px;
-  margin: 0;
-  padding: 14px 16px;
-  border: 1px solid #e2e8f0;
-  border-radius: 8px;
-  background: #f8fafc;
-}
-
-.result-meta > div {
-  display: grid;
-  grid-template-columns: 88px minmax(0, 1fr);
-  gap: 12px;
-}
-
-.result-meta dt {
-  color: #64748b;
-}
-
-.result-meta dd {
-  margin: 0;
-  color: #0f172a;
-  font-weight: 600;
-}
-
 .secret-label {
-  margin-bottom: -8px;
-  color: #334155;
-  font-size: 13px;
-  font-weight: 600;
+  color: var(--el-text-color-regular);
 }
 
 .secret-box {
@@ -759,33 +630,8 @@ onMounted(load);
   min-width: 0;
 }
 
-.secret-input :deep(.el-input__wrapper) {
-  background: #fffbeb;
-  box-shadow: 0 0 0 1px #fbbf24 inset;
-}
-
-.secret-input :deep(.el-input__wrapper.is-focus) {
-  box-shadow:
-    0 0 0 1px var(--el-color-primary) inset,
-    0 0 0 3px rgb(64 158 255 / 20%);
-}
-
-.secret-input :deep(.el-input__inner) {
-  background: #fffbeb;
-  color: #92400e;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 13px;
-}
-
-.secret-box .el-button {
-  min-width: 116px;
-}
-
 .result-tip {
-  margin: -6px 0 0;
-  color: #64748b;
-  font-size: 12px;
-  line-height: 1.6;
+  margin: 0;
+  color: var(--el-text-color-secondary);
 }
-
 </style>

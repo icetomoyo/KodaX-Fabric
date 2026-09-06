@@ -37,7 +37,7 @@
           title="该渠道还没有发现模型"
         />
 
-        <el-table :data="catalog" stripe empty-text="该渠道暂无已发现模型">
+        <el-table :data="pagedCatalog" stripe empty-text="该渠道暂无已发现模型">
           <el-table-column label="模型" min-width="200">
             <template #default="{ row }">
               <span class="model-name" :title="row.model">{{ row.model }}</span>
@@ -78,16 +78,26 @@
             </template>
           </el-table-column>
         </el-table>
+        <div class="pager">
+          <el-pagination
+            v-model:current-page="catalogPage"
+            background
+            layout="total, prev, pager, next"
+            :total="catalogTotal"
+            :page-size="catalogPageSize"
+          />
+        </div>
       </section>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import { ElMessage } from "element-plus";
 import { http } from "@/api/http";
 import { formatDateTime } from "@/lib/date-time";
+import { useTablePage } from "@/lib/table-page";
 
 type CreditRate = {
   promptCreditsPer10k: string;
@@ -127,6 +137,14 @@ const currentChannel = computed(() =>
 );
 
 const catalog = computed(() => currentChannel.value?.models ?? []);
+const {
+  page: catalogPage,
+  paged: pagedCatalog,
+  total: catalogTotal,
+  pageSize: catalogPageSize,
+  resetPage: resetCatalogPage,
+} = useTablePage(catalog);
+watch(selectedChannelId, resetCatalogPage);
 
 function ensureSelection() {
   if (selectedChannelId.value && channels.value.some((channel) => channel.id === selectedChannelId.value)) {

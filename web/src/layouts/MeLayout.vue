@@ -5,7 +5,14 @@
         <strong>KodaX Fabric</strong>
         <span>Token Hub</span>
       </div>
-      <el-menu :default-active="route.path" router>
+      <el-menu
+        :default-active="route.path"
+        router
+        class="aside-menu"
+        background-color="#0f172a"
+        text-color="#cbd5e1"
+        active-text-color="#ffffff"
+      >
         <el-menu-item index="/me">工作台</el-menu-item>
         <el-menu-item index="/me/keys">API Key</el-menu-item>
         <el-menu-item index="/me/models">模型</el-menu-item>
@@ -25,7 +32,6 @@
           </div>
           <el-tag
             v-if="auth.user?.actAs"
-            size="small"
             effect="light"
             type="danger"
           >
@@ -83,29 +89,16 @@ function onLogout() {
 }
 
 .brand strong {
-  font-size: 14px;
   font-weight: 700;
-  letter-spacing: 0.01em;
 }
 
 .brand span {
-  color: #94a3b8;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.06em;
+  color: var(--el-color-info-light-3);
 }
-.aside :deep(.el-menu) {
+.aside-menu {
   border-right: none;
-  background: transparent;
 }
-.aside :deep(.el-menu-item) {
-  color: #cbd5e1;
-}
-.aside :deep(.el-menu-item.is-active) {
-  background: #1e293b;
-  color: #fff;
-}
-.shell > :deep(.el-container) {
+.shell > .el-container {
   height: 100%;
   min-height: 0;
   overflow: hidden;
@@ -134,7 +127,7 @@ function onLogout() {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.shell :deep(.el-main) {
+.shell .el-main {
   display: flex;
   flex: 1;
   flex-direction: column;
@@ -142,7 +135,6 @@ function onLogout() {
   overflow: auto;
 }
 .muted {
-  color: #6b7280;
-  font-size: 13px;
+  color: var(--el-text-color-secondary);
 }
 </style>

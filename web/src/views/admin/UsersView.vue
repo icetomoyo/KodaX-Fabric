@@ -60,7 +60,6 @@
             <template #default="{ row }">
               <el-tag
                 :type="row.status === 'active' ? 'success' : row.status === 'pending' ? 'warning' : 'danger'"
-                size="small"
               >
                 {{ statusLabel(row.status) }}
               </el-tag>
@@ -119,7 +118,6 @@
           <el-pagination
             v-model:current-page="page"
             background
-            size="small"
             layout="total, prev, pager, next"
             :total="filteredRows.length"
             :page-size="pageSize"
@@ -261,6 +259,7 @@ import { ElMessage, ElMessageBox } from "element-plus";
 import { http } from "@/api/http";
 import { formatDateTime } from "@/lib/date-time";
 import { roleLabel as formatRoleLabel } from "@/lib/roles";
+import { useTablePage } from "@/lib/table-page";
 import { useAuthStore } from "@/stores/auth";
 import EmployeeUsageDrawer from "./EmployeeUsageDrawer.vue";
 
@@ -297,8 +296,6 @@ type TeamNavItem = {
 };
 
 const rows = ref<UserRow[]>([]);
-const page = ref(1);
-const pageSize = 10;
 const auth = useAuthStore();
 const q = ref("");
 const statusFilter = ref<"" | UserRow["status"]>("");
@@ -397,10 +394,7 @@ const filteredRows = computed(() => {
   });
 });
 
-const pagedRows = computed(() => {
-  const start = (page.value - 1) * pageSize;
-  return filteredRows.value.slice(start, start + pageSize);
-});
+const { page, paged: pagedRows, pageSize, resetPage } = useTablePage(() => filteredRows.value);
 
 const currentGroupTitle = computed(() => {
   if (selectedKey.value === UNASSIGNED_KEY) return "未加入团队";
@@ -416,7 +410,7 @@ const emptyText = computed(() => {
 });
 
 watch([selectedKey, q, statusFilter], () => {
-  page.value = 1;
+  resetPage();
 });
 
 function selectTeam(key: TeamNavKey) {
@@ -521,8 +515,6 @@ async function load() {
     });
   }
   ensureSelection();
-  const maxPage = Math.max(1, Math.ceil(filteredRows.value.length / pageSize));
-  if (page.value > maxPage) page.value = maxPage;
 }
 
 function openDetail(row: UserRow) {

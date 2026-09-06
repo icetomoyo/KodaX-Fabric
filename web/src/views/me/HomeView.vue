@@ -105,7 +105,7 @@
         <article v-for="team in teamUsage" :key="team.teamId" class="team-quota-card">
           <div class="team-quota-head">
             <strong>{{ team.teamName }}</strong>
-            <el-tag v-if="teamRoleLabel(team.teamId)" size="small" effect="plain">
+            <el-tag v-if="teamRoleLabel(team.teamId)" effect="plain">
               {{ teamRoleLabel(team.teamId) }}
             </el-tag>
           </div>

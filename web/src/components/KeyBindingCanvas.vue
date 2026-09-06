@@ -227,7 +227,7 @@ function credentialCaption(data: {
   overflow: hidden;
 }
 
-.canvas-card :deep(.el-empty) {
+.canvas-card .el-empty {
   margin: auto;
 }
 

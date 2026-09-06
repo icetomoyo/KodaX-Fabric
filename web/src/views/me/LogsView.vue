@@ -1,6 +1,5 @@
 <template>
-  <div class="logs-page">
-    <section class="page-card">
+  <el-card shadow="never">
       <el-form inline class="filters" @keyup.enter="search">
         <el-form-item>
           <el-select
@@ -60,7 +59,7 @@
         <el-table-column label="Request ID" min-width="240">
           <template #default="{ row }">
             <el-button link type="primary" @click="copyRequestId(row.requestId)">
-              <code class="request-id">{{ row.requestId }}</code>
+              {{ row.requestId }}
             </el-button>
           </template>
         </el-table-column>
@@ -68,7 +67,7 @@
           <template #default="{ row }">
             <span>
               {{ providerText(row.providerCode) }}
-              <el-tag v-if="row.productType === 'coding_plan'" size="small" effect="plain">套餐</el-tag>
+              <el-tag v-if="row.productType === 'coding_plan'" effect="plain">套餐</el-tag>
             </span>
           </template>
         </el-table-column>
@@ -95,7 +94,7 @@
         </el-table-column>
         <el-table-column label="状态" width="120">
           <template #default="{ row }">
-            <el-tag :type="statusTagType(row.status)" size="small">
+            <el-tag :type="statusTagType(row.status)">
               {{ statusText(row.status) }}
             </el-tag>
           </template>
@@ -109,15 +108,13 @@
         <el-pagination
           v-model:current-page="page"
           background
-          size="small"
           layout="total, prev, pager, next"
           :total="total"
           :page-size="limit"
           @current-change="load"
         />
       </div>
-    </section>
-  </div>
+  </el-card>
 </template>
 
 <script setup lang="ts">
@@ -126,6 +123,7 @@ import { ElMessage } from "element-plus";
 import { http } from "@/api/http";
 import { copyText } from "@/lib/clipboard";
 import { formatDateTime } from "@/lib/date-time";
+import { TABLE_PAGE_SIZE } from "@/lib/table-page";
 
 
 type LogStatus = "success" | "upstream_error" | "client_error" | "cancelled";
@@ -170,7 +168,7 @@ const channels = ref<CatalogChannel[]>([]);
 const items = ref<MeLogRow[]>([]);
 const total = ref(0);
 const page = ref(1);
-const limit = 10;
+const limit = TABLE_PAGE_SIZE;
 const loading = ref(false);
 
 const hasFilters = computed(() => Boolean(
@@ -316,24 +314,12 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.logs-page {
-  min-width: 0;
-}
-
 .filters {
-  margin-bottom: 8px;
+  margin-bottom: 12px;
 }
-
-.request-id {
-  color: #475569;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 12px;
-}
-
 .pager {
   display: flex;
   justify-content: flex-end;
   margin-top: 16px;
 }
-
 </style>

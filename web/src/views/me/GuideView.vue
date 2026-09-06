@@ -132,6 +132,7 @@
       <el-tabs v-model="clientTab" class="guide-tabs client-tabs">
         <el-tab-pane label="Anthropic Message" name="anthropic">
           <el-alert
+            class="tab-alert"
             title="使用「Anthropic Message 协议」的员工 Key"
             type="info"
             :closable="false"
@@ -155,6 +156,7 @@
 
         <el-tab-pane label="OpenAI Chat Completion" name="openai-chat">
           <el-alert
+            class="tab-alert"
             title="使用「OpenAI Chat Completion 协议」的员工 Key"
             type="info"
             :closable="false"
@@ -184,6 +186,7 @@
 
         <el-tab-pane label="OpenAI Response" name="openai-response">
           <el-alert
+            class="tab-alert"
             title="使用「OpenAI Response 协议」的员工 Key；Chat Completion Key 不能调用 /responses"
             type="info"
             :closable="false"
@@ -491,7 +494,7 @@ onMounted(loadRelayUrl);
   gap: 10px;
 }
 
-.security-alert :deep(.el-alert__content) {
+.security-alert {
   min-width: 0;
 }
 
@@ -574,8 +577,8 @@ onMounted(loadRelayUrl);
   font-weight: 700;
 }
 
-.guide-tabs :deep(.el-tabs__header) {
-  margin-bottom: 16px;
+.tab-alert {
+  margin-bottom: 12px;
 }
 
 .instruction-list {
@@ -658,10 +661,6 @@ onMounted(loadRelayUrl);
   font-size: 12px;
 }
 
-:deep(.snippet-head .el-button) {
-  color: #93c5fd;
-}
-
 :deep(.snippet-block pre) {
   margin: 0;
   padding: 16px;
@@ -719,11 +718,7 @@ onMounted(loadRelayUrl);
   line-height: 1.7;
 }
 
-.client-tabs :deep(.el-alert) {
-  margin-bottom: 12px;
-}
-
-.client-tabs :deep(.snippet-block + .snippet-block) {
+:deep(.snippet-block + .snippet-block) {
   margin-top: 12px;
 }
 

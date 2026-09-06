@@ -1,17 +1,17 @@
 <template>
-  <div class="page-card logs-page">
+  <el-card class="logs-page" shadow="never">
     <div class="page-head">
-      <a
-        class="doc-link"
+      <el-link
         href="https://docs.bigmodel.cn/cn/faq/api-code"
         target="_blank"
         rel="noopener noreferrer"
+        type="primary"
       >
         智谱错误码
-      </a>
+      </el-link>
     </div>
 
-    <el-form :inline="true" size="small" class="filters" @keyup.enter="search">
+    <el-form :inline="true" class="filters" @keyup.enter="search">
       <el-form-item>
         <el-input
           v-model="filters.requestId"
@@ -87,41 +87,33 @@
       v-loading="loading"
       :data="items"
       stripe
-      size="small"
-      class="logs-table"
       empty-text="暂无报错记录"
     >
       <el-table-column label="企业 / 团队" min-width="160" show-overflow-tooltip>
         <template #default="{ row }">
-          <span class="employee-text">
-            {{ row.enterpriseName || "—" }}
-            <template v-if="row.teamName"> · {{ row.teamName }}</template>
-          </span>
+          {{ row.enterpriseName || "—" }}
+          <template v-if="row.teamName"> · {{ row.teamName }}</template>
         </template>
       </el-table-column>
       <el-table-column label="员工" width="100" show-overflow-tooltip>
         <template #default="{ row }">
-          <span class="employee-text">{{ row.employeeName || "—" }}</span>
+          {{ row.employeeName || "—" }}
         </template>
       </el-table-column>
-      <el-table-column label="模型" width="140" show-overflow-tooltip>
+      <el-table-column prop="clientModel" label="模型" width="140" show-overflow-tooltip />
+      <el-table-column label="错误信息" min-width="280" show-overflow-tooltip>
         <template #default="{ row }">
-          <span class="model-text">{{ row.clientModel }}</span>
+          {{ row.errorMessage || "—" }}
         </template>
       </el-table-column>
-      <el-table-column label="错误信息" min-width="280">
+      <el-table-column label="时间" width="180">
         <template #default="{ row }">
-          <div class="meaning">{{ row.errorMessage || "—" }}</div>
-        </template>
-      </el-table-column>
-      <el-table-column label="时间" width="156">
-        <template #default="{ row }">
-          <span class="time-text">{{ formatDateTime(row.createdAt) }}</span>
+          {{ formatDateTime(row.createdAt) }}
         </template>
       </el-table-column>
       <el-table-column label="操作" width="72" align="right">
         <template #default="{ row }">
-          <el-button class="detail-button" link @click="openDetail(row)">详情</el-button>
+          <el-button link type="primary" @click="openDetail(row)">详情</el-button>
         </template>
       </el-table-column>
     </el-table>
@@ -129,7 +121,6 @@
     <div class="pager">
       <el-pagination
         background
-        size="small"
         layout="total, prev, pager, next"
         :total="total"
         :page-size="limit"
@@ -146,76 +137,44 @@
     >
       <div v-loading="detailLoading" class="detail-body">
         <template v-if="detail">
-          <dl class="detail-grid">
-            <div>
-              <dt>Request ID</dt>
-              <dd>
-                <el-button class="request-id-button" link @click="copyRequestId(detail.requestId)">
-                  {{ detail.requestId }}
-                </el-button>
-              </dd>
-            </div>
-            <div>
-              <dt>员工</dt>
-              <dd>
-                {{ detail.employeeName || "—" }}
-                <template v-if="detail.employeePhone"> · {{ detail.employeePhone }}</template>
-                <template v-if="detail.employeeDept"> · {{ detail.employeeDept }}</template>
-              </dd>
-            </div>
-            <div>
-              <dt>企业</dt>
-              <dd>{{ detail.enterpriseName || "—" }}</dd>
-            </div>
-            <div>
-              <dt>团队</dt>
-              <dd>{{ detail.teamName || "—" }}</dd>
-            </div>
-            <div>
-              <dt>模型</dt>
-              <dd>{{ detail.clientModel }}</dd>
-            </div>
-            <div>
-              <dt>渠道</dt>
-              <dd>{{ providerText(detail.providerCode) }} · {{ productTypeText(detail.productType) }}</dd>
-            </div>
-            <div>
-              <dt>状态</dt>
-              <dd>{{ statusText(detail.status) }}</dd>
-            </div>
-            <div>
-              <dt>错误码</dt>
-              <dd>{{ detail.errorCode || "—" }}</dd>
-            </div>
-            <div>
-              <dt>HTTP</dt>
-              <dd>{{ detail.httpStatus ?? "—" }}</dd>
-            </div>
-            <div>
-              <dt>上游 HTTP</dt>
-              <dd>{{ detail.upstreamStatus ?? "—" }}</dd>
-            </div>
-            <div>
-              <dt>渠道凭证</dt>
-              <dd>{{ detail.credentialId ?? "—" }}</dd>
-            </div>
-            <div>
-              <dt>时间</dt>
-              <dd>{{ formatDateTime(detail.createdAt) }}</dd>
-            </div>
-          </dl>
-
-          <section class="detail-section">
-            <h3>错误信息</h3>
-            <p class="error-text">{{ detail.errorMessage || "—" }}</p>
-          </section>
+          <el-descriptions :column="2" border>
+            <el-descriptions-item label="Request ID">
+              <el-button link type="primary" @click="copyRequestId(detail.requestId)">
+                {{ detail.requestId }}
+              </el-button>
+            </el-descriptions-item>
+            <el-descriptions-item label="员工">
+              {{ detail.employeeName || "—" }}
+              <template v-if="detail.employeePhone"> · {{ detail.employeePhone }}</template>
+              <template v-if="detail.employeeDept"> · {{ detail.employeeDept }}</template>
+            </el-descriptions-item>
+            <el-descriptions-item label="企业">{{ detail.enterpriseName || "—" }}</el-descriptions-item>
+            <el-descriptions-item label="团队">{{ detail.teamName || "—" }}</el-descriptions-item>
+            <el-descriptions-item label="模型">{{ detail.clientModel }}</el-descriptions-item>
+            <el-descriptions-item label="渠道">
+              {{ providerText(detail.providerCode) }} · {{ productTypeText(detail.productType) }}
+            </el-descriptions-item>
+            <el-descriptions-item label="状态">{{ statusText(detail.status) }}</el-descriptions-item>
+            <el-descriptions-item label="错误码">{{ detail.errorCode || "—" }}</el-descriptions-item>
+            <el-descriptions-item label="HTTP">{{ detail.httpStatus ?? "—" }}</el-descriptions-item>
+            <el-descriptions-item label="上游 HTTP">{{ detail.upstreamStatus ?? "—" }}</el-descriptions-item>
+            <el-descriptions-item label="渠道凭证">{{ detail.credentialId ?? "—" }}</el-descriptions-item>
+            <el-descriptions-item label="时间">{{ formatDateTime(detail.createdAt) }}</el-descriptions-item>
+          </el-descriptions>
+          <el-alert
+            type="error"
+            :closable="false"
+            title="错误信息"
+            :description="detail.errorMessage || '—'"
+            show-icon
+          />
         </template>
       </div>
       <template #footer>
         <el-button @click="showDetail = false">关闭</el-button>
       </template>
     </el-drawer>
-  </div>
+  </el-card>
 </template>
 
 <script setup lang="ts">
@@ -224,6 +183,7 @@ import { ElMessage } from "element-plus";
 import { http } from "@/api/http";
 import { copyText } from "@/lib/clipboard";
 import { formatDateTime } from "@/lib/date-time";
+import { TABLE_PAGE_SIZE } from "@/lib/table-page";
 import { useAuthStore } from "@/stores/auth";
 
 type LogStatus = "upstream_error" | "client_error" | "cancelled";
@@ -276,7 +236,7 @@ const employeesLoading = ref(false);
 const items = ref<ErrorLogRow[]>([]);
 const total = ref(0);
 const page = ref(1);
-const limit = 10;
+const limit = TABLE_PAGE_SIZE;
 const loading = ref(false);
 const showDetail = ref(false);
 const detailLoading = ref(false);
@@ -517,115 +477,23 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.logs-page {
-  padding: 16px 20px 14px;
-  border: 1px solid #e9edf3;
-}
 .page-head {
   display: flex;
   align-items: center;
   justify-content: flex-end;
   margin-bottom: 12px;
 }
-.doc-link {
-  flex: none;
-  color: var(--el-color-primary);
-  font-size: 13px;
-}
 .filters {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 10px;
-}
-.filters :deep(.el-form-item) {
-  flex: none;
-  margin-right: 0;
-  margin-bottom: 0;
-}
-.logs-table {
-  --el-table-border-color: #edf0f5;
-  --el-table-header-bg-color: #f8fafc;
-  --el-table-row-hover-bg-color: #f3f7fc;
-  width: 100%;
-  color: #344054;
-}
-.logs-table :deep(th.el-table__cell) {
-  padding: 7px 0;
-  color: #667085;
-  font-size: 12px;
-  font-weight: 600;
-}
-.logs-table :deep(td.el-table__cell) {
-  padding: 6px 0;
-}
-.employee-text,
-.model-text {
-  display: block;
-  overflow: hidden;
-  color: #344054;
-  text-overflow: ellipsis;
-}
-.employee-text {
-  font-weight: 500;
-}
-.time-text {
-  color: #475467;
-  font-variant-numeric: tabular-nums;
-}
-.meaning {
-  color: #344054;
-  font-size: 13px;
-  line-height: 1.45;
-  white-space: normal;
-}
-.detail-button {
-  height: auto;
-  padding: 0;
-  font-size: 12px;
+  margin-bottom: 12px;
 }
 .pager {
   display: flex;
   justify-content: flex-end;
-  margin-top: 10px;
+  margin-top: 16px;
 }
 .detail-body {
   display: flex;
   flex-direction: column;
   gap: 16px;
-}
-.detail-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px 16px;
-  margin: 0;
-}
-.detail-grid dt {
-  color: #667085;
-  font-size: 12px;
-}
-.detail-grid dd {
-  margin: 2px 0 0;
-  color: #101828;
-  font-size: 13px;
-  word-break: break-all;
-}
-.detail-section h3 {
-  margin: 0 0 8px;
-  font-size: 14px;
-}
-.error-text {
-  margin: 0;
-  color: #b42318;
-  font-size: 13px;
-  white-space: pre-wrap;
-}
-.request-id-button {
-  height: auto;
-  padding: 0;
-  color: #344054;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 12px;
 }
 </style>

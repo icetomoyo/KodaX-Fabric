@@ -1,7 +1,7 @@
 <template>
   <div class="charts-page" v-loading="loading">
     <div class="toolbar">
-      <el-radio-group v-model="rangePreset" size="small" @change="onPresetChange">
+      <el-radio-group v-model="rangePreset" @change="onPresetChange">
         <el-radio-button value="today">今天</el-radio-button>
         <el-radio-button value="7d">近 7 天</el-radio-button>
         <el-radio-button value="30d">近 30 天</el-radio-button>
@@ -54,7 +54,7 @@
         <section class="page-card chart-card">
           <div class="chart-head">
             <h3>组织消耗</h3>
-            <el-radio-group v-model="rankLevel" size="small">
+            <el-radio-group v-model="rankLevel">
               <el-radio-button
                 v-for="level in rankLevels"
                 :key="level.value"

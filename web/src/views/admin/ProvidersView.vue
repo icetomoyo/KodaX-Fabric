@@ -1,5 +1,5 @@
 <template>
-  <div class="page-card">
+  <el-card shadow="never">
     <div class="head">
       <h2 class="page-title" style="margin: 0">供应商 / 产品线</h2>
       <el-button v-if="auth.isSuperAdmin" type="primary" @click="openCreateProvider">新增供应商</el-button>
@@ -10,10 +10,10 @@
 
     <el-empty v-if="!providers.length" description="暂无供应商，请先新增" />
 
-    <el-table v-else :data="providers" row-key="id" default-expand-all>
+    <el-table v-else :data="pagedProviders" row-key="id" default-expand-all>
       <el-table-column type="expand">
         <template #default="{ row }">
-          <el-table :data="row.productLines" size="small" style="margin: 0 24px 12px">
+          <el-table :data="row.productLines" style="margin: 0 24px 12px">
             <el-table-column prop="code" label="产品线" width="120" />
             <el-table-column prop="name" label="名称" width="140" />
             <el-table-column prop="productType" label="类型" width="120" />
@@ -39,6 +39,15 @@
         </template>
       </el-table-column>
     </el-table>
+    <div v-if="providers.length" class="pager">
+      <el-pagination
+        v-model:current-page="page"
+        background
+        layout="total, prev, pager, next"
+        :total="total"
+        :page-size="pageSize"
+      />
+    </div>
 
     <el-dialog v-model="showProvider" :title="providerForm.id ? '编辑供应商' : '新增供应商'" width="520px">
       <el-form label-width="110px">
@@ -65,7 +74,7 @@
       </template>
     </el-dialog>
 
-  </div>
+  </el-card>
 </template>
 
 <script setup lang="ts">
@@ -73,11 +82,13 @@ import { onMounted, reactive, ref } from "vue";
 import { useRouter } from "vue-router";
 import { ElMessage } from "element-plus";
 import { http } from "@/api/http";
+import { useTablePage } from "@/lib/table-page";
 import { useAuthStore } from "@/stores/auth";
 
 const auth = useAuthStore();
 const router = useRouter();
 const providers = ref<Array<Record<string, any>>>([]);
+const { page, paged: pagedProviders, total, pageSize } = useTablePage(providers);
 const showProvider = ref(false);
 const saving = ref(false);
 const providerForm = reactive({

@@ -1,11 +1,11 @@
 <template>
-  <div class="page-card">
+  <el-card shadow="never">
     <div class="head">
       <h2 class="page-title" style="margin: 0">团队管理</h2>
       <el-button v-if="canCreate" type="primary" @click="openCreate">新建团队</el-button>
     </div>
 
-    <el-table :data="rows" stripe>
+    <el-table :data="pagedRows" stripe>
       <el-table-column prop="name" label="团队" min-width="160" />
       <el-table-column prop="departmentName" label="部门" min-width="140" />
       <el-table-column v-if="auth.isSuperAdmin" prop="enterpriseName" label="企业" min-width="140" />
@@ -22,7 +22,7 @@
       </el-table-column>
       <el-table-column label="状态" width="100">
         <template #default="{ row }">
-          <el-tag :type="row.status === 'active' ? 'success' : 'danger'" size="small">
+          <el-tag :type="row.status === 'active' ? 'success' : 'danger'">
             {{ row.status === "active" ? "正常" : "已停用" }}
           </el-tag>
         </template>
@@ -35,6 +35,15 @@
         </template>
       </el-table-column>
     </el-table>
+    <div class="pager">
+      <el-pagination
+        v-model:current-page="page"
+        background
+        layout="total, prev, pager, next"
+        :total="total"
+        :page-size="pageSize"
+      />
+    </div>
 
     <el-dialog v-model="showCreate" title="新建团队" width="440px">
       <el-form label-width="90px">
@@ -129,7 +138,7 @@
             <div class="chart-wrap">
               <UsageChart v-if="chartReady" :option="usageChartOption" />
             </div>
-            <el-table :data="usage?.byModel ?? []" stripe>
+            <el-table :data="pagedModels" stripe>
               <el-table-column prop="model" label="模型" min-width="160" show-overflow-tooltip />
               <el-table-column label="Tokens" min-width="110">
                 <template #default="{ row }">
@@ -137,12 +146,21 @@
                 </template>
               </el-table-column>
             </el-table>
+            <div class="pager">
+              <el-pagination
+                v-model:current-page="modelPage"
+                background
+                layout="total, prev, pager, next"
+                :total="modelTotal"
+                :page-size="modelPageSize"
+              />
+            </div>
           </div>
         </section>
 
         <section>
           <h3>成员消耗</h3>
-          <el-table :data="members" stripe>
+          <el-table :data="pagedMembers" stripe>
             <el-table-column prop="name" label="姓名" min-width="100" />
             <el-table-column label="团队角色" width="110">
               <template #default="{ row }">
@@ -160,10 +178,19 @@
               </template>
             </el-table-column>
           </el-table>
+          <div class="pager">
+            <el-pagination
+              v-model:current-page="memberPage"
+              background
+              layout="total, prev, pager, next"
+              :total="memberTotal"
+              :page-size="memberPageSize"
+            />
+          </div>
         </section>
       </div>
     </el-drawer>
-  </div>
+  </el-card>
 </template>
 
 <script setup lang="ts">
@@ -172,6 +199,7 @@ import { ElMessage } from "element-plus";
 import type { EChartsCoreOption } from "echarts/core";
 import { http } from "@/api/http";
 import UsageChart from "@/components/UsageChart.vue";
+import { useTablePage } from "@/lib/table-page";
 import { formatTokenCompact } from "@/lib/tokens";
 import { useAuthStore } from "@/stores/auth";
 
@@ -223,6 +251,21 @@ const detailLoading = ref(false);
 const detailRow = ref<TeamRow | null>(null);
 const members = ref<MemberRow[]>([]);
 const usage = ref<TeamUsage | null>(null);
+const { page, paged: pagedRows, total, pageSize } = useTablePage(rows);
+const {
+  page: modelPage,
+  paged: pagedModels,
+  total: modelTotal,
+  pageSize: modelPageSize,
+  resetPage: resetModelPage,
+} = useTablePage(() => usage.value?.byModel ?? []);
+const {
+  page: memberPage,
+  paged: pagedMembers,
+  total: memberTotal,
+  pageSize: memberPageSize,
+  resetPage: resetMemberPage,
+} = useTablePage(members);
 const usageLoading = ref(false);
 const usageRange = ref<[string, string]>(defaultUsageRange());
 const chartReady = ref(false);
@@ -308,6 +351,8 @@ async function openDetail(row: TeamRow) {
   usageRange.value = defaultUsageRange();
   usage.value = null;
   members.value = [];
+  resetModelPage();
+  resetMemberPage();
   showDetail.value = true;
   detailLoading.value = true;
   try {
@@ -465,9 +510,7 @@ onMounted(async () => {
 }
 .form-help {
   margin-top: 6px;
-  color: #94a3b8;
-  font-size: 12px;
-  line-height: 1.5;
+  color: var(--el-text-color-secondary);
 }
 .detail-body {
   display: flex;
@@ -482,12 +525,10 @@ onMounted(async () => {
 .quota-stats span {
   display: block;
   margin-bottom: 6px;
-  color: #64748b;
-  font-size: 12px;
+  color: var(--el-text-color-secondary);
 }
 .quota-stats strong {
-  color: #0f172a;
-  font-size: 20px;
+  color: var(--el-text-color-primary);
   font-variant-numeric: tabular-nums;
 }
 .section-head {
@@ -499,7 +540,6 @@ onMounted(async () => {
 }
 .detail-body h3 {
   margin: 0 0 12px;
-  font-size: 15px;
 }
 .section-head h3 {
   margin: 0;

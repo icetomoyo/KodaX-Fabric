@@ -5,7 +5,14 @@
         <strong>KodaX Fabric</strong>
         <span>Token Hub · 管理</span>
       </div>
-      <el-menu :default-active="route.path" router>
+      <el-menu
+        :default-active="route.path"
+        router
+        class="aside-menu"
+        background-color="#111827"
+        text-color="#d1d5db"
+        active-text-color="#ffffff"
+      >
         <el-menu-item index="/admin">工作台</el-menu-item>
         <el-menu-item v-if="auth.isSuperAdmin" index="/admin/enterprises">企业管理</el-menu-item>
         <el-menu-item v-if="auth.isOrgAdmin" index="/admin/enterprises">本企业编制</el-menu-item>
@@ -44,10 +51,9 @@
               </template>
             </span>
           </router-link>
-          <el-tag size="small" effect="plain" type="warning">{{ roleTag }}</el-tag>
+          <el-tag effect="plain" type="warning">{{ roleTag }}</el-tag>
           <el-tag
             v-if="auth.user?.actAs"
-            size="small"
             effect="light"
             type="danger"
           >
@@ -107,29 +113,16 @@ function onLogout() {
 }
 
 .brand strong {
-  font-size: 14px;
   font-weight: 700;
-  letter-spacing: 0.01em;
 }
 
 .brand span {
-  color: #94a3b8;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.06em;
+  color: var(--el-color-info-light-3);
 }
-.aside :deep(.el-menu) {
+.aside-menu {
   border-right: none;
-  background: transparent;
 }
-.aside :deep(.el-menu-item) {
-  color: #d1d5db;
-}
-.aside :deep(.el-menu-item.is-active) {
-  background: #1f2937;
-  color: #fff;
-}
-.shell > :deep(.el-container) {
+.shell > .el-container {
   height: 100%;
   min-height: 0;
   overflow: hidden;
@@ -153,17 +146,16 @@ function onLogout() {
 .header-right {
   flex-shrink: 0;
 }
-.shell :deep(.el-main) {
+.shell .el-main {
   display: flex;
   flex: 1;
   flex-direction: column;
   min-height: 0;
   overflow: auto;
 }
-.shell :deep(.el-main.is-canvas) {
+.shell .el-main.is-canvas {
   padding: 0;
   overflow: hidden;
-  background: #f8fafc;
 }
 .account-link {
   color: inherit;

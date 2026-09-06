@@ -32,7 +32,7 @@
       </div>
       <div v-loading="usageLoading">
         <UsageChart :option="usageChartOption" />
-        <el-table :data="usage?.byModel ?? []" stripe class="model-table">
+        <el-table :data="pagedModels" stripe class="model-table">
           <el-table-column prop="model" label="模型" min-width="180" show-overflow-tooltip />
           <el-table-column label="Tokens" min-width="140">
             <template #default="{ row }">
@@ -40,6 +40,15 @@
             </template>
           </el-table-column>
         </el-table>
+        <div class="pager">
+          <el-pagination
+            v-model:current-page="modelPage"
+            background
+            layout="total, prev, pager, next"
+            :total="modelTotal"
+            :page-size="modelPageSize"
+          />
+        </div>
       </div>
     </div>
 
@@ -48,7 +57,7 @@
         <h3 class="section-title">团队成员</h3>
         <el-button type="primary" @click="openAddMember">添加成员</el-button>
       </div>
-      <el-table :data="members" stripe>
+      <el-table :data="pagedMembers" stripe>
         <el-table-column prop="name" label="姓名" width="140" />
         <el-table-column prop="phone" label="手机号" width="140" />
         <el-table-column prop="dept" label="部门" min-width="140" />
@@ -89,6 +98,15 @@
           </template>
         </el-table-column>
       </el-table>
+      <div class="pager">
+        <el-pagination
+          v-model:current-page="memberPage"
+          background
+          layout="total, prev, pager, next"
+          :total="memberTotal"
+          :page-size="memberPageSize"
+        />
+      </div>
     </div>
 
     <el-dialog v-model="showAddMember" title="邀请已注册用户" width="480px">
@@ -118,6 +136,7 @@ import { ElMessage, ElMessageBox } from "element-plus";
 import type { EChartsCoreOption } from "echarts/core";
 import { http } from "@/api/http";
 import UsageChart from "@/components/UsageChart.vue";
+import { useTablePage } from "@/lib/table-page";
 import { formatTokenCompact, formatTokenMillion } from "@/lib/tokens";
 import { useAuthStore } from "@/stores/auth";
 
@@ -163,12 +182,24 @@ const router = useRouter();
 const teamId = computed(() => Number(route.params.id));
 const team = ref<TeamInfo | null>(null);
 const members = ref<MemberRow[]>([]);
+const {
+  page: memberPage,
+  paged: pagedMembers,
+  total: memberTotal,
+  pageSize: memberPageSize,
+} = useTablePage(members);
 const showAddMember = ref(false);
 const addingMember = ref(false);
 const addPhone = ref("");
 const addRole = ref<"member" | "team_admin">("member");
 const canAssignAdmin = computed(() => auth.isSuperAdmin || auth.isOrgAdmin);
 const usage = ref<TeamUsage | null>(null);
+const {
+  page: modelPage,
+  paged: pagedModels,
+  total: modelTotal,
+  pageSize: modelPageSize,
+} = useTablePage(() => usage.value?.byModel ?? []);
 const usageLoading = ref(false);
 const usageRange = ref<[string, string]>(defaultUsageRange());
 

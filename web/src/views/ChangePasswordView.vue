@@ -13,9 +13,11 @@
       <el-form-item label="确认新密码">
         <el-input v-model="confirm" type="password" show-password autocomplete="new-password" :maxlength="128" />
       </el-form-item>
-      <el-button type="primary" native-type="submit" :loading="loading">
-        确认修改
-      </el-button>
+      <el-form-item>
+        <el-button type="primary" native-type="submit" :loading="loading" style="width: 100%">
+          确认修改
+        </el-button>
+      </el-form-item>
     </el-form>
   </AuthShell>
 </template>
@@ -81,8 +83,4 @@ h2 {
   line-height: 1.6;
 }
 
-.auth-form :deep(.el-button) {
-  width: 100%;
-  margin-top: 8px;
-}
 </style>

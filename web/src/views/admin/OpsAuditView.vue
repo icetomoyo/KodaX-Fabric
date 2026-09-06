@@ -1,5 +1,5 @@
 <template>
-  <div class="page-card">
+  <el-card shadow="never">
     <el-form inline class="filters">
       <el-form-item label="动作">
         <el-select
@@ -62,7 +62,6 @@
       <el-pagination
         v-model:current-page="page"
         background
-        size="small"
         layout="total, prev, pager, next"
         :total="total"
         :page-size="limit"
@@ -72,7 +71,7 @@
 
     <el-dialog v-model="detailVisible" :title="detailTitle" width="680px">
       <template v-if="selectedItem">
-        <el-descriptions :column="2" border size="small">
+        <el-descriptions :column="2" border>
           <el-descriptions-item label="时间">
             {{ formatAuditDate(selectedItem.createdAt) }}
           </el-descriptions-item>
@@ -97,16 +96,19 @@
           v-if="selectedDetailRows.length"
           :data="selectedDetailRows"
           border
-          size="small"
           class="detail-table"
         >
           <el-table-column prop="label" label="字段" width="180" />
-          <el-table-column prop="value" label="内容" />
+          <el-table-column label="内容">
+            <template #default="{ row }">
+              <span class="detail-value">{{ row.value }}</span>
+            </template>
+          </el-table-column>
         </el-table>
         <el-empty v-else description="无详情" :image-size="56" />
       </template>
     </el-dialog>
-  </div>
+  </el-card>
 </template>
 
 <script setup lang="ts">
@@ -119,6 +121,7 @@ import {
   auditTargetText,
   formatAuditDate,
 } from "@/lib/ops-audit-dictionary";
+import { TABLE_PAGE_SIZE } from "@/lib/table-page";
 
 type AuditItem = {
   id: number;
@@ -137,8 +140,7 @@ type AuditItem = {
 const items = ref<AuditItem[]>([]);
 const total = ref(0);
 const page = ref(1);
-/** Align with admin call logs: 10 rows per page. */
-const limit = 10;
+const limit = TABLE_PAGE_SIZE;
 const loading = ref(false);
 const action = ref("");
 const detailVisible = ref(false);
@@ -197,7 +199,7 @@ onMounted(load);
   margin-top: 16px;
 }
 
-.detail-table :deep(.cell) {
+.detail-value {
   word-break: break-word;
 }
 

@@ -1,5 +1,5 @@
 <template>
-  <div class="page-card">
+  <el-card shadow="never">
     <div class="head">
       <h2 class="page-title" style="margin: 0">团队成员</h2>
       <el-button type="primary" @click="openInvite">邀请已注册员工</el-button>
@@ -13,7 +13,7 @@
       </el-form-item>
     </el-form>
 
-    <el-table :data="rows" stripe>
+    <el-table :data="pagedRows" stripe>
       <el-table-column prop="name" label="姓名" min-width="120" />
       <el-table-column prop="phone" label="手机号" width="140" />
       <el-table-column prop="teamName" label="团队" min-width="140" />
@@ -33,6 +33,15 @@
         </template>
       </el-table-column>
     </el-table>
+    <div class="pager">
+      <el-pagination
+        v-model:current-page="page"
+        background
+        layout="total, prev, pager, next"
+        :total="total"
+        :page-size="pageSize"
+      />
+    </div>
 
     <el-dialog v-model="showInvite" title="邀请已注册员工" width="480px">
       <el-form label-width="90px">
@@ -51,13 +60,14 @@
         <el-button type="primary" :loading="inviting" @click="inviteMember">邀请</el-button>
       </template>
     </el-dialog>
-  </div>
+  </el-card>
 </template>
 
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
 import { ElMessage } from "element-plus";
 import { http } from "@/api/http";
+import { useTablePage } from "@/lib/table-page";
 import { formatTokenCompact } from "@/lib/tokens";
 
 type TeamRow = { id: number; name: string };
@@ -74,6 +84,7 @@ type MemberRow = {
 
 const teams = ref<TeamRow[]>([]);
 const rows = ref<MemberRow[]>([]);
+const { page, paged: pagedRows, total, pageSize, resetPage } = useTablePage(rows);
 const teamFilter = ref<number | "">("");
 const showInvite = ref(false);
 const inviting = ref(false);
@@ -101,6 +112,7 @@ async function loadMembers() {
     }),
   );
   rows.value = lists.flat();
+  resetPage();
 }
 
 function openInvite() {
@@ -156,8 +168,6 @@ onMounted(async () => {
 }
 .form-help {
   margin: 0 0 0 90px;
-  color: #94a3b8;
-  font-size: 12px;
-  line-height: 1.5;
+  color: var(--el-text-color-secondary);
 }
 </style>

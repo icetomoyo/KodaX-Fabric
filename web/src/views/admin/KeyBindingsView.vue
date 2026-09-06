@@ -59,7 +59,7 @@
         <article v-for="row in resourceKeys" :key="row.id" class="resource-row">
           <div class="resource-top">
             <strong>{{ row.label }}</strong>
-            <el-tag size="small" effect="light" :type="resourceTagType(row.lane)">
+            <el-tag effect="light" :type="resourceTagType(row.lane)">
               {{ resourceLaneLabel(row.lane) }}
             </el-tag>
           </div>
@@ -1187,7 +1187,7 @@ onUnmounted(() => {
   background: #f8fafc;
 }
 
-.bindings-page :deep(.el-empty) {
+.bindings-page .el-empty {
   margin: auto;
 }
 

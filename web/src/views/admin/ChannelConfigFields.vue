@@ -10,10 +10,9 @@
       />
     </el-form-item>
 
-    <el-form-item label="支持协议" required class="protocol-form-item">
+    <el-form-item label="支持协议" required>
       <el-checkbox-group
         v-model="supportedProtocols"
-        class="protocol-checkbox-group"
         :disabled="disabled"
         @change="onProtocolsChange"
       >
@@ -22,13 +21,10 @@
           :key="option.value"
           :value="option.value"
           :disabled="!isProtocolAvailable(option.value)"
+          :title="option.description"
           border
-          class="protocol-checkbox-option"
         >
-          <span class="protocol-option-copy">
-            <strong>{{ protocolOptionLabel(option) }}</strong>
-            <small>{{ option.description }}</small>
-          </span>
+          {{ protocolOptionLabel(option) }}
         </el-checkbox>
       </el-checkbox-group>
       <div class="form-help">
@@ -48,7 +44,6 @@
             <el-select
               v-if="editable"
               :model-value="row.authStyle"
-              size="small"
               style="width: 132px"
               :disabled="disabled"
               @change="updateAuthStyle(row.protocol, $event)"
@@ -56,13 +51,14 @@
               <el-option label="Bearer" value="bearer" />
               <el-option label="x-api-key" value="x-api-key" />
             </el-select>
-            <el-tag v-else size="small" effect="plain">{{ authStyleLabel(row.authStyle) }}</el-tag>
+            <el-tag v-else effect="plain">{{ authStyleLabel(row.authStyle) }}</el-tag>
           </div>
           <el-input
             v-if="editable"
             :model-value="row.baseUrl"
             placeholder="http://host:port/v1"
             :disabled="disabled"
+            style="width: 100%"
             @update:model-value="updateProtocolBaseUrl(row.protocol, $event)"
           />
           <code v-else>{{ row.baseUrl }}</code>
@@ -85,12 +81,12 @@
         :closable="false"
         show-icon
         :title="routingUpgradeTitle"
+        style="flex: 1; min-width: 0"
       />
       <el-button
         v-if="!routingUpgradePending"
         type="warning"
         plain
-        size="small"
         :disabled="disabled"
         @click="emit('request-routing-upgrade')"
       >
@@ -282,59 +278,9 @@ function protocolOptionLabel(option: RelayProtocolOption): string {
 </script>
 
 <style scoped>
-.protocol-form-item :deep(.el-form-item__content) {
-  display: block;
-}
-
-.protocol-checkbox-group {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  width: 100%;
-  gap: 10px;
-}
-
-.protocol-checkbox-option.el-checkbox.is-bordered {
-  width: 100%;
-  height: auto;
-  min-height: 58px;
-  margin: 0;
-  padding: 10px 12px;
-  border-radius: 8px;
-}
-
-.protocol-checkbox-option :deep(.el-checkbox__label) {
-  min-width: 0;
-  padding-left: 9px;
-  white-space: normal;
-}
-
-.protocol-option-copy {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  line-height: 1.35;
-}
-
-.protocol-option-copy strong {
-  color: #334155;
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.protocol-option-copy small {
-  color: #64748b;
-  font-size: 11px;
-}
-
-.protocol-checkbox-option.is-checked .protocol-option-copy strong {
-  color: var(--el-color-primary);
-}
-
 .form-help {
   margin-top: 6px;
-  color: #64748b;
-  font-size: 12px;
-  line-height: 1.5;
+  color: var(--el-text-color-secondary);
 }
 
 .change-risk-alert {
@@ -346,11 +292,6 @@ function protocolOptionLabel(option: RelayProtocolOption): string {
   align-items: center;
   gap: 10px;
   margin: -4px 0 18px;
-}
-
-.routing-upgrade-panel :deep(.el-alert) {
-  flex: 1;
-  min-width: 0;
 }
 
 .protocol-config-list {
@@ -377,21 +318,13 @@ function protocolOptionLabel(option: RelayProtocolOption): string {
 }
 
 .protocol-config-head strong {
-  color: #334155;
-  font-size: 12px;
+  color: var(--el-text-color-primary);
 }
 
 .protocol-config-row code {
   display: block;
   overflow-wrap: anywhere;
-  color: #475569;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 12px;
-  line-height: 1.5;
-}
-
-.protocol-config-row :deep(.el-input) {
-  width: 100%;
+  color: var(--el-text-color-regular);
 }
 
 .config-missing-alert {
@@ -400,10 +333,6 @@ function protocolOptionLabel(option: RelayProtocolOption): string {
 }
 
 @media (max-width: 720px) {
-  .protocol-checkbox-group {
-    grid-template-columns: 1fr;
-  }
-
   .routing-upgrade-panel {
     align-items: stretch;
     flex-direction: column;

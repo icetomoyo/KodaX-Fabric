@@ -49,7 +49,7 @@
           description="未加入团队"
           :image-size="72"
         />
-        <el-table v-else :data="usage.quota.teams" stripe>
+        <el-table v-else :data="pagedTeams" stripe>
           <el-table-column prop="teamName" label="团队" min-width="140" />
           <el-table-column label="团队本月已用" min-width="130">
             <template #default="{ row }">{{ formatTokenCompact(row.teamUsedMonth) }}</template>
@@ -58,6 +58,15 @@
             <template #default="{ row }">{{ formatNumber(row.myUsedToday) }}</template>
           </el-table-column>
         </el-table>
+        <div class="pager">
+          <el-pagination
+            v-model:current-page="teamPage"
+            background
+            layout="total, prev, pager, next"
+            :total="teamTotal"
+            :page-size="teamPageSize"
+          />
+        </div>
       </section>
 
       <section class="page-card range-card">
@@ -67,7 +76,7 @@
             <p>所有日期按 {{ usage.range.timezone }} 的自然日统计</p>
           </div>
           <div class="range-controls">
-            <el-radio-group v-model="rangePreset" size="small" @change="applyPreset">
+            <el-radio-group v-model="rangePreset" @change="applyPreset">
               <el-radio-button value="today">今天</el-radio-button>
               <el-radio-button value="7d">近 7 天</el-radio-button>
               <el-radio-button value="30d">近 30 天</el-radio-button>
@@ -81,7 +90,6 @@
               range-separator="至"
               start-placeholder="开始日期"
               end-placeholder="结束日期"
-              size="small"
               :clearable="false"
               @change="applyCustomRange"
             />
@@ -140,6 +148,7 @@ import type { EChartsCoreOption } from "echarts/core";
 import { http } from "@/api/http";
 import UsageChart from "@/components/UsageChart.vue";
 import { formatDateTime, formatDateTimeInTimeZone } from "@/lib/date-time";
+import { useTablePage } from "@/lib/table-page";
 import { formatTokenCompact } from "@/lib/tokens";
 
 type UsageCounts = {
@@ -184,6 +193,12 @@ type RangePreset = "today" | "7d" | "30d" | "custom";
 const route = useRoute();
 const router = useRouter();
 const usage = ref<UsageResponse | null>(null);
+const {
+  page: teamPage,
+  paged: pagedTeams,
+  total: teamTotal,
+  pageSize: teamPageSize,
+} = useTablePage(() => usage.value?.quota.teams ?? []);
 const loading = ref(false);
 const errorMessage = ref("");
 const rangePreset = ref<RangePreset>("30d");
