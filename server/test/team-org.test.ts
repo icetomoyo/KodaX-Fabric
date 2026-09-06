@@ -349,10 +349,12 @@ test("admin shell uses org board for all console roles", () => {
   assert.match(layout, /本企业编制/);
   assert.match(layout, /本部门编制/);
   assert.match(layout, /v-if="auth.isTeamAdmin" index="\/admin\/enterprises">员工/);
+  assert.match(layout, /isOrgAdmin \|\| auth.isDeptAdmin \|\| auth.isTeamAdmin" index="\/admin\/keys">API Key/);
+  assert.match(layout, /index="\/admin\/guide">接入教程/);
   assert.doesNotMatch(layout, /index="\/admin\/departments"/);
   assert.doesNotMatch(layout, /index="\/admin\/teams"/);
   assert.doesNotMatch(layout, /index="\/admin\/members"/);
-  assert.doesNotMatch(layout, /index="\/admin\/keys"/);
+  assert.doesNotMatch(layout, /auth.isSuperAdmin" index="\/admin\/keys"/);
   assert.match(home, /dept_admin/);
   assert.match(router, /dept_admin/);
   assert.doesNotMatch(layout, /项目管理/);
@@ -361,6 +363,7 @@ test("admin shell uses org board for all console roles", () => {
   assert.match(home, /return \"\/admin\"/);
   assert.doesNotMatch(router, /admin-projects/);
   assert.match(router, /admin-keys/);
+  assert.match(router, /admin-guide/);
   assert.match(router, /team_admin/);
   const orgView = readFileSync(resolve(root, "web/src/views/admin/EnterprisesView.vue"), "utf8");
   assert.match(orgView, /showEnterprisePane/);

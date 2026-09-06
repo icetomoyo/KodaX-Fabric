@@ -12,7 +12,7 @@
         </p>
       </div>
       <div class="hero-actions">
-        <el-button type="primary" @click="router.push('/me/keys')">创建 API Key</el-button>
+        <el-button type="primary" @click="router.push(workspacePath('keys'))">创建 API Key</el-button>
         <el-button @click="scrollToTroubleshooting">查看排障</el-button>
       </div>
     </section>
@@ -98,7 +98,7 @@
         <div class="key-safety-card">
           <strong>Key 安全</strong>
           <p>不要把完整 Key 放进截图、聊天记录或代码仓库。怀疑泄漏时，请立即删除旧 Key 并重新创建。</p>
-          <el-button type="primary" @click="router.push('/me/keys')">前往 API Key</el-button>
+          <el-button type="primary" @click="router.push(workspacePath('keys'))">前往 API Key</el-button>
         </div>
       </div>
     </section>
@@ -247,7 +247,7 @@
       </div>
 
       <div class="section-actions model-list-action">
-        <el-button type="primary" @click="router.push('/me/models')">查看模型列表</el-button>
+        <el-button type="primary" @click="router.push(workspacePath('models'))">查看模型列表</el-button>
       </div>
       <SnippetBlock
         :value="modelListCommand"
@@ -280,7 +280,7 @@
         </article>
       </div>
       <div class="section-actions">
-        <el-button type="primary" @click="router.push('/me/logs')">查看我的调用</el-button>
+        <el-button type="primary" @click="router.push(workspacePath('logs'))">查看我的调用</el-button>
       </div>
     </section>
   </div>
@@ -289,7 +289,7 @@
 <script setup lang="ts">
 import { computed, defineComponent, h, onMounted, ref } from "vue";
 import { ElButton, ElMessage } from "element-plus";
-import { useRouter } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import { http } from "@/api/http";
 import { copyText } from "@/lib/clipboard";
 import {
@@ -320,7 +320,15 @@ const SnippetBlock = defineComponent({
   },
 });
 
+const route = useRoute();
 const router = useRouter();
+
+function workspacePath(page: "keys" | "models" | "logs") {
+  if (route.path.startsWith("/admin")) {
+    return page === "logs" ? "/admin/my-logs" : `/admin/${page}`;
+  }
+  return `/me/${page}`;
+}
 const clientTab = ref("anthropic");
 const relayUrl = ref("");
 

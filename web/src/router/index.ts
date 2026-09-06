@@ -101,6 +101,24 @@ export const router = createRouter({
           meta: { roles: ["org_admin", "dept_admin", "team_admin"] },
         },
         {
+          path: "models",
+          name: "admin-models",
+          component: () => import("@/views/me/ModelsView.vue"),
+          meta: { roles: ["org_admin", "dept_admin", "team_admin"] },
+        },
+        {
+          path: "guide",
+          name: "admin-guide",
+          component: () => import("@/views/me/GuideView.vue"),
+          meta: { roles: ["org_admin", "dept_admin", "team_admin"] },
+        },
+        {
+          path: "my-logs",
+          name: "admin-my-logs",
+          component: () => import("@/views/me/LogsView.vue"),
+          meta: { roles: ["org_admin", "dept_admin", "team_admin"] },
+        },
+        {
           path: "users",
           redirect: "/admin/enterprises",
         },
