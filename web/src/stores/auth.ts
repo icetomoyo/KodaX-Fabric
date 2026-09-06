@@ -10,10 +10,11 @@ export type UserEnterprise = {
 };
 
 export type ActAsPayload = {
-  role: "org_admin" | "dept_admin" | "team_admin";
+  role: "org_admin" | "dept_admin" | "team_admin" | "employee";
   enterpriseId: number;
   departmentId?: number;
   teamId?: number;
+  employeeId?: number;
 };
 
 export type UserActAs = ActAsPayload & {
@@ -44,7 +45,12 @@ function readStoredActAs(): ActAsPayload | null {
   if (!raw) return null;
   try {
     const parsed = JSON.parse(raw) as ActAsPayload;
-    if (parsed?.role === "org_admin" || parsed?.role === "dept_admin" || parsed?.role === "team_admin") {
+    if (
+      parsed?.role === "org_admin"
+      || parsed?.role === "dept_admin"
+      || parsed?.role === "team_admin"
+      || parsed?.role === "employee"
+    ) {
       return parsed;
     }
   } catch {

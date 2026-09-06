@@ -31,6 +31,18 @@ test("act-as header parses org/dept/team payloads and rejects incomplete ones", 
     (parseActAsHeader(JSON.stringify({ role: "dept_admin", enterpriseId: 8 })) as { invalid: true }).invalid,
     true,
   );
+  assert.deepEqual(
+    parseActAsHeader(JSON.stringify({
+      role: "employee",
+      enterpriseId: 8,
+      employeeId: 41,
+    })),
+    { role: "employee", enterpriseId: 8, employeeId: 41 },
+  );
+  assert.equal(
+    (parseActAsHeader(JSON.stringify({ role: "employee", enterpriseId: 8 })) as { invalid: true }).invalid,
+    true,
+  );
   assert.equal(
     (parseActAsHeader(JSON.stringify({ role: "admin", enterpriseId: 8 })) as { invalid: true }).invalid,
     true,
@@ -60,4 +72,8 @@ test("admin shell keeps the act-as switch for true super admins", () => {
   assert.match(http, /INVALID_ACT_AS/);
   assert.match(auth, /canSwitchActAs/);
   assert.match(auth, /trueRole/);
+  const meLayout = readFileSync(resolve(root, "web/src/layouts/MeLayout.vue"), "utf8");
+  const drawer = readFileSync(resolve(root, "web/src/views/admin/ActAsDrawer.vue"), "utf8");
+  assert.match(meLayout, /切换临时权限/);
+  assert.match(drawer, /role: 'employee'/);
 });

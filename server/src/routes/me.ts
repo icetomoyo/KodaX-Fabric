@@ -28,6 +28,7 @@ import {
   getEmployeeUpstreamChannel,
   getEmployeeUpstreamChannels,
 } from "../lib/upstream-channel-metadata.js";
+import { actingEmployeeId } from "../lib/act-as.js";
 import {
   requirePasswordChanged,
   requireRoles,
@@ -49,6 +50,10 @@ export function buildRelayBaseUrl(
   request: Pick<FastifyRequest, "protocol" | "host">,
 ): string {
   return `${request.protocol}://${request.host}${RELAY_BASE_PATH}`;
+}
+
+function meId(req: FastifyRequest): number {
+  return actingEmployeeId(req);
 }
 
 export async function meRoutes(app: FastifyInstance) {
@@ -76,7 +81,7 @@ export async function meRoutes(app: FastifyInstance) {
         enterpriseId: employees.enterpriseId,
       })
       .from(employees)
-      .where(eq(employees.id, req.employeeId!))
+      .where(eq(employees.id, meId(req)))
       .limit(1);
 
     let enterprise: {
@@ -108,19 +113,19 @@ export async function meRoutes(app: FastifyInstance) {
       })
       .from(teamMembers)
       .innerJoin(teams, eq(teamMembers.teamId, teams.id))
-      .where(eq(teamMembers.employeeId, req.employeeId!))
+      .where(eq(teamMembers.employeeId, meId(req)))
       .orderBy(desc(teams.id));
 
     return { success: true, data: { enterprise, teams: teamRows } };
   });
 
   app.get("/api/me/upstream-channels", async (req) => {
-    const channels = await getEmployeeUpstreamChannels(req.employeeId!);
+    const channels = await getEmployeeUpstreamChannels(meId(req));
     return { success: true, data: channels };
   });
 
   app.get("/api/me/models", async (req) => {
-    const accessible = await getEmployeeUpstreamChannels(req.employeeId!);
+    const accessible = await getEmployeeUpstreamChannels(meId(req));
     if (accessible.length === 0) {
       return { success: true, data: { channels: [] } };
     }
@@ -183,7 +188,7 @@ export async function meRoutes(app: FastifyInstance) {
       .innerJoin(productLines, eq(employeeApiKeys.productLineId, productLines.id))
       .innerJoin(providers, eq(productLines.providerId, providers.id))
       .leftJoin(teams, eq(employeeApiKeys.teamId, teams.id))
-      .where(eq(employeeApiKeys.employeeId, req.employeeId!))
+      .where(eq(employeeApiKeys.employeeId, meId(req)))
       .orderBy(desc(employeeApiKeys.id));
 
     if (rows.length === 0) {
@@ -220,7 +225,7 @@ export async function meRoutes(app: FastifyInstance) {
           enterpriseId: employees.enterpriseId,
         })
         .from(employees)
-        .where(eq(employees.id, req.employeeId!))
+        .where(eq(employees.id, meId(req)))
         .limit(1)
         .for("update");
 
@@ -249,7 +254,7 @@ export async function meRoutes(app: FastifyInstance) {
         .innerJoin(teams, eq(teamMembers.teamId, teams.id))
         .where(
           and(
-            eq(teamMembers.employeeId, req.employeeId!),
+            eq(teamMembers.employeeId, meId(req)),
             eq(teamMembers.teamId, body.data.teamId),
           ),
         )
@@ -264,7 +269,7 @@ export async function meRoutes(app: FastifyInstance) {
       );
 
       const channel = await getEmployeeUpstreamChannel(
-        req.employeeId!,
+        meId(req),
         body.data.productLineId,
         tx,
         { lockForCreate: true },
@@ -279,7 +284,7 @@ export async function meRoutes(app: FastifyInstance) {
       const [created] = await tx
         .insert(employeeApiKeys)
         .values({
-          employeeId: req.employeeId!,
+          employeeId: meId(req),
           name: body.data.name,
           keyPrefix: prefix,
           keyHash: hash,
@@ -392,7 +397,7 @@ export async function meRoutes(app: FastifyInstance) {
         .where(
           and(
             eq(employeeApiKeys.id, params.data.id),
-            eq(employeeApiKeys.employeeId, req.employeeId!),
+            eq(employeeApiKeys.employeeId, meId(req)),
           ),
         )
         .limit(1);
@@ -404,7 +409,7 @@ export async function meRoutes(app: FastifyInstance) {
         .where(
           and(
             eq(employeeApiKeys.id, target.id),
-            eq(employeeApiKeys.employeeId, req.employeeId!),
+            eq(employeeApiKeys.employeeId, meId(req)),
           ),
         );
 
@@ -443,7 +448,7 @@ export async function meRoutes(app: FastifyInstance) {
       .from(usageCountersDaily)
       .where(
         and(
-          eq(usageCountersDaily.employeeId, req.employeeId!),
+          eq(usageCountersDaily.employeeId, meId(req)),
           eq(usageCountersDaily.day, today),
         ),
       )
@@ -457,7 +462,7 @@ export async function meRoutes(app: FastifyInstance) {
       .from(usageCountersDaily)
       .where(
         and(
-          eq(usageCountersDaily.employeeId, req.employeeId!),
+          eq(usageCountersDaily.employeeId, meId(req)),
           sql`${usageCountersDaily.day} >= ${monthStart}`,
         ),
       );
@@ -471,10 +476,10 @@ export async function meRoutes(app: FastifyInstance) {
       })
       .from(employees)
       .leftJoin(enterprises, eq(employees.enterpriseId, enterprises.id))
-      .where(eq(employees.id, req.employeeId!))
+      .where(eq(employees.id, meId(req)))
       .limit(1);
     const teamUsage = await listEmployeeTeamUsageViews(
-      req.employeeId!,
+      meId(req),
       today,
       zonedMonthRange(new Date(), env.QUOTA_TIMEZONE),
     );
@@ -533,7 +538,7 @@ export async function meRoutes(app: FastifyInstance) {
       return reply.code(400).send({ success: false, message: "参数无效" });
     }
 
-    const conditions: SQL[] = [eq(requestAudits.employeeId, req.employeeId!)];
+    const conditions: SQL[] = [eq(requestAudits.employeeId, meId(req))];
     if (filters.productLineId) conditions.push(eq(requestAudits.productLineId, filters.productLineId));
     if (filters.model) conditions.push(eq(requestAudits.clientModel, filters.model));
     if (filters.status) conditions.push(eq(requestAudits.status, filters.status));

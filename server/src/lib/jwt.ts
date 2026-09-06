@@ -12,13 +12,14 @@ export function isSessionRole(value: unknown): value is SessionRole {
   return typeof value === "string" && SESSION_ROLE_SET.has(value);
 }
 
-export type ActAsRole = "org_admin" | "dept_admin" | "team_admin";
+export type ActAsRole = "org_admin" | "dept_admin" | "team_admin" | "employee";
 
 export type SessionActAs = {
   role: ActAsRole;
   enterpriseId: number;
   departmentId?: number;
   teamId?: number;
+  employeeId?: number;
   label: string;
 };
 

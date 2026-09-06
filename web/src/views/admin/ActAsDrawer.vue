@@ -11,7 +11,7 @@
       <el-input
         v-model="query"
         clearable
-        placeholder="搜索企业 / 部门 / 团队"
+        placeholder="搜索企业 / 部门 / 团队 / 员工"
       />
 
       <el-button
@@ -73,25 +73,70 @@
               </el-button>
             </div>
             <div
-              v-for="team in department.teams"
-              :key="team.id"
+              v-for="person in department.employees"
+              :key="`dept-${person.id}`"
               class="unit-row nested"
             >
               <div class="unit-copy">
-                <strong>{{ team.name }}</strong>
+                <strong>{{ person.name }}</strong>
               </div>
               <el-button
                 link
                 type="primary"
                 @click="select({
-                  role: 'team_admin',
+                  role: 'employee',
                   enterpriseId: enterprise.id,
                   departmentId: department.id,
-                  teamId: team.id,
+                  employeeId: person.id,
                 })"
               >
-                团队管理员
+                员工
               </el-button>
+            </div>
+            <div
+              v-for="team in department.teams"
+              :key="team.id"
+              class="team-block"
+            >
+              <div class="unit-row nested">
+                <div class="unit-copy">
+                  <strong>{{ team.name }}</strong>
+                </div>
+                <el-button
+                  link
+                  type="primary"
+                  @click="select({
+                    role: 'team_admin',
+                    enterpriseId: enterprise.id,
+                    departmentId: department.id,
+                    teamId: team.id,
+                  })"
+                >
+                  团队管理员
+                </el-button>
+              </div>
+              <div
+                v-for="person in team.employees"
+                :key="person.id"
+                class="unit-row nested person"
+              >
+                <div class="unit-copy">
+                  <strong>{{ person.name }}</strong>
+                </div>
+                <el-button
+                  link
+                  type="primary"
+                  @click="select({
+                    role: 'employee',
+                    enterpriseId: enterprise.id,
+                    departmentId: department.id,
+                    teamId: team.id,
+                    employeeId: person.id,
+                  })"
+                >
+                  员工
+                </el-button>
+              </div>
             </div>
           </article>
         </section>
@@ -107,8 +152,14 @@ import { ElMessage } from "element-plus";
 import { http } from "@/api/http";
 import { useAuthStore, type ActAsPayload } from "@/stores/auth";
 
-type TeamNode = { id: number; name: string };
-type DepartmentNode = { id: number; name: string; teams: TeamNode[] };
+type PersonNode = { id: number; name: string };
+type TeamNode = { id: number; name: string; employees: PersonNode[] };
+type DepartmentNode = {
+  id: number;
+  name: string;
+  employees: PersonNode[];
+  teams: TeamNode[];
+};
 type EnterpriseNode = {
   id: number;
   name: string;
@@ -132,10 +183,22 @@ const visibleEnterprises = computed(() => {
     const enterpriseHit = matches(enterprise.name, needle) || matches(enterprise.code, needle);
     const departments = enterprise.departments.flatMap((department) => {
       const departmentHit = matches(department.name, needle);
-      const teams = department.teams.filter((team) => matches(team.name, needle));
-      if (enterpriseHit || departmentHit || teams.length) {
+      const employees = department.employees.filter((person) => matches(person.name, needle));
+      const teams = department.teams.flatMap((team) => {
+        const teamHit = matches(team.name, needle);
+        const teamEmployees = team.employees.filter((person) => matches(person.name, needle));
+        if (enterpriseHit || departmentHit || teamHit || teamEmployees.length) {
+          return [{
+            ...team,
+            employees: enterpriseHit || departmentHit || teamHit ? team.employees : teamEmployees,
+          }];
+        }
+        return [];
+      });
+      if (enterpriseHit || departmentHit || employees.length || teams.length) {
         return [{
           ...department,
+          employees: enterpriseHit || departmentHit ? department.employees : employees,
           teams: enterpriseHit || departmentHit ? department.teams : teams,
         }];
       }
@@ -171,7 +234,7 @@ async function select(payload: ActAsPayload) {
   try {
     await auth.fetchMe();
     emit("update:modelValue", false);
-    await leaveSuperOnlyRoute();
+    await goToRoleHome(payload.role);
   } catch (error) {
     auth.setActAs(null);
     const message = (error as { response?: { data?: { message?: unknown } } })
@@ -185,16 +248,22 @@ async function clearActAs() {
   try {
     await auth.fetchMe();
     emit("update:modelValue", false);
-    if (router.currentRoute.value.path === "/admin/keys") {
-      await router.replace("/admin");
-    }
+    await goToRoleHome("admin");
   } catch {
     ElMessage.error("退出临时权限失败");
   }
 }
 
-async function leaveSuperOnlyRoute() {
+async function goToRoleHome(role: ActAsPayload["role"] | "admin") {
   const path = router.currentRoute.value.path;
+  if (role === "employee") {
+    if (!path.startsWith("/me")) await router.replace("/me");
+    return;
+  }
+  if (path.startsWith("/me") || path === "/admin/keys") {
+    await router.replace("/admin");
+    return;
+  }
   if (
     path.startsWith("/admin/credentials")
     || path.startsWith("/admin/key-bindings")
@@ -249,6 +318,12 @@ watch(
 .unit-row.nested {
   margin-top: 6px;
   padding-left: 12px;
+}
+.unit-row.person {
+  padding-left: 24px;
+}
+.team-block {
+  margin-top: 4px;
 }
 .unit-copy {
   min-width: 0;

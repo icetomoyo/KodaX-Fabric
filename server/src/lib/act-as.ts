@@ -1,7 +1,7 @@
 import { and, asc, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../db/client.js";
-import { departments, enterprises, teams } from "../db/schema/index.js";
+import { departments, employees, teamMembers, teams, enterprises } from "../db/schema/index.js";
 import type { ActAsRole, SessionActAs } from "./jwt.js";
 
 export type ActAsRequest = {
@@ -9,6 +9,7 @@ export type ActAsRequest = {
   enterpriseId: number;
   departmentId?: number;
   teamId?: number;
+  employeeId?: number;
 };
 
 export type ResolvedActAs = {
@@ -20,10 +21,11 @@ export type ResolvedActAs = {
 };
 
 const actAsSchema = z.object({
-  role: z.enum(["org_admin", "dept_admin", "team_admin"]),
+  role: z.enum(["org_admin", "dept_admin", "team_admin", "employee"]),
   enterpriseId: z.number().int().positive(),
   departmentId: z.number().int().positive().optional(),
   teamId: z.number().int().positive().optional(),
+  employeeId: z.number().int().positive().optional(),
 });
 
 export function parseActAsHeader(raw: unknown): ActAsRequest | { invalid: true } | null {
@@ -40,7 +42,18 @@ export function parseActAsHeader(raw: unknown): ActAsRequest | { invalid: true }
   if (!result.success) return { invalid: true };
   if (result.data.role === "dept_admin" && result.data.departmentId == null) return { invalid: true };
   if (result.data.role === "team_admin" && result.data.teamId == null) return { invalid: true };
+  if (result.data.role === "employee" && result.data.employeeId == null) return { invalid: true };
   return result.data;
+}
+
+export function actingEmployeeId(req: {
+  session?: { actAs?: { role?: string; employeeId?: number } };
+  employeeId?: number;
+}): number {
+  if (req.session?.actAs?.role === "employee" && req.session.actAs.employeeId != null) {
+    return req.session.actAs.employeeId;
+  }
+  return req.employeeId!;
 }
 
 export async function resolveActAs(input: ActAsRequest): Promise<ResolvedActAs | null> {
@@ -95,6 +108,53 @@ export async function resolveActAs(input: ActAsRequest): Promise<ResolvedActAs |
         enterpriseId: enterprise.id,
         departmentId: department.id,
         label: `${enterprise.name} · ${department.name}`,
+      },
+    };
+  }
+
+  if (input.role === "employee") {
+    if (input.employeeId == null) return null;
+    const [person] = await db
+      .select({
+        id: employees.id,
+        name: employees.name,
+        role: employees.role,
+        status: employees.status,
+        enterpriseId: employees.enterpriseId,
+        teamId: teamMembers.teamId,
+        teamName: teams.name,
+        teamIsDefault: teams.isDefault,
+        departmentId: teams.departmentId,
+        departmentName: departments.name,
+      })
+      .from(employees)
+      .innerJoin(teamMembers, eq(teamMembers.employeeId, employees.id))
+      .innerJoin(teams, eq(teamMembers.teamId, teams.id))
+      .innerJoin(departments, eq(teams.departmentId, departments.id))
+      .where(eq(employees.id, input.employeeId))
+      .limit(1);
+    if (
+      !person
+      || person.status !== "active"
+      || person.role === "admin"
+      || person.enterpriseId !== enterprise.id
+      || (input.teamId != null && person.teamId !== input.teamId)
+    ) {
+      return null;
+    }
+    const teamLabel = person.teamIsDefault ? person.departmentName : person.teamName;
+    return {
+      role: "employee",
+      enterpriseId: enterprise.id,
+      departmentIds: [person.departmentId],
+      teamIds: [person.teamId],
+      actAs: {
+        role: "employee",
+        enterpriseId: enterprise.id,
+        departmentId: person.departmentId,
+        teamId: person.teamId,
+        employeeId: person.id,
+        label: `${enterprise.name} · ${teamLabel} · ${person.name}`,
       },
     };
   }
@@ -176,6 +236,31 @@ export async function loadActAsOrgTree() {
       .orderBy(asc(teams.name), asc(teams.id))
     : [];
 
+  const teamIds = teamRows.map((row) => row.id);
+  const memberRows = teamIds.length
+    ? await db
+      .select({
+        id: employees.id,
+        name: employees.name,
+        role: employees.role,
+        teamId: teamMembers.teamId,
+      })
+      .from(teamMembers)
+      .innerJoin(employees, eq(teamMembers.employeeId, employees.id))
+      .where(and(
+        inArray(teamMembers.teamId, teamIds),
+        eq(employees.status, "active"),
+      ))
+      .orderBy(asc(employees.name), asc(employees.id))
+    : [];
+
+  const membersByTeam = new Map<number, Array<{ id: number; name: string }>>();
+  for (const member of memberRows) {
+    if (member.role === "admin") continue;
+    const list = membersByTeam.get(member.teamId) ?? [];
+    list.push({ id: member.id, name: member.name });
+    membersByTeam.set(member.teamId, list);
+  }
   const teamsByDepartment = new Map<number, typeof teamRows>();
   for (const team of teamRows) {
     const list = teamsByDepartment.get(team.departmentId) ?? [];
@@ -193,16 +278,22 @@ export async function loadActAsOrgTree() {
     id: enterprise.id,
     name: enterprise.name,
     code: enterprise.code,
-    departments: (departmentsByEnterprise.get(enterprise.id) ?? []).map((department) => ({
-      id: department.id,
-      name: department.name,
-      isDefault: department.isDefault,
-      teams: (teamsByDepartment.get(department.id) ?? [])
-        .filter((team) => !team.isDefault)
-        .map((team) => ({
-          id: team.id,
-          name: team.name,
-        })),
-    })),
+    departments: (departmentsByEnterprise.get(enterprise.id) ?? []).map((department) => {
+      const departmentTeams = teamsByDepartment.get(department.id) ?? [];
+      const defaultTeam = departmentTeams.find((team) => team.isDefault);
+      return {
+        id: department.id,
+        name: department.name,
+        isDefault: department.isDefault,
+        employees: defaultTeam ? membersByTeam.get(defaultTeam.id) ?? [] : [],
+        teams: departmentTeams
+          .filter((team) => !team.isDefault)
+          .map((team) => ({
+            id: team.id,
+            name: team.name,
+            employees: membersByTeam.get(team.id) ?? [],
+          })),
+      };
+    }),
   }));
 }
