@@ -8,7 +8,7 @@ import {
   requestErrorLogs,
   teams,
 } from "../../db/schema/index.js";
-import { listAdminDepartmentIds, listAdminTeamIds, listTeamIdsInDepartments } from "../../lib/org.js";
+import { scopedDepartmentIds, scopedTeamIds, listTeamIdsInDepartments } from "../../lib/org.js";
 import { REQUEST_CONTEXT_ID_PATTERN } from "../../lib/relay/request-context.js";
 import {
   requirePasswordChanged,
@@ -86,7 +86,7 @@ export function buildErrorLogListQuery(input: ErrorLogListInput) {
 
 async function resolveListScope(
   role: string,
-  session: { enterpriseId: number | null },
+  session: { enterpriseId: number | null; departmentIds?: number[]; teamIds?: number[] },
   employeeId: number | undefined,
   query: z.infer<typeof listQuerySchema>,
 ): Promise<ErrorLogListInput | { forbidden: true }> {
@@ -106,11 +106,14 @@ async function resolveListScope(
     return input;
   }
   if (role === "dept_admin") {
-    input.teamIds = await listTeamIdsInDepartments(await listAdminDepartmentIds(employeeId!));
+    input.teamIds = await listTeamIdsInDepartments(await scopedDepartmentIds({
+      departmentIds: session.departmentIds,
+      employeeId: employeeId!,
+    }));
     return input;
   }
   if (role === "team_admin") {
-    input.teamIds = await listAdminTeamIds(employeeId!);
+    input.teamIds = await scopedTeamIds({ teamIds: session.teamIds, employeeId: employeeId! });
     return input;
   }
   input.enterpriseId = query.enterpriseId;
@@ -130,7 +133,7 @@ export async function adminErrorLogRoutes(app: FastifyInstance) {
     }
     const input = await resolveListScope(
       req.session!.role,
-      { enterpriseId: req.session!.enterpriseId },
+      req.session!,
       req.employeeId,
       parsed.data,
     );
@@ -203,8 +206,19 @@ export async function adminErrorLogRoutes(app: FastifyInstance) {
       if (req.session!.enterpriseId == null || row.enterpriseId !== req.session!.enterpriseId) {
         return reply.code(403).send({ success: false, message: "权限不足" });
       }
+    } else if (role === "dept_admin") {
+      const teamIds = await listTeamIdsInDepartments(await scopedDepartmentIds({
+        departmentIds: req.session!.departmentIds,
+        employeeId: req.employeeId!,
+      }));
+      if (row.teamId == null || !teamIds.includes(row.teamId)) {
+        return reply.code(403).send({ success: false, message: "权限不足" });
+      }
     } else if (role === "team_admin") {
-      const teamIds = await listAdminTeamIds(req.employeeId!);
+      const teamIds = await scopedTeamIds({
+        teamIds: req.session!.teamIds,
+        employeeId: req.employeeId!,
+      });
       if (row.teamId == null || !teamIds.includes(row.teamId)) {
         return reply.code(403).send({ success: false, message: "权限不足" });
       }

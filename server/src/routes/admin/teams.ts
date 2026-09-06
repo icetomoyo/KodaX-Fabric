@@ -32,6 +32,7 @@ import {
   employeeSingleTeamConflictMessage,
   listAdminTeamIds,
   loadOrgActor,
+  scopedTeamIds,
   loadTeamAccessForActor,
   resolveTeamListScope,
   type OrgActor,
@@ -100,13 +101,19 @@ export function buildTeamListQuery(query: TeamListQuery) {
 }
 
 async function actorFrom(req: {
-  session?: { role: SessionRole; enterpriseId: number | null };
+  session?: {
+    role: SessionRole;
+    enterpriseId: number | null;
+    departmentIds?: number[];
+    teamIds?: number[];
+  };
   employeeId?: number;
 }): Promise<OrgActor> {
   return loadOrgActor({
     role: req.session!.role,
     enterpriseId: req.session!.enterpriseId ?? null,
     employeeId: req.employeeId!,
+    departmentIds: req.session!.departmentIds,
   });
 }
 
@@ -171,7 +178,9 @@ export async function adminTeamRoutes(app: FastifyInstance) {
       })
       .parse(req.query);
     const actor = await actorFrom(req);
-    const adminTeamIds = actor.role === "team_admin" ? await listAdminTeamIds(actor.employeeId) : [];
+    const adminTeamIds = actor.role === "team_admin"
+      ? await scopedTeamIds({ teamIds: req.session!.teamIds, employeeId: actor.employeeId })
+      : [];
     const scope = resolveTeamListScope(actor, query.enterpriseId, adminTeamIds);
     if ("forbidden" in scope) {
       return reply.code(403).send({ success: false, message: "权限不足" });

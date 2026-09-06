@@ -2,6 +2,7 @@ import type { FastifyReply, FastifyRequest } from "fastify";
 import { eq } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { employees, enterprises } from "../db/schema/index.js";
+import { parseActAsHeader, resolveActAs } from "../lib/act-as.js";
 import { isSessionRole, verifySession, type SessionClaims } from "../lib/jwt.js";
 
 function extractBearer(req: FastifyRequest): string | null {
@@ -78,8 +79,33 @@ export async function requireSession(req: FastifyRequest, reply: FastifyReply) {
     role: user.role,
     mustChangePassword: user.mustChangePassword,
     enterpriseId: user.enterpriseId,
+    trueRole: user.role,
   };
   req.employeeId = user.id;
+
+  if (user.role !== "admin") return;
+  const parsed = parseActAsHeader(req.headers["x-act-as"]);
+  if (parsed == null) return;
+  if ("invalid" in parsed) {
+    return reply.code(400).send({
+      success: false,
+      code: "INVALID_ACT_AS",
+      message: "临时权限无效",
+    });
+  }
+  const resolved = await resolveActAs(parsed);
+  if (!resolved) {
+    return reply.code(400).send({
+      success: false,
+      code: "INVALID_ACT_AS",
+      message: "临时权限无效",
+    });
+  }
+  req.session.role = resolved.role;
+  req.session.enterpriseId = resolved.enterpriseId;
+  req.session.departmentIds = resolved.departmentIds;
+  req.session.teamIds = resolved.teamIds;
+  req.session.actAs = resolved.actAs;
 }
 
 export async function requirePasswordChanged(req: FastifyRequest, reply: FastifyReply) {
@@ -95,6 +121,15 @@ export async function requirePasswordChanged(req: FastifyRequest, reply: Fastify
 export function requireRoles(...roles: SessionClaims["role"][]) {
   return async (req: FastifyRequest, reply: FastifyReply) => {
     if (!req.session || !roles.includes(req.session.role)) {
+      return reply.code(403).send({ success: false, message: "权限不足" });
+    }
+  };
+}
+
+export function requireTrueAdmin() {
+  return async (req: FastifyRequest, reply: FastifyReply) => {
+    const trueRole = req.session?.trueRole ?? req.session?.role;
+    if (trueRole !== "admin") {
       return reply.code(403).send({ success: false, message: "权限不足" });
     }
   };

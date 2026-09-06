@@ -9,6 +9,17 @@ export type UserEnterprise = {
   status: string;
 };
 
+export type ActAsPayload = {
+  role: "org_admin" | "dept_admin" | "team_admin";
+  enterpriseId: number;
+  departmentId?: number;
+  teamId?: number;
+};
+
+export type UserActAs = ActAsPayload & {
+  label: string;
+};
+
 export type User = {
   id: number;
   name: string;
@@ -20,18 +31,38 @@ export type User = {
   enterprise?: UserEnterprise | null;
   mustChangePassword: boolean;
   lastLoginAt?: string | null;
+  trueRole?: "employee" | "admin" | "org_admin" | "dept_admin" | "team_admin";
+  actAs?: UserActAs | null;
 };
 
 const TOKEN_KEY = "th_token";
 const USER_KEY = "th_user";
+const ACT_AS_KEY = "th_act_as";
+
+function readStoredActAs(): ActAsPayload | null {
+  const raw = localStorage.getItem(ACT_AS_KEY);
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as ActAsPayload;
+    if (parsed?.role === "org_admin" || parsed?.role === "dept_admin" || parsed?.role === "team_admin") {
+      return parsed;
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
 
 export const useAuthStore = defineStore("auth", () => {
   const token = ref<string | null>(localStorage.getItem(TOKEN_KEY));
   const user = ref<User | null>(
     localStorage.getItem(USER_KEY) ? JSON.parse(localStorage.getItem(USER_KEY)!) : null,
   );
+  const actAs = ref<ActAsPayload | null>(readStoredActAs());
 
   const isLoggedIn = computed(() => Boolean(token.value));
+  const trueRole = computed(() => user.value?.trueRole ?? user.value?.role);
+  const canSwitchActAs = computed(() => trueRole.value === "admin");
   const isSuperAdmin = computed(() => user.value?.role === "admin");
   const isOrgAdmin = computed(() => user.value?.role === "org_admin");
   const isDeptAdmin = computed(() => user.value?.role === "dept_admin");
@@ -47,11 +78,19 @@ export const useAuthStore = defineStore("auth", () => {
     localStorage.setItem(USER_KEY, JSON.stringify(nextUser));
   }
 
+  function setActAs(next: ActAsPayload | null) {
+    actAs.value = next;
+    if (next) localStorage.setItem(ACT_AS_KEY, JSON.stringify(next));
+    else localStorage.removeItem(ACT_AS_KEY);
+  }
+
   function logout() {
     token.value = null;
     user.value = null;
+    actAs.value = null;
     localStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem(USER_KEY);
+    localStorage.removeItem(ACT_AS_KEY);
   }
 
   async function login(phone: string, password: string) {
@@ -92,13 +131,17 @@ export const useAuthStore = defineStore("auth", () => {
   return {
     token,
     user,
+    actAs,
     isLoggedIn,
     isAdmin,
     isSuperAdmin,
     isOrgAdmin,
     isDeptAdmin,
     isTeamAdmin,
+    trueRole,
+    canSwitchActAs,
     setSession,
+    setActAs,
     logout,
     login,
     register,

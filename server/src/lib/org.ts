@@ -62,10 +62,27 @@ export async function loadOrgActor(input: {
   role: SessionRole;
   enterpriseId: number | null;
   employeeId: number;
+  departmentIds?: number[];
 }): Promise<OrgActor> {
-  const departmentIds =
-    input.role === "dept_admin" ? await listAdminDepartmentIds(input.employeeId) : [];
+  const departmentIds = input.departmentIds
+    ?? (input.role === "dept_admin" ? await listAdminDepartmentIds(input.employeeId) : []);
   return { ...input, departmentIds };
+}
+
+export async function scopedDepartmentIds(input: {
+  departmentIds?: number[];
+  employeeId: number;
+}): Promise<number[]> {
+  if (input.departmentIds?.length) return input.departmentIds;
+  return listAdminDepartmentIds(input.employeeId);
+}
+
+export async function scopedTeamIds(input: {
+  teamIds?: number[];
+  employeeId: number;
+}): Promise<number[]> {
+  if (input.teamIds?.length) return input.teamIds;
+  return listAdminTeamIds(input.employeeId);
 }
 
 export async function loadTeamAccess(teamId: number): Promise<TeamAccess | null> {

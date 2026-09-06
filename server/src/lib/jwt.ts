@@ -12,6 +12,16 @@ export function isSessionRole(value: unknown): value is SessionRole {
   return typeof value === "string" && SESSION_ROLE_SET.has(value);
 }
 
+export type ActAsRole = "org_admin" | "dept_admin" | "team_admin";
+
+export type SessionActAs = {
+  role: ActAsRole;
+  enterpriseId: number;
+  departmentId?: number;
+  teamId?: number;
+  label: string;
+};
+
 export type SessionClaims = {
   sub: string;
   role: SessionRole;
@@ -19,6 +29,10 @@ export type SessionClaims = {
   name: string;
   mustChangePassword: boolean;
   enterpriseId: number | null;
+  trueRole?: SessionRole;
+  departmentIds?: number[];
+  teamIds?: number[];
+  actAs?: SessionActAs;
 };
 
 export async function signSession(

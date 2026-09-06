@@ -19,8 +19,8 @@ import {
   resolveUserListScope,
 } from "../../lib/enterprise.js";
 import {
-  listAdminDepartmentIds,
-  listAdminTeamIds,
+  scopedDepartmentIds,
+  scopedTeamIds,
   listTeamIdsInDepartments,
 } from "../../lib/org.js";
 import type { SessionRole } from "../../lib/jwt.js";
@@ -143,12 +143,18 @@ function actorFrom(req: { session?: { role: SessionRole; enterpriseId: number | 
   return { role: req.session!.role, enterpriseId: req.session!.enterpriseId ?? null };
 }
 
-async function actorTeamScopeIds(role: SessionRole, employeeId: number): Promise<number[] | null> {
-  if (role === "dept_admin") {
-    return listTeamIdsInDepartments(await listAdminDepartmentIds(employeeId));
+async function actorTeamScopeIds(
+  session: { role: SessionRole; departmentIds?: number[]; teamIds?: number[] },
+  employeeId: number,
+): Promise<number[] | null> {
+  if (session.role === "dept_admin") {
+    return listTeamIdsInDepartments(await scopedDepartmentIds({
+      departmentIds: session.departmentIds,
+      employeeId,
+    }));
   }
-  if (role === "team_admin") {
-    return listAdminTeamIds(employeeId);
+  if (session.role === "team_admin") {
+    return scopedTeamIds({ teamIds: session.teamIds, employeeId });
   }
   return null;
 }
@@ -158,7 +164,7 @@ async function canManageScopedUser(
   target: { role: SessionRole; enterpriseId: number | null; id: number },
 ): Promise<boolean> {
   if (!canAccessEmployee(actorFrom(req), target)) return false;
-  const teamIds = await actorTeamScopeIds(req.session!.role, req.employeeId!);
+  const teamIds = await actorTeamScopeIds(req.session!, req.employeeId!);
   if (teamIds == null) return true;
   if (teamIds.length === 0) return false;
   const [membership] = await db
@@ -194,9 +200,15 @@ export async function adminUserRoutes(app: FastifyInstance) {
     }
     let teamIds = scope.teamIds;
     if (req.session!.role === "dept_admin") {
-      teamIds = await listTeamIdsInDepartments(await listAdminDepartmentIds(req.employeeId!));
+      teamIds = await listTeamIdsInDepartments(await scopedDepartmentIds({
+        departmentIds: req.session!.departmentIds,
+        employeeId: req.employeeId!,
+      }));
     } else if (req.session!.role === "team_admin") {
-      teamIds = await listAdminTeamIds(req.employeeId!);
+      teamIds = await scopedTeamIds({
+        teamIds: req.session!.teamIds,
+        employeeId: req.employeeId!,
+      });
     }
 
     const rows = await buildAdminUserListQuery({

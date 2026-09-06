@@ -15,15 +15,23 @@ import { requireSession } from "../middleware/auth.js";
 function publicEmployee(
   row: typeof employees.$inferSelect,
   enterprise?: { id: number; name: string; code: string; status: string } | null,
+  extras?: {
+    role?: typeof row.role;
+    enterpriseId?: number | null;
+    trueRole?: typeof row.role;
+    actAs?: unknown;
+  },
 ) {
+  const role = extras?.role ?? row.role;
+  const enterpriseId = extras?.enterpriseId ?? row.enterpriseId;
   return {
     id: row.id,
     name: row.name,
     phone: row.phone,
     dept: row.dept,
-    role: row.role,
+    role,
     status: row.status,
-    enterpriseId: row.enterpriseId,
+    enterpriseId,
     enterprise: enterprise
       ? {
           id: enterprise.id,
@@ -34,6 +42,8 @@ function publicEmployee(
       : null,
     mustChangePassword: row.mustChangePassword,
     lastLoginAt: row.lastLoginAt,
+    trueRole: extras?.trueRole ?? row.role,
+    actAs: extras?.actAs ?? null,
   };
 }
 
@@ -204,7 +214,15 @@ export async function authRoutes(app: FastifyInstance) {
     if (!user || user.status !== "active") {
       return reply.code(401).send({ success: false, message: "用户不可用" });
     }
-    return { success: true, data: publicEmployee(user, await loadEnterprise(user.enterpriseId)) };
+    return {
+      success: true,
+      data: publicEmployee(user, await loadEnterprise(req.session!.enterpriseId), {
+        role: req.session!.role,
+        enterpriseId: req.session!.enterpriseId,
+        trueRole: req.session!.trueRole ?? user.role,
+        actAs: req.session!.actAs ?? null,
+      }),
+    };
   });
 
   app.post(

@@ -8,9 +8,9 @@ import { writeOpsAudit } from "../../lib/ops-audit.js";
 import { ensureDefaultTeam } from "../../lib/enterprise.js";
 import {
   canCreateTeam,
-  listAdminTeamIds,
   loadOrgActor,
   resolveTeamListScope,
+  scopedTeamIds,
   type OrgActor,
 } from "../../lib/org.js";
 import { detachAndDeleteTeam } from "./teams.js";
@@ -22,13 +22,19 @@ import {
 } from "../../middleware/auth.js";
 
 async function actorFrom(req: {
-  session?: { role: SessionRole; enterpriseId: number | null };
+  session?: {
+    role: SessionRole;
+    enterpriseId: number | null;
+    departmentIds?: number[];
+    teamIds?: number[];
+  };
   employeeId?: number;
 }): Promise<OrgActor> {
   return loadOrgActor({
     role: req.session!.role,
     enterpriseId: req.session!.enterpriseId ?? null,
     employeeId: req.employeeId!,
+    departmentIds: req.session!.departmentIds,
   });
 }
 
@@ -45,7 +51,9 @@ export async function adminDepartmentRoutes(app: FastifyInstance) {
       .safeParse(req.query);
     if (!query.success) return reply.code(400).send({ success: false, message: "参数无效" });
     const actor = await actorFrom(req);
-    const adminTeamIds = actor.role === "team_admin" ? await listAdminTeamIds(actor.employeeId) : [];
+    const adminTeamIds = actor.role === "team_admin"
+      ? await scopedTeamIds({ teamIds: req.session!.teamIds, employeeId: actor.employeeId })
+      : [];
     const scope = resolveTeamListScope(actor, query.data.enterpriseId, adminTeamIds);
     if ("forbidden" in scope) {
       return reply.code(403).send({ success: false, message: "权限不足" });

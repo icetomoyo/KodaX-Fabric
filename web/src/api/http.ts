@@ -11,6 +11,9 @@ http.interceptors.request.use((config) => {
   if (auth.token) {
     config.headers.Authorization = `Bearer ${auth.token}`;
   }
+  if (auth.actAs) {
+    config.headers["X-Act-As"] = JSON.stringify(auth.actAs);
+  }
   return config;
 });
 
@@ -29,6 +32,13 @@ http.interceptors.response.use(
     if (status === 403 && code === "MUST_CHANGE_PASSWORD") {
       if (location.pathname !== "/change-password") {
         location.href = "/change-password";
+      }
+    }
+    if (status === 400 && code === "INVALID_ACT_AS") {
+      const auth = useAuthStore();
+      if (auth.actAs) {
+        auth.setActAs(null);
+        location.reload();
       }
     }
     return Promise.reject(err);

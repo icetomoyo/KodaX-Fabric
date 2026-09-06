@@ -16,7 +16,7 @@ import {
   usageCountersTeamDaily,
 } from "../../db/schema/index.js";
 import { getChannelOverviewStats } from "../../lib/channel-overview.js";
-import { listAdminDepartmentIds, listAdminTeamIds, listTeamIdsInDepartments } from "../../lib/org.js";
+import { scopedDepartmentIds, scopedTeamIds, listTeamIdsInDepartments } from "../../lib/org.js";
 import { inclusiveDayCount, quotaDayAt, zonedDateRange, zonedMonthRange } from "../../lib/quota-time.js";
 import { fillDailyUsage, summarizeDailyUsage } from "../../lib/user-usage.js";
 import {
@@ -638,12 +638,18 @@ export async function adminOverviewRoutes(app: FastifyInstance) {
     }
     if (role === "dept_admin") {
       const teamIds = await listTeamIdsInDepartments(
-        await listAdminDepartmentIds(req.employeeId!),
+        await scopedDepartmentIds({
+          departmentIds: req.session!.departmentIds,
+          employeeId: req.employeeId!,
+        }),
       );
       return { success: true, data: { ...(await teamScopeOverview(teamIds)), role: "dept_admin" } };
     }
     if (role === "team_admin") {
-      const teamIds = await listAdminTeamIds(req.employeeId!);
+      const teamIds = await scopedTeamIds({
+        teamIds: req.session!.teamIds,
+        employeeId: req.employeeId!,
+      });
       return { success: true, data: await teamScopeOverview(teamIds) };
     }
     return { success: true, data: await platformOverview() };

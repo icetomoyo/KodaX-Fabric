@@ -681,6 +681,13 @@ async function load() {
   }
 }
 
+watch(
+  () => [auth.user?.role, auth.user?.enterpriseId, auth.actAs?.departmentId, auth.actAs?.teamId],
+  () => {
+    if (!auth.isSuperAdmin) void load();
+  },
+);
+
 onMounted(() => {
   if (!auth.isSuperAdmin) void load();
 });
