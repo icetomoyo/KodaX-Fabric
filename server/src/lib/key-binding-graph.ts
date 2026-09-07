@@ -34,6 +34,14 @@ export type KeyBindingVirtualKeyInput = {
   status: "active" | "revoked";
 };
 
+export type KeyBindingScopeType = "employee" | "team" | "enterprise" | "department";
+
+export type KeyBindingCredentialBinding = {
+  scopeType: KeyBindingScopeType;
+  scopeId: number;
+  scopeName: string;
+};
+
 export type KeyBindingCredentialInput = {
   id: number;
   label: string;
@@ -46,9 +54,12 @@ export type KeyBindingCredentialInput = {
   coolingKind?: CreditCoolingKind | null;
   coolUntil?: string | null;
   supportedProtocols: readonly string[];
+  fiveHourCredits?: number;
+  weeklyCredits?: number;
+  fiveHourLimit?: number | null;
+  weeklyLimit?: number | null;
+  binding?: KeyBindingCredentialBinding | null;
 };
-
-export type KeyBindingScopeType = "employee" | "team" | "enterprise" | "department";
 
 export type KeyBindingBindingInput = {
   credentialId: number;

@@ -266,10 +266,10 @@ async function goToRoleHome(role: ActAsPayload["role"] | "admin") {
   }
   if (
     path.startsWith("/admin/credentials")
-    || path.startsWith("/admin/key-bindings")
     || path.startsWith("/admin/model-prices")
     || path.startsWith("/admin/logs")
     || path.startsWith("/admin/ops-audit")
+    || (path.startsWith("/admin/key-bindings") && role !== "org_admin")
   ) {
     await router.replace("/admin");
   }

@@ -567,6 +567,33 @@ test("productLineId filter keeps only that channel's keys and credentials", () =
   );
 });
 
+test("credential usage and binding fields pass through the graph", () => {
+  const graph = buildKeyBindingGraph({
+    employees: [employee({ id: 1, name: "张三", usageTier: "heavy" })],
+    virtualKeys: [virtualKey({ id: 11, employeeId: 1, productLineId: 100 })],
+    credentials: [
+      credential({
+        id: 21,
+        productLineId: 100,
+        fiveHourCredits: 12,
+        weeklyCredits: 34,
+        fiveHourLimit: 100,
+        weeklyLimit: 200,
+        binding: { scopeType: "employee", scopeId: 1, scopeName: "张三" },
+      }),
+    ],
+    bindings: [binding(21, "employee", 1)],
+  });
+
+  assert.equal(graph.credentials[0]?.fiveHourCredits, 12);
+  assert.equal(graph.credentials[0]?.weeklyLimit, 200);
+  assert.deepEqual(graph.credentials[0]?.binding, {
+    scopeType: "employee",
+    scopeId: 1,
+    scopeName: "张三",
+  });
+});
+
 test("enterprise filter keeps that enterprise's employees and reachable channels", () => {
   const graph = buildKeyBindingGraph({
     employees: [

@@ -20,7 +20,7 @@
         资源
         <span v-if="resourceKeys.length" class="fab-count">{{ resourceKeys.length }}</span>
       </button>
-      <button type="button" class="fab primary" @click="filterOpen = true">筛选</button>
+      <button v-if="auth.isSuperAdmin" type="button" class="fab primary" @click="filterOpen = true">筛选</button>
     </div>
 
     <el-drawer
@@ -69,6 +69,81 @@
           </div>
         </article>
       </div>
+      <template #footer>
+        <el-button :loading="loading" @click="load">刷新</el-button>
+      </template>
+    </el-drawer>
+
+    <el-drawer
+      v-model="credentialOpen"
+      :title="selectedCredential?.label || '渠道 Key'"
+      direction="rtl"
+      size="420px"
+      append-to-body
+    >
+      <template v-if="selectedCredential">
+        <section class="detail-block">
+          <div class="resource-top">
+            <strong>{{ selectedCredential.label }}</strong>
+            <el-tag effect="light" :type="resourceTagType(selectedCredential.lane)">
+              {{ resourceLaneLabel(selectedCredential.lane) }}
+            </el-tag>
+          </div>
+          <div class="resource-meta">
+            <span class="mono">…{{ selectedCredential.secretSuffix }}</span>
+            <span>{{ selectedCredential.providerName || selectedCredential.productLineName }}</span>
+          </div>
+        </section>
+
+        <section class="detail-block">
+          <h3>绑定</h3>
+          <p v-if="selectedCredential.binding">
+            {{ bindingScopeLabel(selectedCredential.binding.scopeType) }}
+            · {{ selectedCredential.binding.scopeName || selectedCredential.binding.scopeId }}
+          </p>
+          <p v-else class="muted">当前没有可释放的绑定</p>
+        </section>
+
+        <section class="detail-block">
+          <h3>使用情况</h3>
+          <dl class="quota-list">
+            <div>
+              <dt>5 小时积分</dt>
+              <dd>{{ formatQuotaPair(selectedCredential.fiveHourCredits, selectedCredential.fiveHourLimit) }}</dd>
+            </div>
+            <div>
+              <dt>周积分</dt>
+              <dd>{{ formatQuotaPair(selectedCredential.weeklyCredits, selectedCredential.weeklyLimit) }}</dd>
+            </div>
+            <div v-if="selectedCredential.inFlight">
+              <dt>进行中</dt>
+              <dd>{{ selectedCredential.inFlight }} 路请求</dd>
+            </div>
+          </dl>
+          <el-empty
+            v-if="!credentialUsers.length"
+            description="没有连到这把 Key 的员工"
+            :image-size="56"
+          />
+          <ul v-else class="user-list">
+            <li v-for="row in credentialUsers" :key="row.keyId">
+              <strong>{{ row.employeeName }}</strong>
+              <span>{{ usageTierLabel(row.usageTier) }} · {{ row.keyName }}</span>
+            </li>
+          </ul>
+        </section>
+      </template>
+      <template #footer>
+        <el-button @click="credentialOpen = false">关闭</el-button>
+        <el-button
+          v-if="selectedCredential?.binding"
+          type="primary"
+          :loading="releasing"
+          @click="releaseSelectedCredential"
+        >
+          释放到资源列表
+        </el-button>
+      </template>
     </el-drawer>
   </div>
 </template>
@@ -77,8 +152,9 @@
 import { computed, onMounted, onUnmounted, ref } from "vue";
 import KeyBindingCanvas from "@/components/KeyBindingCanvas.vue";
 import { MarkerType, type Edge, type Node, type NodeMouseEvent } from "@vue-flow/core";
-import { ElMessage } from "element-plus";
+import { ElMessage, ElMessageBox } from "element-plus";
 import { http } from "@/api/http";
+import { useAuthStore } from "@/stores/auth";
 
 type BindingKind =
   | "org"
@@ -143,6 +219,12 @@ type GraphVirtualKey = {
   status: "active" | "revoked";
 };
 
+type GraphCredentialBinding = {
+  scopeType: "employee" | "team" | "enterprise" | "department";
+  scopeId: number;
+  scopeName: string;
+};
+
 type GraphCredential = {
   id: number;
   label: string;
@@ -156,6 +238,11 @@ type GraphCredential = {
   coolUntil?: string | null;
   supportedProtocols: string[];
   bound?: boolean;
+  fiveHourCredits?: number;
+  weeklyCredits?: number;
+  fiveHourLimit?: number | null;
+  weeklyLimit?: number | null;
+  binding?: GraphCredentialBinding | null;
 };
 
 type GraphEdge = {
@@ -248,6 +335,9 @@ const boards = ref<CanvasBoard[]>([]);
 const lastLive = ref<RelayLiveLoad | null>(null);
 const filterOpen = ref(false);
 const resourceOpen = ref(false);
+const credentialOpen = ref(false);
+const releasing = ref(false);
+const auth = useAuthStore();
 const emptyScope: CanvasScope = { enterpriseId: null, departmentId: null, teamId: null };
 
 const orgBoards = computed(() => boards.value.filter((board) => board.mode === "enterprise"));
@@ -259,8 +349,45 @@ const resourceKeys = computed(() => {
   const order: CredentialLane[] = ["pending", "cooling_5h", "cooling_weekly", "disabled"];
   return source.credentials
     .map((row) => ({ ...row, lane: credentialLane(row, boundIds) }))
-    .filter((row) => row.lane !== "bound")
+    .filter((row) => row.bound !== true && row.lane !== "bound")
     .sort((a, b) => order.indexOf(a.lane) - order.indexOf(b.lane) || a.id - b.id);
+});
+const selectedCredential = computed(() => {
+  if (!credentialOpen.value || !selectedNodeId.value?.startsWith("credential:")) return null;
+  const credentialId = parseNodeNumericId(selectedNodeId.value);
+  if (credentialId == null) return null;
+  const source = graph.value;
+  if (!source) return null;
+  const row = source.credentials.find((item) => item.id === credentialId);
+  if (!row) return null;
+  const node = activeBoard.value?.nodes.find((item) => item.id === selectedNodeId.value);
+  return {
+    ...row,
+    lane: (node?.data?.lane as CredentialLane | undefined) ?? credentialLane(row, boundCredentialIds(source)),
+    inFlight: Number(node?.data?.inFlight ?? 0),
+  };
+});
+const credentialUsers = computed(() => {
+  const credentialId = selectedCredential.value?.id;
+  const source = graph.value;
+  if (credentialId == null || !source) return [];
+  const keyIds = new Set(
+    source.edges
+      .filter((edge) => isUseEdgeKind(edge.kind) && edge.targetId === credentialId)
+      .map((edge) => edge.sourceId),
+  );
+  const employeesById = new Map(source.employees.map((row) => [row.id, row]));
+  return source.virtualKeys
+    .filter((key) => keyIds.has(key.id))
+    .map((key) => {
+      const employee = employeesById.get(key.employeeId);
+      return {
+        keyId: key.id,
+        keyName: key.name,
+        employeeName: employee?.name ?? `员工 ${key.employeeId}`,
+        usageTier: employee?.usageTier ?? "standard",
+      };
+    });
 });
 const canvasNodes = computed({
   get: () => activeBoard.value?.nodes ?? [],
@@ -315,6 +442,30 @@ function resourceTagType(lane: CredentialLane): "info" | "warning" | "danger" | 
   if (lane === "cooling_weekly" || lane === "cooling_5h") return "danger";
   if (lane === "disabled") return "info";
   return "success";
+}
+
+function bindingScopeLabel(scopeType: GraphCredentialBinding["scopeType"]): string {
+  if (scopeType === "employee") return "员工独占";
+  if (scopeType === "department") return "部门共享";
+  if (scopeType === "team") return "团队共享";
+  return "企业共享";
+}
+
+function usageTierLabel(tier: UsageTier): string {
+  if (tier === "idle") return "闲置用户";
+  if (tier === "heavy") return "重度用户";
+  return "标准用户";
+}
+
+function formatCreditAmount(value: number | undefined): string {
+  const n = Math.round(Number(value ?? 0));
+  if (!Number.isFinite(n)) return "0";
+  return n.toLocaleString("zh-CN");
+}
+
+function formatQuotaPair(used: number | undefined, limit: number | null | undefined): string {
+  const usedText = formatCreditAmount(used);
+  return limit == null ? `${usedText} / 不限` : `${usedText} / ${formatCreditAmount(limit)} 积分`;
 }
 
 function isUseEdgeKind(kind: BindingKind): kind is UseBindingKind {
@@ -1081,6 +1232,7 @@ function renderGraph() {
 function onTabChange() {
   selectedNodeId.value = null;
   selectedBoardKey.value = null;
+  credentialOpen.value = false;
   applyHighlight();
 }
 
@@ -1088,9 +1240,11 @@ function onNodeClick(boardKey: string, event: NodeMouseEvent) {
   if (selectedBoardKey.value === boardKey && selectedNodeId.value === event.node.id) {
     selectedBoardKey.value = null;
     selectedNodeId.value = null;
+    credentialOpen.value = false;
   } else {
     selectedBoardKey.value = boardKey;
     selectedNodeId.value = event.node.id;
+    credentialOpen.value = event.node.type === "credential";
   }
   applyHighlight();
 }
@@ -1099,7 +1253,40 @@ function onPaneClick(boardKey: string) {
   if (selectedBoardKey.value !== boardKey) return;
   selectedBoardKey.value = null;
   selectedNodeId.value = null;
+  credentialOpen.value = false;
   applyHighlight();
+}
+
+async function releaseSelectedCredential() {
+  const credential = selectedCredential.value;
+  if (!credential?.binding) return;
+  try {
+    await ElMessageBox.confirm(
+      "释放后，该渠道 Key 会回到资源列表。正在使用它的员工下次请求时会重新从资源池挂 Key。",
+      "释放渠道 Key",
+      { type: "warning", confirmButtonText: "释放", cancelButtonText: "取消" },
+    );
+  } catch {
+    return;
+  }
+  releasing.value = true;
+  try {
+    const { data } = await http.post(`/api/admin/key-bindings/credentials/${credential.id}/release`);
+    if (!data.success) {
+      throw new Error(data.message || "释放失败");
+    }
+    ElMessage.success("已释放到资源列表");
+    credentialOpen.value = false;
+    selectedNodeId.value = null;
+    selectedBoardKey.value = null;
+    await load();
+    resourceOpen.value = true;
+  } catch (error) {
+    const err = error as { response?: { data?: { message?: string } }; message?: string };
+    ElMessage.error(err.response?.data?.message || err.message || "释放失败");
+  } finally {
+    releasing.value = false;
+  }
 }
 
 async function load() {
@@ -1120,6 +1307,7 @@ async function load() {
     );
     selectedNodeId.value = null;
     selectedBoardKey.value = null;
+    credentialOpen.value = false;
     renderGraph();
   } catch (error) {
     const err = error as { response?: { data?: { message?: string } }; message?: string };
@@ -1280,5 +1468,79 @@ onUnmounted(() => {
 .resource-meta .mono {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   color: #475569;
+}
+
+.detail-block {
+  margin-bottom: 20px;
+}
+
+.detail-block h3 {
+  margin: 0 0 8px;
+  color: #0f172a;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.detail-block p {
+  margin: 0;
+  color: #334155;
+  font-size: 13px;
+}
+
+.detail-block .muted {
+  color: #94a3b8;
+}
+
+.quota-list {
+  display: grid;
+  gap: 8px;
+  margin: 0 0 12px;
+}
+
+.quota-list div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.quota-list dt {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.quota-list dd {
+  margin: 0;
+  color: #0f172a;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.user-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.user-list li {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  border: 1px solid #eef2f7;
+  border-radius: 10px;
+  background: #f8fafc;
+}
+
+.user-list strong {
+  color: #0f172a;
+  font-size: 13px;
+}
+
+.user-list span {
+  color: #64748b;
+  font-size: 12px;
 }
 </style>

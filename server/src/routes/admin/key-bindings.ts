@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import { eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../../db/client.js";
 import {
@@ -19,7 +19,14 @@ import { snapshotRelayLiveLoad } from "../../lib/relay/credential-load.js";
 import {
   buildKeyBindingGraph,
   usageTierForKeyBindingGraph,
+  type KeyBindingCredentialBinding,
+  type KeyBindingScopeType,
 } from "../../lib/key-binding-graph.js";
+import { writeOpsAudit } from "../../lib/ops-audit.js";
+import {
+  loadBindingEnterpriseId,
+  releaseCredentialBinding,
+} from "../../lib/relay/binding.js";
 import {
   evaluateCredentialQuota,
   getCredentialQuotaUsage,
@@ -40,12 +47,21 @@ const querySchema = z.object({
 export async function adminKeyBindingRoutes(app: FastifyInstance) {
   app.addHook("preHandler", requireSession);
   app.addHook("preHandler", requirePasswordChanged);
-  app.addHook("preHandler", requireRoles("admin"));
+  app.addHook("preHandler", requireRoles("admin", "org_admin"));
 
   app.get("/api/admin/key-bindings", async (req, reply) => {
     const query = querySchema.safeParse(req.query);
     if (!query.success) {
       return reply.code(400).send({ success: false, message: "参数无效" });
+    }
+
+    const scopedEnterpriseId = resolveActorEnterpriseFilter(
+      req.session?.role,
+      req.session?.enterpriseId,
+      query.data.enterpriseId,
+    );
+    if (scopedEnterpriseId === "forbidden") {
+      return reply.code(403).send({ success: false, message: "权限不足" });
     }
 
     const now = new Date();
@@ -154,6 +170,7 @@ export async function adminKeyBindingRoutes(app: FastifyInstance) {
       credentialRows.map((row) => row.id),
       now,
     );
+    const bindingViewById = await loadCredentialBindingViews(bindingRows);
 
     const graph = buildKeyBindingGraph({
       employees: [...employeesById.values()],
@@ -193,12 +210,17 @@ export async function adminKeyBindingRoutes(app: FastifyInstance) {
           coolingKind,
           coolUntil: coolingUntilIso(coolingKind, row.coolUntil, quota.exhaustedUntil),
           supportedProtocols: row.supportedProtocols ?? [],
+          fiveHourCredits: quota.fiveHourCredits,
+          weeklyCredits: quota.weeklyCredits,
+          fiveHourLimit: quota.fiveHourLimit,
+          weeklyLimit: quota.weeklyLimit,
+          binding: bindingViewById.get(row.id) ?? null,
         };
       }),
       bindings: bindingRows,
       filter: {
         productLineId: query.data.productLineId,
-        enterpriseId: query.data.enterpriseId,
+        enterpriseId: scopedEnterpriseId,
         q: query.data.q,
       },
     });
@@ -209,6 +231,150 @@ export async function adminKeyBindingRoutes(app: FastifyInstance) {
   app.get("/api/admin/key-bindings/live", async () => {
     return { success: true, data: snapshotRelayLiveLoad() };
   });
+
+  app.post("/api/admin/key-bindings/credentials/:id/release", async (req, reply) => {
+    const params = z.object({ id: z.coerce.number().int().positive() }).safeParse(req.params);
+    if (!params.success) {
+      return reply.code(400).send({ success: false, message: "参数无效" });
+    }
+
+    const credentialId = params.data.id;
+    const [locator] = await db
+      .select({
+        credentialId: credentialBindings.credentialId,
+        scopeType: credentialBindings.scopeType,
+        scopeId: credentialBindings.scopeId,
+      })
+      .from(credentialBindings)
+      .where(eq(credentialBindings.credentialId, credentialId))
+      .limit(1);
+    if (!locator) {
+      return reply.code(409).send({
+        success: false,
+        message: "该渠道 Key 当前没有可释放的绑定",
+      });
+    }
+
+    if (req.session?.role === "org_admin") {
+      if (req.session.enterpriseId == null) {
+        return reply.code(403).send({ success: false, message: "权限不足" });
+      }
+      const bindingEnterpriseId = await loadBindingEnterpriseId({
+        scopeType: locator.scopeType,
+        scopeId: locator.scopeId,
+      });
+      if (bindingEnterpriseId !== req.session.enterpriseId) {
+        return reply.code(403).send({ success: false, message: "权限不足" });
+      }
+    }
+
+    const released = await releaseCredentialBinding(credentialId);
+    if (!released) {
+      return reply.code(409).send({
+        success: false,
+        message: "该渠道 Key 当前没有可释放的绑定",
+      });
+    }
+
+    await writeOpsAudit({
+      actorEmployeeId: req.employeeId,
+      action: "credential.release_binding",
+      targetType: "upstream_credential",
+      targetId: String(credentialId),
+      detail: {
+        productLineId: released.productLineId,
+        scopeType: released.scopeType,
+        scopeId: released.scopeId,
+      },
+      ip: req.ip,
+    });
+
+    return {
+      success: true,
+      data: {
+        credentialId: released.credentialId,
+        productLineId: released.productLineId,
+        scopeType: released.scopeType,
+        scopeId: released.scopeId,
+      },
+    };
+  });
+}
+
+export function resolveActorEnterpriseFilter(
+  role: string | undefined,
+  actorEnterpriseId: number | null | undefined,
+  requestedEnterpriseId: number | undefined,
+): number | undefined | "forbidden" {
+  if (role === "org_admin") {
+    if (actorEnterpriseId == null) return "forbidden";
+    if (requestedEnterpriseId != null && requestedEnterpriseId !== actorEnterpriseId) {
+      return "forbidden";
+    }
+    return actorEnterpriseId;
+  }
+  return requestedEnterpriseId;
+}
+
+async function loadCredentialBindingViews(
+  bindings: readonly {
+    credentialId: number;
+    scopeType: KeyBindingScopeType;
+    scopeId: number;
+  }[],
+): Promise<Map<number, KeyBindingCredentialBinding>> {
+  const views = new Map<number, KeyBindingCredentialBinding>();
+  if (bindings.length === 0) return views;
+
+  const rows = await db
+    .select({
+      credentialId: credentialBindings.credentialId,
+      scopeType: credentialBindings.scopeType,
+      scopeId: credentialBindings.scopeId,
+      employeeName: employees.name,
+      teamName: teams.name,
+      departmentName: departments.name,
+      enterpriseName: enterprises.name,
+    })
+    .from(credentialBindings)
+    .leftJoin(
+      employees,
+      and(
+        eq(credentialBindings.scopeType, "employee"),
+        eq(employees.id, credentialBindings.scopeId),
+      ),
+    )
+    .leftJoin(
+      teams,
+      and(
+        eq(credentialBindings.scopeType, "team"),
+        eq(teams.id, credentialBindings.scopeId),
+      ),
+    )
+    .leftJoin(
+      departments,
+      and(
+        eq(credentialBindings.scopeType, "department"),
+        eq(departments.id, credentialBindings.scopeId),
+      ),
+    )
+    .leftJoin(
+      enterprises,
+      and(
+        eq(credentialBindings.scopeType, "enterprise"),
+        eq(enterprises.id, credentialBindings.scopeId),
+      ),
+    )
+    .where(inArray(credentialBindings.credentialId, bindings.map((row) => row.credentialId)));
+
+  for (const row of rows) {
+    views.set(row.credentialId, {
+      scopeType: row.scopeType,
+      scopeId: row.scopeId,
+      scopeName: row.employeeName ?? row.departmentName ?? row.teamName ?? row.enterpriseName ?? "",
+    });
+  }
+  return views;
 }
 
 function creditLimitNumber(value: string | null): number | null {

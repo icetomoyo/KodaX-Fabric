@@ -23,7 +23,7 @@
         <el-menu-item v-if="auth.isOrgAdmin || auth.isDeptAdmin || auth.isTeamAdmin" index="/admin/guide">接入教程</el-menu-item>
         <el-menu-item v-if="auth.isOrgAdmin || auth.isDeptAdmin || auth.isTeamAdmin" index="/admin/my-logs">我的调用</el-menu-item>
         <el-menu-item v-if="auth.isSuperAdmin" index="/admin/credentials">上游渠道</el-menu-item>
-        <el-menu-item v-if="auth.isSuperAdmin" index="/admin/key-bindings">调度画布</el-menu-item>
+        <el-menu-item v-if="auth.isSuperAdmin || auth.isOrgAdmin" index="/admin/key-bindings">调度画布</el-menu-item>
         <el-menu-item v-if="auth.isSuperAdmin" index="/admin/model-prices">模型列表</el-menu-item>
         <el-menu-item v-if="auth.isSuperAdmin" index="/admin/logs">调用日志</el-menu-item>
         <el-menu-item index="/admin/error-logs">报错日志</el-menu-item>

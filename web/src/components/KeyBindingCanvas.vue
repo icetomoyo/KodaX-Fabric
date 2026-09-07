@@ -78,7 +78,7 @@
       </template>
       <template #node-credential="{ data }">
         <div
-          class="graph-node credential"
+          class="graph-node credential clickable"
           :class="[
             data.lane,
             {
@@ -412,6 +412,10 @@ function credentialCaption(data: {
 
 .graph-node.credential.working.afterglow {
   box-shadow: 0 0 0 2px rgba(194, 65, 12, 0.16);
+}
+
+.graph-node.clickable {
+  cursor: pointer;
 }
 
 .graph-node.dimmed {

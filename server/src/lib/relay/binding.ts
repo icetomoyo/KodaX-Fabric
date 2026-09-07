@@ -16,6 +16,7 @@ import { env } from "../../config.js";
 import { db } from "../../db/client.js";
 import {
   credentialBindings,
+  departments,
   employeeApiKeys,
   employees,
   productLines,
@@ -232,6 +233,71 @@ export function unusedBindingIds(
   return bindings
     .filter((row) => !bindingStillNeeded(row, people))
     .map((row) => row.id);
+}
+
+/**
+ * Enterprise that currently owns a binding. Enterprise-scoped rows are the
+ * scope itself; other scopes use the subject's `enterpriseId`.
+ */
+export function enterpriseIdForBindingScope(
+  binding: BindingScope,
+  subjectEnterpriseId: number | null | undefined,
+): number | null {
+  if (binding.scopeType === "enterprise") return binding.scopeId;
+  return subjectEnterpriseId ?? null;
+}
+
+export type ReleasedCredentialBinding = {
+  id: number;
+  credentialId: number;
+  productLineId: number;
+  scopeType: BindingScopeType;
+  scopeId: number;
+};
+
+/** Drop the current binding so the channel Key returns to the unbound pool. */
+export async function releaseCredentialBinding(
+  credentialId: number,
+): Promise<ReleasedCredentialBinding | null> {
+  const [row] = await db
+    .delete(credentialBindings)
+    .where(eq(credentialBindings.credentialId, credentialId))
+    .returning({
+      id: credentialBindings.id,
+      credentialId: credentialBindings.credentialId,
+      productLineId: credentialBindings.productLineId,
+      scopeType: credentialBindings.scopeType,
+      scopeId: credentialBindings.scopeId,
+    });
+  return row ?? null;
+}
+
+export async function loadBindingEnterpriseId(
+  binding: BindingScope,
+): Promise<number | null> {
+  if (binding.scopeType === "enterprise") return binding.scopeId;
+  if (binding.scopeType === "employee") {
+    const [row] = await db
+      .select({ enterpriseId: employees.enterpriseId })
+      .from(employees)
+      .where(eq(employees.id, binding.scopeId))
+      .limit(1);
+    return row?.enterpriseId ?? null;
+  }
+  if (binding.scopeType === "department") {
+    const [row] = await db
+      .select({ enterpriseId: departments.enterpriseId })
+      .from(departments)
+      .where(eq(departments.id, binding.scopeId))
+      .limit(1);
+    return row?.enterpriseId ?? null;
+  }
+  const [row] = await db
+    .select({ enterpriseId: teams.enterpriseId })
+    .from(teams)
+    .where(eq(teams.id, binding.scopeId))
+    .limit(1);
+  return row?.enterpriseId ?? null;
 }
 
 async function loadRecentUsage(

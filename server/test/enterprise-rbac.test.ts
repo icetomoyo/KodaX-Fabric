@@ -18,6 +18,9 @@ const { adminUserRoutes, buildAdminUserListQuery } = await import(
   "../src/routes/admin/users.js"
 );
 const { adminCredentialRoutes } = await import("../src/routes/admin/credentials.js");
+const { adminKeyBindingRoutes, resolveActorEnterpriseFilter } = await import(
+  "../src/routes/admin/key-bindings.js"
+);
 const { canAccessEmployee, resolveUpdatedUserFields, resolveUserListScope } = await import(
   "../src/lib/enterprise.js"
 );
@@ -32,8 +35,12 @@ const orgAdminSession = {
   enterpriseId: 3,
 };
 
-function attachSession(session: typeof orgAdminSession) {
-  return async (req: { session?: typeof orgAdminSession; employeeId?: number }) => {
+type TestSession = Omit<typeof orgAdminSession, "role"> & {
+  role: "admin" | "org_admin" | "dept_admin" | "team_admin";
+};
+
+function attachSession(session: TestSession) {
+  return async (req: { session?: TestSession; employeeId?: number }) => {
     req.session = session;
     req.employeeId = Number(session.sub);
   };
@@ -131,6 +138,73 @@ test("org_admin cannot create or list-all enterprises and cannot call super-admi
     assert.equal(credentials.statusCode, 403);
     assert.equal(quota.statusCode, 404);
     assert.equal(unscopedUsers.statusCode, 403);
+  } finally {
+    await app.close();
+  }
+});
+
+test("unauthenticated key-binding calls return 401", async () => {
+  const app = Fastify();
+  await app.register(adminKeyBindingRoutes);
+  await app.ready();
+  try {
+    const graph = await app.inject({ method: "GET", url: "/api/admin/key-bindings" });
+    const live = await app.inject({ method: "GET", url: "/api/admin/key-bindings/live" });
+    const release = await app.inject({
+      method: "POST",
+      url: "/api/admin/key-bindings/credentials/1/release",
+    });
+    assert.equal(graph.statusCode, 401);
+    assert.equal(live.statusCode, 401);
+    assert.equal(release.statusCode, 401);
+  } finally {
+    await app.close();
+  }
+});
+
+test("dept_admin cannot open the scheduling canvas or release a channel Key", async () => {
+  const app = Fastify();
+  app.addHook("onRequest", attachSession({
+    ...orgAdminSession,
+    role: "dept_admin",
+  }));
+  await app.register(adminKeyBindingRoutes);
+  await app.ready();
+  try {
+    const graph = await app.inject({ method: "GET", url: "/api/admin/key-bindings" });
+    const release = await app.inject({
+      method: "POST",
+      url: "/api/admin/key-bindings/credentials/1/release",
+    });
+    assert.equal(graph.statusCode, 403);
+    assert.equal(release.statusCode, 403);
+  } finally {
+    await app.close();
+  }
+});
+
+test("org_admin canvas is locked to that enterprise", () => {
+  assert.equal(resolveActorEnterpriseFilter("org_admin", 3, undefined), 3);
+  assert.equal(resolveActorEnterpriseFilter("org_admin", 3, 3), 3);
+  assert.equal(resolveActorEnterpriseFilter("org_admin", 3, 99), "forbidden");
+  assert.equal(resolveActorEnterpriseFilter("org_admin", null, 3), "forbidden");
+  assert.equal(resolveActorEnterpriseFilter("admin", null, 8), 8);
+  assert.equal(resolveActorEnterpriseFilter("admin", null, undefined), undefined);
+});
+
+test("org_admin can poll canvas live load and is rejected for an invalid release id", async () => {
+  const app = Fastify();
+  app.addHook("onRequest", attachSession(orgAdminSession));
+  await app.register(adminKeyBindingRoutes);
+  await app.ready();
+  try {
+    const live = await app.inject({ method: "GET", url: "/api/admin/key-bindings/live" });
+    const release = await app.inject({
+      method: "POST",
+      url: "/api/admin/key-bindings/credentials/abc/release",
+    });
+    assert.equal(live.statusCode, 200);
+    assert.equal(release.statusCode, 400);
   } finally {
     await app.close();
   }

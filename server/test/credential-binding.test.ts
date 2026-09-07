@@ -10,6 +10,7 @@ const { classifyUsageTier } = await import("../src/lib/usage-tier.js");
 const { isOpenPoolProvider } = await import("../src/lib/relay/open-pool.js");
 const {
   bindingStillNeeded,
+  enterpriseIdForBindingScope,
   resolveBindingScope,
   resolveBindingScopeFromPeak,
   unusedBindingIds,
@@ -272,5 +273,24 @@ test("shared bindings stay when someone still resolves onto them", () => {
       people,
     ),
     [1],
+  );
+});
+
+test("enterprise-scoped bindings belong to that enterprise even if the subject is elsewhere", () => {
+  assert.equal(
+    enterpriseIdForBindingScope({ scopeType: "enterprise", scopeId: 7 }, 99),
+    7,
+  );
+  assert.equal(
+    enterpriseIdForBindingScope({ scopeType: "department", scopeId: 8 }, 3),
+    3,
+  );
+  assert.equal(
+    enterpriseIdForBindingScope({ scopeType: "employee", scopeId: 11 }, 3),
+    3,
+  );
+  assert.equal(
+    enterpriseIdForBindingScope({ scopeType: "team", scopeId: 10 }, null),
+    null,
   );
 });

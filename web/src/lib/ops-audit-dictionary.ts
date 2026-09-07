@@ -50,6 +50,7 @@ export const OPS_AUDIT_ACTION_LABELS: Record<string, string> = {
   "credential.delete": "删除上游 Key",
   "credential.bulk_delete": "批量删除上游 Key",
   "credential.test": "测试上游 Key",
+  "credential.release_binding": "释放渠道 Key",
   "model_route.create": "新建模型路由",
   "model_route.update": "更新模型路由",
   "model_route.delete": "删除模型路由",

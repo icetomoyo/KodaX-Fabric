@@ -338,6 +338,8 @@ test("key binding page is a full canvas with a filter drawer and unbound-key ent
   assert.match(view, /isScheduledUseKind/);
   assert.match(view, /kind === "dedicated" \|\| kind === "department_shared" \|\| kind === "open_shared"/);
   assert.match(view, /fab-stack/);
+  assert.match(view, /释放到资源列表/);
+  assert.match(view, /\/api\/admin\/key-bindings\/credentials\/\$\{credential.id\}\/release/);
 });
 
 test("admin shell uses org board for all console roles", () => {
@@ -351,6 +353,7 @@ test("admin shell uses org board for all console roles", () => {
   assert.match(layout, /v-if="auth.isTeamAdmin" index="\/admin\/enterprises">员工/);
   assert.match(layout, /isOrgAdmin \|\| auth.isDeptAdmin \|\| auth.isTeamAdmin" index="\/admin\/keys">API Key/);
   assert.match(layout, /index="\/admin\/guide">接入教程/);
+  assert.match(layout, /isSuperAdmin \|\| auth.isOrgAdmin" index="\/admin\/key-bindings">调度画布/);
   assert.doesNotMatch(layout, /index="\/admin\/departments"/);
   assert.doesNotMatch(layout, /index="\/admin\/teams"/);
   assert.doesNotMatch(layout, /index="\/admin\/members"/);
@@ -365,6 +368,7 @@ test("admin shell uses org board for all console roles", () => {
   assert.match(router, /admin-keys/);
   assert.match(router, /admin-guide/);
   assert.match(router, /team_admin/);
+  assert.match(router, /name: "admin-key-bindings"[\s\S]*roles: \["admin", "org_admin"\]/);
   const orgView = readFileSync(resolve(root, "web/src/views/admin/EnterprisesView.vue"), "utf8");
   assert.match(orgView, /showEnterprisePane/);
   assert.match(orgView, /showDepartmentPane/);
