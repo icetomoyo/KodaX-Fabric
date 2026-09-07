@@ -8,8 +8,10 @@
     <KeyBindingCanvas
       v-else-if="activeBoard"
       :key="activeBoardKey"
-      v-model:nodes="canvasNodes"
-      v-model:edges="canvasEdges"
+      :nodes="canvasNodes"
+      :edges="canvasEdges"
+      :selected-node-id="selectedNodeId"
+      :live="lastLive"
       :active="true"
       @node-click="(event) => onNodeClick(activeBoardKey, event)"
       @pane-click="() => onPaneClick(activeBoardKey)"
@@ -324,7 +326,7 @@ const STATUS_HEADERS: Array<{
 const NODE_H = 92;
 const NODE_GAP = 40;
 const GROUP_GAP = 72;
-const LIVE_POLL_MS = 2000;
+const LIVE_POLL_MS = 4000;
 
 const loading = ref(false);
 const graph = ref<KeyBindingGraph | null>(null);
@@ -333,6 +335,7 @@ const selectedBoardKey = ref<string | null>(null);
 const activeBoardKey = ref("");
 const boards = ref<CanvasBoard[]>([]);
 const lastLive = ref<RelayLiveLoad | null>(null);
+let lastLiveStamp = "";
 const filterOpen = ref(false);
 const resourceOpen = ref(false);
 const credentialOpen = ref(false);
@@ -361,10 +364,11 @@ const selectedCredential = computed(() => {
   const row = source.credentials.find((item) => item.id === credentialId);
   if (!row) return null;
   const node = activeBoard.value?.nodes.find((item) => item.id === selectedNodeId.value);
+  const live = lastLive.value?.credentials.find((item) => item.id === credentialId);
   return {
     ...row,
     lane: (node?.data?.lane as CredentialLane | undefined) ?? credentialLane(row, boundCredentialIds(source)),
-    inFlight: Number(node?.data?.inFlight ?? 0),
+    inFlight: Number(live?.inFlight ?? node?.data?.inFlight ?? 0),
   };
 });
 const credentialUsers = computed(() => {
@@ -389,18 +393,8 @@ const credentialUsers = computed(() => {
       };
     });
 });
-const canvasNodes = computed({
-  get: () => activeBoard.value?.nodes ?? [],
-  set: (value) => {
-    if (activeBoard.value) activeBoard.value.nodes = value;
-  },
-});
-const canvasEdges = computed({
-  get: () => activeBoard.value?.edges ?? [],
-  set: (value) => {
-    if (activeBoard.value) activeBoard.value.edges = value;
-  },
-});
+const canvasNodes = computed(() => activeBoard.value?.nodes ?? []);
+const canvasEdges = computed(() => activeBoard.value?.edges ?? []);
 const orgBoardKey = computed({
   get: () => activeBoardKey.value,
   set: (value: string) => {
@@ -763,7 +757,7 @@ function makeNode(type: NodeKind, id: number, x: number, y: number, data: Record
     type,
     position: { x, y },
     data: { ...data, dimmed: false, active: false },
-    draggable: true,
+    draggable: false,
     connectable: false,
   };
 }
@@ -1043,7 +1037,7 @@ function layoutGraph(
         id: edge.id,
         source: nodeId(edge.sourceType, edge.sourceId),
         target: nodeId(edge.targetType, edge.targetId),
-        type: useEdge ? "traffic" : "step",
+        type: useEdge ? "smoothstep" : "step",
         animated: false,
         markerEnd: MarkerType.ArrowClosed,
         pathOptions: { offset: 28, borderRadius: 8 },
@@ -1062,146 +1056,9 @@ function layoutGraph(
   return { nodes: laidNodes, edges: laidEdges };
 }
 
-function relatedIds(
-  origin: string,
-  currentEdges: Array<{ source: string; target: string }>,
-): Set<string> {
-  const ids = new Set<string>([origin]);
-  const walk = (fromTarget: boolean) => {
-    const queue = [origin];
-    const seen = new Set<string>([origin]);
-    while (queue.length) {
-      const current = queue.shift();
-      if (!current) break;
-      for (const edge of currentEdges) {
-        const next = fromTarget
-          ? edge.target === current
-            ? edge.source
-            : null
-          : edge.source === current
-            ? edge.target
-            : null;
-        if (!next || seen.has(next)) continue;
-        seen.add(next);
-        ids.add(next);
-        queue.push(next);
-      }
-    }
-  };
-  walk(false);
-  walk(true);
-  return ids;
-}
-
-function applyHighlight() {
-  for (const board of boards.value) {
-    const selected =
-      selectedBoardKey.value === board.key ? selectedNodeId.value : null;
-    const related = selected ? relatedIds(selected, board.edges) : null;
-    for (const node of board.nodes) {
-      if (node.type === "lane_header") continue;
-      node.data.active = node.id === selected;
-      node.data.dimmed = related != null && !related.has(node.id);
-    }
-    for (const edge of board.edges) {
-      const keep = related == null || (related.has(edge.source) && related.has(edge.target));
-      edge.style = {
-        ...(edge.style ?? {}),
-        opacity: keep ? 1 : 0.12,
-      };
-      if (edge.data) edge.data.dimmed = !keep;
-    }
-  }
-}
-
 function parseNodeNumericId(id: string): number | null {
   const value = Number(id.slice(id.indexOf(":") + 1));
   return Number.isSafeInteger(value) ? value : null;
-}
-
-function patchGraphData(
-  target: { data?: any },
-  patch: { working: boolean; afterglow: boolean; inFlight: number },
-) {
-  const current = target.data ?? {};
-  if (
-    current.working === patch.working &&
-    current.afterglow === patch.afterglow &&
-    current.inFlight === patch.inFlight
-  ) {
-    return;
-  }
-  target.data = { ...current, ...patch };
-}
-
-function applyLiveLoad() {
-  const live = lastLive.value;
-  const keyLoad = new Map((live?.keys ?? []).map((row) => [row.id, row]));
-  const credLoad = new Map((live?.credentials ?? []).map((row) => [row.id, row]));
-  const hopLoad = new Map(
-    (live?.hops ?? []).map((row) => [`${row.virtualKeyId}:${row.credentialId}`, row]),
-  );
-  const workingEmployees = new Set<number>();
-  const allNodes: any[] = [];
-  const allEdges: any[] = [];
-  for (const board of boards.value) {
-    for (const node of board.nodes) allNodes.push(node);
-    for (const edge of board.edges) allEdges.push(edge);
-  }
-
-  for (const node of allNodes) {
-    if (node.type === "lane_header") continue;
-    if (node.type === "virtual_key") {
-      const load = keyLoad.get(Number(node.data.id));
-      const working = Boolean(load && (load.inFlight > 0 || load.afterglow));
-      patchGraphData(node, {
-        working,
-        afterglow: Boolean(working && load && load.inFlight <= 0),
-        inFlight: load?.inFlight ?? 0,
-      });
-      if (working && typeof node.data.employeeId === "number") {
-        workingEmployees.add(node.data.employeeId);
-      }
-      continue;
-    }
-    if (node.type === "credential") {
-      const load = credLoad.get(Number(node.data.id));
-      const working = Boolean(load && (load.inFlight > 0 || load.afterglow));
-      patchGraphData(node, {
-        working,
-        afterglow: Boolean(working && load && load.inFlight <= 0),
-        inFlight: load?.inFlight ?? 0,
-      });
-      continue;
-    }
-    patchGraphData(node, { working: false, afterglow: false, inFlight: 0 });
-  }
-  for (const node of allNodes) {
-    if (node.type !== "employee") continue;
-    patchGraphData(node, {
-      working: workingEmployees.has(Number(node.data.id)),
-      afterglow: false,
-      inFlight: 0,
-    });
-  }
-
-  for (const edge of allEdges) {
-    const kind = edge.data?.kind as BindingKind | undefined;
-    if (!kind || !isUseEdgeKind(kind) || !edge.data) {
-      if (edge.data) patchGraphData(edge, { working: false, afterglow: false, inFlight: 0 });
-      continue;
-    }
-    const sourceId = parseNodeNumericId(String(edge.source));
-    const targetId = parseNodeNumericId(String(edge.target));
-    const hop =
-      sourceId != null && targetId != null ? hopLoad.get(`${sourceId}:${targetId}`) : undefined;
-    const working = Boolean(hop && (hop.inFlight > 0 || hop.afterglow));
-    patchGraphData(edge, {
-      working,
-      afterglow: Boolean(working && hop && hop.inFlight <= 0),
-      inFlight: hop?.inFlight ?? 0,
-    });
-  }
 }
 
 function renderGraph() {
@@ -1225,15 +1082,12 @@ function renderGraph() {
   if (!nextBoards.some((board) => board.key === activeBoardKey.value)) {
     activeBoardKey.value = nextBoards[0]?.key ?? "";
   }
-  applyHighlight();
-  applyLiveLoad();
 }
 
 function onTabChange() {
   selectedNodeId.value = null;
   selectedBoardKey.value = null;
   credentialOpen.value = false;
-  applyHighlight();
 }
 
 function onNodeClick(boardKey: string, event: NodeMouseEvent) {
@@ -1246,7 +1100,6 @@ function onNodeClick(boardKey: string, event: NodeMouseEvent) {
     selectedNodeId.value = event.node.id;
     credentialOpen.value = event.node.type === "credential";
   }
-  applyHighlight();
 }
 
 function onPaneClick(boardKey: string) {
@@ -1254,7 +1107,6 @@ function onPaneClick(boardKey: string) {
   selectedBoardKey.value = null;
   selectedNodeId.value = null;
   credentialOpen.value = false;
-  applyHighlight();
 }
 
 async function releaseSelectedCredential() {
@@ -1324,8 +1176,10 @@ async function pollLive() {
   try {
     const { data } = await http.get("/api/admin/key-bindings/live");
     if (!data.success) return;
+    const stamp = JSON.stringify(data.data);
+    if (stamp === lastLiveStamp) return;
+    lastLiveStamp = stamp;
     lastLive.value = data.data;
-    applyLiveLoad();
   } catch {
     // Keep the last snapshot; a missed poll should not toast.
   }

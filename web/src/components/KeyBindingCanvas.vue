@@ -3,14 +3,20 @@
     <el-empty v-if="!nodes.length" description="没有可展示的绑定关系" :image-size="72" />
     <VueFlow
       v-else
-      v-model:nodes="innerNodes"
-      v-model:edges="innerEdges"
+      :nodes="nodes"
+      :edges="edges"
       :min-zoom="0.15"
       :max-zoom="1.6"
       :default-viewport="{ zoom: 0.45 }"
+      :nodes-draggable="false"
       :nodes-connectable="false"
       :edges-updatable="false"
       :elements-selectable="true"
+      :select-nodes-on-drag="false"
+      :auto-pan-on-node-drag="false"
+      :only-render-visible-elements="true"
+      :elevate-nodes-on-select="false"
+      :elevate-edges-on-select="false"
       fit-view-on-init
       @node-click="onNodeClick"
       @pane-click="emit('pane-click')"
@@ -104,7 +110,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, watch } from "vue";
+import { nextTick, unref, watch } from "vue";
 import {
   VueFlow,
   Handle,
@@ -126,33 +132,30 @@ type UsageTier = "idle" | "standard" | "heavy";
 type CoolingKind = "five_hour" | "weekly" | "other";
 type CredentialLane = "bound" | "pending" | "cooling_5h" | "cooling_weekly" | "disabled";
 
+type LiveNode = { id: number; inFlight: number; afterglow: boolean };
+type LiveHop = { virtualKeyId: number; credentialId: number; inFlight: number; afterglow: boolean };
+type LiveLoad = { keys: LiveNode[]; credentials: LiveNode[]; hops: LiveHop[] };
+
 const props = defineProps<{
   nodes: Node[];
   edges: Edge[];
+  selectedNodeId?: string | null;
+  live?: LiveLoad | null;
   active?: boolean;
 }>();
 
 const emit = defineEmits<{
-  "update:nodes": [Node[]];
-  "update:edges": [Edge[]];
   "node-click": [NodeMouseEvent];
   "pane-click": [];
 }>();
-
-const innerNodes = computed({
-  get: () => props.nodes,
-  set: (value) => emit("update:nodes", value),
-});
-const innerEdges = computed({
-  get: () => props.edges,
-  set: (value) => emit("update:edges", value),
-});
 
 let flowStore: VueFlowStore | null = null;
 
 function onFlowInit(store: VueFlowStore) {
   flowStore = store;
   fit();
+  syncSelection();
+  syncLive();
 }
 
 function fit() {
@@ -167,6 +170,174 @@ watch(
     if (props.active !== false) fit();
   },
 );
+
+watch(
+  () => props.nodes,
+  () => {
+    void nextTick(() => {
+      syncSelection();
+      syncLive();
+    });
+  },
+);
+
+watch(() => props.selectedNodeId, syncSelection);
+watch(() => props.live, syncLive);
+
+function relatedIds(origin: string, currentEdges: Array<{ source: string; target: string }>): Set<string> {
+  const ids = new Set<string>([origin]);
+  const walk = (fromTarget: boolean) => {
+    const queue = [origin];
+    const seen = new Set<string>([origin]);
+    while (queue.length) {
+      const current = queue.shift();
+      if (!current) break;
+      for (const edge of currentEdges) {
+        const next = fromTarget
+          ? edge.target === current
+            ? edge.source
+            : null
+          : edge.source === current
+            ? edge.target
+            : null;
+        if (!next || seen.has(next)) continue;
+        seen.add(next);
+        ids.add(next);
+        queue.push(next);
+      }
+    }
+  };
+  walk(false);
+  walk(true);
+  return ids;
+}
+
+function parseNumericId(id: string): number | null {
+  const value = Number(id.slice(id.indexOf(":") + 1));
+  return Number.isSafeInteger(value) ? value : null;
+}
+
+function patchNode(
+  id: string,
+  patch: { active?: boolean; dimmed?: boolean; working?: boolean; afterglow?: boolean; inFlight?: number },
+) {
+  const store = flowStore;
+  if (!store) return;
+  const node = store.findNode(id);
+  if (!node?.data) return;
+  const data = node.data as Record<string, unknown>;
+  for (const [key, value] of Object.entries(patch)) {
+    if (data[key] === value) continue;
+    store.updateNodeData(id, patch);
+    return;
+  }
+}
+
+function storeNodes() {
+  return unref(flowStore?.nodes) ?? [];
+}
+
+function storeEdges() {
+  return unref(flowStore?.edges) ?? [];
+}
+
+function syncSelection() {
+  const store = flowStore;
+  if (!store) return;
+  const selected = props.selectedNodeId ?? null;
+  const edges = storeEdges();
+  const related = selected ? relatedIds(selected, edges.map((edge) => ({ source: edge.source, target: edge.target }))) : null;
+  for (const node of storeNodes()) {
+    if (node.type === "lane_header") continue;
+    patchNode(node.id, {
+      active: node.id === selected,
+      dimmed: related != null && !related.has(node.id),
+    });
+  }
+  for (const edge of edges) {
+    const keep = related == null || (related.has(edge.source) && related.has(edge.target));
+    const dimmed = !keep;
+    const opacity = keep ? 1 : 0.12;
+    if (edge.data?.dimmed !== dimmed) {
+      store.updateEdgeData(edge.id, { dimmed });
+    }
+    if (edge.style?.opacity !== opacity) {
+      edge.style = { ...(edge.style ?? {}), opacity };
+    }
+  }
+}
+
+function syncLive() {
+  const store = flowStore;
+  if (!store) return;
+  const live = props.live;
+  const keyLoad = new Map((live?.keys ?? []).map((row) => [row.id, row]));
+  const credLoad = new Map((live?.credentials ?? []).map((row) => [row.id, row]));
+  const hopLoad = new Map(
+    (live?.hops ?? []).map((row) => [`${row.virtualKeyId}:${row.credentialId}`, row]),
+  );
+  const workingEmployees = new Set<number>();
+  const nodes = storeNodes();
+  for (const node of nodes) {
+    if (node.type !== "virtual_key") continue;
+    const load = keyLoad.get(Number(node.data.id));
+    const working = Boolean(load && (load.inFlight > 0 || load.afterglow));
+    patchNode(node.id, {
+      working,
+      afterglow: Boolean(working && load && load.inFlight <= 0),
+      inFlight: load?.inFlight ?? 0,
+    });
+    if (working && typeof node.data.employeeId === "number") {
+      workingEmployees.add(node.data.employeeId);
+    }
+  }
+  for (const node of nodes) {
+    if (node.type === "credential") {
+      const load = credLoad.get(Number(node.data.id));
+      const working = Boolean(load && (load.inFlight > 0 || load.afterglow));
+      patchNode(node.id, {
+        working,
+        afterglow: Boolean(working && load && load.inFlight <= 0),
+        inFlight: load?.inFlight ?? 0,
+      });
+      continue;
+    }
+    if (node.type === "employee") {
+      patchNode(node.id, {
+        working: workingEmployees.has(Number(node.data.id)),
+        afterglow: false,
+        inFlight: 0,
+      });
+    }
+  }
+  for (const edge of storeEdges()) {
+    const kind = edge.data?.kind as string | undefined;
+    if (
+      kind !== "dedicated"
+      && kind !== "team_shared"
+      && kind !== "department_shared"
+      && kind !== "enterprise_shared"
+      && kind !== "open_shared"
+    ) {
+      continue;
+    }
+    const sourceId = parseNumericId(String(edge.source));
+    const targetId = parseNumericId(String(edge.target));
+    const hop =
+      sourceId != null && targetId != null ? hopLoad.get(`${sourceId}:${targetId}`) : undefined;
+    const working = Boolean(hop && (hop.inFlight > 0 || hop.afterglow));
+    const afterglow = Boolean(working && hop && hop.inFlight <= 0);
+    const inFlight = hop?.inFlight ?? 0;
+    if (
+      edge.data?.working === working
+      && edge.data?.afterglow === afterglow
+      && edge.data?.inFlight === inFlight
+    ) {
+      continue;
+    }
+    store.updateEdgeData(edge.id, { working, afterglow, inFlight });
+  }
+}
 
 function onNodeClick(event: NodeMouseEvent) {
   emit("node-click", event);

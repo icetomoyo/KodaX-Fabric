@@ -340,6 +340,11 @@ test("key binding page is a full canvas with a filter drawer and unbound-key ent
   assert.match(view, /fab-stack/);
   assert.match(view, /释放到资源列表/);
   assert.match(view, /\/api\/admin\/key-bindings\/credentials\/\$\{credential.id\}\/release/);
+  assert.doesNotMatch(view, /v-model:nodes/);
+  const canvas = readFileSync(resolve(root, "web/src/components/KeyBindingCanvas.vue"), "utf8");
+  assert.doesNotMatch(canvas, /v-model:nodes/);
+  assert.match(canvas, /only-render-visible-elements/);
+  assert.match(canvas, /:nodes-draggable="false"/);
 });
 
 test("admin shell uses org board for all console roles", () => {
