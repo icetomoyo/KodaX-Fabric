@@ -110,7 +110,7 @@
 </template>
 
 <script setup lang="ts">
-import { nextTick, unref, watch } from "vue";
+import { nextTick, unref, watch, type CSSProperties } from "vue";
 import {
   VueFlow,
   Handle,
@@ -261,8 +261,9 @@ function syncSelection() {
     if (edge.data?.dimmed !== dimmed) {
       store.updateEdgeData(edge.id, { dimmed });
     }
-    if (edge.style?.opacity !== opacity) {
-      edge.style = { ...(edge.style ?? {}), opacity };
+    const currentStyle = (edge.style ?? {}) as CSSProperties;
+    if (currentStyle.opacity !== opacity) {
+      edge.style = { ...currentStyle, opacity };
     }
   }
 }
