@@ -22,7 +22,7 @@
         资源
         <span v-if="resourceKeys.length" class="fab-count">{{ resourceKeys.length }}</span>
       </button>
-      <button v-if="auth.isSuperAdmin" type="button" class="fab primary" @click="filterOpen = true">筛选</button>
+      <button type="button" class="fab primary" @click="filterOpen = true">筛选</button>
     </div>
 
     <el-drawer
@@ -33,10 +33,20 @@
       append-to-body
     >
       <el-form label-position="top">
-        <el-form-item label="当前企业">
-          <el-select v-model="orgBoardKey" style="width: 100%" placeholder="选择企业">
+        <el-form-item label="企业">
+          <el-select v-model="filterEnterpriseKey" style="width: 100%" placeholder="选择企业">
             <el-option
-              v-for="board in orgBoards"
+              v-for="item in filterEnterprises"
+              :key="item.key"
+              :label="item.title"
+              :value="item.key"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="部门">
+          <el-select v-model="orgBoardKey" style="width: 100%" placeholder="选择部门">
+            <el-option
+              v-for="board in filterDepartments"
               :key="board.key"
               :label="board.title"
               :value="board.key"
@@ -156,7 +166,6 @@ import KeyBindingCanvas from "@/components/KeyBindingCanvas.vue";
 import { MarkerType, type Edge, type Node, type NodeMouseEvent } from "@vue-flow/core";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { http } from "@/api/http";
-import { useAuthStore } from "@/stores/auth";
 
 type BindingKind =
   | "org"
@@ -295,6 +304,7 @@ type CanvasScope = {
 type CanvasBoard = {
   key: string;
   title: string;
+  enterpriseTitle: string;
   mode: "enterprise" | "pool";
   scope: CanvasScope;
   nodes: any[];
@@ -340,10 +350,8 @@ const filterOpen = ref(false);
 const resourceOpen = ref(false);
 const credentialOpen = ref(false);
 const releasing = ref(false);
-const auth = useAuthStore();
 const emptyScope: CanvasScope = { enterpriseId: null, departmentId: null, teamId: null };
 
-const orgBoards = computed(() => boards.value.filter((board) => board.mode === "enterprise"));
 const activeBoard = computed(() => boards.value.find((board) => board.key === activeBoardKey.value) ?? null);
 const resourceKeys = computed(() => {
   const source = graph.value;
@@ -395,6 +403,36 @@ const credentialUsers = computed(() => {
 });
 const canvasNodes = computed(() => activeBoard.value?.nodes ?? []);
 const canvasEdges = computed(() => activeBoard.value?.edges ?? []);
+
+function enterpriseKeyOf(scope: CanvasScope): string {
+  return scope.enterpriseId == null ? "none" : `ent:${scope.enterpriseId}`;
+}
+
+const filterEnterprises = computed(() => {
+  const seen = new Set<string>();
+  const list: Array<{ key: string; title: string }> = [];
+  for (const board of boards.value) {
+    const key = enterpriseKeyOf(board.scope);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    list.push({ key, title: board.enterpriseTitle });
+  }
+  return list;
+});
+const filterDepartments = computed(() => {
+  const enterpriseKey = activeBoard.value ? enterpriseKeyOf(activeBoard.value.scope) : filterEnterprises.value[0]?.key;
+  if (!enterpriseKey) return [];
+  return boards.value.filter((board) => enterpriseKeyOf(board.scope) === enterpriseKey);
+});
+const filterEnterpriseKey = computed({
+  get: () => (activeBoard.value ? enterpriseKeyOf(activeBoard.value.scope) : ""),
+  set: (value: string) => {
+    const first = boards.value.find((board) => enterpriseKeyOf(board.scope) === value);
+    if (!first) return;
+    activeBoardKey.value = first.key;
+    onTabChange();
+  },
+});
 const orgBoardKey = computed({
   get: () => activeBoardKey.value,
   set: (value: string) => {
@@ -543,8 +581,15 @@ function hydrateOrgChain(
   });
 
   const graphDepartments = new Map<number, GraphDepartment>();
+  for (const department of departments) {
+    graphDepartments.set(department.id, {
+      id: department.id,
+      name: department.name,
+      enterpriseId: department.enterpriseId,
+    });
+  }
   for (const employee of employees) {
-    if (employee.departmentId == null) continue;
+    if (employee.departmentId == null || graphDepartments.has(employee.departmentId)) continue;
     const department = deptById.get(employee.departmentId);
     graphDepartments.set(employee.departmentId, {
       id: employee.departmentId,
@@ -693,6 +738,7 @@ function subgraphForEmployees(source: KeyBindingGraph, employees: GraphEmployee[
 function splitIntoBoards(source: KeyBindingGraph): Array<{
   key: string;
   title: string;
+  enterpriseTitle: string;
   mode: "enterprise";
   scope: CanvasScope;
   graph: KeyBindingGraph;
@@ -700,55 +746,114 @@ function splitIntoBoards(source: KeyBindingGraph): Array<{
   const groups = new Map<string, {
     key: string;
     title: string;
-    sortKey: string;
-    trailing: boolean;
+    enterpriseTitle: string;
+    trailingEnterprise: boolean;
+    trailingDepartment: boolean;
     employees: GraphEmployee[];
     scope: CanvasScope;
   }>();
+  const enterpriseNameById = new Map(source.enterprises.map((row) => [row.id, row.name]));
+
+  const putGroup = (
+    key: string,
+    title: string,
+    enterpriseTitle: string,
+    scope: CanvasScope,
+    flags: { trailingEnterprise?: boolean; trailingDepartment?: boolean } = {},
+  ) => {
+    const existing = groups.get(key);
+    if (existing) return existing;
+    const group = {
+      key,
+      title,
+      enterpriseTitle,
+      trailingEnterprise: Boolean(flags.trailingEnterprise),
+      trailingDepartment: Boolean(flags.trailingDepartment),
+      employees: [] as GraphEmployee[],
+      scope,
+    };
+    groups.set(key, group);
+    return group;
+  };
+
+  for (const department of source.departments ?? []) {
+    if (department.enterpriseId == null) continue;
+    putGroup(
+      `ent:${department.enterpriseId}:dept:${department.id}`,
+      department.name,
+      enterpriseNameById.get(department.enterpriseId) || "企业",
+      {
+        enterpriseId: department.enterpriseId,
+        departmentId: department.id,
+        teamId: null,
+      },
+    );
+  }
+
   for (const employee of source.employees) {
     if (employee.enterpriseId == null) {
-      const existing = groups.get("none");
-      if (existing) {
-        existing.employees.push(employee);
-        continue;
-      }
-      groups.set("none", {
-        key: "none",
-        title: "未加入企业",
-        sortKey: "未加入企业",
-        trailing: true,
-        employees: [employee],
-        scope: emptyScope,
-      });
+      putGroup("none", "未加入企业", "未加入企业", emptyScope, { trailingEnterprise: true })
+        .employees.push(employee);
       continue;
     }
-    const mapKey = `ent:${employee.enterpriseId}`;
-    const existing = groups.get(mapKey);
-    if (existing) {
-      existing.employees.push(employee);
+    const departmentId = employee.departmentId;
+    const enterpriseTitle = employee.enterpriseName
+      || enterpriseNameById.get(employee.enterpriseId)
+      || "企业";
+    if (departmentId == null) {
+      putGroup(
+        `ent:${employee.enterpriseId}:dept:none`,
+        "未加入部门",
+        enterpriseTitle,
+        { enterpriseId: employee.enterpriseId, departmentId: null, teamId: null },
+        { trailingDepartment: true },
+      ).employees.push(employee);
       continue;
     }
-    groups.set(mapKey, {
-      key: mapKey,
-      title: employee.enterpriseName || "未加入企业",
-      sortKey: employee.enterpriseName || "未加入企业",
-      trailing: false,
-      employees: [employee],
-      scope: { enterpriseId: employee.enterpriseId, departmentId: null, teamId: null },
-    });
+    putGroup(
+      `ent:${employee.enterpriseId}:dept:${departmentId}`,
+      employee.departmentName || "部门",
+      enterpriseTitle,
+      { enterpriseId: employee.enterpriseId, departmentId, teamId: null },
+    ).employees.push(employee);
   }
+
   return [...groups.values()]
     .sort((a, b) => {
-      if (a.trailing !== b.trailing) return a.trailing ? 1 : -1;
-      return a.sortKey.localeCompare(b.sortKey, "zh");
+      if (a.trailingEnterprise !== b.trailingEnterprise) return a.trailingEnterprise ? 1 : -1;
+      const enterpriseA = a.scope.enterpriseId ?? Number.MAX_SAFE_INTEGER;
+      const enterpriseB = b.scope.enterpriseId ?? Number.MAX_SAFE_INTEGER;
+      if (enterpriseA !== enterpriseB) return enterpriseA - enterpriseB;
+      if (a.trailingDepartment !== b.trailingDepartment) return a.trailingDepartment ? 1 : -1;
+      return (a.scope.departmentId ?? Number.MAX_SAFE_INTEGER)
+        - (b.scope.departmentId ?? Number.MAX_SAFE_INTEGER);
     })
     .map((group) => ({
       key: group.key,
       title: group.title,
+      enterpriseTitle: group.enterpriseTitle,
       mode: "enterprise" as const,
       scope: group.scope,
-      graph: subgraphForEmployees(source, group.employees),
+      graph: subgraphForScope(source, group.employees, group.scope),
     }));
+}
+
+function subgraphForScope(
+  source: KeyBindingGraph,
+  employees: GraphEmployee[],
+  scope: CanvasScope,
+): KeyBindingGraph {
+  const graph = subgraphForEmployees(source, employees);
+  const departments = graph.departments ?? [];
+  if (scope.departmentId != null && !departments.some((row) => row.id === scope.departmentId)) {
+    const department = (source.departments ?? []).find((row) => row.id === scope.departmentId);
+    if (department) graph.departments = [...departments, department];
+  }
+  if (scope.enterpriseId != null && !graph.enterprises.some((row) => row.id === scope.enterpriseId)) {
+    const enterprise = source.enterprises.find((row) => row.id === scope.enterpriseId);
+    if (enterprise) graph.enterprises = [...graph.enterprises, enterprise];
+  }
+  return graph;
 }
 
 function makeNode(type: NodeKind, id: number, x: number, y: number, data: Record<string, unknown>): Node {
@@ -826,6 +931,18 @@ function layoutGraph(
   }
 
   const entBlocks: EntBlock[] = [];
+  if (employees.length === 0) {
+    for (const department of source.departments ?? []) {
+      const enterpriseName = source.enterprises.find((row) => row.id === department.enterpriseId)?.name
+        || "未加入企业";
+      entBlocks.push({
+        enterpriseId: department.enterpriseId,
+        enterpriseName,
+        departments: [{ department, teams: [], height: NODE_H }],
+        height: NODE_H,
+      });
+    }
+  }
   for (const [enterpriseKey, entEmployees] of byEnterprise) {
     const byDepartment = new Map<number | "none", GraphEmployee[]>();
     for (const employee of entEmployees) {
@@ -913,7 +1030,11 @@ function layoutGraph(
             dept.department.id,
             colX("department"),
             deptCursor + Math.max(0, (dept.height - NODE_H) / 2),
-            dept.department,
+            {
+              ...dept.department,
+              root: viewDepth === "department",
+              enterpriseName: ent.enterpriseName,
+            },
           ),
         );
       }
@@ -1068,10 +1189,11 @@ function renderGraph() {
     return;
   }
   const nextBoards = splitIntoBoards(graph.value).map((item) => {
-    const laid = layoutGraph(item.graph, item.mode, "enterprise");
+    const laid = layoutGraph(item.graph, item.mode, "department");
     return {
       key: item.key,
       title: item.title,
+      enterpriseTitle: item.enterpriseTitle,
       mode: item.mode,
       scope: item.scope,
       nodes: laid.nodes,

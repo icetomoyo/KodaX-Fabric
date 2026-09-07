@@ -326,7 +326,12 @@ test("key binding page is a full canvas with a filter drawer and unbound-key ent
   const view = readFileSync(resolve(root, "web/src/views/admin/KeyBindingsView.vue"), "utf8");
   assert.doesNotMatch(view, /page-title">调度画布/);
   assert.match(view, /el-drawer/);
-  assert.match(view, /当前企业/);
+  assert.match(view, /label="企业"/);
+  assert.match(view, /label="部门"/);
+  assert.match(view, /layoutGraph\(item.graph, item.mode, "department"\)/);
+  assert.match(view, /ent:\$\{department.enterpriseId\}:dept:\$\{department.id\}/);
+  assert.match(view, /filterEnterpriseKey/);
+  assert.doesNotMatch(view, /当前企业/);
   assert.doesNotMatch(view, /展示程度/);
   assert.doesNotMatch(view, /部门级/);
   assert.doesNotMatch(view, /团队级/);
@@ -338,6 +343,7 @@ test("key binding page is a full canvas with a filter drawer and unbound-key ent
   assert.match(view, /isScheduledUseKind/);
   assert.match(view, /kind === "dedicated" \|\| kind === "department_shared" \|\| kind === "open_shared"/);
   assert.match(view, /fab-stack/);
+  assert.match(view, /class="fab primary" @click="filterOpen = true">筛选/);
   assert.match(view, /释放到资源列表/);
   assert.match(view, /\/api\/admin\/key-bindings\/credentials\/\$\{credential.id\}\/release/);
   assert.doesNotMatch(view, /v-model:nodes/);

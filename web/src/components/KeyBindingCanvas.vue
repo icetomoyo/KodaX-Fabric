@@ -34,10 +34,11 @@
       </template>
       <template #node-department="{ data }">
         <div class="graph-node org department" :class="{ dimmed: data.dimmed, active: data.active }">
-          <Handle type="target" :position="Position.Left" :connectable="false" />
+          <Handle v-if="!data.root" type="target" :position="Position.Left" :connectable="false" />
           <Handle type="source" :position="Position.Right" :connectable="false" />
           <span class="kind">部门</span>
           <strong>{{ data.name }}</strong>
+          <span v-if="data.root && data.enterpriseName">{{ data.enterpriseName }}</span>
         </div>
       </template>
       <template #node-team="{ data }">
