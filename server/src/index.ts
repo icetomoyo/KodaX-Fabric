@@ -3,6 +3,7 @@ import { env } from "./config.js";
 import { pingRedis } from "./redis.js";
 import { sql } from "./db/client.js";
 import { startCapacityAlert, stopCapacityAlert } from "./lib/capacity-alert.js";
+import { startIdleBindingRelease, stopIdleBindingRelease } from "./lib/idle-binding-release.js";
 import { startTierRebind, stopTierRebind } from "./lib/tier-rebind.js";
 
 async function main() {
@@ -11,9 +12,11 @@ async function main() {
 
   const app = await buildApp();
   startCapacityAlert(app.log);
+  startIdleBindingRelease(app.log);
   startTierRebind(app.log);
   app.addHook("onClose", async () => {
     stopCapacityAlert();
+    stopIdleBindingRelease();
     stopTierRebind();
   });
   await app.listen({ port: env.PORT, host: env.HOST });

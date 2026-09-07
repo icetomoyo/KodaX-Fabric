@@ -16,6 +16,7 @@ import { employees, usageCountersDaily } from "../db/schema/index.js";
 import { addCalendarDays, quotaDayAt } from "./quota-time.js";
 import {
   rebindEmployeesToCurrentScope,
+  releaseIdleCredentialBindings,
   releaseOrphanBindings,
 } from "./relay/binding.js";
 import {
@@ -99,6 +100,7 @@ export async function runTierRebindOnce(
   const reboundIds = changedIds.filter((id) => !idsByNextTier.idle.includes(id));
   const reboundCount = await rebindEmployeesToCurrentScope(reboundIds, now);
   const orphanReleased = await releaseOrphanBindings(now);
+  await releaseIdleCredentialBindings(now);
   const result: TierRebindResult = {
     employeeCount: activeRows.length,
     changedCount,

@@ -17,6 +17,7 @@ const WEEK_MS = 7 * 24 * HOUR_MS;
 export const CREDENTIAL_WEEKLY_EPOCH = new Date("2026-09-03T11:00:00.000Z");
 
 export type CredentialQuotaUsage = {
+  fiveHourTokens?: number;
   fiveHourCredits: number;
   weeklyCredits: number;
 };
@@ -149,7 +150,7 @@ export async function getCredentialQuotaUsage(
 ): Promise<Map<number, CredentialQuotaUsage>> {
   const usage = new Map<number, CredentialQuotaUsage>();
   for (const id of credentialIds) {
-    usage.set(id, { fiveHourCredits: 0, weeklyCredits: 0 });
+    usage.set(id, { fiveHourTokens: 0, fiveHourCredits: 0, weeklyCredits: 0 });
   }
   if (credentialIds.length === 0) return usage;
 
@@ -162,6 +163,13 @@ export async function getCredentialQuotaUsage(
   const rows = await db
     .select({
       credentialId: credentialUsageHourly.credentialId,
+      fiveHourTokens: sql<string>`
+        coalesce(
+          sum(${credentialUsageHourly.totalTokens})
+          filter (where ${credentialUsageHourly.hourStart} >= ${fiveHourStartIso}::timestamptz),
+          0
+        )
+      `,
       fiveHourCredits: sql<string>`
         coalesce(
           sum(${credentialUsageHourly.totalCredits})
@@ -188,6 +196,7 @@ export async function getCredentialQuotaUsage(
 
   for (const row of rows) {
     usage.set(row.credentialId, {
+      fiveHourTokens: Number(row.fiveHourTokens),
       fiveHourCredits: Number(row.fiveHourCredits),
       weeklyCredits: Number(row.weeklyCredits),
     });
