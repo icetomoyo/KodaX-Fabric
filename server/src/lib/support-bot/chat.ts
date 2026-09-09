@@ -2,9 +2,6 @@ import { and, asc, desc, eq } from "drizzle-orm";
 import { db } from "../../db/client.js";
 import { supportConversations, supportMessages } from "../../db/schema/index.js";
 import { supportBotConversationNotFound } from "./errors.js";
-import type { SupportLlmMessage } from "./invoke.js";
-import { buildSupportLlmMessages } from "./invoke.js";
-import { buildSupportSystemPrompt } from "./knowledge.js";
 
 export type SupportStoredRole = "user" | "assistant";
 
@@ -183,18 +180,18 @@ export async function runSupportChatTurn(input: {
   conversationId?: number;
   newConversation?: boolean;
   store: SupportChatStore;
-  accountContext: string;
-  invoke: (messages: SupportLlmMessage[]) => Promise<string>;
+  complete: (turn: {
+    history: Array<{ role: SupportStoredRole; content: string }>;
+    userMessage: string;
+  }) => Promise<string>;
 }): Promise<{ conversationId: number; reply: string }> {
   const conversation = await resolveSupportConversation(input.store, input.employeeId, input);
   const history = await input.store.listRecentMessages(conversation.id, 8);
-  const llmMessages = buildSupportLlmMessages({
-    system: buildSupportSystemPrompt(input.accountContext),
+  await input.store.insertMessage(conversation.id, "user", input.message);
+  const reply = await input.complete({
     history,
     userMessage: input.message,
   });
-  await input.store.insertMessage(conversation.id, "user", input.message);
-  const reply = await input.invoke(llmMessages);
   await input.store.insertMessage(conversation.id, "assistant", reply);
   return { conversationId: conversation.id, reply };
 }

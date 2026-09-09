@@ -2,10 +2,8 @@ import type { FastifyInstance, FastifyReply } from "fastify";
 import { z } from "zod";
 import { env } from "../config.js";
 import { actingEmployeeId } from "../lib/act-as.js";
-import {
-  buildPublicRelayBaseUrl,
-  loadSupportAccountContext,
-} from "../lib/support-bot/account-context.js";
+import { buildPublicRelayBaseUrl } from "../lib/support-bot/account-context.js";
+import { runSupportAgent } from "../lib/support-bot/agent.js";
 import {
   createPostgresSupportChatStore,
   parseSupportChatMessage,
@@ -14,10 +12,8 @@ import {
 } from "../lib/support-bot/chat.js";
 import { SupportBotError } from "../lib/support-bot/errors.js";
 import {
-  invokeSupportBot,
   resolveSupportBotTransport,
   type SupportBotTransport,
-  type SupportLlmMessage,
 } from "../lib/support-bot/invoke.js";
 import { consumeSupportBotRateLimit } from "../lib/support-bot/rate-limit.js";
 import {
@@ -35,8 +31,7 @@ const chatBodySchema = z.object({
 export const supportBotRuntime = {
   consumeRateLimit: consumeSupportBotRateLimit,
   resolveTransport: resolveSupportBotTransport,
-  invoke: invokeSupportBot,
-  loadAccountContext: loadSupportAccountContext,
+  runAgent: runSupportAgent,
   createStore: createPostgresSupportChatStore,
 };
 
@@ -91,22 +86,25 @@ export async function supportRoutes(app: FastifyInstance) {
     try {
       await supportBotRuntime.consumeRateLimit(employeeId);
       const transport: SupportBotTransport = await supportBotRuntime.resolveTransport();
-      const accountContext = await supportBotRuntime.loadAccountContext({
-        employeeId,
-        role: req.session.role,
-        trueRole: req.session.trueRole,
-        actAs: req.session.actAs,
-        relayBaseUrl: buildPublicRelayBaseUrl(req),
-      });
       const result = await runSupportChatTurn({
         employeeId,
         message,
         conversationId: parsed.data.conversationId,
         newConversation: parsed.data.newConversation,
         store: supportBotRuntime.createStore(),
-        accountContext,
-        invoke: (llmMessages: SupportLlmMessage[]) =>
-          supportBotRuntime.invoke(llmMessages, transport),
+        complete: (turn) =>
+          supportBotRuntime.runAgent({
+            transport,
+            account: {
+              employeeId,
+              role: req.session!.role,
+              trueRole: req.session!.trueRole,
+              actAs: req.session!.actAs,
+              relayBaseUrl: buildPublicRelayBaseUrl(req),
+            },
+            history: turn.history,
+            userMessage: turn.userMessage,
+          }),
       });
       return { success: true, data: result };
     } catch (error) {

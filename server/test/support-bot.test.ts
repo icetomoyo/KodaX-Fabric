@@ -15,6 +15,7 @@ const {
   formatAccountContext,
   isBareSuperAdmin,
   buildPublicRelayBaseUrl,
+  publicSiteOrigin,
   truncateErrorMessage,
 } = await import("../src/lib/support-bot/account-context.js");
 const {
@@ -24,14 +25,21 @@ const {
 } = await import("../src/lib/support-bot/chat.js");
 const { SupportBotError } = await import("../src/lib/support-bot/errors.js");
 const {
+  extractSupportRequestId,
+  formatRequestLookup,
+} = await import("../src/lib/support-bot/lookup-request.js");
+const {
   buildSupportLlmMessages,
   hasSupportBotOverride,
   joinChatCompletionsUrl,
+  parseSupportCompletion,
   readAssistantContent,
 } = await import("../src/lib/support-bot/invoke.js");
-const { SUPPORT_BOT_KNOWLEDGE, buildSupportSystemPrompt } = await import(
-  "../src/lib/support-bot/knowledge.js"
-);
+const {
+  SUPPORT_BOT_KNOWLEDGE,
+  applySupportOriginPlaceholders,
+  buildSupportAgentSystemPrompt,
+} = await import("../src/lib/support-bot/knowledge.js");
 const { supportBotRateLimitKey } = await import("../src/lib/support-bot/rate-limit.js");
 const { supportRoutes, supportBotRuntime } = await import("../src/routes/support.js");
 
@@ -64,9 +72,25 @@ test("knowledge covers GuideView facts and refuses invented features", () => {
   assert.match(SUPPORT_BOT_KNOWLEDGE, /工单系统已删除/);
   assert.match(SUPPORT_BOT_KNOWLEDGE, /飞书 Bot/);
   assert.match(SUPPORT_BOT_KNOWLEDGE, /不要要求用户粘贴完整 API Key/);
-  const prompt = buildSupportSystemPrompt("角色：employee");
-  assert.match(prompt, /当前用户账号上下文/);
-  assert.match(prompt, /角色：employee/);
+  const prompt = buildSupportAgentSystemPrompt("https://tokenhub.haizhi.com/ai");
+  assert.match(prompt, /https:\/\/tokenhub\.haizhi\.com\/ai/);
+  assert.match(prompt, /lookup_my_account/);
+  assert.match(prompt, /lookup_request/);
+  assert.match(prompt, /lookup_invite_contacts/);
+  assert.match(prompt, /不要编造/);
+  assert.match(prompt, /不要写 \{origin\}/);
+  assert.doesNotMatch(prompt, /retrieve_docs/);
+});
+
+test("Base URL answers use the request origin, not the {origin} template", () => {
+  assert.equal(publicSiteOrigin("https://tokenhub.haizhi.com/ai"), "https://tokenhub.haizhi.com");
+  assert.equal(publicSiteOrigin("https://tokenhub.haizhi.com/ai/"), "https://tokenhub.haizhi.com");
+  const filled = applySupportOriginPlaceholders(
+    "Base URL 一律是当前站点的 `{origin}/ai`。",
+    "https://tokenhub.haizhi.com",
+  );
+  assert.equal(filled, "Base URL 一律是当前站点的 `https://tokenhub.haizhi.com/ai`。");
+  assert.doesNotMatch(filled, /\{origin\}/);
 });
 
 test("joins chat completions URL without doubling the path", () => {
@@ -185,6 +209,70 @@ test("empty assistant content is treated as upstream failure", () => {
   assert.equal(readAssistantContent({}), null);
 });
 
+test("Request ID lookup is scoped and never invents an error", () => {
+  assert.equal(extractSupportRequestId("  threq_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  "), "threq_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+  assert.equal(extractSupportRequestId("请看 threq_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 这次"), "threq_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+  assert.equal(extractSupportRequestId("??"), null);
+  const missing = formatRequestLookup(null);
+  assert.match(missing, /找不到这条调用/);
+  assert.match(missing, /不要编造错误原因/);
+  const found = formatRequestLookup({
+    requestId: "threq_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    status: "upstream_error",
+    clientModel: "glm-5.3-flash",
+    providerCode: "glm",
+    protocol: "openai_chat",
+    createdAt: "2026-09-09T00:00:00.000Z",
+    httpStatus: 401,
+    upstreamStatus: 401,
+    errorCode: "invalid_api_key",
+    errorMessage: "invalid api key",
+    ownerName: null,
+  });
+  assert.match(found, /threq_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/);
+  assert.match(found, /invalid_api_key/);
+  assert.doesNotMatch(found, /keyEncrypted|phone/i);
+});
+
+test("parses OpenAI tool calls without treating them as empty content", () => {
+  const parsed = parseSupportCompletion({
+    choices: [
+      {
+        finish_reason: "tool_calls",
+        message: {
+          content: null,
+          tool_calls: [
+            {
+              id: "call_docs",
+              type: "function",
+              function: { name: "retrieve_docs", arguments: "{\"query\":\"Base URL\"}" },
+            },
+          ],
+        },
+      },
+    ],
+  });
+  assert.equal(parsed?.stopReason, "toolUse");
+  assert.equal(parsed?.toolCalls[0]?.name, "retrieve_docs");
+  assert.equal(parsed?.toolCalls[0]?.arguments.query, "Base URL");
+  assert.equal(readAssistantContent({
+    choices: [
+      {
+        message: {
+          content: "",
+          tool_calls: [
+            {
+              id: "call_docs",
+              type: "function",
+              function: { name: "retrieve_docs", arguments: "{}" },
+            },
+          ],
+        },
+      },
+    ],
+  }), null);
+});
+
 test("LLM payload keeps system + last 8 history + current user", () => {
   const history = Array.from({ length: 10 }, (_, index) => ({
     role: index % 2 === 0 ? "user" as const : "assistant" as const,
@@ -208,8 +296,7 @@ test("successful turn writes user + assistant and never mentions relay quota", a
     employeeId: 41,
     message: "Base URL 是什么",
     store,
-    accountContext: "角色：employee",
-    invoke: async () => {
+    complete: async () => {
       invokeCount += 1;
       return "请使用当前站点的 /ai，不要加端口。";
     },
@@ -227,6 +314,10 @@ test("successful turn writes user + assistant and never mentions relay quota", a
     "src/lib/support-bot/invoke.ts",
     "src/lib/support-bot/chat.ts",
     "src/lib/support-bot/account-context.ts",
+    "src/lib/support-bot/agent.ts",
+    "src/lib/support-bot/tools.ts",
+    "src/lib/support-bot/invite-contacts.ts",
+    "src/lib/support-bot/lookup-request.ts",
   ]) {
     const source = readFileSync(resolve(root, rel), "utf8");
     assert.doesNotMatch(source, /acquireRelayQuota/);
@@ -242,8 +333,7 @@ test("invoke failure keeps the user message and writes no empty assistant", asyn
         employeeId: 41,
         message: "hello",
         store,
-        accountContext: "角色：employee",
-        invoke: async () => {
+        complete: async () => {
           throw new SupportBotError(502, "SUPPORT_BOT_UPSTREAM_ERROR", "down");
         },
       }),
@@ -345,9 +435,8 @@ test("mocked successful chat persists two messages without quota", async () => {
   let invokeCount = 0;
   supportBotRuntime.consumeRateLimit = async () => {};
   supportBotRuntime.resolveTransport = async () => ({ kind: "override" });
-  supportBotRuntime.loadAccountContext = async () => "角色：employee";
   supportBotRuntime.createStore = () => store;
-  supportBotRuntime.invoke = async () => {
+  supportBotRuntime.runAgent = async () => {
     invokeCount += 1;
     return "Base URL 是当前站点的 /ai。";
   };

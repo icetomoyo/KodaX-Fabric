@@ -97,6 +97,8 @@ const envSchema = z.object({
     .refine((value) => URL.canParse(value), "must be a URL"),
   SUPPORT_BOT_UPSTREAM_API_KEY: optionalSecret(),
   SUPPORT_BOT_RATE_LIMIT_PER_HOUR: z.coerce.number().int().min(1).default(30),
+  SUPPORT_BOT_AGENT_MAX_TURNS: z.coerce.number().int().min(1).max(8).default(4),
+  SUPPORT_BOT_AGENT_TIMEOUT_MS: z.coerce.number().int().min(5_000).default(45_000),
 });
 
 const parsed = envSchema.safeParse(process.env);

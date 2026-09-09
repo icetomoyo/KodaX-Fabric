@@ -21,8 +21,38 @@ import { supportBotUnavailable, supportBotUpstreamError } from "./errors.js";
 export const SUPPORT_BOT_INVOKE_TIMEOUT_MS = 45_000;
 
 export type SupportLlmMessage = {
-  role: "system" | "user" | "assistant";
+  role: "system" | "user" | "assistant" | "tool";
+  content: string | null;
+  tool_calls?: SupportOpenAiToolCall[];
+  tool_call_id?: string;
+  name?: string;
+};
+
+export type SupportOpenAiTool = {
+  type: "function";
+  function: {
+    name: string;
+    description?: string;
+    parameters?: unknown;
+  };
+};
+
+export type SupportOpenAiToolCall = {
+  id: string;
+  type: "function";
+  function: { name: string; arguments: string };
+};
+
+export type SupportToolCall = {
+  id: string;
+  name: string;
+  arguments: Record<string, unknown>;
+};
+
+export type SupportCompletion = {
   content: string;
+  toolCalls: SupportToolCall[];
+  stopReason: "stop" | "toolUse";
 };
 
 export type SupportBotTransport =
@@ -41,6 +71,24 @@ export function joinChatCompletionsUrl(baseUrl: string): string {
 }
 
 export function readAssistantContent(payload: unknown): string | null {
+  const completion = parseSupportCompletion(payload);
+  if (!completion) return null;
+  return completion.content || null;
+}
+
+function parseJsonObject(raw: string): Record<string, unknown> {
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch {
+    // Tool arguments may be malformed; still expose the name.
+  }
+  return {};
+}
+
+export function parseSupportCompletion(payload: unknown): SupportCompletion | null {
   if (!payload || typeof payload !== "object") return null;
   const choices = "choices" in payload ? payload.choices : undefined;
   if (!Array.isArray(choices) || choices.length === 0) return null;
@@ -48,10 +96,53 @@ export function readAssistantContent(payload: unknown): string | null {
   if (!first || typeof first !== "object") return null;
   const message = "message" in first ? first.message : undefined;
   if (!message || typeof message !== "object") return null;
-  const content = "content" in message ? message.content : undefined;
-  if (typeof content !== "string") return null;
-  const trimmed = content.trim();
-  return trimmed.length > 0 ? trimmed : null;
+
+  const contentRaw = "content" in message ? message.content : undefined;
+  const content = typeof contentRaw === "string" ? contentRaw.trim() : "";
+
+  const toolCalls: SupportToolCall[] = [];
+  const rawToolCalls = "tool_calls" in message ? message.tool_calls : undefined;
+  if (Array.isArray(rawToolCalls)) {
+    for (const [index, item] of rawToolCalls.entries()) {
+      if (!item || typeof item !== "object") continue;
+      const fn = "function" in item ? item.function : undefined;
+      if (!fn || typeof fn !== "object") continue;
+      const name = "name" in fn && typeof fn.name === "string" ? fn.name.trim() : "";
+      if (!name) continue;
+      const id =
+        "id" in item && typeof item.id === "string" && item.id.trim()
+          ? item.id
+          : `call_${index + 1}`;
+      const argsValue = "arguments" in fn ? fn.arguments : undefined;
+      const args =
+        argsValue && typeof argsValue === "object" && !Array.isArray(argsValue)
+          ? (argsValue as Record<string, unknown>)
+          : parseJsonObject(typeof argsValue === "string" ? argsValue : "{}");
+      toolCalls.push({ id, name, arguments: args });
+    }
+  }
+
+  const functionCall = "function_call" in message ? message.function_call : undefined;
+  if (toolCalls.length === 0 && functionCall && typeof functionCall === "object") {
+    const name =
+      "name" in functionCall && typeof functionCall.name === "string"
+        ? functionCall.name.trim()
+        : "";
+    if (name) {
+      const argsRaw =
+        "arguments" in functionCall && typeof functionCall.arguments === "string"
+          ? functionCall.arguments
+          : "{}";
+      toolCalls.push({ id: "call_1", name, arguments: parseJsonObject(argsRaw) });
+    }
+  }
+
+  if (!content && toolCalls.length === 0) return null;
+  return {
+    content,
+    toolCalls,
+    stopReason: toolCalls.length > 0 ? "toolUse" : "stop",
+  };
 }
 
 export function buildSupportLlmMessages(input: {
@@ -205,7 +296,47 @@ export async function resolveSupportBotTransport(): Promise<SupportBotTransport>
   return { kind: "channel", candidate };
 }
 
-async function invokeOverride(messages: SupportLlmMessage[]): Promise<string> {
+function completionBody(
+  messages: SupportLlmMessage[],
+  tools: SupportOpenAiTool[] | undefined,
+): Record<string, unknown> {
+  const body: Record<string, unknown> = {
+    model: env.SUPPORT_BOT_MODEL,
+    messages,
+    temperature: 0.2,
+    max_tokens: 800,
+    stream: false,
+    thinking: { type: "disabled" },
+  };
+  if (tools && tools.length > 0) {
+    body.tools = tools;
+    body.tool_choice = "auto";
+  }
+  return body;
+}
+
+async function readCompletion(response: Response): Promise<SupportCompletion> {
+  if (!response.ok) {
+    throw supportBotUpstreamError();
+  }
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    throw supportBotUpstreamError();
+  }
+  const completion = parseSupportCompletion(payload);
+  if (!completion) {
+    throw supportBotUpstreamError();
+  }
+  return completion;
+}
+
+async function invokeOverrideCompletion(
+  messages: SupportLlmMessage[],
+  tools: SupportOpenAiTool[] | undefined,
+  signal?: AbortSignal,
+): Promise<SupportCompletion> {
   const apiKey = env.SUPPORT_BOT_UPSTREAM_API_KEY;
   if (!apiKey) {
     throw supportBotUnavailable();
@@ -213,6 +344,12 @@ async function invokeOverride(messages: SupportLlmMessage[]): Promise<string> {
   const baseUrl = env.SUPPORT_BOT_UPSTREAM_BASE_URL;
 
   const controller = new AbortController();
+  const onAbort = () => controller.abort(signal?.reason);
+  if (signal?.aborted) {
+    onAbort();
+  } else {
+    signal?.addEventListener("abort", onAbort, { once: true });
+  }
   const timer = setTimeout(() => controller.abort(), SUPPORT_BOT_INVOKE_TIMEOUT_MS);
   timer.unref?.();
 
@@ -226,82 +363,64 @@ async function invokeOverride(messages: SupportLlmMessage[]): Promise<string> {
         Authorization: `Bearer ${apiKey}`,
         "User-Agent": "TokenHub/0.1 support-bot",
       },
-      body: JSON.stringify({
-        model: env.SUPPORT_BOT_MODEL,
-        messages,
-        temperature: 0.2,
-        max_tokens: 1500,
-      }),
+      body: JSON.stringify(completionBody(messages, tools)),
       signal: controller.signal,
     });
   } catch {
     throw supportBotUpstreamError();
   } finally {
     clearTimeout(timer);
+    signal?.removeEventListener("abort", onAbort);
   }
 
-  if (!response.ok) {
-    throw supportBotUpstreamError();
-  }
-
-  let payload: unknown;
-  try {
-    payload = await response.json();
-  } catch {
-    throw supportBotUpstreamError();
-  }
-
-  const content = readAssistantContent(payload);
-  if (!content) {
-    throw supportBotUpstreamError();
-  }
-  return content;
+  return readCompletion(response);
 }
 
-async function invokeChannel(
+async function invokeChannelCompletion(
   candidate: RelayCandidate,
   messages: SupportLlmMessage[],
-): Promise<string> {
+  tools: SupportOpenAiTool[] | undefined,
+  signal?: AbortSignal,
+): Promise<SupportCompletion> {
   const attempt = await sendRelayUpstream({
     candidate,
     operation: "chat_completions",
     protocol: "openai_chat",
-    body: {
-      messages,
-      temperature: 0.2,
-      max_tokens: 1500,
-      stream: false,
-    },
+    body: completionBody(messages, tools),
     timeoutMs: SUPPORT_BOT_INVOKE_TIMEOUT_MS,
+    signal,
   });
 
   try {
     if (attempt.kind !== "success" || !attempt.response) {
       throw supportBotUpstreamError();
     }
-    let payload: unknown;
-    try {
-      payload = await attempt.response.json();
-    } catch {
-      throw supportBotUpstreamError();
-    }
-    const content = readAssistantContent(payload);
-    if (!content) {
-      throw supportBotUpstreamError();
-    }
-    return content;
+    return await readCompletion(attempt.response);
   } finally {
     attempt.cleanup();
   }
+}
+
+export async function invokeSupportBotCompletion(
+  messages: SupportLlmMessage[],
+  transport?: SupportBotTransport,
+  tools?: SupportOpenAiTool[],
+  signal?: AbortSignal,
+): Promise<SupportCompletion> {
+  const resolved = transport ?? (await resolveSupportBotTransport());
+  if (resolved.kind === "override") {
+    return invokeOverrideCompletion(messages, tools, signal);
+  }
+  return invokeChannelCompletion(resolved.candidate, messages, tools, signal);
 }
 
 export async function invokeSupportBot(
   messages: SupportLlmMessage[],
   transport?: SupportBotTransport,
 ): Promise<string> {
-  const resolved = transport ?? (await resolveSupportBotTransport());
-  if (resolved.kind === "override") {
-    return invokeOverride(messages);
+  const completion = await invokeSupportBotCompletion(messages, transport);
+  if (!completion.content) {
+    throw supportBotUpstreamError();
   }
-  return invokeChannel(resolved.candidate, messages);
+  return completion.content;
 }

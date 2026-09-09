@@ -26,6 +26,7 @@ RUN npm ci --omit=dev --workspace=@kodax-fabric/server
 
 COPY --from=build /app/server/dist ./server/dist
 COPY --from=build /app/server/drizzle ./server/drizzle
+COPY --from=build /app/server/src/lib/support-bot/knowledge.md ./server/dist/lib/support-bot/knowledge.md
 
 RUN mkdir -p /var/lib/tokenhub/request-context \
   && chown node:node /var/lib/tokenhub/request-context

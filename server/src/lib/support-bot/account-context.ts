@@ -63,6 +63,10 @@ export function buildPublicRelayBaseUrl(request: { protocol: string; host: strin
   return `${request.protocol}://${request.host}${RELAY_BASE_PATH}`;
 }
 
+export function publicSiteOrigin(relayBaseUrl: string): string {
+  return relayBaseUrl.replace(/\/+$/, "").replace(/\/ai$/i, "");
+}
+
 export function truncateErrorMessage(
   value: string | null | undefined,
   max = ACCOUNT_ERROR_MESSAGE_MAX,

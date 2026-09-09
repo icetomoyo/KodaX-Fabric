@@ -246,6 +246,20 @@
       "when": 1788506000000,
       "tag": "0034_support_bot",
       "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1788507000000,
+      "tag": "0035_support_doc_embeddings",
+      "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1788508000000,
+      "tag": "0036_drop_support_doc_embeddings",
+      "breakpoints": true
     }
   ]
 }
