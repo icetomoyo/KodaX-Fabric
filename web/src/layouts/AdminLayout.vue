@@ -73,11 +73,13 @@
     </el-container>
   </el-container>
   <ActAsDrawer v-model="actAsOpen" />
+  <TokenBotPanel />
 </template>
 
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
+import TokenBotPanel from "@/components/TokenBotPanel.vue";
 import { roleLabel } from "@/lib/roles";
 import { useAuthStore } from "@/stores/auth";
 import ActAsDrawer from "@/views/admin/ActAsDrawer.vue";

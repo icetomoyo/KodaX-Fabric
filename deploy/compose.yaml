@@ -77,6 +77,9 @@ services:
       AUDIT_BODY_PRUNE_INTERVAL_MS: "600000"
       REQUEST_CONTEXT_DIR: /var/lib/tokenhub/request-context
       REQUEST_CONTEXT_MAX_BYTES: "52428800"
+      SUPPORT_BOT_MODEL: ${SUPPORT_BOT_MODEL:-glm-5.3-flash}
+      SUPPORT_BOT_UPSTREAM_BASE_URL: ${SUPPORT_BOT_UPSTREAM_BASE_URL:-https://open.bigmodel.cn/api/coding/paas/v4}
+      SUPPORT_BOT_UPSTREAM_API_KEY: ${SUPPORT_BOT_UPSTREAM_API_KEY:-}
     volumes:
       - request_context:/var/lib/tokenhub/request-context
     depends_on:

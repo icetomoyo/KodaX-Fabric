@@ -12,6 +12,27 @@ function isValidIanaTimeZone(value: string): boolean {
   }
 }
 
+function envBoolean(defaultValue: boolean) {
+  return z.preprocess((value: unknown) => {
+    if (value === undefined || value === null || value === "") return defaultValue;
+    if (typeof value === "boolean") return value;
+    const normalized = String(value).trim().toLowerCase();
+    if (["1", "true", "yes", "on"].includes(normalized)) return true;
+    if (["0", "false", "no", "off"].includes(normalized)) return false;
+    return value;
+  }, z.boolean());
+}
+
+function optionalSecret() {
+  return z
+    .string()
+    .optional()
+    .transform((value) => {
+      const trimmed = value?.trim();
+      return trimmed ? trimmed : undefined;
+    });
+}
+
 const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 loadEnv({ path: resolve(rootDir, ".env") });
 loadEnv({ path: resolve(dirname(fileURLToPath(import.meta.url)), "../.env") });
@@ -64,6 +85,18 @@ const envSchema = z.object({
   SEED_ADMIN_NAME: z.string().default("管理员"),
   SEED_ADMIN_PHONE: z.string().default("13800000000"),
   SEED_ADMIN_PASSWORD: z.string().min(8).default("ChangeMe@123"),
+  SUPPORT_BOT_ENABLED: envBoolean(true),
+  SUPPORT_BOT_MODEL: z.string().trim().min(1).default("glm-5.3-flash"),
+  SUPPORT_BOT_UPSTREAM_BASE_URL: z
+    .string()
+    .optional()
+    .transform((value) => {
+      const trimmed = value?.trim();
+      return trimmed ? trimmed : "https://open.bigmodel.cn/api/coding/paas/v4";
+    })
+    .refine((value) => URL.canParse(value), "must be a URL"),
+  SUPPORT_BOT_UPSTREAM_API_KEY: optionalSecret(),
+  SUPPORT_BOT_RATE_LIMIT_PER_HOUR: z.coerce.number().int().min(1).default(30),
 });
 
 const parsed = envSchema.safeParse(process.env);

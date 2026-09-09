@@ -1,5 +1,6 @@
 import { defineConfig, loadEnv } from "vite";
 import vue from "@vitejs/plugin-vue";
+import tailwindcss from "@tailwindcss/vite";
 import { resolve } from "node:path";
 
 export default defineConfig(({ mode }) => {
@@ -19,7 +20,7 @@ export default defineConfig(({ mode }) => {
   console.log(`[vite] dev API proxy → ${apiTarget}`);
 
   return {
-    plugins: [vue()],
+    plugins: [vue(), tailwindcss()],
     resolve: {
       alias: {
         "@": resolve(webDir, "src"),

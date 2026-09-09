@@ -454,3 +454,32 @@ export const systemSettings = pgTable("system_settings", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+export const supportMessageRoleEnum = pgEnum("support_message_role", ["user", "assistant"]);
+
+export const supportConversations = pgTable(
+  "support_conversations",
+  {
+    id: bigint("id", { mode: "number" }).generatedAlwaysAsIdentity().primaryKey(),
+    employeeId: bigint("employee_id", { mode: "number" })
+      .notNull()
+      .references(() => employees.id, { onDelete: "cascade", onUpdate: "no action" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("support_conversations_employee_updated_idx").on(t.employeeId, t.updatedAt)],
+);
+
+export const supportMessages = pgTable(
+  "support_messages",
+  {
+    id: bigint("id", { mode: "number" }).generatedAlwaysAsIdentity().primaryKey(),
+    conversationId: bigint("conversation_id", { mode: "number" })
+      .notNull()
+      .references(() => supportConversations.id, { onDelete: "cascade", onUpdate: "no action" }),
+    role: supportMessageRoleEnum("role").notNull(),
+    content: text("content").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("support_messages_conversation_created_idx").on(t.conversationId, t.createdAt)],
+);
+

@@ -15,7 +15,7 @@
       >
         <el-menu-item index="/me">工作台</el-menu-item>
         <el-menu-item index="/me/keys">API Key</el-menu-item>
-        <el-menu-item index="/me/models">模型</el-menu-item>
+        <el-menu-item index="/me/models">模型列表</el-menu-item>
         <el-menu-item index="/me/guide">接入教程</el-menu-item>
         <el-menu-item index="/me/logs">我的调用</el-menu-item>
       </el-menu>
@@ -51,11 +51,13 @@
     </el-container>
   </el-container>
   <ActAsDrawer v-model="actAsOpen" />
+  <TokenBotPanel />
 </template>
 
 <script setup lang="ts">
 import { ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
+import TokenBotPanel from "@/components/TokenBotPanel.vue";
 import { useAuthStore } from "@/stores/auth";
 import ActAsDrawer from "@/views/admin/ActAsDrawer.vue";
 

@@ -239,6 +239,13 @@
       "when": 1788505000000,
       "tag": "0033_dept_admin_role",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1788506000000,
+      "tag": "0034_support_bot",
+      "breakpoints": true
     }
   ]
 }
