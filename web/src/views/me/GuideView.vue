@@ -3,24 +3,24 @@
     <section class="page-card pin-card" aria-label="接入必看">
       <div class="pin-item">
         <span class="pin-label">Base URL</span>
-        <p class="pin-copy">所有客户端都填这一条，不要加端口，也不要再拼路径。</p>
+        <p class="pin-copy">所有客户端均填写此地址。Base URL 不需要包含端口号或接口路径。</p>
         <div class="pin-row">
           <code class="pin-value">{{ clientBaseUrl }}</code>
           <el-button type="primary" @click="copyValue('Base URL', clientBaseUrl)">复制 Base URL</el-button>
         </div>
       </div>
       <div class="pin-item">
-        <span class="pin-label">不懂就问 Token Hub</span>
+        <span class="pin-label">遇到问题？咨询 Token Bot</span>
         <p class="pin-copy">
-          协议、Key、客户端配不好，点页面<strong>右下角 Token Bot</strong> 问。
-          它能看你自己的 Key 和调用，比自己猜快。
+          协议、API Key 或客户端配置遇到问题，可点击页面<strong>右下角 Token Bot</strong> 咨询。
+          它能查看你的 API Key 和调用记录。
         </p>
       </div>
       <div v-if="!loaded || !inTeam" class="pin-item">
-        <span class="pin-label">还没进团队，也可以问该找谁</span>
+        <span class="pin-label">尚未加入团队</span>
         <p class="pin-copy">
-          点右下角 Token Bot，先告诉它你是哪个企业、哪个团队（或部门），再问「我该找谁把我加进团队」。
-          没说清团队，它没法帮你对上该找的人。
+          点击右下角 Token Bot，说明你所属的企业和团队（或部门），再询问应将你加入团队的联系人。
+          需提供团队信息，才能匹配到对应负责人。
         </p>
       </div>
     </section>
@@ -29,43 +29,43 @@
       <div class="step-heading">
         <span class="step-index">1</span>
         <div>
-          <h3>找领导，把你请进团队</h3>
-          <p>刚注册完还不能调用。你现在是普通注册用户，不是员工；没进团队就没有 API Key。</p>
+          <h3>加入团队</h3>
+          <p>注册完成后需加入团队，才能创建 API Key。当前账号为普通注册用户，加入团队后即为员工身份。</p>
         </div>
       </div>
 
       <el-alert
         v-if="loaded && inTeam"
         class="status-alert"
-        title="第一步已完成：你已经在团队里"
+        title="第一步已完成：你已加入团队"
         type="success"
         show-icon
         :closable="false"
       >
         <p v-if="teamNames">当前团队：{{ teamNames }}</p>
-        <p>下一步先看你会用哪个产品，建 Key 时选对应协议。</p>
+        <p>下一步请确认所用产品，创建 API Key 时选择对应协议。</p>
       </el-alert>
       <el-alert
         v-else-if="loaded"
         class="status-alert"
-        title="你还没进团队。先做下面这件事，不要去建 Key、也不要先配客户端。"
+        title="你尚未加入团队。请先完成本步，再创建 API Key 或配置客户端。"
         type="warning"
         show-icon
         :closable="false"
       />
 
       <ol class="steps">
-        <li>用手机号注册并登录，就是现在这个账号。</li>
+        <li>使用手机号注册并登录，即当前账号。</li>
         <li>
-          把注册手机号发给能管编制的人，请他把你加进团队。
-          通常是你的组长、部门负责人，或企业里管账号的人
-          （产品里叫团队管理员、部门管理员、企业管理员）。
+          将注册手机号发给负责团队成员管理的人员，请其将你加入团队。
+          通常为组长、部门负责人，或企业内账号管理员
+          （产品中称为团队管理员、部门管理员、企业管理员）。
         </li>
-        <li>对方只能邀请<strong>已经注册好的手机号</strong>，不能替你开号。</li>
+        <li>对方仅能邀请<strong>已经注册好的手机号</strong>，无法代为注册。</li>
       </ol>
 
       <div class="phone-card">
-        <span class="phone-label">发给领导的手机号</span>
+        <span class="phone-label">用于加入团队的手机号</span>
         <code class="phone-value">{{ phone || "登录后显示" }}</code>
         <el-button
           type="primary"
@@ -77,14 +77,14 @@
       </div>
 
       <div class="script-card">
-        <strong>可以直接这样说</strong>
+        <strong>参考话术</strong>
         <p>「我已经在 Token Hub 注册了，手机号是 {{ phone || "（你的注册手机号）" }}，请把我加进团队。」</p>
       </div>
 
       <ul class="notes">
-        <li>工作台还在提示「普通注册用户」，说明第一步没完成。</li>
-        <li>「API Key」页的「创建 Key」是灰的，也是因为还没进团队。</li>
-        <li>领导侧找不到你：先确认对方用的是上面这个手机号，而且你已经注册成功。</li>
+        <li>工作台仍提示「普通注册用户」，表示尚未加入团队。</li>
+        <li>「API Key」页的「创建 Key」为灰色，表示尚未加入团队。</li>
+        <li>管理员无法找到你时，请确认对方使用的是上方手机号，且该号码已完成注册。</li>
       </ul>
     </section>
 
@@ -92,20 +92,20 @@
       <div class="step-heading">
         <span class="step-index">2</span>
         <div>
-          <h3>先搞清三种协议，再用什么产品选什么协议</h3>
+          <h3>选择协议</h3>
           <p>
-            创建 Key 时要选协议，选错了这把 Key 就废了：创建后不能改，路径对不上会 404，或能列模型但调不了。
-            一种产品用一把对应协议的 Key，不要混用。
+            创建 API Key 时需选择协议。协议在创建后不可修改；选错会导致路径不匹配并返回 404，或能列出模型但无法调用。
+            每种产品使用对应协议的 API Key。
           </p>
         </div>
       </div>
 
-      <p class="lead">看你电脑上实际在用的软件，对照下面这张表。建 Key 时「协议」三个选项的名字就是表里这一列。</p>
+      <p class="lead">对照下表，按实际使用的客户端选择协议。创建 API Key 时，「协议」选项名称与下表右列一致。</p>
 
       <div class="protocol-table" aria-label="产品与协议对照">
         <div class="protocol-row protocol-head">
-          <span>你用的产品</span>
-          <span>建 Key 时选</span>
+          <span>所用产品</span>
+          <span>对应协议</span>
         </div>
         <div class="protocol-row">
           <span>Claude Code</span>
@@ -125,7 +125,7 @@
         </div>
         <div class="protocol-row">
           <span>CC Switch</span>
-          <span>看你在 CC Switch 里配的 API 格式：Anthropic 就选 <strong>Anthropic Message 协议</strong>，OpenAI Chat 就选 <strong>OpenAI Chat Completion 协议</strong></span>
+          <span>按 CC Switch 中配置的 API 格式选择：Anthropic 对应 <strong>Anthropic Message 协议</strong>，OpenAI Chat 对应 <strong>OpenAI Chat Completion 协议</strong></span>
         </div>
         <div class="protocol-row">
           <span>其他 OpenAI 兼容客户端（走 Chat Completions）</span>
@@ -138,11 +138,11 @@
       </div>
 
       <ul class="notes">
-        <li>不确定就先看客户端要填的是 Anthropic 还是 OpenAI。公司产品 KodaX / KodaX Space 选 Chat Completion；常见外部工具是 Claude Code、Cursor 或 Codex。</li>
-        <li>Chat Completion 的 Key 不能打 Responses，Responses 的 Key 也不能打 Chat Completions。</li>
-        <li>Codex 自定义模型默认走 Responses，不要选 Chat Completion。</li>
-        <li>Claude Code、Cursor、Codex 要一起用：各建一把对应协议的 Key，不要共用。</li>
-        <li>渠道不支持你选的协议时，创建页不会出现该选项；换一个渠道，或换符合该渠道的协议。</li>
+        <li>如不确定协议，先确认客户端要求填写 Anthropic 还是 OpenAI。公司产品 KodaX / KodaX Space 选择 Chat Completion；常见外部工具为 Claude Code、Cursor 或 Codex。</li>
+        <li>Chat Completion 协议的 API Key 无法调用 Responses 接口，Responses 协议的 API Key 也无法调用 Chat Completions 接口。</li>
+        <li>Codex 自定义模型默认使用 Responses 接口，应选择 OpenAI Response 协议。</li>
+        <li>同时使用 Claude Code、Cursor、Codex 时，分别为每种产品创建对应协议的 API Key。</li>
+        <li>上游渠道不支持所选协议时，创建页不会显示该选项。可更换上游渠道，或选择该渠道支持的协议。</li>
       </ul>
     </section>
 
@@ -151,35 +151,35 @@
         <span class="step-index">3</span>
         <div>
           <h3>创建 API Key</h3>
-          <p>进团队之后，到「API Key」页按你要用的产品建 Key。协议按上一步对照表选，选完不能改。</p>
+          <p>加入团队后，在「API Key」页按所用产品创建 API Key。协议按上一步对照表选择，创建后不可修改。</p>
         </div>
       </div>
 
       <el-alert
         v-if="loaded && !inTeam"
         class="status-alert"
-        title="还没进团队，「创建 Key」是灰的。先完成第一步。"
+        title="尚未加入团队时，「创建 Key」不可用。请先完成第一步。"
         type="warning"
         show-icon
         :closable="false"
       />
 
       <ol class="steps">
-        <li>打开「API Key」，点「创建 Key」。</li>
-        <li>名称随便起，建议写成产品名，例如 <code>Cursor</code>、<code>Claude Code</code>、<code>KodaX</code>。</li>
-        <li>选上游渠道（没有可选的，找管理员先配渠道）。</li>
-        <li>选协议：必须和上一步表格一致。Claude Code 选 Anthropic Message，Cursor / KodaX / KodaX Space 选 OpenAI Chat Completion，Codex 选 OpenAI Response。</li>
-        <li>创建成功后立刻复制完整 Key（<code>th_</code> 开头）。关掉窗口就再也看不到明文。</li>
+        <li>打开「API Key」页，点击「创建 Key」。</li>
+        <li>填写名称，建议使用产品名，例如 <code>Cursor</code>、<code>Claude Code</code>、<code>KodaX</code>。</li>
+        <li>选择上游渠道。若无可选项，请联系团队管理员先配置渠道。</li>
+        <li>选择协议，须与上一步对照表一致：Claude Code 选择 Anthropic Message，Cursor / KodaX / KodaX Space 选择 OpenAI Chat Completion，Codex 选择 OpenAI Response。</li>
+        <li>创建成功后立即复制完整 API Key（<code>th_</code> 开头）。关闭窗口后将无法再次查看明文。</li>
       </ol>
 
       <div class="script-card">
-        <strong>这一步最容易栽的坑</strong>
-        <p>Key 只显示一次。没复制就关掉，只能删除再建。怀疑泄漏了也是删掉再建，不要把完整 Key 发到聊天或截图里。</p>
+        <strong>注意</strong>
+        <p>API Key 只显示一次。未复制即关闭窗口后，只能删除后重新创建。如怀疑泄漏，同样删除后重新创建。请勿将完整 API Key 发送到聊天工具或截图中。</p>
       </div>
 
       <ul class="notes">
-        <li>一把 Key 绑死渠道 + 协议，创建后不能改。换协议或换产品就另建一把。</li>
-        <li>Claude Code、Cursor、Codex 不要共用一把 Key。</li>
+        <li>每把 API Key 绑定固定的上游渠道和协议，创建后不可修改。更换协议或产品时，需另行创建。</li>
+        <li>Claude Code、Cursor、Codex 需分别使用各自协议的 API Key。</li>
       </ul>
 
       <div class="step-actions">
@@ -193,70 +193,70 @@
       <div class="step-heading">
         <span class="step-index">4</span>
         <div>
-          <h3>配客户端，Base URL 只填这一个</h3>
-          <p>所有产品的 Base URL 都是当前站点的 <code>/ai</code>。不要加 <code>:3000</code> 或 <code>:3100</code>，也不要在地址后面再拼 <code>/v1/messages</code>、<code>/chat/completions</code>。</p>
+          <h3>配置客户端</h3>
+          <p>所有产品的 Base URL 均为当前站点的 <code>/ai</code>。Base URL 不需要包含端口号或接口路径，例如 <code>:3000</code>、<code>:3100</code>、<code>/v1/messages</code>、<code>/chat/completions</code>。</p>
         </div>
       </div>
 
       <div class="phone-card">
-        <span class="phone-label">Base URL（复制后填进客户端）</span>
+        <span class="phone-label">Base URL（复制后填入客户端）</span>
         <code class="phone-value">{{ clientBaseUrl }}</code>
         <el-button type="primary" @click="copyValue('Base URL', clientBaseUrl)">复制 Base URL</el-button>
       </div>
 
-      <p class="lead">API Key 填第三步复制的 <code>th_</code> 开头那串。各产品字段名字不一样，对照下面填。</p>
+      <p class="lead">API Key 填写第三步复制的 <code>th_</code> 开头字符串。各产品字段名称不同，请对照下表填写。</p>
 
       <div class="protocol-table" aria-label="客户端填写对照">
         <div class="protocol-row protocol-head">
           <span>产品</span>
-          <span>怎么填</span>
+          <span>填写说明</span>
         </div>
         <div class="protocol-row">
           <span>Claude Code</span>
           <span>
-            把下面 JSON <strong>合并</strong>进 <code>~/.claude/settings.json</code> 的 <code>env</code>，不要整文件覆盖。改完后完全退出再打开。
+            将下方 JSON <strong>合并</strong>到 <code>~/.claude/settings.json</code> 的 <code>env</code> 中，保留文件中的其余配置。修改后完全退出客户端再重新打开。
           </span>
         </div>
         <div class="protocol-row">
           <span>Cursor</span>
-          <span>自定义模型 / OpenAI 兼容：Base URL 填上面地址，API Key 填员工 Key。</span>
+          <span>自定义模型 / OpenAI 兼容：Base URL 填写上方地址，API Key 填写第三步创建的 API Key。</span>
         </div>
         <div class="protocol-row">
           <span>KodaX、KodaX Space</span>
-          <span>按 OpenAI Chat Completion 配：Base URL 填上面地址，API Key 填员工 Key。</span>
+          <span>按 OpenAI Chat Completion 配置：Base URL 填写上方地址，API Key 填写第三步创建的 API Key。</span>
         </div>
         <div class="protocol-row">
           <span>Codex（自定义模型）</span>
           <span>
-            <code>~/.codex/config.toml</code> 里自定义 provider 的 <code>base_url</code> 填上面地址，
-            <code>wire_api = "responses"</code>。Codex 会自己请求 <code>/responses</code>。
+            在 <code>~/.codex/config.toml</code> 中，将自定义 provider 的 <code>base_url</code> 设为上方地址，
+            并设置 <code>wire_api = "responses"</code>。Codex 会自行请求 <code>/responses</code>。
           </span>
         </div>
         <div class="protocol-row">
           <span>CC Switch</span>
           <span>
-            <strong>上游</strong> Base URL 填上面地址，API Key 填员工 Key。
-            禁止把 <code>127.0.0.1:15721</code> 填成上游（那是 CC Switch 本地代理，填上去会循环）。
+            <strong>上游</strong> Base URL 填写上方地址，API Key 填写第三步创建的 API Key。
+            CC Switch 的本地代理地址 <code>127.0.0.1:15721</code> 不能作为上游地址，否则会形成请求循环。
           </span>
         </div>
       </div>
 
-      <p class="lead">Claude Code 可直接复制这段，只改 Key：</p>
+      <p class="lead">Claude Code 可直接复制以下配置，将其中的 Key 替换为你的 API Key：</p>
       <pre class="snippet"><code>{{ claudeSettingsSnippet }}</code></pre>
       <div class="step-actions">
         <el-button @click="copyValue('Claude Code 配置', claudeSettingsSnippet)">复制 Claude Code 配置</el-button>
       </div>
 
-      <p class="lead">Codex 自定义 provider 可参考：</p>
+      <p class="lead">Codex 自定义 provider 可参考以下配置：</p>
       <pre class="snippet"><code>{{ codexSnippet }}</code></pre>
       <div class="step-actions">
         <el-button @click="copyValue('Codex 配置', codexSnippet)">复制 Codex 配置</el-button>
       </div>
 
       <ul class="notes">
-        <li>地址里出现 <code>:3000</code> / <code>:3100</code> 一定是错的，那是 API 内部端口，员工电脑访问不到。</li>
-        <li>模型名称到「模型列表」页复制，不要手打。</li>
-        <li>配完仍连不上：先用浏览器打开当前站点，确认不是证书或网络问题，再完全退出客户端重开。</li>
+        <li>Base URL 中如出现 <code>:3000</code> / <code>:3100</code>，属于 API 内部端口，员工电脑无法访问。</li>
+        <li>模型名称请到「模型列表」页复制。</li>
+        <li>配置后仍无法连接时，先用浏览器打开当前站点，确认证书与网络正常，再完全退出客户端后重新打开。</li>
       </ul>
     </section>
 
@@ -264,26 +264,26 @@
       <div class="step-heading">
         <span class="step-index">5</span>
         <div>
-          <h3>从模型列表复制模型名，做第一次调用</h3>
-          <p>模型 ID 不要手打。先到「模型列表」复制，填进客户端，发一句短消息；再到「我的调用」看有没有记录。</p>
+          <h3>完成首次调用</h3>
+          <p>模型 ID 请从「模型列表」复制后填入客户端，发送一条短消息，再到「我的调用」确认是否产生记录。</p>
         </div>
       </div>
 
       <ol class="steps">
-        <li>打开「模型列表」，左侧选和 Key 相同的上游渠道。</li>
-        <li>点模型名旁边的「复制」，粘贴到客户端。智谱渠道当前常用：<code>glm-5.3</code>（文本）、<code>glm-5.3-flash</code>（多模态）。</li>
-        <li>在客户端发一句很短的话，例如「ping」或「你好」。</li>
-        <li>打开「我的调用」：成功会出现 Request ID、模型和 Tokens；失败也能看到错误，把 Request ID 复制下来再排障。</li>
+        <li>打开「模型列表」，在左侧选择与 API Key 相同的上游渠道。</li>
+        <li>点击模型名旁的「复制」，粘贴到客户端。智谱渠道当前常用：<code>glm-5.3</code>（文本）、<code>glm-5.3-flash</code>（多模态）。</li>
+        <li>在客户端发送一句短消息，例如「ping」或「你好」。</li>
+        <li>打开「我的调用」。成功时会显示 Request ID、模型和 Tokens；失败时也可查看错误信息，复制 Request ID 后用于排查。</li>
       </ol>
 
       <div class="script-card">
-        <strong>怎样算第一次调用成功</strong>
-        <p>客户端有完整或流式回复，并且「我的调用」里能看到刚那条记录。只有客户端转圈、调用页没有记录，多半是 Base URL、Key 或协议没配对，回到第二到第四步核对。</p>
+        <strong>成功标准</strong>
+        <p>客户端出现完整或流式回复，且「我的调用」中可见对应记录，即表示首次调用成功。若客户端持续等待且调用页无记录，通常是 Base URL、API Key 或协议未匹配，请回到第二至第四步核对。</p>
       </div>
 
       <ul class="notes">
-        <li>能列出模型但生成失败：模型 ID 和渠道不匹配，或上游暂时不可用。重新从「模型列表」复制。</li>
-        <li>智谱渠道不允许随便填旧模型名，手打 glm-4.x 会被拒。</li>
+        <li>能列出模型但生成失败时，通常是模型 ID 与上游渠道不匹配，或上游暂时不可用。请重新从「模型列表」复制。</li>
+        <li>智谱渠道不接受自行填写的旧模型名，手打 glm-4.x 会被拒绝。</li>
       </ul>
 
       <div class="step-actions">
