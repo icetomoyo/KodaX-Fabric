@@ -4,6 +4,7 @@
       <div class="page-head">
         <div class="head-actions">
           <el-button :loading="loading" @click="refreshAll">刷新</el-button>
+          <el-button v-if="canWrite" @click="openSubmitRecords">渠道 KEY 提交记录</el-button>
           <el-button v-if="canWrite" type="primary" @click="openCreateChannel">
             新增渠道
           </el-button>
@@ -751,6 +752,87 @@
         </div>
       </template>
     </el-drawer>
+
+    <el-dialog
+      v-model="showSubmitRecords"
+      title="渠道 KEY 提交记录"
+      width="min(860px, 94vw)"
+      class="credential-dialog"
+      @open="loadSubmitRecords"
+    >
+      <div class="submit-records-toolbar">
+        <el-select
+          v-model="submitRecordsProductLineId"
+          clearable
+          placeholder="全部渠道"
+          style="width: 240px"
+          @change="loadSubmitRecords"
+        >
+          <el-option
+            v-for="channel in channels"
+            :key="channel.id"
+            :label="channelDisplayName(channel)"
+            :value="channel.id"
+          />
+        </el-select>
+        <el-input
+          v-model="submitRecordsQuery"
+          clearable
+          placeholder="搜索姓名或手机号"
+          style="width: 220px"
+        />
+      </div>
+      <el-tabs v-model="submitRecordsTab">
+        <el-tab-pane :label="`已提交（${submitRecords.submittedCount}）`" name="submitted">
+          <el-table
+            v-loading="submitRecordsLoading"
+            :data="filteredSubmittedRows"
+            stripe
+            empty-text="暂无已提交员工"
+            max-height="420"
+          >
+            <el-table-column prop="name" label="姓名" width="110" />
+            <el-table-column prop="phone" label="手机号" width="130" />
+            <el-table-column label="渠道" min-width="160">
+              <template #default="{ row }">
+                {{ row.providerName }} / {{ row.productLineName }}
+              </template>
+            </el-table-column>
+            <el-table-column label="尾号" width="100">
+              <template #default="{ row }">****{{ row.secretSuffix }}</template>
+            </el-table-column>
+            <el-table-column label="状态" width="100">
+              <template #default="{ row }">
+                <el-tag :type="statusTagType(row.status)" effect="light">
+                  {{ statusText(row.status) }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="提交时间" min-width="170">
+              <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
+            </el-table-column>
+          </el-table>
+        </el-tab-pane>
+        <el-tab-pane :label="`未提交（${submitRecords.unsubmittedCount}）`" name="unsubmitted">
+          <el-table
+            v-loading="submitRecordsLoading"
+            :data="filteredUnsubmittedRows"
+            stripe
+            empty-text="暂无未提交员工"
+            max-height="420"
+          >
+            <el-table-column prop="name" label="姓名" width="120" />
+            <el-table-column prop="phone" label="手机号" width="140" />
+            <el-table-column label="角色" width="120">
+              <template #default="{ row }">{{ formatRoleLabel(row.role) }}</template>
+            </el-table-column>
+            <el-table-column label="企业" min-width="180">
+              <template #default="{ row }">{{ row.enterpriseName || "—" }}</template>
+            </el-table-column>
+          </el-table>
+        </el-tab-pane>
+      </el-tabs>
+    </el-dialog>
   </div>
 </template>
 
@@ -760,6 +842,7 @@ import { useRoute, useRouter } from "vue-router";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { http } from "@/api/http";
 import { formatDateTime } from "@/lib/date-time";
+import { roleLabel as formatRoleLabel } from "@/lib/roles";
 import { usagePercent, usageProgressStatus } from "@/lib/tokens";
 import { useAuthStore } from "@/stores/auth";
 import ChannelConfigFields from "@/views/admin/ChannelConfigFields.vue";
@@ -984,6 +1067,62 @@ const channelEditOriginal = ref<ChannelEditSnapshot | null>(null);
 
 const showKeyDetails = ref(false);
 const detailCredentialId = ref<number | null>(null);
+const showSubmitRecords = ref(false);
+const submitRecordsLoading = ref(false);
+const submitRecordsTab = ref("submitted");
+const submitRecordsQuery = ref("");
+const submitRecordsProductLineId = ref<number | null>(null);
+const submitRecords = ref<{
+  submittedCount: number;
+  unsubmittedCount: number;
+  submitted: Array<{
+    id: number;
+    name: string;
+    phone: string;
+    role: string;
+    enterpriseName: string | null;
+    submissions: Array<{
+      credentialId: number;
+      productLineId: number;
+      productLineName: string;
+      providerName: string;
+      secretSuffix: string;
+      status: CredentialStatus;
+      createdAt: string;
+    }>;
+  }>;
+  unsubmitted: Array<{
+    id: number;
+    name: string;
+    phone: string;
+    role: string;
+    enterpriseName: string | null;
+  }>;
+}>({ submittedCount: 0, unsubmittedCount: 0, submitted: [], unsubmitted: [] });
+
+const filteredSubmittedRows = computed(() => {
+  const query = submitRecordsQuery.value.trim();
+  const rows = submitRecords.value.submitted.flatMap((person) =>
+    person.submissions.map((item) => ({
+      ...item,
+      name: person.name,
+      phone: person.phone,
+      role: person.role,
+      enterpriseName: person.enterpriseName,
+    })),
+  );
+  if (!query) return rows;
+  return rows.filter((row) => row.name.includes(query) || row.phone.includes(query));
+});
+
+const filteredUnsubmittedRows = computed(() => {
+  const query = submitRecordsQuery.value.trim();
+  if (!query) return submitRecords.value.unsubmitted;
+  return submitRecords.value.unsubmitted.filter(
+    (row) => row.name.includes(query) || row.phone.includes(query),
+  );
+});
+
 const showChannelDetails = ref(false);
 const channelSummaryLoading = ref(false);
 const channelSummaries = ref(new Map<number, ChannelSummary>());
@@ -1718,6 +1857,34 @@ async function refreshAll() {
     ElMessage.error(getErrorMessage(error, "加载上游渠道失败"));
   } finally {
     loading.value = false;
+  }
+}
+
+function openSubmitRecords() {
+  submitRecordsQuery.value = "";
+  submitRecordsTab.value = "submitted";
+  showSubmitRecords.value = true;
+}
+
+async function loadSubmitRecords() {
+  submitRecordsLoading.value = true;
+  try {
+    const { data } = await http.get("/api/admin/credential-submissions", {
+      params: submitRecordsProductLineId.value
+        ? { productLineId: submitRecordsProductLineId.value }
+        : {},
+    });
+    if (!data.success) throw new Error(data.message || "加载提交记录失败");
+    submitRecords.value = {
+      submittedCount: Number(data.data?.submittedCount ?? 0),
+      unsubmittedCount: Number(data.data?.unsubmittedCount ?? 0),
+      submitted: Array.isArray(data.data?.submitted) ? data.data.submitted : [],
+      unsubmitted: Array.isArray(data.data?.unsubmitted) ? data.data.unsubmitted : [],
+    };
+  } catch (error) {
+    ElMessage.error(getErrorMessage(error, "加载提交记录失败"));
+  } finally {
+    submitRecordsLoading.value = false;
   }
 }
 
@@ -3135,6 +3302,13 @@ onMounted(refreshAll);
 .time-text {
   color: #64748b;
   font-size: 12px;
+}
+
+.submit-records-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
 }
 
 .detail-empty {

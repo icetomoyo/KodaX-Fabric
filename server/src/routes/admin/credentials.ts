@@ -24,7 +24,15 @@ import {
   allocateCustomProductLineCode,
   resolveCustomProtocolConfigs,
 } from "../../lib/custom-channel.js";
-import { effectiveCredentialStatus } from "../../lib/credential-status.js";
+import {
+  partitionCredentialSubmitRoster,
+  presentEmployeeSubmittedCredentials,
+  submittedByEmployeeIdFromMeta,
+} from "../../lib/channel-credential-submit.js";
+import {
+  effectiveCredentialStatus,
+  type CredentialStatus,
+} from "../../lib/credential-status.js";
 import { decryptSecret, encryptSecret, secretSuffix } from "../../lib/crypto-secret.js";
 import { writeOpsAudit } from "../../lib/ops-audit.js";
 import {
@@ -682,6 +690,98 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
           })),
         };
       }),
+    };
+  });
+
+  app.get("/api/admin/credential-submissions", async (req, reply) => {
+    const query = z
+      .object({
+        productLineId: z.coerce.number().int().positive().optional(),
+      })
+      .safeParse(req.query);
+    if (!query.success) {
+      return reply.code(400).send({ success: false, message: "参数无效" });
+    }
+
+    const people = await db
+      .select({
+        id: employees.id,
+        name: employees.name,
+        phone: employees.phone,
+        role: employees.role,
+        status: employees.status,
+        enterpriseName: enterprises.name,
+      })
+      .from(employees)
+      .leftJoin(enterprises, eq(employees.enterpriseId, enterprises.id))
+      .where(ne(employees.role, "admin"))
+      .orderBy(asc(employees.id));
+
+    const credentialRows = await db
+      .select({
+        id: upstreamCredentials.id,
+        productLineId: productLines.id,
+        productLineName: productLines.name,
+        providerName: providers.name,
+        providerCode: providers.code,
+        label: upstreamCredentials.label,
+        secretSuffix: upstreamCredentials.secretSuffix,
+        status: upstreamCredentials.status,
+        coolUntil: upstreamCredentials.coolUntil,
+        createdAt: upstreamCredentials.createdAt,
+        meta: upstreamCredentials.meta,
+      })
+      .from(upstreamCredentials)
+      .innerJoin(productLines, eq(upstreamCredentials.productLineId, productLines.id))
+      .innerJoin(providers, eq(productLines.providerId, providers.id))
+      .where(
+        query.data.productLineId
+          ? and(
+            sql`${upstreamCredentials.meta}->>'createdBy' = 'employee_submit'`,
+            eq(upstreamCredentials.productLineId, query.data.productLineId),
+          )
+          : sql`${upstreamCredentials.meta}->>'createdBy' = 'employee_submit'`,
+      )
+      .orderBy(desc(upstreamCredentials.id));
+
+    const views = presentEmployeeSubmittedCredentials(
+      credentialRows.map((row) => ({
+        id: row.id,
+        productLineId: row.productLineId,
+        productLineName: row.productLineName,
+        providerName: row.providerName,
+        providerCode: row.providerCode,
+        label: row.label,
+        secretSuffix: row.secretSuffix,
+        status: row.status as CredentialStatus,
+        coolUntil: row.coolUntil,
+        createdAt: row.createdAt,
+      })),
+    );
+    const submissions = views.flatMap((view, index) => {
+      const employeeId = submittedByEmployeeIdFromMeta(credentialRows[index]?.meta);
+      if (employeeId == null) return [];
+      return [{
+        credentialId: view.id,
+        employeeId,
+        productLineId: view.productLineId,
+        productLineName: view.productLineName,
+        providerName: view.providerName,
+        secretSuffix: view.secretSuffix,
+        status: view.status,
+        createdAt: view.createdAt,
+      }];
+    });
+
+    const roster = partitionCredentialSubmitRoster(people, submissions);
+    return {
+      success: true,
+      data: {
+        submittedCount: roster.submitted.length,
+        unsubmittedCount: roster.unsubmitted.length,
+        submitted: roster.submitted,
+        unsubmitted: roster.unsubmitted,
+      },
     };
   });
 

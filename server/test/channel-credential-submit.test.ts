@@ -14,8 +14,10 @@ const {
   buildEmployeeSubmittedCredentialLabel,
   collectSubmitableChannels,
   isEmployeeSubmittedCredentialMeta,
+  partitionCredentialSubmitRoster,
   planEmployeeChannelCredentialSubmit,
   presentEmployeeSubmittedCredentials,
+  submittedByEmployeeIdFromMeta,
 } = await import("../src/lib/channel-credential-submit.js");
 const { meRoutes } = await import("../src/routes/me.js");
 
@@ -235,6 +237,38 @@ test("employee submit history is scoped to the submitter and never includes secr
   assert.equal(JSON.stringify(views).includes("secretEncrypted"), false);
 });
 
+test("admin submit roster splits employees who submitted from those who have not", () => {
+  assert.equal(
+    submittedByEmployeeIdFromMeta({ createdBy: "employee_submit", submittedByEmployeeId: 7 }),
+    7,
+  );
+  assert.equal(submittedByEmployeeIdFromMeta({ createdBy: "bulk_create" }), null);
+
+  const roster = partitionCredentialSubmitRoster(
+    [
+      { id: 3, name: "已交", phone: "13800000003", role: "employee", status: "active", enterpriseName: "海致" },
+      { id: 4, name: "未交", phone: "13800000004", role: "employee", status: "active", enterpriseName: null },
+    ],
+    [
+      {
+        credentialId: 12,
+        employeeId: 3,
+        productLineId: 1,
+        productLineName: "GLM",
+        providerName: "智谱",
+        secretSuffix: "ab12",
+        status: "active",
+        createdAt: "2026-09-10T02:00:00.000Z",
+      },
+    ],
+  );
+  assert.equal(roster.submitted.length, 1);
+  assert.equal(roster.submitted[0]?.id, 3);
+  assert.equal(roster.submitted[0]?.submissions.length, 1);
+  assert.equal(roster.unsubmitted.length, 1);
+  assert.equal(roster.unsubmitted[0]?.id, 4);
+});
+
 test("personal center exposes channel-key submit for every non-super-admin role", () => {
   const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
   const profile = readFileSync(resolve(root, "web/src/views/admin/ProfileView.vue"), "utf8");
@@ -246,6 +280,18 @@ test("personal center exposes channel-key submit for every non-super-admin role"
   assert.match(profile, /\/api\/me\/upstream-credentials/);
   assert.match(profile, /提交记录/);
   assert.doesNotMatch(profile, /\/api\/admin\/credentials\/bulk-create/);
+});
+
+test("upstream channel page exposes employee submit records for super-admin", () => {
+  const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+  const credentials = readFileSync(
+    resolve(root, "web/src/views/admin/CredentialsView.vue"),
+    "utf8",
+  );
+  assert.match(credentials, /渠道 KEY 提交记录/);
+  assert.match(credentials, /\/api\/admin\/credential-submissions/);
+  assert.match(credentials, /已提交/);
+  assert.match(credentials, /未提交/);
 });
 
 test("me channel-key submit routes exist and reject anonymous callers", async () => {

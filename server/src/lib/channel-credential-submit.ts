@@ -153,6 +153,57 @@ export function isEmployeeSubmittedCredentialMeta(
   );
 }
 
+export function submittedByEmployeeIdFromMeta(meta: unknown): number | null {
+  if (!meta || typeof meta !== "object" || Array.isArray(meta)) return null;
+  const record = meta as Record<string, unknown>;
+  if (record.createdBy !== "employee_submit") return null;
+  const employeeId = Number(record.submittedByEmployeeId);
+  return Number.isSafeInteger(employeeId) && employeeId > 0 ? employeeId : null;
+}
+
+export type CredentialSubmitRosterPerson = {
+  id: number;
+  name: string;
+  phone: string;
+  role: string;
+  status: string;
+  enterpriseName: string | null;
+};
+
+export type CredentialSubmitRosterItem = {
+  credentialId: number;
+  employeeId: number;
+  productLineId: number;
+  productLineName: string;
+  providerName: string;
+  secretSuffix: string;
+  status: CredentialStatus;
+  createdAt: string;
+};
+
+export function partitionCredentialSubmitRoster(
+  people: readonly CredentialSubmitRosterPerson[],
+  submissions: readonly CredentialSubmitRosterItem[],
+): {
+  submitted: Array<CredentialSubmitRosterPerson & { submissions: CredentialSubmitRosterItem[] }>;
+  unsubmitted: CredentialSubmitRosterPerson[];
+} {
+  const submissionsByEmployee = new Map<number, CredentialSubmitRosterItem[]>();
+  for (const submission of submissions) {
+    const list = submissionsByEmployee.get(submission.employeeId) ?? [];
+    list.push(submission);
+    submissionsByEmployee.set(submission.employeeId, list);
+  }
+  const submitted: Array<CredentialSubmitRosterPerson & { submissions: CredentialSubmitRosterItem[] }> = [];
+  const unsubmitted: CredentialSubmitRosterPerson[] = [];
+  for (const person of people) {
+    const owned = submissionsByEmployee.get(person.id);
+    if (owned?.length) submitted.push({ ...person, submissions: owned });
+    else unsubmitted.push(person);
+  }
+  return { submitted, unsubmitted };
+}
+
 export function presentEmployeeSubmittedCredentials(
   rows: readonly EmployeeSubmittedCredentialRow[],
   now: Date = new Date(),
