@@ -824,18 +824,6 @@ function nodeActions(node: OrgTreeNode): Array<{ command: string; label: string;
       { command: "delete", label: "删除", danger: true },
     ];
   }
-  if (node.kind === "team" && canManageTeams.value) {
-    const row = teams.value.find((item) => item.id === node.id);
-    return [
-      { command: "edit", label: "编辑" },
-      {
-        command: row?.status === "active" ? "disable" : "enable",
-        label: row?.status === "active" ? "停用" : "启用",
-        danger: row?.status === "active",
-      },
-      { command: "delete", label: "删除", danger: true },
-    ];
-  }
   return [];
 }
 
@@ -855,15 +843,6 @@ function onNodeAction(action: string, node: OrgTreeNode) {
     if (action === "disable") void setDepartmentStatus(row, "disabled");
     if (action === "enable") void setDepartmentStatus(row, "active");
     if (action === "delete") void deleteDepartment(row);
-    return;
-  }
-  if (node.kind === "team") {
-    const row = teams.value.find((item) => item.id === node.id);
-    if (!row) return;
-    if (action === "edit") openEditTeam(row);
-    if (action === "disable") void setTeamStatus(row, "disabled");
-    if (action === "enable") void setTeamStatus(row, "active");
-    if (action === "delete") void deleteTeam(row);
   }
 }
 
@@ -1234,7 +1213,7 @@ async function createTeam() {
     showCreateTeam.value = false;
     await loadEnterprises();
     await loadTeamsAndPeople();
-    selectedNodeKind.value = "team";
+    selectedNodeKind.value = "department";
     selectedTeamId.value = data.data.id;
     syncQuery();
     highlightTree();
@@ -1272,7 +1251,7 @@ async function updateTeam() {
     if (!data.success) throw new Error(data.message);
     ElMessage.success("已更新");
     showEditTeam.value = false;
-    selectedNodeKind.value = "team";
+    selectedNodeKind.value = "department";
     selectedDepartmentId.value = editTeamDepartmentId.value;
     selectedTeamId.value = editTeam.value.id;
     await loadTeamsAndPeople();
