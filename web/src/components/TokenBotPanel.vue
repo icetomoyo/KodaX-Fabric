@@ -89,7 +89,8 @@
       type="button"
       class="fab"
       :class="{ open }"
-      title="拖动可移动位置"
+      aria-label="Token Bot"
+      title="Token Bot"
       @pointerdown="onHandlePointerDown"
       @pointermove="onHandlePointerMove"
       @pointerup="onHandlePointerUp"
@@ -97,7 +98,8 @@
       @lostpointercapture="onHandlePointerUp"
       @click="onFabClick"
     >
-      {{ open ? "收起" : "Token Bot" }}
+      <XIcon v-if="open" :size="22" aria-hidden="true" />
+      <BotIcon v-else :size="22" aria-hidden="true" />
     </button>
   </div>
 </template>
@@ -105,6 +107,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute } from "vue-router";
+import { BotIcon, XIcon } from "@lucide/vue";
 import {
   Conversation,
   ConversationContent,
@@ -385,13 +388,17 @@ async function sendMessage(message: string) {
 }
 
 .fab {
-  min-height: 40px;
-  padding: 8px 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  min-height: 48px;
+  padding: 0;
   border: none;
-  border-radius: 999px;
+  border-radius: 50%;
   background: #0f172a;
   color: #fff;
-  font: inherit;
   cursor: grab;
   touch-action: none;
   box-shadow: 0 10px 24px rgba(15, 23, 42, 0.28);
