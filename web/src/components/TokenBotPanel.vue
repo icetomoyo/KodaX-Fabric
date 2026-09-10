@@ -1,7 +1,24 @@
 <template>
-  <div v-if="enabled" class="token-bot" :class="{ 'is-canvas': isCanvasPage }">
+  <div
+    v-if="enabled"
+    ref="rootRef"
+    class="token-bot"
+    :class="{
+      'is-canvas': isCanvasPage,
+      'is-moved': position != null,
+      'is-dragging': dragging,
+    }"
+    :style="positionStyle"
+  >
     <section v-if="open" class="panel" role="dialog" aria-labelledby="token-bot-title">
-      <header class="panel-head">
+      <header
+        class="panel-head"
+        @pointerdown="onHandlePointerDown"
+        @pointermove="onHandlePointerMove"
+        @pointerup="onHandlePointerUp"
+        @pointercancel="onHandlePointerUp"
+        @lostpointercapture="onHandlePointerUp"
+      >
         <div>
           <strong id="token-bot-title">Token Bot</strong>
           <p>接入与排障，可查看你自己的 Key 和调用</p>
@@ -68,14 +85,25 @@
       </footer>
     </section>
 
-    <button type="button" class="fab" :class="{ open }" @click="toggle">
+    <button
+      type="button"
+      class="fab"
+      :class="{ open }"
+      title="拖动可移动位置"
+      @pointerdown="onHandlePointerDown"
+      @pointermove="onHandlePointerMove"
+      @pointerup="onHandlePointerUp"
+      @pointercancel="onHandlePointerUp"
+      @lostpointercapture="onHandlePointerUp"
+      @click="onFabClick"
+    >
       {{ open ? "收起" : "Token Bot" }}
     </button>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 import {
   Conversation,
@@ -99,6 +127,15 @@ import {
   supportApiError,
   type SupportHistoryMessage,
 } from "@/api/support";
+import {
+  TOKEN_BOT_POSITION_KEY,
+  boxToRightBottom,
+  clampTokenBotPosition,
+  moveTokenBotPosition,
+  parseTokenBotPosition,
+  tokenBotDragMoved,
+  type TokenBotPosition,
+} from "@/lib/token-bot-position";
 
 type ChatLine = {
   id?: number;
@@ -113,9 +150,21 @@ const suggestions = [
   "现在可用哪些模型？",
 ] as const;
 
+type DragSession = {
+  pointerId: number;
+  startX: number;
+  startY: number;
+  origin: TokenBotPosition;
+  moved: boolean;
+};
+
 const route = useRoute();
+const rootRef = ref<HTMLElement | null>(null);
 const enabled = ref(false);
 const open = ref(false);
+const position = ref<TokenBotPosition | null>(null);
+const dragSession = ref<DragSession | null>(null);
+const suppressClick = ref(false);
 const sending = ref(false);
 const loadedHistory = ref(false);
 const startFresh = ref(false);
@@ -126,13 +175,32 @@ const messages = ref<ChatLine[]>([]);
 
 const isCanvasPage = computed(() => route.path === "/admin/key-bindings");
 const guidePath = computed(() => (route.path.startsWith("/admin") ? "/admin/guide" : "/me/guide"));
+const dragging = computed(() => Boolean(dragSession.value?.moved));
+const positionStyle = computed(() => {
+  if (!position.value) return undefined;
+  return {
+    right: `${position.value.right}px`,
+    bottom: `${position.value.bottom}px`,
+    left: "auto",
+  };
+});
 
 onMounted(async () => {
+  position.value = readStoredPosition();
   try {
     enabled.value = await fetchSupportStatus();
   } catch {
     enabled.value = false;
   }
+  window.addEventListener("resize", onViewportChange);
+});
+
+onBeforeUnmount(() => {
+  window.removeEventListener("resize", onViewportChange);
+});
+
+watch([enabled, open], () => {
+  void nextTick(clampToViewport);
 });
 
 watch(open, async (visible) => {
@@ -152,8 +220,98 @@ function toLine(item: SupportHistoryMessage): ChatLine {
   return { id: item.id, role: item.role, content: item.content };
 }
 
+function readStoredPosition(): TokenBotPosition | null {
+  try {
+    return parseTokenBotPosition(localStorage.getItem(TOKEN_BOT_POSITION_KEY));
+  } catch {
+    return null;
+  }
+}
+
+function writeStoredPosition(value: TokenBotPosition) {
+  try {
+    localStorage.setItem(TOKEN_BOT_POSITION_KEY, JSON.stringify(value));
+  } catch {
+    // Ignore quota / private-mode failures.
+  }
+}
+
+function widgetSize() {
+  const rect = rootRef.value?.getBoundingClientRect();
+  return {
+    width: rect?.width || 120,
+    height: rect?.height || 40,
+    viewportWidth: window.innerWidth,
+    viewportHeight: window.innerHeight,
+  };
+}
+
+function clampToViewport() {
+  if (!position.value || !rootRef.value) return;
+  position.value = clampTokenBotPosition({
+    ...position.value,
+    ...widgetSize(),
+  });
+}
+
+function onViewportChange() {
+  clampToViewport();
+}
+
+function onHandlePointerDown(event: PointerEvent) {
+  if (event.button !== 0) return;
+  const target = event.target;
+  if (target instanceof Element && target.closest(".head-actions")) return;
+  const root = rootRef.value;
+  if (!root) return;
+  const rect = root.getBoundingClientRect();
+  const origin = boxToRightBottom({
+    right: rect.right,
+    bottom: rect.bottom,
+    viewportWidth: window.innerWidth,
+    viewportHeight: window.innerHeight,
+  });
+  dragSession.value = {
+    pointerId: event.pointerId,
+    startX: event.clientX,
+    startY: event.clientY,
+    origin,
+    moved: false,
+  };
+  (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+}
+
+function onHandlePointerMove(event: PointerEvent) {
+  const session = dragSession.value;
+  if (!session || event.pointerId !== session.pointerId) return;
+  const dx = event.clientX - session.startX;
+  const dy = event.clientY - session.startY;
+  if (!session.moved && !tokenBotDragMoved(dx, dy)) return;
+  dragSession.value = { ...session, moved: true };
+  event.preventDefault();
+  position.value = moveTokenBotPosition(session.origin, dx, dy, widgetSize());
+}
+
+function onHandlePointerUp(event: PointerEvent) {
+  const session = dragSession.value;
+  if (!session || event.pointerId !== session.pointerId) return;
+  if (session.moved && position.value) {
+    suppressClick.value = true;
+    writeStoredPosition(position.value);
+  }
+  dragSession.value = null;
+}
+
 function toggle() {
   open.value = !open.value;
+}
+
+function onFabClick() {
+  if (suppressClick.value) {
+    suppressClick.value = false;
+    return;
+  }
+  toggle();
 }
 
 function onNewConversation() {
@@ -217,9 +375,13 @@ async function sendMessage(message: string) {
   gap: 12px;
 }
 
-.token-bot.is-canvas {
+.token-bot.is-canvas:not(.is-moved) {
   right: auto;
   left: 244px;
+}
+
+.token-bot.is-dragging {
+  user-select: none;
 }
 
 .fab {
@@ -230,12 +392,18 @@ async function sendMessage(message: string) {
   background: #0f172a;
   color: #fff;
   font: inherit;
-  cursor: pointer;
+  cursor: grab;
+  touch-action: none;
   box-shadow: 0 10px 24px rgba(15, 23, 42, 0.28);
 }
 
 .fab.open {
   background: #1e293b;
+}
+
+.token-bot.is-dragging .fab,
+.token-bot.is-dragging .panel-head {
+  cursor: grabbing;
 }
 
 .panel {
@@ -258,6 +426,8 @@ async function sendMessage(message: string) {
   padding: 14px 16px 12px;
   background: #0f172a;
   color: #fff;
+  cursor: grab;
+  touch-action: none;
 }
 
 .panel-head p {
@@ -270,6 +440,8 @@ async function sendMessage(message: string) {
 .head-actions {
   display: flex;
   flex-shrink: 0;
+  cursor: auto;
+  touch-action: auto;
 }
 
 .head-actions :deep(.el-button) {

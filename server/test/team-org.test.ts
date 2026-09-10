@@ -390,6 +390,10 @@ test("admin shell uses org board for all console roles", () => {
   assert.match(orgView, /openCreateChildDepartment/);
   assert.doesNotMatch(orgView, /未加入团队/);
   assert.match(orgView, /邀请已注册员工/);
+  assert.match(orgView, /visibleOrgEmployees/);
+  assert.doesNotMatch(orgView, /namedTeamIds/);
+  assert.match(orgView, /useTablePage/);
+  assert.match(orgView, /pagedEmployees/);
 });
 
 test("joining a second team is rejected with a named 409 message", () => {

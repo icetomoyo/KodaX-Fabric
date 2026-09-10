@@ -128,47 +128,59 @@
           description="请先选择企业"
           :image-size="64"
         />
-        <el-table
-          v-else
-          class="people-table"
-          :data="visibleEmployees"
-          stripe
-          height="100%"
-          :empty-text="employeeEmptyText"
-        >
-          <el-table-column prop="name" label="姓名" min-width="120" show-overflow-tooltip />
-          <el-table-column prop="phone" label="手机号" min-width="130" />
-          <el-table-column label="部门" min-width="140" show-overflow-tooltip>
-            <template #default="{ row }">
-              <span :class="{ muted: !row.teamName }">{{ row.teamName || "未分配" }}</span>
-            </template>
-          </el-table-column>
-          <el-table-column label="角色" width="120">
-            <template #default="{ row }">{{ employeeRoleLabel(row.role) }}</template>
-          </el-table-column>
-          <el-table-column label="状态" width="90" align="center">
-            <template #default="{ row }">
-              <el-tag :type="statusTagType(row.status)" size="small">
-                {{ statusLabel(row.status) }}
-              </el-tag>
-            </template>
-          </el-table-column>
-          <el-table-column label="操作" width="160" fixed="right" align="center">
-            <template #default="{ row }">
-              <el-button
-                v-if="row.status === 'pending'"
-                link
-                type="success"
-                :loading="approvingUserId === row.id"
-                @click="approveUser(row)"
-              >
-                审核通过
-              </el-button>
-              <el-button link type="primary" @click="openUserDetail(row)">详情</el-button>
-              <el-button link type="primary" @click="openEditUser(row)">编辑</el-button>
-            </template>
-          </el-table-column>
-        </el-table>
+        <template v-else>
+          <div class="people-table-wrap">
+            <el-table
+              class="people-table"
+              :data="pagedEmployees"
+              stripe
+              height="100%"
+              :empty-text="employeeEmptyText"
+            >
+              <el-table-column prop="name" label="姓名" min-width="120" show-overflow-tooltip />
+              <el-table-column prop="phone" label="手机号" min-width="130" />
+              <el-table-column label="部门" min-width="140" show-overflow-tooltip>
+                <template #default="{ row }">
+                  <span :class="{ muted: !row.teamName }">{{ row.teamName || "未分配" }}</span>
+                </template>
+              </el-table-column>
+              <el-table-column label="角色" width="120">
+                <template #default="{ row }">{{ employeeRoleLabel(row.role) }}</template>
+              </el-table-column>
+              <el-table-column label="状态" width="90" align="center">
+                <template #default="{ row }">
+                  <el-tag :type="statusTagType(row.status)" size="small">
+                    {{ statusLabel(row.status) }}
+                  </el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column label="操作" width="160" fixed="right" align="center">
+                <template #default="{ row }">
+                  <el-button
+                    v-if="row.status === 'pending'"
+                    link
+                    type="success"
+                    :loading="approvingUserId === row.id"
+                    @click="approveUser(row)"
+                  >
+                    审核通过
+                  </el-button>
+                  <el-button link type="primary" @click="openUserDetail(row)">详情</el-button>
+                  <el-button link type="primary" @click="openEditUser(row)">编辑</el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+          </div>
+          <div v-if="visibleEmployees.length" class="pager">
+            <el-pagination
+              v-model:current-page="page"
+              background
+              layout="total, prev, pager, next"
+              :total="total"
+              :page-size="pageSize"
+            />
+          </div>
+        </template>
       </el-card>
     </div>
 
@@ -427,7 +439,9 @@ import {
 } from "@element-plus/icons-vue";
 import { http } from "@/api/http";
 import { parseBulkRegisterText } from "@/lib/bulk-register-users";
+import { employeeDepartmentLabel, visibleOrgEmployees } from "@/lib/org-employees";
 import { roleLabel } from "@/lib/roles";
+import { useTablePage } from "@/lib/table-page";
 
 import { useAuthStore } from "@/stores/auth";
 import EmployeeUsageDrawer from "./EmployeeUsageDrawer.vue";
@@ -463,6 +477,7 @@ type TeamRow = {
   status: "active" | "disabled";
   enterpriseId: number;
   departmentId: number;
+  departmentName?: string;
   isDefault?: boolean;
   memberCount: number;
   todayTotalTokens: number;
@@ -610,14 +625,6 @@ function buildDepartmentNodes(enterpriseId: number, parentId: number | null): Or
   }));
 }
 
-function departmentSubtreeIds(rootId: number): number[] {
-  const ids = [rootId];
-  for (const child of namedDepartments.value.filter((row) => row.parentId === rootId)) {
-    ids.push(...departmentSubtreeIds(child.id));
-  }
-  return ids;
-}
-
 const orgTree = computed((): OrgTreeNode[] => {
   if (auth.isDeptAdmin) {
     const enterpriseId = selectedEnterpriseId.value ?? auth.user?.enterprise?.id;
@@ -697,18 +704,22 @@ const editUserDepartmentOptions = computed(() => {
   return options;
 });
 
-const visibleEmployees = computed(() => {
-  if (auth.isTeamAdmin) return employees.value;
-  if (selectedNodeKind.value === "department" && selectedDepartmentId.value != null) {
-    const subtree = new Set(departmentSubtreeIds(selectedDepartmentId.value));
-    const teamIds = new Set(
-      teams.value.filter((team) => subtree.has(team.departmentId)).map((team) => team.id),
-    );
-    return employees.value.filter((row) => row.teamId != null && teamIds.has(row.teamId));
-  }
-  const namedTeamIds = new Set(namedTeams.value.map((team) => team.id));
-  return employees.value.filter((row) => row.teamId != null && namedTeamIds.has(row.teamId));
-});
+const visibleEmployees = computed(() =>
+  visibleOrgEmployees({
+    isTeamAdmin: auth.isTeamAdmin,
+    selectedKind: selectedNodeKind.value === "department" ? "department" : "enterprise",
+    selectedDepartmentId: selectedDepartmentId.value,
+    employees: employees.value,
+    teams: teams.value,
+    departments: departments.value,
+  }),
+);
+const { page, paged: pagedEmployees, total, pageSize, resetPage } = useTablePage(visibleEmployees);
+
+watch(
+  [selectedNodeKind, selectedEnterpriseId, selectedDepartmentId],
+  () => resetPage(),
+);
 
 const employeeSectionTitle = computed(() => {
   if (auth.isTeamAdmin) return "员工";
@@ -923,6 +934,7 @@ async function loadPeople() {
     .filter((row) => row.role !== "admin")
     .map((row) => {
       const joined = membership.get(row.id);
+      const teamId = joined?.teamId ?? row.teamId ?? null;
       return {
         id: row.id,
         name: row.name,
@@ -930,8 +942,13 @@ async function loadPeople() {
         role: row.role,
         status: row.status,
         enterpriseId: row.enterpriseId,
-        teamId: joined?.teamId ?? row.teamId ?? null,
-        teamName: joined?.teamName ?? row.teamName ?? null,
+        teamId,
+        teamName: employeeDepartmentLabel({
+          teamId,
+          fallbackName: joined?.teamName ?? row.teamName ?? null,
+          teams: teams.value,
+          departments: departments.value,
+        }),
         teamRole: joined?.teamRole ?? (row.role === "team_admin" ? "team_admin" : row.teamId ? "member" : null),
         lastLoginAt: row.lastLoginAt,
       };
@@ -1737,9 +1754,19 @@ onMounted(() => {
   color: var(--el-color-danger);
 }
 
-.people-table {
+.people-table-wrap {
   flex: 1;
   min-height: 0;
+}
+
+.people-table {
+  height: 100%;
+}
+
+.people-pane .pager {
+  flex-shrink: 0;
+  margin-top: 0;
+  padding: 8px 16px 12px;
 }
 
 .people-pane :deep(.el-empty) {
