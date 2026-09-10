@@ -59,6 +59,26 @@ test("standard with a department shares the department Key", () => {
   );
 });
 
+test("standard binding department id is the first-level department", async () => {
+  const { firstLevelDepartmentId } = await import("../src/lib/department-tree.js");
+  const tree = [
+    { id: 8, parentId: null },
+    { id: 18, parentId: 8 },
+    { id: 41, parentId: 18 },
+  ];
+  assert.equal(firstLevelDepartmentId(41, tree), 8);
+  assert.deepEqual(
+    resolveBindingScope({
+      employeeId: 11,
+      usageTier: "standard",
+      teamId: 22,
+      departmentId: firstLevelDepartmentId(41, tree),
+      enterpriseId: 33,
+    }),
+    { scopeType: "department", scopeId: 8 },
+  );
+});
+
 test("standard without a department cannot resolve a scope", () => {
   assert.equal(
     resolveBindingScope({

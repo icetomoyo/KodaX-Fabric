@@ -381,9 +381,14 @@ test("admin shell uses org board for all console roles", () => {
   assert.match(router, /team_admin/);
   assert.match(router, /name: "admin-key-bindings"[\s\S]*roles: \["admin", "org_admin"\]/);
   const orgView = readFileSync(resolve(root, "web/src/views/admin/EnterprisesView.vue"), "utf8");
-  assert.match(orgView, /showEnterprisePane/);
-  assert.match(orgView, /showDepartmentPane/);
-  assert.match(orgView, /showTeamPane/);
+  assert.match(orgView, /el-tree/);
+  assert.match(orgView, /orgTree/);
+  assert.match(orgView, /kind: "enterprise"/);
+  assert.match(orgView, /kind: "department"/);
+  assert.match(orgView, /namedDepartments/);
+  assert.match(orgView, /新建子部门/);
+  assert.match(orgView, /openCreateChildDepartment/);
+  assert.doesNotMatch(orgView, /未加入团队/);
   assert.match(orgView, /邀请已注册员工/);
 });
 

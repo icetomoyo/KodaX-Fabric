@@ -1,6 +1,7 @@
 import { and, eq, inArray } from "drizzle-orm";
 import { db } from "../db/client.js";
-import { teamMembers, teams } from "../db/schema/index.js";
+import { departments, teamMembers, teams } from "../db/schema/index.js";
+import { departmentAndDescendantIds } from "./department-tree.js";
 import type { SessionRole } from "./jwt.js";
 
 export const TEAM_ADMIN_ROLE = "team_admin" as const;
@@ -46,7 +47,12 @@ export async function listAdminDepartmentIds(employeeId: number): Promise<number
     .from(teamMembers)
     .innerJoin(teams, eq(teamMembers.teamId, teams.id))
     .where(eq(teamMembers.employeeId, employeeId));
-  return [...new Set(rows.map((row) => row.departmentId))];
+  const roots = [...new Set(rows.map((row) => row.departmentId))];
+  if (roots.length === 0) return [];
+  const tree = await db
+    .select({ id: departments.id, parentId: departments.parentId })
+    .from(departments);
+  return [...new Set(roots.flatMap((rootId) => departmentAndDescendantIds(rootId, tree)))];
 }
 
 export async function listTeamIdsInDepartments(departmentIds: readonly number[]): Promise<number[]> {

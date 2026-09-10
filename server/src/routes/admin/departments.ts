@@ -89,6 +89,7 @@ export async function adminDepartmentRoutes(app: FastifyInstance) {
         name: departments.name,
         status: departments.status,
         isDefault: departments.isDefault,
+        parentId: departments.parentId,
         enterpriseId: departments.enterpriseId,
         enterpriseName: enterprises.name,
         teamCount,
@@ -122,18 +123,27 @@ export async function adminDepartmentRoutes(app: FastifyInstance) {
       .object({
         name: z.string().trim().min(1).max(100),
         enterpriseId: z.number().int().positive().optional(),
+        parentId: z.number().int().positive().optional(),
       })
       .safeParse(req.body);
     if (!body.success) return reply.code(400).send({ success: false, message: "参数无效" });
     const actor = await actorFrom(req);
-    if (actor.role !== "admin" && actor.role !== "org_admin") {
-      return reply.code(403).send({ success: false, message: "权限不足" });
-    }
+    const parentId = body.data.parentId ?? null;
     const enterpriseId =
       actor.role === "org_admin"
         ? actor.enterpriseId
         : body.data.enterpriseId ?? (actor.role === "admin" ? null : actor.enterpriseId);
-    if (enterpriseId == null || !canCreateTeam(actor, enterpriseId)) {
+    if (enterpriseId == null) {
+      return reply.code(403).send({ success: false, message: "权限不足" });
+    }
+    if (parentId == null) {
+      if (actor.role !== "admin" && actor.role !== "org_admin") {
+        return reply.code(403).send({ success: false, message: "权限不足" });
+      }
+      if (!canCreateTeam(actor, enterpriseId)) {
+        return reply.code(403).send({ success: false, message: "权限不足" });
+      }
+    } else if (!canCreateTeam(actor, enterpriseId, parentId)) {
       return reply.code(403).send({ success: false, message: "权限不足" });
     }
     const [enterprise] = await db
@@ -144,15 +154,31 @@ export async function adminDepartmentRoutes(app: FastifyInstance) {
     if (!enterprise || enterprise.status !== "active") {
       return reply.code(404).send({ success: false, message: "企业不存在或未启用" });
     }
+    if (parentId != null) {
+      const [parent] = await db
+        .select({ id: departments.id, enterpriseId: departments.enterpriseId })
+        .from(departments)
+        .where(eq(departments.id, parentId))
+        .limit(1);
+      if (!parent || parent.enterpriseId !== enterpriseId) {
+        return reply.code(400).send({ success: false, message: "上级部门无效" });
+      }
+    }
     try {
       const [row] = await db
         .insert(departments)
-        .values({ enterpriseId, name: body.data.name, status: "active" })
+        .values({
+          enterpriseId,
+          parentId,
+          name: body.data.name,
+          status: "active",
+        })
         .returning({
           id: departments.id,
           name: departments.name,
           status: departments.status,
           isDefault: departments.isDefault,
+          parentId: departments.parentId,
           enterpriseId: departments.enterpriseId,
           createdAt: departments.createdAt,
         });

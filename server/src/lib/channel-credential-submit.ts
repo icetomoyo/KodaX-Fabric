@@ -1,14 +1,19 @@
+import { createHash, createHmac, timingSafeEqual } from "node:crypto";
+import { env } from "../config.js";
 import { inspectCredentialSecretDuplicates } from "./credential-bulk.js";
 import {
   effectiveCredentialStatus,
   type CredentialStatus,
 } from "./credential-status.js";
-import type { RelayProtocol } from "./relay/protocol.js";
+import { isRelayProtocol, type RelayProtocol } from "./relay/protocol.js";
 import { resolveChannelCredentialInsertProtocols } from "./upstream-channel-update.js";
 import {
   configuredProtocols,
   parseProductLineProtocolConfigs,
 } from "./upstream-protocol-config.js";
+
+export const EMPLOYEE_SUBMIT_TEST_PROOF_TTL_MS = 30 * 60 * 1000;
+const EMPLOYEE_SUBMIT_TEST_PROOF_PURPOSE = "tokenhub:employee-submit-test:v1";
 
 export type SubmitableChannel = {
   id: number;
@@ -38,6 +43,97 @@ export type EmployeeChannelCredentialSubmitPlan =
   | { kind: "existing_secret_unreadable"; credentialIds: number[] };
 
 const LABEL_MAX_LENGTH = 200;
+
+export type EmployeeSubmitTestProofVerification =
+  | { kind: "ok"; testedAt: string; protocol: RelayProtocol }
+  | { kind: "invalid" }
+  | { kind: "expired" };
+
+function hashEmployeeSubmitSecret(secret: string): string {
+  return createHash("sha256").update(secret, "utf8").digest("hex");
+}
+
+function signEmployeeSubmitTestProofBody(body: string): string {
+  return createHmac("sha256", env.CREDENTIAL_ENCRYPT_KEY)
+    .update(EMPLOYEE_SUBMIT_TEST_PROOF_PURPOSE)
+    .update("\0")
+    .update(body, "utf8")
+    .digest("base64url");
+}
+
+export function issueEmployeeSubmitTestProof(input: {
+  employeeId: number;
+  productLineId: number;
+  secret: string;
+  testedAt: string;
+  protocol: RelayProtocol;
+}): string {
+  const body = Buffer.from(
+    JSON.stringify({
+      employeeId: input.employeeId,
+      productLineId: input.productLineId,
+      secretHash: hashEmployeeSubmitSecret(input.secret),
+      testedAt: input.testedAt,
+      protocol: input.protocol,
+    }),
+    "utf8",
+  ).toString("base64url");
+  return `${body}.${signEmployeeSubmitTestProofBody(body)}`;
+}
+
+export function verifyEmployeeSubmitTestProof(input: {
+  proof: string;
+  employeeId: number;
+  productLineId: number;
+  secret: string;
+  now?: Date;
+  ttlMs?: number;
+}): EmployeeSubmitTestProofVerification {
+  const separator = input.proof.lastIndexOf(".");
+  if (separator <= 0 || separator === input.proof.length - 1) return { kind: "invalid" };
+  const body = input.proof.slice(0, separator);
+  const signature = input.proof.slice(separator + 1);
+  const expected = signEmployeeSubmitTestProofBody(body);
+  const actualBuf = Buffer.from(signature);
+  const expectedBuf = Buffer.from(expected);
+  if (actualBuf.length !== expectedBuf.length || !timingSafeEqual(actualBuf, expectedBuf)) {
+    return { kind: "invalid" };
+  }
+
+  let payload: unknown;
+  try {
+    payload = JSON.parse(Buffer.from(body, "base64url").toString("utf8"));
+  } catch {
+    return { kind: "invalid" };
+  }
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return { kind: "invalid" };
+  }
+  const record = payload as Record<string, unknown>;
+  if (
+    Number(record.employeeId) !== input.employeeId
+    || Number(record.productLineId) !== input.productLineId
+    || record.secretHash !== hashEmployeeSubmitSecret(input.secret)
+    || typeof record.testedAt !== "string"
+    || !isRelayProtocol(record.protocol)
+  ) {
+    return { kind: "invalid" };
+  }
+
+  const testedAtMs = Date.parse(record.testedAt);
+  if (!Number.isFinite(testedAtMs)) return { kind: "invalid" };
+  const ttlMs = input.ttlMs ?? EMPLOYEE_SUBMIT_TEST_PROOF_TTL_MS;
+  const nowMs = (input.now ?? new Date()).getTime();
+  if (nowMs - testedAtMs > ttlMs || testedAtMs - nowMs > 60_000) {
+    return { kind: "expired" };
+  }
+
+  return {
+    kind: "ok",
+    testedAt: record.testedAt,
+    protocol: record.protocol,
+  };
+}
 
 export function collectSubmitableChannels(
   rows: readonly SubmitableChannelRow[],

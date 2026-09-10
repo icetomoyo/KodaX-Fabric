@@ -36,14 +36,14 @@ import {
 import { decryptSecret, encryptSecret, secretSuffix } from "../../lib/crypto-secret.js";
 import { writeOpsAudit } from "../../lib/ops-audit.js";
 import {
-  formatUpstreamBusinessFailure,
-  parseUpstreamBusinessFailure,
+  probeUpstreamModels,
+  resolveUpstreamTestProtocol,
+  type UpstreamConnectionTestResult,
 } from "../../lib/upstream-connection-test.js";
 import {
   CUSTOM_PROVIDER_CODE,
   CUSTOM_PROVIDER_NAME,
   getProviderTemplate,
-  isTestableUpstreamUrl,
   PROVIDER_TEMPLATES,
   resolveTemplateBaseUrlOption,
   resolveTemplateProtocolConfigs,
@@ -53,10 +53,6 @@ import {
   RELAY_PROTOCOLS,
   type RelayProtocol,
 } from "../../lib/relay/protocol.js";
-import {
-  buildRelayUpstreamHeaders,
-  buildRelayUpstreamUrl,
-} from "../../lib/relay/upstream.js";
 import {
   configurableSupportedProtocolsSchema,
   resolveChannelCredentialInsertProtocols,
@@ -75,16 +71,7 @@ import {
   requireSession,
 } from "../../middleware/auth.js";
 
-type CredentialTestResult = {
-  ok: boolean;
-  testedAt: string;
-  latencyMs: number;
-  httpStatus: number | null;
-  modelCount: number;
-  models: string[];
-  message: string;
-  protocol: RelayProtocol;
-};
+type CredentialTestResult = UpstreamConnectionTestResult;
 
 type BulkProductLineContext = {
   productLine: typeof productLines.$inferSelect;
@@ -328,42 +315,6 @@ const bulkCredentialDeleteSchema = z.object({
   ids: bulkCredentialIdsSchema,
 });
 
-function parseModels(payload: unknown): string[] {
-  if (!payload || typeof payload !== "object") return [];
-  const data = (payload as { data?: unknown }).data;
-  if (!Array.isArray(data)) return [];
-
-  return data
-    .map((item) => {
-      if (typeof item === "string") return item;
-      if (item && typeof item === "object" && typeof (item as { id?: unknown }).id === "string") {
-        return (item as { id: string }).id;
-      }
-      return null;
-    })
-    .filter((item): item is string => Boolean(item))
-    .slice(0, 200);
-}
-
-function errorSummary(status: number, raw: string): string {
-  let detail = raw.trim();
-  try {
-    const parsed = JSON.parse(raw) as {
-      error?: { message?: unknown } | string;
-      message?: unknown;
-    };
-    if (typeof parsed.error === "string") detail = parsed.error;
-    if (parsed.error && typeof parsed.error === "object" && typeof parsed.error.message === "string") {
-      detail = parsed.error.message;
-    }
-    if (typeof parsed.message === "string") detail = parsed.message;
-  } catch {
-    // Keep the text response when the upstream does not return JSON.
-  }
-  const suffix = detail ? `：${detail.slice(0, 500)}` : "";
-  return `上游返回 HTTP ${status}${suffix}`;
-}
-
 function metaWithoutStaleTest(meta: unknown): Record<string, unknown> {
   const previous = meta && typeof meta === "object" ? { ...(meta as Record<string, unknown>) } : {};
   delete previous.lastTest;
@@ -473,28 +424,6 @@ async function initializeEmptyTemplateChannelProtocolConfigs(
     : { kind: "config_stale" };
 }
 
-function resolveTestProtocol(
-  supportedProtocols: RelayProtocol[] | null | undefined,
-  preferred?: RelayProtocol,
-): RelayProtocol {
-  const supported = supportedProtocols ?? [];
-  if (supported.length === 0) {
-    throw new Error("该渠道未声明任何支持协议");
-  }
-
-  if (preferred) {
-    if (!supported.includes(preferred)) {
-      throw new Error("该渠道未声明支持所选协议");
-    }
-    return preferred;
-  }
-
-  if (supported.includes("anthropic_messages")) return "anthropic_messages";
-  return supported.includes(DEFAULT_RELAY_PROTOCOL)
-    ? DEFAULT_RELAY_PROTOCOL
-    : supported[0];
-}
-
 async function testCredentialConnection(
   credentialId: number,
   preferredProtocol?: RelayProtocol,
@@ -523,7 +452,7 @@ async function testCredentialConnection(
     throw new Error("凭证不存在");
   }
 
-  const protocol = resolveTestProtocol(credential.supportedProtocols, preferredProtocol);
+  const protocol = resolveUpstreamTestProtocol(credential.supportedProtocols, preferredProtocol);
   const upstreamConfig = resolveProtocolUpstreamConfig({
     protocol,
     protocolConfigs: credential.protocolConfigs,
@@ -533,69 +462,29 @@ async function testCredentialConnection(
   if (!upstreamConfig) {
     throw new Error("该渠道缺少所选协议的端点配置");
   }
-  if (!isTestableUpstreamUrl(credential.providerCode, upstreamConfig.baseUrl)) {
-    throw new Error(
-      getProviderTemplate(credential.providerCode)
-        ? "当前仅支持对已确认供应商的官方 HTTPS 地址进行连通性测试"
-        : "自定义渠道缺少可测试的上游地址",
-    );
-  }
 
-  const testedAt = new Date().toISOString();
-  const startedAt = Date.now();
   let result: CredentialTestResult;
-
   try {
     const secret = decryptSecret(credential.secretEncrypted);
-    const response = await fetch(
-      buildRelayUpstreamUrl(upstreamConfig.baseUrl, protocol, "models"),
-      {
-      method: "GET",
-      headers: buildRelayUpstreamHeaders({
-        protocol,
-        authStyle: upstreamConfig.authStyle,
-        secret,
-      }),
-      redirect: "manual",
-      signal: AbortSignal.timeout(12_000),
-      },
-    );
-    const raw = await response.text();
-    let payload: unknown = null;
-    try {
-      payload = raw ? JSON.parse(raw) : null;
-    } catch {
-      payload = null;
-    }
-    const businessFailure = parseUpstreamBusinessFailure(payload);
-    const connectionOk = response.ok && businessFailure === null;
-    const models = connectionOk ? parseModels(payload) : [];
-    result = {
-      ok: connectionOk,
-      testedAt,
-      latencyMs: Date.now() - startedAt,
-      httpStatus: response.status,
-      modelCount: models.length,
-      models,
+    result = await probeUpstreamModels({
+      providerCode: credential.providerCode,
       protocol,
-      message: connectionOk
-        ? models.length
-          ? `连接成功（${protocol}），发现 ${models.length} 个模型`
-          : `连接成功（${protocol}），上游未返回可识别的模型列表`
-        : response.ok && businessFailure
-          ? formatUpstreamBusinessFailure(businessFailure)
-          : errorSummary(response.status, raw),
-    };
+      baseUrl: upstreamConfig.baseUrl,
+      authStyle: upstreamConfig.authStyle,
+      secret,
+    });
   } catch (error) {
-    const message = error instanceof Error && error.name === "TimeoutError"
-      ? "连接超时（12 秒）"
-      : error instanceof Error
-        ? error.message
-        : String(error);
+    const message = error instanceof Error ? error.message : String(error);
+    if (
+      message === "当前仅支持对已确认供应商的官方 HTTPS 地址进行连通性测试"
+      || message === "自定义渠道缺少可测试的上游地址"
+    ) {
+      throw error;
+    }
     result = {
       ok: false,
-      testedAt,
-      latencyMs: Date.now() - startedAt,
+      testedAt: new Date().toISOString(),
+      latencyMs: 0,
       httpStatus: null,
       modelCount: 0,
       models: [],
@@ -1188,7 +1077,7 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
             httpStatus: null,
             modelCount: 0,
             models: [],
-            protocol: resolveTestProtocol(created.credential.supportedProtocols),
+            protocol: resolveUpstreamTestProtocol(created.credential.supportedProtocols),
             message: error instanceof Error ? error.message : "连接测试失败",
           };
         }

@@ -13,11 +13,14 @@ process.env.CREDENTIAL_ENCRYPT_KEY ??= "unit-test-credential-secret";
 const {
   buildEmployeeSubmittedCredentialLabel,
   collectSubmitableChannels,
+  EMPLOYEE_SUBMIT_TEST_PROOF_TTL_MS,
   isEmployeeSubmittedCredentialMeta,
+  issueEmployeeSubmitTestProof,
   partitionCredentialSubmitRoster,
   planEmployeeChannelCredentialSubmit,
   presentEmployeeSubmittedCredentials,
   submittedByEmployeeIdFromMeta,
+  verifyEmployeeSubmitTestProof,
 } = await import("../src/lib/channel-credential-submit.js");
 const { meRoutes } = await import("../src/routes/me.js");
 
@@ -269,6 +272,80 @@ test("admin submit roster splits employees who submitted from those who have not
   assert.equal(roster.unsubmitted[0]?.id, 4);
 });
 
+test("employee submit test proof binds the tester, channel, and secret and expires", () => {
+  const secret = "do-not-leak-this-secret";
+  const proof = issueEmployeeSubmitTestProof({
+    employeeId: 7,
+    productLineId: 3,
+    secret,
+    testedAt: "2026-09-10T04:00:00.000Z",
+    protocol: "openai_chat",
+  });
+  assert.equal(proof.includes(secret), false);
+  assert.deepEqual(
+    verifyEmployeeSubmitTestProof({
+      proof,
+      employeeId: 7,
+      productLineId: 3,
+      secret,
+      now: new Date("2026-09-10T04:10:00.000Z"),
+    }),
+    { kind: "ok", testedAt: "2026-09-10T04:00:00.000Z", protocol: "openai_chat" },
+  );
+  assert.equal(
+    verifyEmployeeSubmitTestProof({
+      proof,
+      employeeId: 8,
+      productLineId: 3,
+      secret,
+      now: new Date("2026-09-10T04:10:00.000Z"),
+    }).kind,
+    "invalid",
+  );
+  assert.equal(
+    verifyEmployeeSubmitTestProof({
+      proof,
+      employeeId: 7,
+      productLineId: 4,
+      secret,
+      now: new Date("2026-09-10T04:10:00.000Z"),
+    }).kind,
+    "invalid",
+  );
+  assert.equal(
+    verifyEmployeeSubmitTestProof({
+      proof,
+      employeeId: 7,
+      productLineId: 3,
+      secret: "a-different-upstream-key",
+      now: new Date("2026-09-10T04:10:00.000Z"),
+    }).kind,
+    "invalid",
+  );
+  assert.equal(
+    verifyEmployeeSubmitTestProof({
+      proof: `${proof.slice(0, 8)}tampered${proof.slice(16)}`,
+      employeeId: 7,
+      productLineId: 3,
+      secret,
+      now: new Date("2026-09-10T04:10:00.000Z"),
+    }).kind,
+    "invalid",
+  );
+  assert.equal(
+    verifyEmployeeSubmitTestProof({
+      proof,
+      employeeId: 7,
+      productLineId: 3,
+      secret,
+      now: new Date(
+        Date.parse("2026-09-10T04:00:00.000Z") + EMPLOYEE_SUBMIT_TEST_PROOF_TTL_MS + 1,
+      ),
+    }).kind,
+    "expired",
+  );
+});
+
 test("personal center exposes channel-key submit for every non-super-admin role", () => {
   const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
   const profile = readFileSync(resolve(root, "web/src/views/admin/ProfileView.vue"), "utf8");
@@ -278,7 +355,17 @@ test("personal center exposes channel-key submit for every non-super-admin role"
   assert.match(profile, /!auth\.isSuperAdmin/);
   assert.match(profile, /\/api\/me\/upstream-credential-channels/);
   assert.match(profile, /\/api\/me\/upstream-credentials/);
+  assert.match(profile, /\/api\/me\/upstream-credentials\/test/);
+  assert.match(profile, /testChannelKey/);
+  assert.match(profile, /channelKeyLocked/);
+  assert.match(profile, /testProof/);
+  assert.match(profile, /已锁定/);
+  assert.match(profile, /重新填写/);
+  assert.match(profile, /:disabled="!channelKeyLocked/);
   assert.match(profile, /提交记录/);
+  assert.match(profile, /deleteSubmittedChannelKey/);
+  assert.match(profile, /ElMessageBox/);
+  assert.match(profile, /\/api\/me\/upstream-credentials\/\$\{row\.id\}/);
   assert.doesNotMatch(profile, /\/api\/admin\/credentials\/bulk-create/);
 });
 
@@ -308,7 +395,15 @@ test("me channel-key submit routes exist and reject anonymous callers", async ()
       true,
     );
     assert.equal(
+      app.hasRoute({ method: "POST", url: "/api/me/upstream-credentials/test" }),
+      true,
+    );
+    assert.equal(
       app.hasRoute({ method: "GET", url: "/api/me/upstream-credentials" }),
+      true,
+    );
+    assert.equal(
+      app.hasRoute({ method: "DELETE", url: "/api/me/upstream-credentials/:id" }),
       true,
     );
     const list = await app.inject({
@@ -319,14 +414,25 @@ test("me channel-key submit routes exist and reject anonymous callers", async ()
       method: "GET",
       url: "/api/me/upstream-credentials",
     });
+    const tested = await app.inject({
+      method: "POST",
+      url: "/api/me/upstream-credentials/test",
+      payload: { productLineId: 1, secret: "12345678" },
+    });
     const created = await app.inject({
       method: "POST",
       url: "/api/me/upstream-credentials",
       payload: { productLineId: 1, secret: "12345678" },
     });
+    const removed = await app.inject({
+      method: "DELETE",
+      url: "/api/me/upstream-credentials/1",
+    });
     assert.equal(list.statusCode, 401);
     assert.equal(history.statusCode, 401);
+    assert.equal(tested.statusCode, 401);
     assert.equal(created.statusCode, 401);
+    assert.equal(removed.statusCode, 401);
   } finally {
     await app.close();
   }

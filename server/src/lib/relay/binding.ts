@@ -47,6 +47,7 @@ import {
 } from "./credential-quota.js";
 import { isRelayProtocol, type RelayProtocol } from "./protocol.js";
 import { isOpenPoolProvider, OPEN_POOL_PROVIDER_CODE } from "./open-pool.js";
+import { firstLevelDepartmentId } from "../department-tree.js";
 
 export type BindingScopeType = "employee" | "team" | "enterprise" | "department";
 
@@ -450,13 +451,23 @@ async function resolveEmployeeBinding(
     now,
     usage.requestCount,
   );
+  const leafDepartmentId = membership?.departmentId ?? null;
   return {
     liveTier,
     storedTier: employee.usageTier,
     teamId: membership?.teamId ?? null,
-    departmentId: membership?.departmentId ?? null,
+    departmentId: leafDepartmentId == null
+      ? null
+      : await firstLevelDepartmentIdFromDb(leafDepartmentId),
     enterpriseId: employee.enterpriseId,
   };
+}
+
+async function firstLevelDepartmentIdFromDb(departmentId: number): Promise<number> {
+  const rows = await db
+    .select({ id: departments.id, parentId: departments.parentId })
+    .from(departments);
+  return firstLevelDepartmentId(departmentId, rows);
 }
 
 async function isOpenPoolProductLine(productLineId: number): Promise<boolean> {
@@ -679,7 +690,7 @@ export async function releaseOrphanBindings(now: Date = new Date()): Promise<num
 }
 
 async function loadEmployeesForEligibility(_now: Date): Promise<BindingEligibilityPerson[]> {
-  const [people, memberships] = await Promise.all([
+  const [people, memberships, departmentRows] = await Promise.all([
     db
       .select({
         id: employees.id,
@@ -696,6 +707,9 @@ async function loadEmployeesForEligibility(_now: Date): Promise<BindingEligibili
       })
       .from(teamMembers)
       .innerJoin(teams, eq(teamMembers.teamId, teams.id)),
+    db
+      .select({ id: departments.id, parentId: departments.parentId })
+      .from(departments),
   ]);
   const membershipByEmployee = new Map(
     memberships.map((row) => [row.employeeId, { teamId: row.teamId, departmentId: row.departmentId }]),
@@ -707,7 +721,9 @@ async function loadEmployeesForEligibility(_now: Date): Promise<BindingEligibili
       usageTier: row.usageTier,
       enterpriseId: row.enterpriseId,
       teamId: membership?.teamId ?? null,
-      departmentId: membership?.departmentId ?? null,
+      departmentId: membership
+        ? firstLevelDepartmentId(membership.departmentId, departmentRows)
+        : null,
     };
   });
 }

@@ -73,16 +73,17 @@
 
         <section v-else-if="activeProfileSection === 'channel-key'" class="profile-section">
           <p class="section-hint">
-            选择已有渠道并提交上游 Key，提交后进入平台资源池供调度使用。不能新建渠道。
+            选择渠道并填写渠道KEY，然后测试连通性，测试通过后方可提交。
           </p>
-          <el-form label-position="top" class="profile-form" @submit.prevent="submitChannelKey">
-            <div class="profile-fields">
+          <el-form label-position="top" class="profile-form channel-key-form" @submit.prevent="submitChannelKey">
+            <div class="profile-fields channel-key-fields">
               <el-form-item label="渠道" required>
                 <el-select
                   v-model="channelKeyForm.productLineId"
                   filterable
                   placeholder="请选择渠道"
                   :loading="channelKeyChannelsLoading"
+                  :disabled="channelKeyLocked"
                   style="width: 100%"
                 >
                   <el-option
@@ -96,19 +97,31 @@
               <el-form-item label="渠道 KEY" required>
                 <el-input
                   v-model="channelKeyForm.secret"
-                  type="password"
-                  show-password
                   autocomplete="off"
                   placeholder="粘贴上游渠道 Key"
+                  :disabled="channelKeyLocked"
                 />
+                <p v-if="channelKeyLocked" class="lock-hint">
+                  已锁定{{ channelKeyTestMessage ? `：${channelKeyTestMessage}` : "" }}
+                </p>
               </el-form-item>
             </div>
             <div class="form-actions">
               <el-button
+                :loading="channelKeyTesting"
+                :disabled="!canTestChannelKey"
+                @click="testChannelKey"
+              >
+                测试
+              </el-button>
+              <el-button v-if="channelKeyLocked" :disabled="channelKeySaving" @click="unlockChannelKey">
+                重新填写
+              </el-button>
+              <el-button
                 type="primary"
                 native-type="submit"
                 :loading="channelKeySaving"
-                :disabled="!channelKeyChannels.length"
+                :disabled="!channelKeyLocked"
               >
                 提交
               </el-button>
@@ -144,6 +157,18 @@
               </el-table-column>
               <el-table-column label="提交时间" min-width="170">
                 <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
+              </el-table-column>
+              <el-table-column label="操作" width="90" fixed="right">
+                <template #default="{ row }">
+                  <el-button
+                    type="danger"
+                    link
+                    :loading="channelKeyDeletingId === row.id"
+                    @click="deleteSubmittedChannelKey(row)"
+                  >
+                    删除
+                  </el-button>
+                </template>
               </el-table-column>
             </el-table>
           </div>
@@ -189,7 +214,7 @@
 
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from "vue";
-import { ElMessage } from "element-plus";
+import { ElMessage, ElMessageBox } from "element-plus";
 import { http } from "@/api/http";
 import { formatDateTime } from "@/lib/date-time";
 import { roleLabel as formatRoleLabel } from "@/lib/roles";
@@ -223,8 +248,13 @@ const activeProfileSection = ref<ProfileSection>("profile");
 const profileSaving = ref(false);
 const passwordSaving = ref(false);
 const channelKeySaving = ref(false);
+const channelKeyTesting = ref(false);
+const channelKeyLocked = ref(false);
+const channelKeyTestProof = ref("");
+const channelKeyTestMessage = ref("");
 const channelKeyChannelsLoading = ref(false);
 const channelKeyHistoryLoading = ref(false);
+const channelKeyDeletingId = ref<number | null>(null);
 const channelKeyChannels = ref<SubmitableChannel[]>([]);
 const channelKeyHistory = ref<SubmittedChannelKey[]>([]);
 const profileForm = reactive({
@@ -244,6 +274,14 @@ const channelKeyForm = reactive({
 
 const roleLabel = computed(() => formatRoleLabel(auth.user?.role));
 const canSubmitChannelKey = computed(() => Boolean(auth.user) && !auth.isSuperAdmin);
+const canTestChannelKey = computed(
+  () =>
+    !channelKeyLocked.value
+    && !channelKeySaving.value
+    && channelKeyForm.productLineId != null
+    && Boolean(channelKeyForm.secret.trim())
+    && channelKeyChannels.value.length > 0,
+);
 const profileNavItems = computed(() => {
   const items: Array<{ id: ProfileSection; label: string }> = [
     { id: "profile", label: "基本信息" },
@@ -276,6 +314,7 @@ watch(canSubmitChannelKey, (enabled) => {
     channelKeyHistory.value = [];
     channelKeyForm.productLineId = null;
     channelKeyForm.secret = "";
+    unlockChannelKey();
   }
 });
 
@@ -294,6 +333,12 @@ function resetProfile() {
   profileForm.name = auth.user?.name ?? "";
   profileForm.phone = auth.user?.phone ?? "";
   profileForm.dept = auth.user?.dept ?? "";
+}
+
+function unlockChannelKey() {
+  channelKeyLocked.value = false;
+  channelKeyTestProof.value = "";
+  channelKeyTestMessage.value = "";
 }
 
 function credentialStatusLabel(status: SubmittedChannelKey["status"]): string {
@@ -334,6 +379,7 @@ async function loadSubmitChannels() {
       && !channelKeyChannels.value.some((channel) => channel.id === channelKeyForm.productLineId)
     ) {
       channelKeyForm.productLineId = null;
+      unlockChannelKey();
     }
   } catch (error) {
     channelKeyChannels.value = [];
@@ -382,6 +428,45 @@ async function submitProfile() {
   }
 }
 
+async function testChannelKey() {
+  if (!canSubmitChannelKey.value || !canTestChannelKey.value) return;
+  if (channelKeyForm.productLineId == null) {
+    ElMessage.warning("请选择渠道");
+    return;
+  }
+  const secret = channelKeyForm.secret.trim();
+  if (!secret) {
+    ElMessage.warning("请填写渠道 KEY");
+    return;
+  }
+
+  channelKeyTesting.value = true;
+  try {
+    const { data } = await http.post("/api/me/upstream-credentials/test", {
+      productLineId: channelKeyForm.productLineId,
+      secret,
+    });
+    if (!data.success) throw new Error(data.message || "测试失败");
+    const result = data.data as {
+      ok?: boolean;
+      proof?: string | null;
+      message?: string;
+    };
+    if (!result?.ok || !result.proof) {
+      ElMessage.error(result?.message || "测试未通过");
+      return;
+    }
+    channelKeyLocked.value = true;
+    channelKeyTestProof.value = result.proof;
+    channelKeyTestMessage.value = result.message || "测试通过";
+    ElMessage.success(channelKeyTestMessage.value);
+  } catch (error) {
+    ElMessage.error(requestErrorMessage(error, "渠道 KEY 测试失败"));
+  } finally {
+    channelKeyTesting.value = false;
+  }
+}
+
 async function submitChannelKey() {
   if (!canSubmitChannelKey.value) return;
   if (channelKeyForm.productLineId == null) {
@@ -393,21 +478,57 @@ async function submitChannelKey() {
     ElMessage.warning("请填写渠道 KEY");
     return;
   }
+  if (!channelKeyLocked.value || !channelKeyTestProof.value) {
+    ElMessage.warning("请先测试渠道 KEY，测试通过后再提交");
+    return;
+  }
 
   channelKeySaving.value = true;
   try {
     const { data } = await http.post("/api/me/upstream-credentials", {
       productLineId: channelKeyForm.productLineId,
       secret,
+      testProof: channelKeyTestProof.value,
     });
     if (!data.success) throw new Error(data.message || "提交失败");
     channelKeyForm.secret = "";
+    unlockChannelKey();
     ElMessage.success("渠道 KEY 已提交");
     await loadSubmitHistory();
   } catch (error) {
     ElMessage.error(requestErrorMessage(error, "渠道 KEY 提交失败"));
   } finally {
     channelKeySaving.value = false;
+  }
+}
+
+async function deleteSubmittedChannelKey(row: SubmittedChannelKey) {
+  if (!canSubmitChannelKey.value) return;
+  try {
+    await ElMessageBox.confirm(
+      `确认删除渠道 KEY（尾号 ****${row.secretSuffix}）？删除后不可恢复。`,
+      "删除渠道 KEY",
+      {
+        type: "warning",
+        confirmButtonText: "删除",
+        cancelButtonText: "取消",
+        confirmButtonClass: "el-button--danger",
+      },
+    );
+  } catch {
+    return;
+  }
+
+  channelKeyDeletingId.value = row.id;
+  try {
+    const { data } = await http.delete(`/api/me/upstream-credentials/${row.id}`);
+    if (!data.success) throw new Error(data.message || "删除失败");
+    ElMessage.success("渠道 KEY 已删除");
+    await loadSubmitHistory();
+  } catch (error) {
+    ElMessage.error(requestErrorMessage(error, "渠道 KEY 删除失败"));
+  } finally {
+    channelKeyDeletingId.value = null;
   }
 }
 
@@ -503,9 +624,24 @@ async function submitPassword() {
   column-gap: 24px;
 }
 
+.channel-key-form {
+  max-width: none;
+}
+
+.channel-key-fields {
+  grid-template-columns: 200px minmax(0, 1fr);
+}
+
 .form-actions {
   display: flex;
   gap: 8px;
+}
+
+.lock-hint {
+  margin: 8px 0 0;
+  color: var(--el-color-success);
+  font-size: 12px;
+  line-height: 1.4;
 }
 
 .account-info {
@@ -547,7 +683,8 @@ async function submitPassword() {
     padding: 16px 0 0;
   }
 
-  .profile-fields {
+  .profile-fields,
+  .channel-key-fields {
     grid-template-columns: 1fr;
   }
 }

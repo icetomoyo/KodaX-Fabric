@@ -104,6 +104,7 @@ export const departments = pgTable(
     enterpriseId: bigint("enterprise_id", { mode: "number" })
       .notNull()
       .references(() => enterprises.id, { onDelete: "restrict", onUpdate: "no action" }),
+    parentId: bigint("parent_id", { mode: "number" }),
     name: varchar("name", { length: 100 }).notNull(),
     status: orgUnitStatusEnum("status").notNull().default("active"),
     isDefault: boolean("is_default").notNull().default(false),
@@ -111,9 +112,14 @@ export const departments = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
-    uniqueIndex("departments_enterprise_name_uidx").on(t.enterpriseId, t.name),
+    uniqueIndex("departments_enterprise_parent_name_uidx").on(
+      t.enterpriseId,
+      sql`coalesce(${t.parentId}, 0)`,
+      t.name,
+    ),
     uniqueIndex("departments_enterprise_default_uidx").on(t.enterpriseId).where(sql`${t.isDefault}`),
     index("departments_enterprise_idx").on(t.enterpriseId),
+    index("departments_parent_idx").on(t.parentId),
   ],
 );
 

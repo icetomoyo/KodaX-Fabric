@@ -26,15 +26,27 @@ import {
 import { groupDiscoveredModelsByChannel } from "../lib/discovered-models.js";
 import {
   collectSubmitableChannels,
+  isEmployeeSubmittedCredentialMeta,
+  issueEmployeeSubmitTestProof,
   planEmployeeChannelCredentialSubmit,
   presentEmployeeSubmittedCredentials,
+  verifyEmployeeSubmitTestProof,
 } from "../lib/channel-credential-submit.js";
 import type { CredentialStatus } from "../lib/credential-status.js";
 import { decryptSecret, encryptSecret, secretSuffix } from "../lib/crypto-secret.js";
 import {
+  probeUpstreamModels,
+  resolveUpstreamTestProtocol,
+} from "../lib/upstream-connection-test.js";
+import {
   getEmployeeUpstreamChannel,
   getEmployeeUpstreamChannels,
 } from "../lib/upstream-channel-metadata.js";
+import {
+  configuredProtocols,
+  parseProductLineProtocolConfigs,
+  resolveProtocolUpstreamConfig,
+} from "../lib/upstream-protocol-config.js";
 import { actingEmployeeId } from "../lib/act-as.js";
 import {
   requirePasswordChanged,
@@ -49,7 +61,7 @@ const createApiKeySchema = z.object({
   protocol: z.enum(RELAY_PROTOCOLS),
 });
 
-const submitUpstreamCredentialSchema = z.object({
+const submitUpstreamCredentialCoreSchema = z.object({
   productLineId: z.number().int().positive(),
   secret: z
     .string()
@@ -195,8 +207,8 @@ export async function meRoutes(app: FastifyInstance) {
     };
   });
 
-  app.post("/api/me/upstream-credentials", async (req, reply) => {
-    const body = submitUpstreamCredentialSchema.safeParse(req.body ?? {});
+  app.post("/api/me/upstream-credentials/test", async (req, reply) => {
+    const body = submitUpstreamCredentialCoreSchema.safeParse(req.body ?? {});
     if (!body.success) {
       return reply.code(400).send({
         success: false,
@@ -204,10 +216,139 @@ export async function meRoutes(app: FastifyInstance) {
       });
     }
 
+    const [located] = await db
+      .select({
+        productLine: productLines,
+        provider: providers,
+      })
+      .from(productLines)
+      .innerJoin(providers, eq(productLines.providerId, providers.id))
+      .where(eq(productLines.id, body.data.productLineId))
+      .limit(1);
+    if (
+      !located
+      || located.productLine.status !== "active"
+      || located.provider.status !== "active"
+    ) {
+      return reply.code(404).send({
+        success: false,
+        code: "channel_unavailable",
+        message: "渠道不存在或已停用",
+      });
+    }
+
+    const protocols = configuredProtocols(
+      parseProductLineProtocolConfigs(located.productLine.protocolConfigs),
+    );
+    let protocol;
+    try {
+      protocol = resolveUpstreamTestProtocol(protocols);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "渠道尚未配置支持协议";
+      return reply.code(400).send({
+        success: false,
+        code: "CHANNEL_PROTOCOLS_UNSET",
+        message: message === "该渠道未声明任何支持协议"
+          ? "渠道尚未配置支持协议"
+          : message,
+      });
+    }
+
+    const upstreamConfig = resolveProtocolUpstreamConfig({
+      protocol,
+      protocolConfigs: located.productLine.protocolConfigs,
+      legacyBaseUrl: located.productLine.baseUrlOverride || located.provider.defaultBaseUrl,
+      legacyAuthStyle: located.provider.authStyle,
+    });
+    if (!upstreamConfig) {
+      return reply.code(400).send({
+        success: false,
+        message: "该渠道缺少所选协议的端点配置",
+      });
+    }
+
+    let result;
+    try {
+      result = await probeUpstreamModels({
+        providerCode: located.provider.code,
+        protocol,
+        baseUrl: upstreamConfig.baseUrl,
+        authStyle: upstreamConfig.authStyle,
+        secret: body.data.secret,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "测试失败";
+      return reply.code(400).send({ success: false, message });
+    }
+
+    const proof = result.ok
+      ? issueEmployeeSubmitTestProof({
+          employeeId: meId(req),
+          productLineId: located.productLine.id,
+          secret: body.data.secret,
+          testedAt: result.testedAt,
+          protocol: result.protocol,
+        })
+      : null;
+
+    return {
+      success: true,
+      data: {
+        ok: result.ok,
+        testedAt: result.testedAt,
+        latencyMs: result.latencyMs,
+        httpStatus: result.httpStatus,
+        modelCount: result.modelCount,
+        message: result.message,
+        protocol: result.protocol,
+        proof,
+      },
+    };
+  });
+
+  app.post("/api/me/upstream-credentials", async (req, reply) => {
+    const core = submitUpstreamCredentialCoreSchema.safeParse(req.body ?? {});
+    if (!core.success) {
+      return reply.code(400).send({
+        success: false,
+        message: "请选择渠道并填写渠道 KEY",
+      });
+    }
+    const proofBody = z
+      .object({
+        testProof: z.string().trim().min(1).max(8192),
+      })
+      .safeParse(req.body ?? {});
+    if (!proofBody.success) {
+      return reply.code(400).send({
+        success: false,
+        message: "请先测试渠道 KEY，测试通过后再提交",
+      });
+    }
+
     const employeeId = meId(req);
+    const proof = verifyEmployeeSubmitTestProof({
+      proof: proofBody.data.testProof,
+      employeeId,
+      productLineId: core.data.productLineId,
+      secret: core.data.secret,
+    });
+    if (proof.kind === "expired") {
+      return reply.code(400).send({
+        success: false,
+        message: "测试已过期，请重新测试",
+      });
+    }
+    if (proof.kind !== "ok") {
+      return reply.code(400).send({
+        success: false,
+        message: "请先测试渠道 KEY，测试通过后再提交",
+      });
+    }
+
     const employeeName = req.session?.name ?? "员工";
     const result = await db.transaction(async (tx) => {
-      await tx.execute(sql`select pg_advisory_xact_lock(${body.data.productLineId})`);
+      await tx.execute(sql`select pg_advisory_xact_lock(${core.data.productLineId})`);
       const [located] = await tx
         .select({
           productLine: productLines,
@@ -215,7 +356,7 @@ export async function meRoutes(app: FastifyInstance) {
         })
         .from(productLines)
         .innerJoin(providers, eq(productLines.providerId, providers.id))
-        .where(eq(productLines.id, body.data.productLineId))
+        .where(eq(productLines.id, core.data.productLineId))
         .limit(1);
       if (!located) return { kind: "channel_unavailable" } as const;
 
@@ -247,7 +388,7 @@ export async function meRoutes(app: FastifyInstance) {
         existingCredentials: existingRows,
         existingSecrets,
         unreadableCredentialIds,
-        secret: body.data.secret,
+        secret: core.data.secret,
       });
       if (plan.kind !== "accepted") return plan;
 
@@ -256,14 +397,20 @@ export async function meRoutes(app: FastifyInstance) {
         .values({
           productLineId: located.productLine.id,
           label: plan.label,
-          secretEncrypted: encryptSecret(body.data.secret),
-          secretSuffix: secretSuffix(body.data.secret),
+          secretEncrypted: encryptSecret(core.data.secret),
+          secretSuffix: secretSuffix(core.data.secret),
           supportedProtocols: plan.protocols,
           weight: 100,
           priority: 0,
           meta: {
             createdBy: "employee_submit",
             submittedByEmployeeId: employeeId,
+            lastTest: {
+              ok: true,
+              testedAt: proof.testedAt,
+              protocol: proof.protocol,
+              message: "提交前测试通过",
+            },
           },
           status: "active",
         })
@@ -322,6 +469,57 @@ export async function meRoutes(app: FastifyInstance) {
     }
 
     return { success: true, data: result.credential };
+  });
+
+  app.delete("/api/me/upstream-credentials/:id", async (req, reply) => {
+    const params = z.object({ id: z.coerce.number().int().positive() }).safeParse(req.params);
+    if (!params.success) {
+      return reply.code(400).send({ success: false, message: "参数无效" });
+    }
+
+    const employeeId = meId(req);
+    const deleted = await db.transaction(async (tx) => {
+      const [row] = await tx
+        .select({
+          id: upstreamCredentials.id,
+          label: upstreamCredentials.label,
+          secretSuffix: upstreamCredentials.secretSuffix,
+          productLineId: upstreamCredentials.productLineId,
+          meta: upstreamCredentials.meta,
+        })
+        .from(upstreamCredentials)
+        .where(eq(upstreamCredentials.id, params.data.id))
+        .limit(1)
+        .for("update");
+      if (!row || !isEmployeeSubmittedCredentialMeta(row.meta, employeeId)) {
+        return null;
+      }
+
+      await tx.delete(upstreamCredentials).where(eq(upstreamCredentials.id, row.id));
+      await tx.insert(opsAuditLogs).values({
+        actorEmployeeId: employeeId,
+        action: "credential.delete",
+        targetType: "upstream_credential",
+        targetId: String(row.id),
+        detail: {
+          productLineId: row.productLineId,
+          label: row.label,
+          secretSuffix: row.secretSuffix,
+          createdBy: "employee_submit",
+        },
+        ip: req.ip,
+      });
+      return row;
+    });
+
+    if (!deleted) {
+      return reply.code(404).send({
+        success: false,
+        message: "提交记录不存在",
+      });
+    }
+
+    return { success: true, data: { id: deleted.id } };
   });
 
   app.get("/api/me/models", async (req) => {
