@@ -4,6 +4,7 @@
       <div class="page-head">
         <div class="head-actions">
           <el-button :loading="loading" @click="refreshAll">刷新</el-button>
+          <el-button v-if="canBulkRegisterUsers" @click="openBulkRegister">批量注册用户</el-button>
           <el-button v-if="canCreateEnterprise" type="primary" @click="openCreateEnterprise">新建企业</el-button>
         </div>
       </div>
@@ -365,6 +366,56 @@
       </template>
     </el-dialog>
 
+    <el-dialog v-model="showBulkRegister" title="批量注册用户" width="560px">
+      <el-form label-position="top">
+        <el-form-item label="姓名和手机号" required>
+          <el-input
+            v-model="bulkRegisterRaw"
+            type="textarea"
+            :rows="10"
+            resize="vertical"
+            placeholder="每行一人：姓名,手机号&#10;也支持用空格或 Tab 分隔"
+          />
+          <p class="form-help">
+            只开通注册账号，不加入企业或团队。初始密码 Hz123456，首次登录必须修改。单次最多 200 人。
+            <strong v-if="bulkRegisterParse.users.length">
+              已识别 {{ bulkRegisterParse.users.length }} 人
+            </strong>
+          </p>
+          <div v-if="bulkRegisterParse.errors.length" class="parse-errors">
+            <div v-for="error in bulkRegisterParse.errors.slice(0, 4)" :key="error">{{ error }}</div>
+            <div v-if="bulkRegisterParse.errors.length > 4">
+              另有 {{ bulkRegisterParse.errors.length - 4 }} 项格式错误
+            </div>
+          </div>
+        </el-form-item>
+        <div v-if="bulkRegisterParse.users.length" class="register-preview">
+          <div
+            v-for="row in bulkRegisterParse.users.slice(0, 5)"
+            :key="`${row.lineNo}-${row.phone}`"
+            class="register-preview-row"
+          >
+            <span>{{ row.name }}</span>
+            <span class="mono">{{ row.phone }}</span>
+          </div>
+          <div v-if="bulkRegisterParse.users.length > 5" class="form-help">
+            其余 {{ bulkRegisterParse.users.length - 5 }} 人将一并注册
+          </div>
+        </div>
+      </el-form>
+      <template #footer>
+        <el-button @click="showBulkRegister = false">取消</el-button>
+        <el-button
+          type="primary"
+          :loading="bulkRegistering"
+          :disabled="!bulkRegisterParse.users.length || Boolean(bulkRegisterParse.errors.length)"
+          @click="submitBulkRegister"
+        >
+          注册 {{ bulkRegisterParse.users.length || "" }} 人
+        </el-button>
+      </template>
+    </el-dialog>
+
     <el-dialog v-model="showInvite" title="邀请已注册员工" width="480px">
       <el-form label-width="90px">
         <el-form-item label="手机号" required>
@@ -453,6 +504,7 @@ import { computed, onMounted, reactive, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { http } from "@/api/http";
+import { parseBulkRegisterText } from "@/lib/bulk-register-users";
 import { roleLabel } from "@/lib/roles";
 import { formatTokenCompact } from "@/lib/tokens";
 import { useAuthStore } from "@/stores/auth";
@@ -514,6 +566,7 @@ const showEnterprisePane = computed(() => auth.isSuperAdmin);
 const showDepartmentPane = computed(() => auth.isSuperAdmin || auth.isOrgAdmin);
 const showTeamPane = computed(() => auth.isSuperAdmin || auth.isOrgAdmin || auth.isDeptAdmin);
 const canCreateEnterprise = computed(() => auth.isSuperAdmin);
+const canBulkRegisterUsers = computed(() => auth.isSuperAdmin);
 const canManageDepartments = computed(() => auth.isSuperAdmin || auth.isOrgAdmin);
 const canManageTeams = computed(() => auth.isSuperAdmin || auth.isOrgAdmin || auth.isDeptAdmin);
 const canAppointOrgAdmin = computed(() => auth.isSuperAdmin);
@@ -541,6 +594,7 @@ const showCreateDepartment = ref(false);
 const showEditDepartment = ref(false);
 const showCreateTeam = ref(false);
 const showEditTeam = ref(false);
+const showBulkRegister = ref(false);
 const showInvite = ref(false);
 const showEditUser = ref(false);
 const showResetPassword = ref(false);
@@ -552,6 +606,7 @@ const savingDepartment = ref(false);
 const updatingDepartment = ref(false);
 const savingTeam = ref(false);
 const updatingTeam = ref(false);
+const bulkRegistering = ref(false);
 const inviting = ref(false);
 const updatingUser = ref(false);
 const resetting = ref(false);
@@ -567,6 +622,7 @@ const createTeamName = ref("");
 const editTeamName = ref("");
 const editTeamDepartmentId = ref<number | undefined>();
 const editTeam = ref<TeamRow | null>(null);
+const bulkRegisterRaw = ref("");
 const invitePhone = ref("");
 const inviteTeamId = ref<number | undefined>();
 const inviteRole = ref<"member" | "team_admin">("member");
@@ -581,6 +637,8 @@ const editUserForm = reactive({
   status: "active" as UserStatus,
   teamId: undefined as number | undefined,
 });
+
+const bulkRegisterParse = computed(() => parseBulkRegisterText(bulkRegisterRaw.value));
 
 const canInvite = computed(() => {
   if (auth.isTeamAdmin) return teams.value.length > 0;
@@ -1125,6 +1183,44 @@ async function deleteTeam(team: TeamRow) {
   }
 }
 
+function openBulkRegister() {
+  bulkRegisterRaw.value = "";
+  showBulkRegister.value = true;
+}
+
+async function submitBulkRegister() {
+  const parsed = bulkRegisterParse.value;
+  if (!parsed.users.length) {
+    ElMessage.warning("请填写姓名和手机号");
+    return;
+  }
+  if (parsed.errors.length) {
+    ElMessage.warning("请先修正名单格式错误");
+    return;
+  }
+
+  bulkRegistering.value = true;
+  try {
+    const { data } = await http.post("/api/admin/users/import", {
+      users: parsed.users.map(({ name, phone }) => ({ name, phone })),
+    });
+    if (!data.success) throw new Error(data.message || "注册失败");
+    const createdCount = Number(data.data?.createdCount ?? data.data?.created?.length ?? 0);
+    const skipped = Array.isArray(data.data?.existingPhones) ? data.data.existingPhones.length : 0;
+    const initialPassword = String(data.data?.initialPassword ?? "");
+    const parts = [`已注册 ${createdCount} 人`];
+    if (skipped) parts.push(`跳过 ${skipped} 个已注册手机号`);
+    if (initialPassword && createdCount) parts.push(`初始密码 ${initialPassword}，首次登录须改密`);
+    ElMessage.success(parts.join("，"));
+    bulkRegisterRaw.value = "";
+    showBulkRegister.value = false;
+  } catch (error) {
+    ElMessage.error(requestMessage(error, "批量注册失败"));
+  } finally {
+    bulkRegistering.value = false;
+  }
+}
+
 function openInvite() {
   invitePhone.value = "";
   inviteRole.value = "member";
@@ -1251,7 +1347,7 @@ async function updateUser() {
 async function approveUser(person: EmployeeRow) {
   try {
     await ElMessageBox.confirm(
-      `确认审核通过 ${person.name} 的注册申请？账号将使用初始密码 Hz@123456，首次登录后需要修改密码。`,
+      `确认审核通过 ${person.name} 的注册申请？账号将使用初始密码 Hz123456，首次登录后需要修改密码。`,
       "审核通过",
       { confirmButtonText: "确认通过", cancelButtonText: "取消", type: "warning" },
     );
@@ -1262,7 +1358,7 @@ async function approveUser(person: EmployeeRow) {
   try {
     const { data } = await http.post(`/api/admin/users/${person.id}/approve`);
     if (!data.success) throw new Error(data.message);
-    ElMessage.success("审核已通过，初始密码为 Hz@123456");
+    ElMessage.success("审核已通过，初始密码为 Hz123456");
     await loadTeamsAndPeople();
   } catch (error) {
     ElMessage.error(requestMessage(error, "审核失败"));
@@ -1522,8 +1618,30 @@ onMounted(() => {
 }
 
 .form-help {
-  margin: 0;
+  margin: 8px 0 0;
   color: #94a3b8;
   font-size: 12px;
+}
+
+.parse-errors {
+  margin-top: 8px;
+  color: #b91c1c;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.register-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.register-preview-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: #334155;
+  font-size: 13px;
 }
 </style>

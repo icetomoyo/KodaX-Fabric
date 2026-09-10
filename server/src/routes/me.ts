@@ -25,6 +25,13 @@ import {
 } from "../lib/relay/protocol.js";
 import { groupDiscoveredModelsByChannel } from "../lib/discovered-models.js";
 import {
+  collectSubmitableChannels,
+  planEmployeeChannelCredentialSubmit,
+  presentEmployeeSubmittedCredentials,
+} from "../lib/channel-credential-submit.js";
+import type { CredentialStatus } from "../lib/credential-status.js";
+import { decryptSecret, encryptSecret, secretSuffix } from "../lib/crypto-secret.js";
+import {
   getEmployeeUpstreamChannel,
   getEmployeeUpstreamChannels,
 } from "../lib/upstream-channel-metadata.js";
@@ -40,6 +47,15 @@ const createApiKeySchema = z.object({
   teamId: z.number().int().positive(),
   productLineId: z.number().int().positive(),
   protocol: z.enum(RELAY_PROTOCOLS),
+});
+
+const submitUpstreamCredentialSchema = z.object({
+  productLineId: z.number().int().positive(),
+  secret: z
+    .string()
+    .trim()
+    .min(8, "上游 Key 至少需要 8 个字符")
+    .max(4096, "上游 Key 最多允许 4096 个字符"),
 });
 
 /**
@@ -122,6 +138,190 @@ export async function meRoutes(app: FastifyInstance) {
   app.get("/api/me/upstream-channels", async (req) => {
     const channels = await getEmployeeUpstreamChannels(meId(req));
     return { success: true, data: channels };
+  });
+
+  app.get("/api/me/upstream-credential-channels", async () => {
+    const rows = await db
+      .select({
+        id: productLines.id,
+        name: productLines.name,
+        code: productLines.code,
+        productType: productLines.productType,
+        status: productLines.status,
+        providerCode: providers.code,
+        providerName: providers.name,
+        providerStatus: providers.status,
+      })
+      .from(productLines)
+      .innerJoin(providers, eq(productLines.providerId, providers.id));
+
+    return { success: true, data: collectSubmitableChannels(rows) };
+  });
+
+  app.get("/api/me/upstream-credentials", async (req) => {
+    const employeeId = meId(req);
+    const rows = await db
+      .select({
+        id: upstreamCredentials.id,
+        productLineId: productLines.id,
+        productLineName: productLines.name,
+        providerName: providers.name,
+        providerCode: providers.code,
+        label: upstreamCredentials.label,
+        secretSuffix: upstreamCredentials.secretSuffix,
+        status: upstreamCredentials.status,
+        coolUntil: upstreamCredentials.coolUntil,
+        createdAt: upstreamCredentials.createdAt,
+      })
+      .from(upstreamCredentials)
+      .innerJoin(productLines, eq(upstreamCredentials.productLineId, productLines.id))
+      .innerJoin(providers, eq(productLines.providerId, providers.id))
+      .where(
+        sql`${upstreamCredentials.meta} @> ${JSON.stringify({
+          createdBy: "employee_submit",
+          submittedByEmployeeId: employeeId,
+        })}::jsonb`,
+      )
+      .orderBy(desc(upstreamCredentials.id));
+
+    return {
+      success: true,
+      data: presentEmployeeSubmittedCredentials(
+        rows.map((row) => ({
+          ...row,
+          status: row.status as CredentialStatus,
+        })),
+      ),
+    };
+  });
+
+  app.post("/api/me/upstream-credentials", async (req, reply) => {
+    const body = submitUpstreamCredentialSchema.safeParse(req.body ?? {});
+    if (!body.success) {
+      return reply.code(400).send({
+        success: false,
+        message: "请选择渠道并填写渠道 KEY",
+      });
+    }
+
+    const employeeId = meId(req);
+    const employeeName = req.session?.name ?? "员工";
+    const result = await db.transaction(async (tx) => {
+      await tx.execute(sql`select pg_advisory_xact_lock(${body.data.productLineId})`);
+      const [located] = await tx
+        .select({
+          productLine: productLines,
+          provider: providers,
+        })
+        .from(productLines)
+        .innerJoin(providers, eq(productLines.providerId, providers.id))
+        .where(eq(productLines.id, body.data.productLineId))
+        .limit(1);
+      if (!located) return { kind: "channel_unavailable" } as const;
+
+      const existingRows = await tx
+        .select({
+          id: upstreamCredentials.id,
+          secretEncrypted: upstreamCredentials.secretEncrypted,
+          supportedProtocols: upstreamCredentials.supportedProtocols,
+        })
+        .from(upstreamCredentials)
+        .where(eq(upstreamCredentials.productLineId, located.productLine.id));
+
+      const existingSecrets: string[] = [];
+      const unreadableCredentialIds: number[] = [];
+      for (const row of existingRows) {
+        try {
+          existingSecrets.push(decryptSecret(row.secretEncrypted));
+        } catch {
+          unreadableCredentialIds.push(row.id);
+        }
+      }
+
+      const plan = planEmployeeChannelCredentialSubmit({
+        productLineStatus: located.productLine.status,
+        providerStatus: located.provider.status,
+        channelName: located.productLine.name,
+        employeeName,
+        protocolConfigs: located.productLine.protocolConfigs,
+        existingCredentials: existingRows,
+        existingSecrets,
+        unreadableCredentialIds,
+        secret: body.data.secret,
+      });
+      if (plan.kind !== "accepted") return plan;
+
+      const [credential] = await tx
+        .insert(upstreamCredentials)
+        .values({
+          productLineId: located.productLine.id,
+          label: plan.label,
+          secretEncrypted: encryptSecret(body.data.secret),
+          secretSuffix: secretSuffix(body.data.secret),
+          supportedProtocols: plan.protocols,
+          weight: 100,
+          priority: 0,
+          meta: {
+            createdBy: "employee_submit",
+            submittedByEmployeeId: employeeId,
+          },
+          status: "active",
+        })
+        .returning({
+          id: upstreamCredentials.id,
+          productLineId: upstreamCredentials.productLineId,
+          label: upstreamCredentials.label,
+          secretSuffix: upstreamCredentials.secretSuffix,
+          status: upstreamCredentials.status,
+        });
+
+      await tx.insert(opsAuditLogs).values({
+        actorEmployeeId: employeeId,
+        action: "credential.employee_submit",
+        targetType: "upstream_credential",
+        targetId: String(credential.id),
+        detail: {
+          productLineId: located.productLine.id,
+          productLineName: located.productLine.name,
+          providerCode: located.provider.code,
+          label: credential.label,
+          secretSuffix: credential.secretSuffix,
+        },
+        ip: req.ip,
+      });
+
+      return { kind: "created" as const, credential };
+    });
+
+    if (result.kind === "channel_unavailable") {
+      return reply.code(404).send({
+        success: false,
+        code: "channel_unavailable",
+        message: "渠道不存在或已停用",
+      });
+    }
+    if (result.kind === "channel_protocol_unset") {
+      return reply.code(400).send({
+        success: false,
+        code: "CHANNEL_PROTOCOLS_UNSET",
+        message: "渠道尚未配置支持协议",
+      });
+    }
+    if (result.kind === "existing_secret_unreadable") {
+      return reply.code(409).send({
+        success: false,
+        message: "渠道中存在无法解密的旧 Key，无法安全完成重复检查",
+        credentialIds: result.credentialIds,
+      });
+    }
+    if (result.kind === "existing_duplicate") {
+      return reply.code(409).send({
+        success: false,
+        message: "该渠道中已存在相同 Key",
+      });
+    }
+
+    return { success: true, data: result.credential };
   });
 
   app.get("/api/me/models", async (req) => {

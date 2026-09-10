@@ -59,6 +59,11 @@ export const router = createRouter({
           name: "me-logs",
           component: () => import("@/views/me/LogsView.vue"),
         },
+        {
+          path: "profile",
+          name: "me-profile",
+          component: () => import("@/views/admin/ProfileView.vue"),
+        },
       ],
     },
     {

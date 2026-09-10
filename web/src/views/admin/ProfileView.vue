@@ -1,124 +1,232 @@
 <template>
   <el-card class="profile-page" shadow="never">
-    <section class="profile-section">
-      <div class="section-heading">
-        <h3 class="section-title">基本信息</h3>
-      </div>
+    <div class="profile-shell">
+      <nav class="profile-nav" aria-label="个人中心">
+        <button
+          v-for="item in profileNavItems"
+          :key="item.id"
+          type="button"
+          class="profile-nav-item"
+          :class="{ active: activeProfileSection === item.id }"
+          @click="activeProfileSection = item.id"
+        >
+          {{ item.label }}
+        </button>
+      </nav>
 
-      <el-form
-        v-if="auth.isSuperAdmin || auth.isOrgAdmin"
-        label-position="top"
-        class="profile-form"
-        @submit.prevent="submitProfile"
-      >
-        <div class="profile-fields">
-          <el-form-item label="姓名" required>
-            <el-input
-              v-model="profileForm.name"
-              autocomplete="name"
-              :maxlength="100"
-            />
-          </el-form-item>
-          <el-form-item label="手机号" required>
-            <el-input
-              v-model="profileForm.phone"
-              autocomplete="tel"
-              inputmode="tel"
-              :maxlength="20"
-            />
-          </el-form-item>
-          <el-form-item label="部门">
-            <el-input :model-value="profileForm.dept || '—'" disabled />
-          </el-form-item>
-          <el-form-item label="角色">
-            <el-input :model-value="roleLabel" disabled />
-          </el-form-item>
-        </div>
-        <div class="form-actions">
-          <el-button
-            type="primary"
-            native-type="submit"
-            :loading="profileSaving"
-            :disabled="!profileDirty"
+      <div class="profile-pane">
+        <section v-if="activeProfileSection === 'profile'" class="profile-section">
+          <el-form
+            v-if="auth.isSuperAdmin || auth.isOrgAdmin"
+            label-position="top"
+            class="profile-form"
+            @submit.prevent="submitProfile"
           >
-            保存个人信息
-          </el-button>
-          <el-button v-if="profileDirty" :disabled="profileSaving" @click="resetProfile">
-            取消修改
-          </el-button>
-        </div>
-      </el-form>
+            <div class="profile-fields">
+              <el-form-item label="姓名" required>
+                <el-input
+                  v-model="profileForm.name"
+                  autocomplete="name"
+                  :maxlength="100"
+                />
+              </el-form-item>
+              <el-form-item label="手机号" required>
+                <el-input
+                  v-model="profileForm.phone"
+                  autocomplete="tel"
+                  inputmode="tel"
+                  :maxlength="20"
+                />
+              </el-form-item>
+              <el-form-item label="部门">
+                <el-input :model-value="profileForm.dept || '—'" disabled />
+              </el-form-item>
+              <el-form-item label="角色">
+                <el-input :model-value="roleLabel" disabled />
+              </el-form-item>
+            </div>
+            <div class="form-actions">
+              <el-button
+                type="primary"
+                native-type="submit"
+                :loading="profileSaving"
+                :disabled="!profileDirty"
+              >
+                保存个人信息
+              </el-button>
+              <el-button v-if="profileDirty" :disabled="profileSaving" @click="resetProfile">
+                取消修改
+              </el-button>
+            </div>
+          </el-form>
 
-      <el-descriptions v-else :column="2" border class="account-info">
-        <el-descriptions-item label="姓名">{{ auth.user?.name || "—" }}</el-descriptions-item>
-        <el-descriptions-item label="手机号">{{ auth.user?.phone || "—" }}</el-descriptions-item>
-        <el-descriptions-item label="角色">{{ roleLabel }}</el-descriptions-item>
-        <el-descriptions-item label="部门">{{ auth.user?.dept || "—" }}</el-descriptions-item>
-      </el-descriptions>
-    </section>
+          <el-descriptions v-else :column="2" border class="account-info">
+            <el-descriptions-item label="姓名">{{ auth.user?.name || "—" }}</el-descriptions-item>
+            <el-descriptions-item label="手机号">{{ auth.user?.phone || "—" }}</el-descriptions-item>
+            <el-descriptions-item label="角色">{{ roleLabel }}</el-descriptions-item>
+            <el-descriptions-item label="部门">{{ auth.user?.dept || "—" }}</el-descriptions-item>
+            <el-descriptions-item v-if="auth.user?.enterprise?.name" label="企业">
+              {{ auth.user.enterprise.name }} · {{ auth.user.enterprise.code }}
+            </el-descriptions-item>
+          </el-descriptions>
+        </section>
 
-    <el-divider />
+        <section v-else-if="activeProfileSection === 'channel-key'" class="profile-section">
+          <p class="section-hint">
+            选择已有渠道并提交上游 Key，提交后进入平台资源池供调度使用。不能新建渠道。
+          </p>
+          <el-form label-position="top" class="profile-form" @submit.prevent="submitChannelKey">
+            <div class="profile-fields">
+              <el-form-item label="渠道" required>
+                <el-select
+                  v-model="channelKeyForm.productLineId"
+                  filterable
+                  placeholder="请选择渠道"
+                  :loading="channelKeyChannelsLoading"
+                  style="width: 100%"
+                >
+                  <el-option
+                    v-for="channel in channelKeyChannels"
+                    :key="channel.id"
+                    :label="`${channel.providerName} / ${channel.name}`"
+                    :value="channel.id"
+                  />
+                </el-select>
+              </el-form-item>
+              <el-form-item label="渠道 KEY" required>
+                <el-input
+                  v-model="channelKeyForm.secret"
+                  type="password"
+                  show-password
+                  autocomplete="off"
+                  placeholder="粘贴上游渠道 Key"
+                />
+              </el-form-item>
+            </div>
+            <div class="form-actions">
+              <el-button
+                type="primary"
+                native-type="submit"
+                :loading="channelKeySaving"
+                :disabled="!channelKeyChannels.length"
+              >
+                提交
+              </el-button>
+            </div>
+            <p v-if="!channelKeyChannelsLoading && !channelKeyChannels.length" class="section-hint">
+              暂无可提交的渠道
+            </p>
+          </el-form>
 
-    <section v-if="auth.isOrgAdmin || auth.isDeptAdmin || auth.isTeamAdmin" class="profile-section">
-      <div class="section-heading">
-        <h3 class="section-title">API Key</h3>
+          <div class="submit-history">
+            <h4 class="history-title">提交记录</h4>
+            <el-table
+              v-loading="channelKeyHistoryLoading"
+              :data="channelKeyHistory"
+              stripe
+              empty-text="暂无提交记录"
+              class="history-table"
+            >
+              <el-table-column label="渠道" min-width="160">
+                <template #default="{ row }">
+                  {{ row.providerName }} / {{ row.productLineName }}
+                </template>
+              </el-table-column>
+              <el-table-column label="尾号" width="100">
+                <template #default="{ row }">****{{ row.secretSuffix }}</template>
+              </el-table-column>
+              <el-table-column label="状态" width="100">
+                <template #default="{ row }">
+                  <el-tag :type="credentialStatusType(row.status)" effect="light">
+                    {{ credentialStatusLabel(row.status) }}
+                  </el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column label="提交时间" min-width="170">
+                <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
+              </el-table-column>
+            </el-table>
+          </div>
+        </section>
+
+        <section v-else class="profile-section">
+          <el-form label-position="top" class="password-form" @submit.prevent="submitPassword">
+            <el-form-item label="原密码" required>
+              <el-input
+                v-model="passwordForm.oldPassword"
+                type="password"
+                show-password
+                autocomplete="current-password"
+              />
+            </el-form-item>
+            <el-form-item label="新密码" required>
+              <el-input
+                v-model="passwordForm.newPassword"
+                type="password"
+                show-password
+                autocomplete="new-password"
+                :maxlength="128"
+              />
+            </el-form-item>
+            <el-form-item label="确认密码" required>
+              <el-input
+                v-model="passwordForm.confirmPassword"
+                type="password"
+                show-password
+                autocomplete="new-password"
+                :maxlength="128"
+              />
+            </el-form-item>
+            <el-button type="primary" native-type="submit" :loading="passwordSaving">
+              保存密码
+            </el-button>
+          </el-form>
+        </section>
       </div>
-      <el-button type="primary" @click="goKeys">管理我的 API Key</el-button>
-    </section>
-
-    <el-divider v-if="auth.isOrgAdmin || auth.isDeptAdmin || auth.isTeamAdmin" />
-
-    <section class="profile-section">
-      <div class="section-heading">
-        <h3 class="section-title">修改密码</h3>
-      </div>
-      <el-form label-position="top" class="password-form" @submit.prevent="submitPassword">
-        <el-form-item label="原密码" required>
-          <el-input
-            v-model="passwordForm.oldPassword"
-            type="password"
-            show-password
-            autocomplete="current-password"
-          />
-        </el-form-item>
-        <el-form-item label="新密码" required>
-          <el-input
-            v-model="passwordForm.newPassword"
-            type="password"
-            show-password
-            autocomplete="new-password"
-            :maxlength="128"
-          />
-        </el-form-item>
-        <el-form-item label="确认密码" required>
-          <el-input
-            v-model="passwordForm.confirmPassword"
-            type="password"
-            show-password
-            autocomplete="new-password"
-            :maxlength="128"
-          />
-        </el-form-item>
-        <el-button type="primary" native-type="submit" :loading="passwordSaving">
-          保存密码
-        </el-button>
-      </el-form>
-    </section>
+    </div>
   </el-card>
 </template>
 
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from "vue";
-import { useRouter } from "vue-router";
 import { ElMessage } from "element-plus";
 import { http } from "@/api/http";
+import { formatDateTime } from "@/lib/date-time";
 import { roleLabel as formatRoleLabel } from "@/lib/roles";
 import { useAuthStore } from "@/stores/auth";
 
-const router = useRouter();
+type SubmitableChannel = {
+  id: number;
+  name: string;
+  code: string;
+  productType: "api" | "coding_plan";
+  providerCode: string;
+  providerName: string;
+};
+
+type SubmittedChannelKey = {
+  id: number;
+  productLineId: number;
+  productLineName: string;
+  providerName: string;
+  providerCode: string;
+  label: string;
+  secretSuffix: string;
+  status: "active" | "disabled" | "auto_disabled" | "cooling";
+  createdAt: string;
+};
+
+type ProfileSection = "profile" | "channel-key" | "password";
+
 const auth = useAuthStore();
+const activeProfileSection = ref<ProfileSection>("profile");
 const profileSaving = ref(false);
 const passwordSaving = ref(false);
+const channelKeySaving = ref(false);
+const channelKeyChannelsLoading = ref(false);
+const channelKeyHistoryLoading = ref(false);
+const channelKeyChannels = ref<SubmitableChannel[]>([]);
+const channelKeyHistory = ref<SubmittedChannelKey[]>([]);
 const profileForm = reactive({
   name: "",
   phone: "",
@@ -129,8 +237,23 @@ const passwordForm = reactive({
   newPassword: "",
   confirmPassword: "",
 });
+const channelKeyForm = reactive({
+  productLineId: null as number | null,
+  secret: "",
+});
 
 const roleLabel = computed(() => formatRoleLabel(auth.user?.role));
+const canSubmitChannelKey = computed(() => Boolean(auth.user) && !auth.isSuperAdmin);
+const profileNavItems = computed(() => {
+  const items: Array<{ id: ProfileSection; label: string }> = [
+    { id: "profile", label: "基本信息" },
+  ];
+  if (canSubmitChannelKey.value) {
+    items.push({ id: "channel-key", label: "提交渠道 KEY" });
+  }
+  items.push({ id: "password", label: "修改密码" });
+  return items;
+});
 
 const profileDirty = computed(() => {
   const user = auth.user;
@@ -144,14 +267,80 @@ watch(
   { immediate: true },
 );
 
-function goKeys() {
-  void router.push("/admin/keys");
-}
+watch(canSubmitChannelKey, (enabled) => {
+  if (!enabled && activeProfileSection.value === "channel-key") {
+    activeProfileSection.value = "profile";
+  }
+  if (!enabled) {
+    channelKeyChannels.value = [];
+    channelKeyHistory.value = [];
+    channelKeyForm.productLineId = null;
+    channelKeyForm.secret = "";
+  }
+});
+
+watch(
+  () => canSubmitChannelKey.value && activeProfileSection.value === "channel-key",
+  (shouldLoad) => {
+    if (shouldLoad) {
+      void loadSubmitChannels();
+      void loadSubmitHistory();
+    }
+  },
+  { immediate: true },
+);
 
 function resetProfile() {
   profileForm.name = auth.user?.name ?? "";
   profileForm.phone = auth.user?.phone ?? "";
   profileForm.dept = auth.user?.dept ?? "";
+}
+
+function credentialStatusLabel(status: SubmittedChannelKey["status"]): string {
+  if (status === "cooling") return "冷却";
+  if (status === "auto_disabled") return "自动停用";
+  if (status === "disabled") return "已停用";
+  return "可用";
+}
+
+function credentialStatusType(status: SubmittedChannelKey["status"]) {
+  if (status === "cooling") return "warning" as const;
+  if (status === "auto_disabled" || status === "disabled") return "danger" as const;
+  return "success" as const;
+}
+
+async function loadSubmitHistory() {
+  channelKeyHistoryLoading.value = true;
+  try {
+    const { data } = await http.get("/api/me/upstream-credentials");
+    if (!data.success) throw new Error(data.message || "加载提交记录失败");
+    channelKeyHistory.value = Array.isArray(data.data) ? data.data : [];
+  } catch (error) {
+    channelKeyHistory.value = [];
+    ElMessage.error(requestErrorMessage(error, "加载提交记录失败"));
+  } finally {
+    channelKeyHistoryLoading.value = false;
+  }
+}
+
+async function loadSubmitChannels() {
+  channelKeyChannelsLoading.value = true;
+  try {
+    const { data } = await http.get("/api/me/upstream-credential-channels");
+    if (!data.success) throw new Error(data.message || "加载渠道失败");
+    channelKeyChannels.value = Array.isArray(data.data) ? data.data : [];
+    if (
+      channelKeyForm.productLineId != null
+      && !channelKeyChannels.value.some((channel) => channel.id === channelKeyForm.productLineId)
+    ) {
+      channelKeyForm.productLineId = null;
+    }
+  } catch (error) {
+    channelKeyChannels.value = [];
+    ElMessage.error(requestErrorMessage(error, "加载渠道失败"));
+  } finally {
+    channelKeyChannelsLoading.value = false;
+  }
 }
 
 function requestErrorMessage(error: unknown, fallback: string) {
@@ -193,6 +382,35 @@ async function submitProfile() {
   }
 }
 
+async function submitChannelKey() {
+  if (!canSubmitChannelKey.value) return;
+  if (channelKeyForm.productLineId == null) {
+    ElMessage.warning("请选择渠道");
+    return;
+  }
+  const secret = channelKeyForm.secret.trim();
+  if (!secret) {
+    ElMessage.warning("请填写渠道 KEY");
+    return;
+  }
+
+  channelKeySaving.value = true;
+  try {
+    const { data } = await http.post("/api/me/upstream-credentials", {
+      productLineId: channelKeyForm.productLineId,
+      secret,
+    });
+    if (!data.success) throw new Error(data.message || "提交失败");
+    channelKeyForm.secret = "";
+    ElMessage.success("渠道 KEY 已提交");
+    await loadSubmitHistory();
+  } catch (error) {
+    ElMessage.error(requestErrorMessage(error, "渠道 KEY 提交失败"));
+  } finally {
+    channelKeySaving.value = false;
+  }
+}
+
 async function submitPassword() {
   if (!passwordForm.oldPassword || !passwordForm.newPassword) {
     ElMessage.warning("请填写密码");
@@ -220,19 +438,59 @@ async function submitPassword() {
 
 <style scoped>
 .profile-page {
-  max-width: 880px;
+  max-width: 960px;
+}
+
+.profile-shell {
+  display: grid;
+  grid-template-columns: 168px minmax(0, 1fr);
+  min-height: 360px;
+}
+
+.profile-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-right: 16px;
+  border-right: 1px solid var(--el-border-color-lighter);
+}
+
+.profile-nav-item {
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #475569;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.profile-nav-item:hover {
+  background: #f1f5f9;
+  color: #0f172a;
+}
+
+.profile-nav-item.active {
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-weight: 600;
+}
+
+.profile-pane {
+  min-width: 0;
+  padding-left: 24px;
 }
 
 .profile-section {
-  margin-top: 18px;
+  margin-top: 0;
 }
 
-.section-heading {
-  margin-bottom: 18px;
-}
-
-.section-title {
-  margin: 0;
+.section-hint {
+  margin: 0 0 16px;
+  color: var(--el-text-color-secondary);
+  font-size: 13px;
+  line-height: 1.5;
 }
 
 .profile-form {
@@ -251,14 +509,44 @@ async function submitPassword() {
 }
 
 .account-info {
-  margin-top: 16px;
+  margin-top: 0;
 }
 
 .password-form {
   max-width: 480px;
 }
 
+.submit-history {
+  margin-top: 24px;
+}
+
+.history-title {
+  margin: 0 0 12px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.history-table {
+  width: 100%;
+}
+
 @media (max-width: 700px) {
+  .profile-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .profile-nav {
+    flex-direction: row;
+    flex-wrap: wrap;
+    padding: 0 0 12px;
+    border-right: 0;
+    border-bottom: 1px solid var(--el-border-color-lighter);
+  }
+
+  .profile-pane {
+    padding: 16px 0 0;
+  }
+
   .profile-fields {
     grid-template-columns: 1fr;
   }

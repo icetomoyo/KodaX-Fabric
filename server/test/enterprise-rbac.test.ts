@@ -411,10 +411,12 @@ test("admin shell source includes 企业管理 and org_admin lands on workbench"
   assert.match(login, /申请注册/);
   assert.doesNotMatch(login, /企业注册/);
   assert.doesNotMatch(login, /Hz@123456/);
+  assert.doesNotMatch(login, /Hz123456/);
   assert.match(register, /提交注册/);
   assert.match(register, /registerForm.password/);
   assert.doesNotMatch(register, /企业注册/);
   assert.doesNotMatch(register, /Hz@123456/);
+  assert.doesNotMatch(register, /Hz123456/);
   const meHome = readFileSync(resolve(root, "web/src/views/me/HomeView.vue"), "utf8");
   assert.doesNotMatch(meHome, /申请合作企业/);
   assert.match(meHome, /普通注册用户/);

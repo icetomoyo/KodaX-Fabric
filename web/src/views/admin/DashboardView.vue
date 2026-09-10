@@ -425,7 +425,7 @@ const quickLinks = computed(() => {
       { to: "/admin/enterprises", title: "本企业编制", desc: "部门 · 团队 · 员工", dot: "blue" },
       { to: "/admin/error-logs", title: "报错日志", desc: "本企业异常", dot: "violet" },
       { to: "/admin/keys", title: "API Key", desc: "我的调用凭据", dot: "teal" },
-      { to: "/admin/profile", title: "个人中心", desc: "账号与密码", dot: "amber" },
+      { to: "/admin/profile", title: "个人中心", desc: "账号、密码与渠道 KEY", dot: "amber" },
     ];
   }
   if (role.value === "dept_admin") {
@@ -433,7 +433,7 @@ const quickLinks = computed(() => {
       { to: "/admin/enterprises", title: "本部门编制", desc: "团队 · 员工", dot: "blue" },
       { to: "/admin/error-logs", title: "报错日志", desc: "本部门异常", dot: "violet" },
       { to: "/admin/keys", title: "API Key", desc: "我的调用凭据", dot: "teal" },
-      { to: "/admin/profile", title: "个人中心", desc: "账号与密码", dot: "amber" },
+      { to: "/admin/profile", title: "个人中心", desc: "账号、密码与渠道 KEY", dot: "amber" },
     ];
   }
   if (role.value === "team_admin") {
@@ -441,7 +441,7 @@ const quickLinks = computed(() => {
       { to: "/admin/enterprises", title: "员工", desc: "本团队成员", dot: "blue" },
       { to: "/admin/error-logs", title: "报错日志", desc: "本团队异常", dot: "violet" },
       { to: "/admin/keys", title: "API Key", desc: "我的调用凭据", dot: "teal" },
-      { to: "/admin/profile", title: "个人中心", desc: "账号与密码", dot: "amber" },
+      { to: "/admin/profile", title: "个人中心", desc: "账号、密码与渠道 KEY", dot: "amber" },
     ];
   }
   return [

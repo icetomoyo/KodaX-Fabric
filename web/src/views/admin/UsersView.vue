@@ -525,7 +525,7 @@ function openDetail(row: UserRow) {
 async function approveRegistration(row: UserRow) {
   try {
     await ElMessageBox.confirm(
-      `确认审核通过 ${row.name} 的注册申请？账号将使用初始密码 Hz@123456，首次登录后需要修改密码。`,
+      `确认审核通过 ${row.name} 的注册申请？账号将使用初始密码 Hz123456，首次登录后需要修改密码。`,
       "审核通过",
       { confirmButtonText: "确认通过", cancelButtonText: "取消", type: "warning" },
     );
@@ -537,7 +537,7 @@ async function approveRegistration(row: UserRow) {
   try {
     const { data } = await http.post(`/api/admin/users/${row.id}/approve`);
     if (!data.success) throw new Error(data.message);
-    ElMessage.success("审核已通过，初始密码为 Hz@123456");
+    ElMessage.success("审核已通过，初始密码为 Hz123456");
     await load();
   } catch (e: unknown) {
     const message = (e as { response?: { data?: { message?: string } } })

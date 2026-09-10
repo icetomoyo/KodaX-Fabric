@@ -18,18 +18,19 @@
         <el-menu-item index="/me/models">模型列表</el-menu-item>
         <el-menu-item index="/me/guide">接入教程</el-menu-item>
         <el-menu-item index="/me/logs">我的调用</el-menu-item>
+        <el-menu-item index="/me/profile">个人中心</el-menu-item>
       </el-menu>
     </el-aside>
     <el-container>
       <el-header class="header">
         <div class="header-left">
-          <div class="account">
+          <router-link to="/me/profile" class="account-link">
             <strong>{{ auth.user?.name }}</strong>
             <span class="muted">
               · {{ auth.user?.phone }}
               · {{ auth.user?.enterprise?.name ? `${auth.user.enterprise.name} · ${auth.user.enterprise.code}` : "普通注册用户" }}
             </span>
-          </div>
+          </router-link>
           <el-tag
             v-if="auth.user?.actAs"
             effect="light"
@@ -124,10 +125,19 @@ function onLogout() {
 .header-right {
   flex-shrink: 0;
 }
-.account {
+.account-link {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  min-width: 0;
+  color: inherit;
+  text-decoration: none;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+.account-link:hover strong {
+  color: var(--el-color-primary);
 }
 .shell .el-main {
   display: flex;
