@@ -235,6 +235,8 @@ export const productLines = pgTable(
     allowAutoRoute: boolean("allow_auto_route").notNull().default(true),
     retryPolicy: jsonb("retry_policy"),
     status: varchar("status", { length: 32 }).notNull().default("active"),
+    seatCount: integer("seat_count").notNull().default(0),
+    tag: varchar("tag", { length: 32 }).notNull().default(""),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -272,6 +274,32 @@ export const upstreamCredentials = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index("upstream_credentials_pl_idx").on(t.productLineId, t.status)],
+);
+
+export const channelSeats = pgTable(
+  "channel_seats",
+  {
+    id: bigint("id", { mode: "number" }).generatedAlwaysAsIdentity().primaryKey(),
+    employeeId: bigint("employee_id", { mode: "number" })
+      .notNull()
+      .references(() => employees.id, { onDelete: "cascade", onUpdate: "no action" }),
+    productLineId: bigint("product_line_id", { mode: "number" })
+      .notNull()
+      .references(() => productLines.id, { onDelete: "cascade", onUpdate: "no action" }),
+    credentialId: bigint("credential_id", { mode: "number" })
+      .references(() => upstreamCredentials.id, { onDelete: "set null", onUpdate: "no action" }),
+    tag: varchar("tag", { length: 32 }).notNull().default(""),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("channel_seats_employee_product_line_tag_uidx").on(
+      t.employeeId,
+      t.productLineId,
+      t.tag,
+    ),
+    uniqueIndex("channel_seats_credential_uidx").on(t.credentialId),
+  ],
 );
 
 export const credentialBindings = pgTable(

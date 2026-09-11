@@ -217,6 +217,7 @@ const bulkCredentialCreateSchema = z
     custom: z.boolean().optional(),
     protocolConfigs: customProtocolConfigsSchema.optional(),
     name: z.string().trim().min(1).max(100).optional(),
+    seatCount: z.number().int().min(0).max(100_000).optional(),
     status: z.enum(["active", "disabled"]).optional(),
     keys: z
       .array(
@@ -256,6 +257,7 @@ const bulkCredentialCreateSchema = z
       && (
         value.name !== undefined
         || value.status !== undefined
+        || value.seatCount !== undefined
         || value.protocolConfigs !== undefined
         || value.custom !== undefined
       )
@@ -284,15 +286,22 @@ const bulkCredentialCreateSchema = z
       if (!value.protocolConfigs) {
         context.addIssue({
           code: z.ZodIssueCode.custom,
-          message: "自定义渠道必须提供协议路由",
+          message: "自定义渠道必须填写上游地址",
           path: ["protocolConfigs"],
         });
       }
     }
+    if (locator !== "existing" && locator !== "invalid" && value.seatCount === undefined) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "请填写席位数量",
+        path: ["seatCount"],
+      });
+    }
     if (locator !== "custom" && value.protocolConfigs !== undefined) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
-        message: "协议路由仅自定义渠道可提交",
+        message: "上游地址仅自定义渠道可提交",
         path: ["protocolConfigs"],
       });
     }
@@ -1235,7 +1244,7 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
           const primaryConfig = customConfigs[primaryProtocol]
             ?? customConfigs.openai_chat
             ?? customConfigs.anthropic_messages;
-          if (!primaryConfig) throw new Error("自定义渠道缺少协议路由");
+          if (!primaryConfig) throw new Error("自定义渠道缺少上游地址");
 
           let [provider] = await tx
             .select()
@@ -1279,6 +1288,7 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
                 baseUrlOverride: primaryConfig.baseUrl,
                 protocolConfigs: customConfigs,
                 configVersion: 1,
+                seatCount: body.data.seatCount ?? 0,
                 status: body.data.status ?? "active",
               })
               .onConflictDoNothing({
@@ -1366,6 +1376,7 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
                   baseUrlOption.url === provider.defaultBaseUrl ? null : baseUrlOption.url,
                 protocolConfigs: newChannelProtocolConfigResolution.configs,
                 configVersion: 1,
+                seatCount: body.data.seatCount ?? 0,
                 status: body.data.status ?? "active",
               })
               .onConflictDoNothing({
@@ -1713,6 +1724,8 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
         baseUrlOverride: productLines.baseUrlOverride,
         protocolConfigs: productLines.protocolConfigs,
         configVersion: productLines.configVersion,
+        seatCount: productLines.seatCount,
+        productLineTag: productLines.tag,
       })
       .from(upstreamCredentials)
       .innerJoin(productLines, eq(upstreamCredentials.productLineId, productLines.id))
@@ -1776,6 +1789,8 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
         providerName: providers.name,
         providerStatus: providers.status,
         defaultBaseUrl: providers.defaultBaseUrl,
+        seatCount: productLines.seatCount,
+        tag: productLines.tag,
       })
       .from(productLines)
       .innerJoin(providers, eq(productLines.providerId, providers.id))

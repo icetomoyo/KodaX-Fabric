@@ -137,9 +137,14 @@ export function verifyEmployeeSubmitTestProof(input: {
 
 export function collectSubmitableChannels(
   rows: readonly SubmitableChannelRow[],
+  allowedProductLineIds?: ReadonlySet<number>,
 ): SubmitableChannel[] {
   return [...rows]
-    .filter((row) => row.status === "active" && row.providerStatus === "active")
+    .filter((row) =>
+      row.status === "active"
+      && row.providerStatus === "active"
+      && (allowedProductLineIds == null || allowedProductLineIds.has(row.id))
+    )
     .sort((left, right) => left.id - right.id)
     .map((row) => ({
       id: row.id,

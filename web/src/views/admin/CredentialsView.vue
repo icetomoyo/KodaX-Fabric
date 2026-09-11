@@ -4,8 +4,8 @@
       <div class="page-head">
         <div class="head-actions">
           <el-button :loading="loading" @click="refreshAll">刷新</el-button>
-          <el-button v-if="canWrite" @click="openSubmitRecords">渠道 KEY 提交记录</el-button>
-          <el-button v-if="canWrite" type="primary" @click="openCreateChannel">
+          <el-button v-if="canWrite && pageKind === 'keys'" @click="openSubmitRecords">渠道 KEY 提交记录</el-button>
+          <el-button v-if="canWrite && pageKind === 'channels'" type="primary" @click="openCreateChannel">
             新增渠道
           </el-button>
         </div>
@@ -20,10 +20,10 @@
 
           <el-empty
             v-if="!loading && !channels.length"
-            description="暂无上游渠道"
+            :description="pageKind === 'keys' ? '暂无渠道' : '暂无上游渠道'"
             :image-size="72"
           >
-            <el-button v-if="canWrite" type="primary" @click="openCreateChannel">
+            <el-button v-if="canWrite && pageKind === 'channels'" type="primary" @click="openCreateChannel">
               新增渠道
             </el-button>
           </el-empty>
@@ -43,6 +43,7 @@
                 </span>
                 <div class="channel-card-copy">
                   <strong class="channel-card-title">{{ channelDisplayName(channel) }}</strong>
+                  <el-tag v-if="channel.tag" effect="plain" class="channel-tag">{{ channel.tag }}</el-tag>
                 </div>
               </div>
               <div class="channel-card-bottom">
@@ -63,8 +64,10 @@
               </div>
               <div class="detail-actions">
                 <el-tag v-if="!canWrite" type="info" effect="plain">只读查看</el-tag>
-                <template v-if="canWrite">
+                <template v-if="canWrite && pageKind === 'channels'">
                   <el-button @click="openEditChannel(selectedChannel)">编辑渠道</el-button>
+                </template>
+                <template v-if="canWrite && pageKind === 'keys'">
                   <el-button type="primary" @click="openAddKeys(selectedChannel)">
                     添加 Key
                   </el-button>
@@ -73,7 +76,18 @@
               </div>
             </div>
 
-            <section class="key-pool-section">
+            <section v-if="pageKind === 'channels'" class="channel-summary-section">
+              <el-descriptions :column="2" border>
+                <el-descriptions-item label="渠道">{{ channelDisplayName(selectedChannel) }}</el-descriptions-item>
+                <el-descriptions-item label="标签">{{ selectedChannel.tag || "—" }}</el-descriptions-item>
+                <el-descriptions-item label="状态">{{ channelStatusText(selectedChannel) }}</el-descriptions-item>
+                <el-descriptions-item label="协议">{{ selectedChannel.protocols.join("、") || "—" }}</el-descriptions-item>
+                <el-descriptions-item label="席位">{{ selectedChannel.seatCount }} 个</el-descriptions-item>
+                <el-descriptions-item label="渠道 KEY">{{ selectedChannel.totalCount }} 个</el-descriptions-item>
+              </el-descriptions>
+            </section>
+
+            <section v-else class="key-pool-section">
               <div class="key-pool-head">
                 <div>
                   <h4>Key 看板（{{ selectedChannel.totalCount }}）</h4>
@@ -237,13 +251,53 @@
             :description="channels.length ? '请从左侧选择一个渠道' : '暂无上游渠道'"
             :image-size="96"
           >
-            <el-button v-if="!channels.length && canWrite" type="primary" @click="openCreateChannel">
+            <el-button v-if="!channels.length && canWrite && pageKind === 'channels'" type="primary" @click="openCreateChannel">
               新增渠道
             </el-button>
           </el-empty>
         </main>
       </div>
     </section>
+
+    <el-dialog
+      v-model="showChannelCreate"
+      title="新增渠道"
+      width="min(620px, 92vw)"
+      destroy-on-close
+      class="credential-dialog"
+    >
+      <el-form label-position="top" class="credential-form" @submit.prevent>
+        <div class="channel-field-grid" :class="{ single: createForm.provider !== 'glm' }">
+          <el-form-item label="供应商" required>
+            <el-select v-model="createForm.provider" style="width: 100%">
+              <el-option label="智谱" value="glm" />
+              <el-option label="海致集团" value="haizhi" />
+            </el-select>
+          </el-form-item>
+          <el-form-item v-if="createForm.provider === 'glm'" label="线路" required>
+            <el-radio-group v-model="createForm.variant">
+              <el-radio-button value="domestic">国内</el-radio-button>
+              <el-radio-button value="international">国际</el-radio-button>
+            </el-radio-group>
+          </el-form-item>
+        </div>
+        <ChannelConfigFields
+          v-model:name="createForm.name"
+          v-model:tag="createForm.tag"
+          v-model:seat-count="createForm.seatCount"
+          v-model:supported-protocols="createForm.supportedProtocols"
+          v-model:status="createForm.status"
+          v-model:protocol-configs="createFormProtocolConfigs"
+          :editable="createNeedsUpstreamUrl"
+          :allow-all-protocols="createForm.provider === 'glm'"
+          :disabled="createSaving"
+        />
+      </el-form>
+      <template #footer>
+        <el-button :disabled="createSaving" @click="showChannelCreate = false">取消</el-button>
+        <el-button type="primary" :loading="createSaving" @click="saveChannelCreate">创建</el-button>
+      </template>
+    </el-dialog>
 
     <el-dialog
       v-model="showChannelEdit"
@@ -258,17 +312,20 @@
         </span>
         <div>
           <strong>{{ channelDisplayName(channelEditTarget) }}</strong>
-          <div class="cell-secondary">供应商与渠道不可在编辑时更换</div>
+          <div class="cell-secondary">供应商不可更换</div>
         </div>
       </div>
 
       <el-form label-position="top" class="credential-form" @submit.prevent>
         <ChannelConfigFields
           v-model:name="channelEditForm.name"
+          v-model:tag="channelEditForm.tag"
+          v-model:seat-count="channelEditForm.seatCount"
           v-model:supported-protocols="channelEditForm.supportedProtocols"
           v-model:status="channelEditForm.status"
           v-model:protocol-configs="channelEditProtocolConfigs"
           :editable="channelEditIsCustom"
+          :allow-all-protocols="!channelEditIsCustom"
           :protocols-touched="channelEditProtocolsTouched"
           :routing-config-drift="channelEditRoutingConfigDrift"
           :routing-upgrade-requested="channelEditRoutingUpgradeRequested"
@@ -294,7 +351,7 @@
 
     <el-dialog
       v-model="showBulkForm"
-      :title="bulkForm.productLineId ? '批量添加 Key' : '新增渠道并导入 Key'"
+      title="批量添加 Key"
       width="min(780px, 94vw)"
       destroy-on-close
       class="credential-dialog"
@@ -355,6 +412,7 @@
 
           <ChannelConfigFields
             v-model:name="bulkForm.name"
+            v-model:seat-count="bulkForm.seatCount"
             v-model:supported-protocols="bulkForm.supportedProtocols"
             v-model:status="bulkForm.status"
             v-model:protocol-configs="bulkFormProtocolConfigs"
@@ -370,12 +428,6 @@
         </span>
         <div>
           <strong>{{ channelDisplayName(importTargetChannel) }}</strong>
-          <ProtocolRouteSummary
-            class="cell-secondary"
-            :protocols="importTargetChannel.protocols"
-            :protocol-configs="importTargetChannel.protocolConfigs"
-            :fallback-base-url="importTargetChannel.baseUrl"
-          />
         </div>
       </div>
 
@@ -523,16 +575,6 @@
               <div class="info-item"><dt>ProductLine</dt><dd>{{ selectedChannelSummary.code }}</dd></div>
               <div class="info-item"><dt>接入类型</dt><dd>{{ selectedChannelSummary.productType === "coding_plan" ? "Coding Plan" : "API" }}</dd></div>
               <div class="info-item full"><dt>Base URL</dt><dd class="url-value">{{ selectedChannelSummary.baseUrl }}</dd></div>
-              <div class="info-item full">
-                <dt>协议路由</dt>
-                <dd>
-                  <ProtocolRouteSummary
-                    :protocols="selectedChannelSummary.protocols"
-                    :protocol-configs="selectedChannelSummary.protocolConfigs"
-                    :fallback-base-url="selectedChannelSummary.baseUrl"
-                  />
-                </dd>
-              </div>
             </dl>
           </section>
 
@@ -598,16 +640,6 @@
           <section class="detail-section">
             <h4 class="section-heading">基本信息</h4>
             <dl class="info-grid">
-              <div class="info-item full">
-                <dt>协议路由</dt>
-                <dd>
-                  <ProtocolRouteSummary
-                    :protocols="credentialProtocols(detailRow)"
-                    :protocol-configs="detailRow.protocolConfigs"
-                    :fallback-base-url="effectiveBaseUrl(detailRow)"
-                  />
-                </dd>
-              </div>
               <div class="info-item">
                 <dt>最近使用</dt>
                 <dd>{{ formatDateTime(detailRow.lastUsedAt) }}</dd>
@@ -841,12 +873,12 @@ import { computed, onMounted, reactive, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { http } from "@/api/http";
+import { channelDisplayName, formatChannelName } from "@/lib/channel-display";
 import { formatDateTime } from "@/lib/date-time";
 import { roleLabel as formatRoleLabel } from "@/lib/roles";
 import { usagePercent, usageProgressStatus } from "@/lib/tokens";
 import { useAuthStore } from "@/stores/auth";
 import ChannelConfigFields from "@/views/admin/ChannelConfigFields.vue";
-import ProtocolRouteSummary from "@/views/admin/ProtocolRouteSummary.vue";
 import {
   RELAY_PROTOCOLS,
   relayProtocolLabel,
@@ -904,6 +936,8 @@ type CredentialRow = {
   productType: "api" | "coding_plan";
   protocolConfigs: RelayProtocolConfigs;
   configVersion: number;
+  seatCount?: number;
+  productLineTag?: string;
   defaultBaseUrl: string;
   baseUrlOverride: string | null;
   fiveHourCreditLimit: number | null;
@@ -930,7 +964,9 @@ type ProviderBaseUrl = {
 
 type ProviderTemplateCode = "glm";
 const CUSTOM_PROVIDER_CODE = "custom";
+const HAIZHI_PROVIDER_CODE = "haizhi";
 const CUSTOM_PROVIDER_COLOR = "#0f766e";
+const HAIZHI_PROVIDER_COLOR = "#0f766e";
 
 type ConfiguredProductLine = {
   id: number;
@@ -954,6 +990,8 @@ type ListedProductLine = {
   providerName: string;
   providerStatus: string;
   baseUrl: string;
+  seatCount: number;
+  tag: string;
 };
 
 type ProviderTemplate = {
@@ -992,6 +1030,8 @@ type ChannelGroup = {
   unschedulableCount: number;
   recentSuccessCount: number;
   recentErrorCount: number;
+  seatCount: number;
+  tag: string;
 };
 
 type ChannelSummary = {
@@ -1019,9 +1059,11 @@ type ChannelSummary = {
 
 type ChannelEditSnapshot = {
   name: string;
+  tag: string;
   supportedProtocols: RelayProtocol[];
   status: ChannelStatus;
   protocolConfigs: RelayProtocolConfigs;
+  seatCount: number;
 };
 
 type ParsedKey = {
@@ -1044,6 +1086,9 @@ const route = useRoute();
 const router = useRouter();
 const auth = useAuthStore();
 const canWrite = computed(() => auth.isSuperAdmin);
+const pageKind = computed<"channels" | "keys">(() =>
+  route.name === "admin-channels" ? "channels" : "keys",
+);
 
 const rows = ref<CredentialRow[]>([]);
 const listedProductLines = ref<ListedProductLine[]>([]);
@@ -1123,6 +1168,19 @@ const filteredUnsubmittedRows = computed(() => {
   );
 });
 
+const showChannelCreate = ref(false);
+const createSaving = ref(false);
+const createFormProtocolConfigs = ref<RelayProtocolConfigs>({});
+const createForm = reactive({
+  provider: "glm" as "glm" | "haizhi",
+  variant: "domestic" as "domestic" | "international",
+  name: "",
+  tag: "",
+  seatCount: null as number | null,
+  supportedProtocols: ["anthropic_messages", "openai_chat", "openai_responses"] as RelayProtocol[],
+  status: "active" as ChannelStatus,
+});
+
 const showChannelDetails = ref(false);
 const channelSummaryLoading = ref(false);
 const channelSummaries = ref(new Map<number, ChannelSummary>());
@@ -1138,6 +1196,7 @@ const bulkForm = reactive({
   custom: false,
   baseUrl: "",
   name: "",
+  seatCount: null as number | null,
   rawKeys: "",
   tag: "",
   supportedProtocols: ["openai_chat"] as RelayProtocol[],
@@ -1156,6 +1215,8 @@ const channelEditForm = reactive({
   id: 0,
   configVersion: 0,
   name: "",
+  tag: "",
+  seatCount: null as number | null,
   supportedProtocols: [] as RelayProtocol[],
   status: "active" as ChannelStatus,
 });
@@ -1196,6 +1257,8 @@ const channels = computed<ChannelGroup[]>(() => {
       unschedulableCount: Math.max(0, keys.length - schedulableCount - coolingCount),
       recentSuccessCount: keys.reduce((sum, key) => sum + (key.recentSuccessCount ?? 0), 0),
       recentErrorCount: keys.reduce((sum, key) => sum + (key.recentErrorCount ?? 0), 0),
+      seatCount: Number(first.seatCount) || 0,
+      tag: first.productLineTag ?? "",
     };
   });
 
@@ -1249,8 +1312,16 @@ const channelEditTarget = computed(
   () => channels.value.find((channel) => channel.id === channelEditForm.id) ?? null,
 );
 
+function isSelfHostedProviderCode(code: string | undefined): boolean {
+  return code === CUSTOM_PROVIDER_CODE || code === HAIZHI_PROVIDER_CODE;
+}
+
+const createNeedsUpstreamUrl = computed(
+  () => createForm.provider === "haizhi",
+);
+
 const channelEditIsCustom = computed(
-  () => channelEditTarget.value?.providerCode === CUSTOM_PROVIDER_CODE,
+  () => isSelfHostedProviderCode(channelEditTarget.value?.providerCode),
 );
 
 const detailRow = computed(
@@ -1375,6 +1446,13 @@ watch(() => route.query.channelId, () => {
   if (syncingQuery.value) return;
   reconcileSelection();
 });
+
+watch(
+  () => [createForm.provider, createForm.variant] as const,
+  () => {
+    createFormProtocolConfigs.value = defaultCustomProtocolConfigs();
+  },
+);
 
 watch(showBulkForm, (visible) => {
   if (!visible) clearBulkSecrets();
@@ -1666,11 +1744,13 @@ function syncQuotaEditForm(row: CredentialRow) {
 }
 
 function providerColor(code: string): string {
+  if (code === HAIZHI_PROVIDER_CODE) return HAIZHI_PROVIDER_COLOR;
   if (code === CUSTOM_PROVIDER_CODE) return CUSTOM_PROVIDER_COLOR;
   return templates.value.find((item) => item.code === code)?.color ?? "#64748b";
 }
 
 function providerShortName(code: string): string {
+  if (code === HAIZHI_PROVIDER_CODE) return "海";
   if (code === CUSTOM_PROVIDER_CODE) return "自";
   return templates.value.find((item) => item.code === code)?.shortName
     ?? code.slice(0, 4).toUpperCase();
@@ -1678,16 +1758,6 @@ function providerShortName(code: string): string {
 
 function providerLogoStyle(code: string): Record<string, string> {
   return { background: providerColor(code) };
-}
-
-/** 公司名称/模型名称，如 智谱/GLM、深度求索/DeepSeek */
-function formatChannelName(companyName: string, modelName: string): string {
-  const company = companyName.trim();
-  const model = modelName.trim();
-  if (!company) return model;
-  if (!model) return company;
-  if (company === model || model.startsWith(`${company}/`)) return model;
-  return `${company}/${model}`;
 }
 
 function templateDisplayName(template: ProviderTemplate): string {
@@ -1707,17 +1777,6 @@ function isBulkChannelOptionSelected(item: BulkChannelOption): boolean {
   return !bulkForm.productLineId
     && bulkForm.providerCode === item.template.code
     && bulkForm.baseUrl === item.option.url;
-}
-
-function channelDisplayName(
-  channel: Pick<ChannelGroup, "providerCode" | "providerName" | "productLineCode" | "productLineName">
-    | Pick<CredentialRow, "providerCode" | "providerName" | "productLineCode" | "productLineName">,
-): string {
-  const template = templates.value.find((item) => item.code === channel.providerCode);
-  const optionName = template?.baseUrls.find(
-    (option) => option.productLineCode === channel.productLineCode,
-  )?.productLineName;
-  return formatChannelName(channel.providerName, optionName || channel.productLineName);
 }
 
 function statusText(status: CredentialStatus): string {
@@ -1900,6 +1959,7 @@ function resetBulkForm() {
   bulkForm.productLineId = null;
   bulkForm.rawKeys = "";
   bulkForm.tag = "";
+  bulkForm.seatCount = null;
   bulkForm.status = "active";
   bulkForm.fiveHourCreditLimit = "";
   bulkForm.weeklyCreditLimit = "";
@@ -1921,15 +1981,78 @@ function resetBulkForm() {
   selectCustomChannelOption();
 }
 
+function resetCreateForm() {
+  createForm.provider = "glm";
+  createForm.variant = "domestic";
+  createForm.name = "";
+  createForm.tag = "";
+  createForm.seatCount = null;
+  createForm.supportedProtocols = ["anthropic_messages", "openai_chat", "openai_responses"];
+  createForm.status = "active";
+  createFormProtocolConfigs.value = defaultCustomProtocolConfigs();
+}
+
 async function openCreateChannel() {
   if (!canWrite.value) return;
-  try {
-    await loadMeta();
-  } catch {
-    // Official templates are optional; custom channels remain available.
+  resetCreateForm();
+  showChannelCreate.value = true;
+}
+
+async function saveChannelCreate() {
+  if (!canWrite.value || createSaving.value) return;
+  const name = createForm.name.trim();
+  if (!name) {
+    ElMessage.warning("请填写渠道名称");
+    return;
   }
-  resetBulkForm();
-  showBulkForm.value = true;
+  if (createForm.seatCount == null || createForm.seatCount < 0) {
+    ElMessage.warning("请填写席位数量");
+    return;
+  }
+  if (!createForm.supportedProtocols.length) {
+    ElMessage.warning("请选择 API 协议");
+    return;
+  }
+  if (
+    createNeedsUpstreamUrl.value
+    && !protocolsHaveConfigs(createForm.supportedProtocols, createFormProtocolConfigs.value)
+  ) {
+    ElMessage.warning("请填写上游地址");
+    return;
+  }
+
+  createSaving.value = true;
+  try {
+    const payload: Record<string, unknown> = {
+      name,
+      tag: createForm.tag.trim(),
+      seatCount: createForm.seatCount,
+      status: createForm.status,
+      supportedProtocols: [...createForm.supportedProtocols],
+      provider: createForm.provider,
+    };
+    if (createForm.provider === "glm") payload.variant = createForm.variant;
+    if (createNeedsUpstreamUrl.value) {
+      payload.protocolConfigs = selectedProtocolConfigs(
+        createForm.supportedProtocols,
+        createFormProtocolConfigs.value,
+      );
+    }
+    const { data } = await http.post("/api/admin/product-lines", payload);
+    if (!data.success) throw new Error(data.message || "创建渠道失败");
+    showChannelCreate.value = false;
+    await Promise.all([loadCredentials(), loadMeta()]);
+    const createdId = Number(data.data?.id);
+    if (Number.isInteger(createdId) && channels.value.some((channel) => channel.id === createdId)) {
+      selectedProductLineId.value = createdId;
+      syncSelectedToQuery(createdId);
+    }
+    ElMessage.success("渠道已创建");
+  } catch (error) {
+    ElMessage.error(getErrorMessage(error, "创建渠道失败"));
+  } finally {
+    createSaving.value = false;
+  }
 }
 
 function openEditChannel(channel: ChannelGroup) {
@@ -1946,6 +2069,8 @@ function openEditChannel(channel: ChannelGroup) {
   channelEditForm.id = channel.id;
   channelEditForm.configVersion = channel.configVersion;
   channelEditForm.name = channel.productLineName;
+  channelEditForm.tag = channel.tag ?? "";
+  channelEditForm.seatCount = channel.seatCount;
   channelEditForm.supportedProtocols = selectedConfigurableProtocols;
   channelEditForm.status = channel.productLineStatus;
   channelEditProtocolConfigs.value = Object.keys(templateConfigs).length
@@ -1966,9 +2091,11 @@ function openEditChannel(channel: ChannelGroup) {
   );
   channelEditOriginal.value = {
     name: channel.productLineName,
+    tag: channel.tag ?? "",
     supportedProtocols: [...channel.protocols],
     status: channel.productLineStatus,
     protocolConfigs: { ...channel.protocolConfigs },
+    seatCount: channel.seatCount,
   };
   showChannelEdit.value = true;
 }
@@ -1989,6 +2116,10 @@ async function saveChannelEdit() {
   }
   if (!name) {
     ElMessage.warning("请输入渠道名称");
+    return;
+  }
+  if (channelEditForm.seatCount == null || channelEditForm.seatCount < 0) {
+    ElMessage.warning("请填写席位数量");
     return;
   }
   if (name.length > 100) {
@@ -2027,7 +2158,9 @@ async function saveChannelEdit() {
     expectedConfigVersion: channelEditForm.configVersion,
   };
   if (name !== original.name) payload.name = name;
+  if (channelEditForm.tag.trim() !== original.tag) payload.tag = channelEditForm.tag.trim();
   if (channelEditForm.status !== original.status) payload.status = channelEditForm.status;
+  if (channelEditForm.seatCount !== original.seatCount) payload.seatCount = channelEditForm.seatCount;
   if (shouldSendProtocols) {
     payload.supportedProtocols = [...channelEditForm.supportedProtocols];
     if (customChannel) {
@@ -2105,6 +2238,8 @@ function emptyChannelFromProductLine(line: ListedProductLine): ChannelGroup {
     unschedulableCount: 0,
     recentSuccessCount: 0,
     recentErrorCount: 0,
+    seatCount: line.seatCount ?? 0,
+    tag: line.tag ?? "",
   };
 }
 
@@ -2120,6 +2255,7 @@ function selectBulkChannelOption(item: BulkChannelOption) {
   bulkForm.providerCode = item.template.code;
   bulkForm.baseUrl = channel?.baseUrl ?? item.option.url;
   bulkForm.name = channel?.productLineName ?? item.option.productLineName;
+  bulkForm.seatCount = channel?.seatCount ?? null;
   bulkForm.supportedProtocols = channel
     ? [...channel.protocols]
     : initialOptionProtocols(item.option, item.template);
@@ -2135,6 +2271,7 @@ function selectCustomChannelOption() {
   bulkForm.providerCode = CUSTOM_PROVIDER_CODE;
   bulkForm.baseUrl = "";
   bulkForm.name = "";
+  bulkForm.seatCount = null;
   bulkForm.supportedProtocols = ["openai_chat", "anthropic_messages"];
   bulkFormProtocolConfigs.value = defaultCustomProtocolConfigs();
 }
@@ -2245,6 +2382,10 @@ async function saveBulkKeys() {
       ElMessage.warning("请输入渠道名称");
       return;
     }
+    if (bulkForm.seatCount == null || bulkForm.seatCount < 0) {
+      ElMessage.warning("请填写席位数量");
+      return;
+    }
     if (name.length > 100) {
       ElMessage.warning("渠道名称不能超过 100 个字符");
       return;
@@ -2272,6 +2413,7 @@ async function saveBulkKeys() {
           ? {
             custom: true,
             name: bulkForm.name.trim(),
+            seatCount: bulkForm.seatCount,
             status: bulkForm.status,
             protocolConfigs: selectedProtocolConfigs(
               bulkForm.supportedProtocols,
@@ -2283,6 +2425,7 @@ async function saveBulkKeys() {
             // Legacy locator only; protocolConfigs determine actual upstream URLs.
             baseUrl: selectedOption!.url,
             name: bulkForm.name.trim(),
+            seatCount: bulkForm.seatCount,
             status: bulkForm.status,
           }),
       tag: bulkForm.tag.trim() || undefined,
@@ -2665,6 +2808,11 @@ onMounted(refreshAll);
   gap: 2px;
 }
 
+.channel-tag {
+  width: fit-content;
+  max-width: 100%;
+}
+
 .channel-card-title {
   display: -webkit-box;
   overflow: hidden;
@@ -2720,6 +2868,10 @@ onMounted(refreshAll);
 .detail-header {
   flex-shrink: 0;
   margin-bottom: 14px;
+}
+
+.channel-summary-section {
+  min-width: 0;
 }
 
 .detail-identity {
@@ -3415,6 +3567,22 @@ onMounted(refreshAll);
 
 .credential-form {
   margin-top: 4px;
+}
+
+.credential-form .channel-field-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0 16px;
+}
+
+.credential-form .channel-field-grid.single {
+  grid-template-columns: 1fr;
+}
+
+@media (max-width: 560px) {
+  .credential-form .channel-field-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .credential-dialog :deep(.el-dialog__body) {

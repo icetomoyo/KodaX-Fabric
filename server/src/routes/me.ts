@@ -4,6 +4,7 @@ import { z } from "zod";
 import { env } from "../config.js";
 import { db } from "../db/client.js";
 import {
+  channelSeats,
   employeeApiKeys,
   employees,
   enterprises,
@@ -25,13 +26,17 @@ import {
 } from "../lib/relay/protocol.js";
 import { groupDiscoveredModelsByChannel } from "../lib/discovered-models.js";
 import {
-  collectSubmitableChannels,
   isEmployeeSubmittedCredentialMeta,
   issueEmployeeSubmitTestProof,
   planEmployeeChannelCredentialSubmit,
   presentEmployeeSubmittedCredentials,
   verifyEmployeeSubmitTestProof,
 } from "../lib/channel-credential-submit.js";
+import {
+  collectSubmitableSeats,
+  SEAT_ALREADY_SUBMITTED_MESSAGE,
+  SEAT_REQUIRED_MESSAGE,
+} from "../lib/channel-seats.js";
 import type { CredentialStatus } from "../lib/credential-status.js";
 import { decryptSecret, encryptSecret, secretSuffix } from "../lib/crypto-secret.js";
 import {
@@ -62,7 +67,7 @@ const createApiKeySchema = z.object({
 });
 
 const submitUpstreamCredentialCoreSchema = z.object({
-  productLineId: z.number().int().positive(),
+  seatId: z.number().int().positive(),
   secret: z
     .string()
     .trim()
@@ -82,6 +87,25 @@ export function buildRelayBaseUrl(
 
 function meId(req: FastifyRequest): number {
   return actingEmployeeId(req);
+}
+
+async function loadOwnedSeat(employeeId: number, seatId: number) {
+  const [seat] = await db
+    .select({
+      id: channelSeats.id,
+      credentialId: channelSeats.credentialId,
+      productLineId: channelSeats.productLineId,
+      tag: channelSeats.tag,
+    })
+    .from(channelSeats)
+    .where(
+      and(
+        eq(channelSeats.id, seatId),
+        eq(channelSeats.employeeId, employeeId),
+      ),
+    )
+    .limit(1);
+  return seat ?? null;
 }
 
 export async function meRoutes(app: FastifyInstance) {
@@ -152,7 +176,7 @@ export async function meRoutes(app: FastifyInstance) {
     return { success: true, data: channels };
   });
 
-  app.get("/api/me/upstream-credential-channels", async () => {
+  app.get("/api/me/upstream-credential-channels", async (req) => {
     const rows = await db
       .select({
         id: productLines.id,
@@ -166,8 +190,20 @@ export async function meRoutes(app: FastifyInstance) {
       })
       .from(productLines)
       .innerJoin(providers, eq(productLines.providerId, providers.id));
+    const seats = await db
+      .select({
+        id: channelSeats.id,
+        productLineId: channelSeats.productLineId,
+        tag: channelSeats.tag,
+        credentialId: channelSeats.credentialId,
+      })
+      .from(channelSeats)
+      .where(eq(channelSeats.employeeId, meId(req)));
 
-    return { success: true, data: collectSubmitableChannels(rows) };
+    return {
+      success: true,
+      data: collectSubmitableSeats(rows, seats),
+    };
   });
 
   app.get("/api/me/upstream-credentials", async (req) => {
@@ -212,7 +248,22 @@ export async function meRoutes(app: FastifyInstance) {
     if (!body.success) {
       return reply.code(400).send({
         success: false,
-        message: "请选择渠道并填写渠道 KEY",
+        message: "请选择席位并填写渠道 KEY",
+      });
+    }
+
+    const seat = await loadOwnedSeat(meId(req), body.data.seatId);
+    if (!seat) {
+      return reply.code(403).send({
+        success: false,
+        code: "seat_required",
+        message: SEAT_REQUIRED_MESSAGE,
+      });
+    }
+    if (seat.credentialId != null) {
+      return reply.code(409).send({
+        success: false,
+        message: SEAT_ALREADY_SUBMITTED_MESSAGE,
       });
     }
 
@@ -223,7 +274,7 @@ export async function meRoutes(app: FastifyInstance) {
       })
       .from(productLines)
       .innerJoin(providers, eq(productLines.providerId, providers.id))
-      .where(eq(productLines.id, body.data.productLineId))
+      .where(eq(productLines.id, seat.productLineId))
       .limit(1);
     if (
       !located
@@ -311,7 +362,7 @@ export async function meRoutes(app: FastifyInstance) {
     if (!core.success) {
       return reply.code(400).send({
         success: false,
-        message: "请选择渠道并填写渠道 KEY",
+        message: "请选择席位并填写渠道 KEY",
       });
     }
     const proofBody = z
@@ -327,10 +378,18 @@ export async function meRoutes(app: FastifyInstance) {
     }
 
     const employeeId = meId(req);
+    const ownedSeat = await loadOwnedSeat(employeeId, core.data.seatId);
+    if (!ownedSeat) {
+      return reply.code(403).send({
+        success: false,
+        code: "seat_required",
+        message: SEAT_REQUIRED_MESSAGE,
+      });
+    }
     const proof = verifyEmployeeSubmitTestProof({
       proof: proofBody.data.testProof,
       employeeId,
-      productLineId: core.data.productLineId,
+      productLineId: ownedSeat.productLineId,
       secret: core.data.secret,
     });
     if (proof.kind === "expired") {
@@ -348,7 +407,25 @@ export async function meRoutes(app: FastifyInstance) {
 
     const employeeName = req.session?.name ?? "员工";
     const result = await db.transaction(async (tx) => {
-      await tx.execute(sql`select pg_advisory_xact_lock(${core.data.productLineId})`);
+      await tx.execute(sql`select pg_advisory_xact_lock(${ownedSeat.productLineId})`);
+      const [seat] = await tx
+        .select({
+          id: channelSeats.id,
+          credentialId: channelSeats.credentialId,
+          productLineId: channelSeats.productLineId,
+        })
+        .from(channelSeats)
+        .where(
+          and(
+            eq(channelSeats.id, core.data.seatId),
+            eq(channelSeats.employeeId, employeeId),
+          ),
+        )
+        .limit(1)
+        .for("update");
+      if (!seat) return { kind: "seat_required" } as const;
+      if (seat.credentialId != null) return { kind: "already_submitted" } as const;
+
       const [located] = await tx
         .select({
           productLine: productLines,
@@ -356,7 +433,7 @@ export async function meRoutes(app: FastifyInstance) {
         })
         .from(productLines)
         .innerJoin(providers, eq(productLines.providerId, providers.id))
-        .where(eq(productLines.id, core.data.productLineId))
+        .where(eq(productLines.id, seat.productLineId))
         .limit(1);
       if (!located) return { kind: "channel_unavailable" } as const;
 
@@ -437,9 +514,27 @@ export async function meRoutes(app: FastifyInstance) {
         ip: req.ip,
       });
 
+      await tx
+        .update(channelSeats)
+        .set({ credentialId: credential.id, updatedAt: new Date() })
+        .where(eq(channelSeats.id, seat.id));
+
       return { kind: "created" as const, credential };
     });
 
+    if (result.kind === "seat_required") {
+      return reply.code(403).send({
+        success: false,
+        code: "seat_required",
+        message: SEAT_REQUIRED_MESSAGE,
+      });
+    }
+    if (result.kind === "already_submitted") {
+      return reply.code(409).send({
+        success: false,
+        message: SEAT_ALREADY_SUBMITTED_MESSAGE,
+      });
+    }
     if (result.kind === "channel_unavailable") {
       return reply.code(404).send({
         success: false,

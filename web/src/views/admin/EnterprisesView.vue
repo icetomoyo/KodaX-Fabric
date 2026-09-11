@@ -15,40 +15,38 @@
     </div>
 
     <div v-loading="loading" class="split-layout" :class="layoutClass">
-      <el-card v-if="showOrgTree" shadow="never" class="pane tree-pane" body-class="pane-body">
-        <template #header>
-          <div class="pane-header">
-            <span class="pane-title">编制</span>
-            <el-dropdown
-              v-if="canCreateRootDepartment || canCreateChildDepartment"
-              trigger="click"
-              @command="onCreateDepartmentCommand"
-            >
-              <el-button type="primary" size="small" :icon="Plus" plain>
-                新建
-                <el-icon class="el-icon--right"><ArrowDown /></el-icon>
-              </el-button>
-              <template #dropdown>
-                <el-dropdown-menu>
-                  <el-dropdown-item
-                    v-if="canCreateRootDepartment"
-                    command="root"
-                    :disabled="!selectedEnterprise"
-                  >
-                    新建部门
-                  </el-dropdown-item>
-                  <el-dropdown-item
-                    v-if="canCreateChildDepartment"
-                    command="child"
-                    :disabled="!selectedDepartment"
-                  >
-                    新建子部门
-                  </el-dropdown-item>
-                </el-dropdown-menu>
-              </template>
-            </el-dropdown>
-          </div>
-        </template>
+      <aside v-if="showOrgTree" class="pane tree-pane">
+        <div class="pane-header">
+          <span class="pane-title">编制</span>
+          <el-dropdown
+            v-if="canCreateRootDepartment || canCreateChildDepartment"
+            trigger="click"
+            @command="onCreateDepartmentCommand"
+          >
+            <el-button type="primary" size="small" :icon="Plus" plain>
+              新建
+              <el-icon class="el-icon--right"><ArrowDown /></el-icon>
+            </el-button>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item
+                  v-if="canCreateRootDepartment"
+                  command="root"
+                  :disabled="!selectedEnterprise"
+                >
+                  新建部门
+                </el-dropdown-item>
+                <el-dropdown-item
+                  v-if="canCreateChildDepartment"
+                  command="child"
+                  :disabled="!selectedDepartment"
+                >
+                  新建子部门
+                </el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
+        </div>
 
         <el-empty v-if="!loading && !orgTree.length" description="暂无编制" :image-size="64">
           <el-button v-if="canCreateEnterprise" type="primary" @click="openCreateEnterprise">
@@ -103,25 +101,23 @@
             </template>
           </el-tree>
         </el-scrollbar>
-      </el-card>
+      </aside>
 
-      <el-card shadow="never" class="pane people-pane" body-class="pane-body">
-        <template #header>
-          <div class="pane-header">
-            <span class="pane-title">{{ employeeSectionTitle }}</span>
-            <el-tag type="info" size="small" round>{{ visibleEmployees.length }} 人</el-tag>
-            <el-button
-              class="pane-header-action"
-              type="primary"
-              size="small"
-              :icon="Plus"
-              :disabled="!canInvite"
-              @click="openInvite"
-            >
-              邀请已注册员工
-            </el-button>
-          </div>
-        </template>
+      <section class="pane people-pane">
+        <div class="pane-header">
+          <span class="pane-title">{{ employeeSectionTitle }}</span>
+          <el-tag type="info" size="small" round>{{ visibleEmployees.length }} 人</el-tag>
+          <el-button
+            class="pane-header-action"
+            type="primary"
+            size="small"
+            :icon="Plus"
+            :disabled="!canInvite"
+            @click="openInvite"
+          >
+            邀请已注册员工
+          </el-button>
+        </div>
 
         <el-empty
           v-if="showOrgTree && !selectedEnterprise"
@@ -181,7 +177,7 @@
             />
           </div>
         </template>
-      </el-card>
+      </section>
     </div>
 
     <el-dialog v-model="showCreateEnterprise" title="新建企业" width="440px">
@@ -335,13 +331,13 @@
       </template>
     </el-dialog>
 
-    <el-dialog v-model="showInvite" title="邀请已注册员工" width="480px">
+    <el-dialog v-model="showInvite" title="邀请已注册员工" width="560px">
       <el-form label-width="90px">
         <el-form-item label="手机号" required>
           <el-input v-model="invitePhone" placeholder="已注册用户的手机号" />
         </el-form-item>
-        <el-form-item label="加入团队" required>
-          <el-select v-model="inviteTeamId" style="width: 100%" placeholder="选择团队">
+        <el-form-item label="加入部门" required>
+          <el-select v-model="inviteTeamId" style="width: 100%" placeholder="选择部门" filterable>
             <el-option v-for="item in teamOptions" :key="item.id" :label="item.name" :value="item.id" />
           </el-select>
         </el-form-item>
@@ -439,7 +435,7 @@ import {
 } from "@element-plus/icons-vue";
 import { http } from "@/api/http";
 import { parseBulkRegisterText } from "@/lib/bulk-register-users";
-import { employeeDepartmentLabel, visibleOrgEmployees } from "@/lib/org-employees";
+import { departmentPathLabel, employeeDepartmentLabel, visibleOrgEmployees } from "@/lib/org-employees";
 import { roleLabel } from "@/lib/roles";
 import { useTablePage } from "@/lib/table-page";
 
@@ -666,12 +662,21 @@ const currentTreeKey = computed(() => {
   return undefined;
 });
 
-const teamOptions = computed(() =>
-  namedTeams.value.map((team) => ({
-    id: team.id,
-    name: team.name,
-  })),
-);
+const teamOptions = computed(() => {
+  const enterpriseId = selectedEnterpriseId.value;
+  const enterpriseName = selectedEnterprise.value?.name ?? null;
+  return namedDepartments.value
+    .filter((department) => enterpriseId == null || department.enterpriseId === enterpriseId)
+    .map((department) => ({
+      id: department.defaultTeamId ?? 0,
+      name: departmentPathLabel({
+        departmentId: department.id,
+        departments: departments.value,
+        enterpriseName,
+      }),
+    }))
+    .filter((item) => item.id > 0 && item.name.length > 0);
+});
 
 const editUserTeamOptions = computed(() => {
   const current = teams.value.find((team) => team.id === editUser.value?.teamId);
@@ -1341,7 +1346,10 @@ async function submitBulkRegister() {
 function openInvite() {
   invitePhone.value = "";
   inviteRole.value = "member";
-  inviteTeamId.value = selectedTeamId.value ?? undefined;
+  const selectedDepartmentTeamId = selectedDepartmentId.value
+    ? namedDepartments.value.find((row) => row.id === selectedDepartmentId.value)?.defaultTeamId
+    : null;
+  inviteTeamId.value = selectedDepartmentTeamId ?? selectedTeamId.value ?? undefined;
   showInvite.value = true;
 }
 
@@ -1352,7 +1360,7 @@ async function inviteMember() {
     return;
   }
   if (!inviteTeamId.value) {
-    ElMessage.warning(teams.value.length ? "请选择要加入的团队" : "请先创建团队，再邀请员工入团队");
+    ElMessage.warning(teamOptions.value.length ? "请选择要加入的部门" : "请先创建部门，再邀请员工");
     return;
   }
   inviting.value = true;
@@ -1619,12 +1627,12 @@ onMounted(() => {
 
 .split-layout {
   display: grid;
-  gap: 16px;
+  gap: 0;
   flex: 1;
   min-height: 0;
 }
 .split-layout.layout-tree {
-  grid-template-columns: 280px minmax(0, 1fr);
+  grid-template-columns: 252px minmax(0, 1fr);
 }
 .split-layout.layout-people {
   grid-template-columns: 1fr;
@@ -1637,23 +1645,22 @@ onMounted(() => {
   min-height: 0;
 }
 
-.pane :deep(.el-card__header) {
-  padding: 12px 16px;
+.tree-pane {
+  padding-right: 8px;
 }
 
-.pane :deep(.pane-body) {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  min-height: 0;
-  padding: 0;
+.split-layout.layout-tree .people-pane {
+  padding-left: 16px;
+  border-left: 1px solid var(--el-border-color-lighter);
 }
 
 .pane-header {
   display: flex;
+  flex-shrink: 0;
   align-items: center;
   gap: 8px;
-  min-height: 24px;
+  min-height: 40px;
+  padding: 0 0 8px;
 }
 
 .pane-title {
@@ -1677,7 +1684,7 @@ onMounted(() => {
 }
 
 .org-tree {
-  padding: 8px;
+  padding: 0 0 8px;
 }
 
 .org-tree :deep(.el-tree-node__content) {
@@ -1745,10 +1752,10 @@ onMounted(() => {
 .people-pane .pager {
   flex-shrink: 0;
   margin-top: 0;
-  padding: 8px 16px 12px;
+  padding: 8px 0 4px;
 }
 
-.people-pane :deep(.el-empty) {
+.pane :deep(.el-empty) {
   flex: 1;
 }
 
@@ -1772,6 +1779,13 @@ onMounted(() => {
   }
   .tree-pane {
     max-height: 320px;
+    padding-right: 0;
+  }
+  .split-layout.layout-tree .people-pane {
+    padding-left: 0;
+    padding-top: 8px;
+    border-left: none;
+    border-top: 1px solid var(--el-border-color-lighter);
   }
 }
 </style>

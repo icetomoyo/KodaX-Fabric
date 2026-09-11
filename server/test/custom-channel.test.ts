@@ -8,7 +8,9 @@ import {
 } from "../src/lib/custom-channel.js";
 import {
   CUSTOM_PROVIDER_CODE,
+  HAIZHI_PROVIDER_CODE,
   isCustomProvider,
+  isSelfHostedProvider,
   isTestableUpstreamUrl,
 } from "../src/lib/provider-templates.js";
 
@@ -137,6 +139,12 @@ test("custom protocol configs require a URL and auth style for every selected pr
 
 test("connectivity tests allow custom http(s) URLs but still lock GLM to official hosts", () => {
   assert.equal(isCustomProvider(CUSTOM_PROVIDER_CODE), true);
+  assert.equal(isSelfHostedProvider(HAIZHI_PROVIDER_CODE), true);
+  assert.equal(isCustomProvider(HAIZHI_PROVIDER_CODE), false);
+  assert.equal(
+    isTestableUpstreamUrl("haizhi", "http://10.10.20.10:8080/v1"),
+    true,
+  );
   assert.equal(
     isTestableUpstreamUrl("custom", "https://gateway.example.test/v1"),
     true,

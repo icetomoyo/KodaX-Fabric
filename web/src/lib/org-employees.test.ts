@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  departmentPathLabel,
   employeeDepartmentLabel,
   visibleOrgEmployees,
 } from "./org-employees.ts";
@@ -54,6 +55,25 @@ test("selecting a department lists members of that node and nested children only
   assert.deepEqual(
     rows.map((row) => row.id),
     [1, 2],
+  );
+});
+
+test("department path joins enterprise and nested departments with slashes", () => {
+  assert.equal(
+    departmentPathLabel({
+      departmentId: 18,
+      departments,
+      enterpriseName: "海致科技",
+    }),
+    "海致科技/产品技术部/平台组",
+  );
+  assert.equal(
+    departmentPathLabel({ departmentId: 8, departments, enterpriseName: "海致科技" }),
+    "海致科技/产品技术部",
+  );
+  assert.equal(
+    departmentPathLabel({ departmentId: 1, departments, enterpriseName: "海致科技" }),
+    "海致科技",
   );
 });
 

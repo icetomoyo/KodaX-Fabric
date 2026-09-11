@@ -1,7 +1,8 @@
 import type { RelayProtocol } from "./relay/protocol.js";
-import type {
-  ProductLineProtocolConfigs,
-  ProtocolUpstreamConfig,
+import {
+  parseProductLineProtocolConfigs,
+  type ProductLineProtocolConfigs,
+  type ProtocolUpstreamConfig,
 } from "./upstream-protocol-config.js";
 
 export type ProviderTemplateCode = "glm";
@@ -9,6 +10,8 @@ export type ProviderTemplateCode = "glm";
 /** Catch-all provider for administrator-defined upstreams that are not official templates. */
 export const CUSTOM_PROVIDER_CODE = "custom" as const;
 export const CUSTOM_PROVIDER_NAME = "自定义";
+export const HAIZHI_PROVIDER_CODE = "haizhi" as const;
+export const HAIZHI_PROVIDER_NAME = "海致集团";
 
 export type ProviderBaseUrlOption = {
   label: string;
@@ -121,6 +124,32 @@ export function resolveTemplateProductLineOption(
   return template.baseUrls.find((item) => item.productLineCode === productLineCode);
 }
 
+/** Map a stored GLM channel back to 国内版 / 国际版 even when the product-line code is unique. */
+export function resolveTemplateOptionForStoredChannel(
+  template: ProviderTemplate,
+  productLineCode: string,
+  protocolConfigs: unknown,
+): ProviderBaseUrlOption | undefined {
+  const byCode = resolveTemplateProductLineOption(template, productLineCode);
+  if (byCode) return byCode;
+  const parsed = parseProductLineProtocolConfigs(protocolConfigs);
+  if (parsed) {
+    const storedUrls = new Set(
+      Object.values(parsed)
+        .filter((config): config is ProtocolUpstreamConfig => Boolean(config))
+        .map((config) => normalizeBaseUrl(config.baseUrl)),
+    );
+    const byUrl = template.baseUrls.find((option) =>
+      storedUrls.has(normalizeBaseUrl(option.url))
+      || Object.values(option.protocolConfigs).some((config) =>
+        config && storedUrls.has(normalizeBaseUrl(config.baseUrl))
+      ),
+    );
+    if (byUrl) return byUrl;
+  }
+  return template.baseUrls[0];
+}
+
 export type TemplateProtocolConfigResolution =
   | { ok: true; configs: ProductLineProtocolConfigs }
   | { ok: false; reason: "product_line_unsupported"; unsupportedProtocols: RelayProtocol[] }
@@ -191,14 +220,18 @@ export function isCustomProvider(code: string): boolean {
   return code === CUSTOM_PROVIDER_CODE;
 }
 
+export function isSelfHostedProvider(code: string): boolean {
+  return code === CUSTOM_PROVIDER_CODE || code === HAIZHI_PROVIDER_CODE;
+}
+
 /**
  * Official templates may only be probed at their documented HTTPS hosts.
- * Custom channels may use any http(s) URL the administrator stored.
+ * Self-hosted channels may use any http(s) URL the administrator stored.
  */
 export function isTestableUpstreamUrl(providerCode: string, baseUrl: string): boolean {
   const template = getProviderTemplate(providerCode);
   if (template) return isAllowedTemplateHost(template, baseUrl);
-  if (!isCustomProvider(providerCode)) return false;
+  if (!isSelfHostedProvider(providerCode)) return false;
   try {
     const url = new URL(baseUrl);
     return url.protocol === "http:" || url.protocol === "https:";

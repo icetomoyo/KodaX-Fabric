@@ -366,6 +366,8 @@ test("personal center exposes channel-key submit for every non-super-admin role"
   assert.match(profile, /deleteSubmittedChannelKey/);
   assert.match(profile, /ElMessageBox/);
   assert.match(profile, /\/api\/me\/upstream-credentials\/\$\{row\.id\}/);
+  assert.match(profile, /没有席位，无需提交渠道 KEY/);
+  assert.match(profile, /channelKeyForm.seatId/);
   assert.doesNotMatch(profile, /\/api\/admin\/credentials\/bulk-create/);
 });
 
@@ -417,12 +419,12 @@ test("me channel-key submit routes exist and reject anonymous callers", async ()
     const tested = await app.inject({
       method: "POST",
       url: "/api/me/upstream-credentials/test",
-      payload: { productLineId: 1, secret: "12345678" },
+      payload: { seatId: 1, secret: "12345678" },
     });
     const created = await app.inject({
       method: "POST",
       url: "/api/me/upstream-credentials",
-      payload: { productLineId: 1, secret: "12345678" },
+      payload: { seatId: 1, secret: "12345678" },
     });
     const removed = await app.inject({
       method: "DELETE",

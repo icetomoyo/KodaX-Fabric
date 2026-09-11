@@ -56,6 +56,36 @@ export function visibleOrgEmployees<T extends { teamId: number | null }>(input: 
   return [...input.employees];
 }
 
+export function departmentPathNames(
+  departmentId: number,
+  departments: readonly OrgDepartmentNode[],
+): string[] {
+  const byId = new Map(departments.map((department) => [department.id, department]));
+  const names: string[] = [];
+  const seen = new Set<number>();
+  let current = byId.get(departmentId);
+  while (current && !seen.has(current.id)) {
+    seen.add(current.id);
+    if (!current.isDefault) {
+      const name = current.name?.trim();
+      if (name) names.push(name);
+    }
+    current = current.parentId != null ? byId.get(current.parentId) : undefined;
+  }
+  return names.reverse();
+}
+
+export function departmentPathLabel(input: {
+  departmentId: number;
+  departments: readonly OrgDepartmentNode[];
+  enterpriseName?: string | null;
+}): string {
+  const parts = departmentPathNames(input.departmentId, input.departments);
+  const enterprise = input.enterpriseName?.trim();
+  if (enterprise) parts.unshift(enterprise);
+  return parts.join("/");
+}
+
 export function employeeDepartmentLabel(input: {
   teamId: number | null;
   fallbackName?: string | null;

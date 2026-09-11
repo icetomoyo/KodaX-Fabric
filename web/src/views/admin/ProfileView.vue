@@ -73,24 +73,32 @@
 
         <section v-else-if="activeProfileSection === 'channel-key'" class="profile-section">
           <p class="section-hint">
-            选择渠道并填写渠道KEY，然后测试连通性，测试通过后方可提交。
+            有席位的员工需要提交渠道 KEY。有多个席位时按标签分别提交。选择后先测试，测试通过后再提交。
           </p>
-          <el-form label-position="top" class="profile-form channel-key-form" @submit.prevent="submitChannelKey">
+          <p v-if="!channelKeyChannelsLoading && !channelKeyChannels.length" class="section-hint">
+            没有席位，无需提交渠道 KEY
+          </p>
+          <el-form
+            v-else
+            label-position="top"
+            class="profile-form channel-key-form"
+            @submit.prevent="submitChannelKey"
+          >
             <div class="profile-fields channel-key-fields">
-              <el-form-item label="渠道" required>
+              <el-form-item label="席位" required>
                 <el-select
-                  v-model="channelKeyForm.productLineId"
+                  v-model="channelKeyForm.seatId"
                   filterable
-                  placeholder="请选择渠道"
+                  placeholder="请选择席位"
                   :loading="channelKeyChannelsLoading"
                   :disabled="channelKeyLocked"
                   style="width: 100%"
                 >
                   <el-option
                     v-for="channel in channelKeyChannels"
-                    :key="channel.id"
-                    :label="`${channel.providerName} / ${channel.name}`"
-                    :value="channel.id"
+                    :key="channel.seatId"
+                    :label="seatOptionLabel(channel)"
+                    :value="channel.seatId"
                   />
                 </el-select>
               </el-form-item>
@@ -126,9 +134,6 @@
                 提交
               </el-button>
             </div>
-            <p v-if="!channelKeyChannelsLoading && !channelKeyChannels.length" class="section-hint">
-              暂无可提交的渠道
-            </p>
           </el-form>
 
           <div class="submit-history">
@@ -221,6 +226,9 @@ import { roleLabel as formatRoleLabel } from "@/lib/roles";
 import { useAuthStore } from "@/stores/auth";
 
 type SubmitableChannel = {
+  seatId: number;
+  tag: string;
+  productLineId: number;
   id: number;
   name: string;
   code: string;
@@ -268,7 +276,7 @@ const passwordForm = reactive({
   confirmPassword: "",
 });
 const channelKeyForm = reactive({
-  productLineId: null as number | null,
+  seatId: null as number | null,
   secret: "",
 });
 
@@ -278,7 +286,7 @@ const canTestChannelKey = computed(
   () =>
     !channelKeyLocked.value
     && !channelKeySaving.value
-    && channelKeyForm.productLineId != null
+    && channelKeyForm.seatId != null
     && Boolean(channelKeyForm.secret.trim())
     && channelKeyChannels.value.length > 0,
 );
@@ -312,7 +320,7 @@ watch(canSubmitChannelKey, (enabled) => {
   if (!enabled) {
     channelKeyChannels.value = [];
     channelKeyHistory.value = [];
-    channelKeyForm.productLineId = null;
+    channelKeyForm.seatId = null;
     channelKeyForm.secret = "";
     unlockChannelKey();
   }
@@ -375,10 +383,10 @@ async function loadSubmitChannels() {
     if (!data.success) throw new Error(data.message || "加载渠道失败");
     channelKeyChannels.value = Array.isArray(data.data) ? data.data : [];
     if (
-      channelKeyForm.productLineId != null
-      && !channelKeyChannels.value.some((channel) => channel.id === channelKeyForm.productLineId)
+      channelKeyForm.seatId != null
+      && !channelKeyChannels.value.some((channel) => channel.seatId === channelKeyForm.seatId)
     ) {
-      channelKeyForm.productLineId = null;
+      channelKeyForm.seatId = null;
       unlockChannelKey();
     }
   } catch (error) {
@@ -428,10 +436,15 @@ async function submitProfile() {
   }
 }
 
+function seatOptionLabel(channel: SubmitableChannel): string {
+  const label = `${channel.providerName} / ${channel.name}`;
+  return channel.tag ? `${label} · ${channel.tag}` : label;
+}
+
 async function testChannelKey() {
   if (!canSubmitChannelKey.value || !canTestChannelKey.value) return;
-  if (channelKeyForm.productLineId == null) {
-    ElMessage.warning("请选择渠道");
+  if (channelKeyForm.seatId == null) {
+    ElMessage.warning("请选择席位");
     return;
   }
   const secret = channelKeyForm.secret.trim();
@@ -443,7 +456,7 @@ async function testChannelKey() {
   channelKeyTesting.value = true;
   try {
     const { data } = await http.post("/api/me/upstream-credentials/test", {
-      productLineId: channelKeyForm.productLineId,
+      seatId: channelKeyForm.seatId,
       secret,
     });
     if (!data.success) throw new Error(data.message || "测试失败");
@@ -469,8 +482,8 @@ async function testChannelKey() {
 
 async function submitChannelKey() {
   if (!canSubmitChannelKey.value) return;
-  if (channelKeyForm.productLineId == null) {
-    ElMessage.warning("请选择渠道");
+  if (channelKeyForm.seatId == null) {
+    ElMessage.warning("请选择席位");
     return;
   }
   const secret = channelKeyForm.secret.trim();
@@ -486,7 +499,7 @@ async function submitChannelKey() {
   channelKeySaving.value = true;
   try {
     const { data } = await http.post("/api/me/upstream-credentials", {
-      productLineId: channelKeyForm.productLineId,
+      seatId: channelKeyForm.seatId,
       secret,
       testProof: channelKeyTestProof.value,
     });
@@ -494,7 +507,7 @@ async function submitChannelKey() {
     channelKeyForm.secret = "";
     unlockChannelKey();
     ElMessage.success("渠道 KEY 已提交");
-    await loadSubmitHistory();
+    await Promise.all([loadSubmitHistory(), loadSubmitChannels()]);
   } catch (error) {
     ElMessage.error(requestErrorMessage(error, "渠道 KEY 提交失败"));
   } finally {
@@ -524,7 +537,7 @@ async function deleteSubmittedChannelKey(row: SubmittedChannelKey) {
     const { data } = await http.delete(`/api/me/upstream-credentials/${row.id}`);
     if (!data.success) throw new Error(data.message || "删除失败");
     ElMessage.success("渠道 KEY 已删除");
-    await loadSubmitHistory();
+    await Promise.all([loadSubmitHistory(), loadSubmitChannels()]);
   } catch (error) {
     ElMessage.error(requestErrorMessage(error, "渠道 KEY 删除失败"));
   } finally {

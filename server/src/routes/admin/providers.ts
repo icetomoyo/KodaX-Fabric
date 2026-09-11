@@ -1,8 +1,9 @@
 import type { FastifyInstance } from "fastify";
-import { and, asc, eq, gt, inArray, isNull, or, sql } from "drizzle-orm";
+import { and, asc, count, eq, gt, inArray, isNull, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../../db/client.js";
 import {
+  channelSeats,
   employeeApiKeys,
   opsAuditLogs,
   productLines,
@@ -10,15 +11,21 @@ import {
   upstreamCredentials,
 } from "../../db/schema/index.js";
 import { writeOpsAudit } from "../../lib/ops-audit.js";
+import { SEAT_COUNT_BELOW_REGISTERED_MESSAGE } from "../../lib/channel-seats.js";
 import {
   mergeCustomProtocolConfigs,
   resolveCustomProtocolConfigs,
 } from "../../lib/custom-channel.js";
 import {
   getProviderTemplate,
-  isCustomProvider,
+  isSelfHostedProvider,
+  resolveTemplateOptionForStoredChannel,
   resolveTemplateProtocolConfigs,
 } from "../../lib/provider-templates.js";
+import {
+  channelCreateError,
+  planUpstreamChannelCreate,
+} from "../../lib/upstream-channel-create.js";
 import {
   collectRemovedProtocolUsage,
   planChannelProtocolUpdate,
@@ -83,6 +90,8 @@ export async function adminProviderRoutes(app: FastifyInstance) {
         configVersion: productLines.configVersion,
         allowAutoRoute: productLines.allowAutoRoute,
         status: productLines.status,
+        seatCount: productLines.seatCount,
+        tag: productLines.tag,
         providerCode: providers.code,
         providerName: providers.name,
         defaultBaseUrl: providers.defaultBaseUrl,
@@ -160,64 +169,92 @@ export async function adminProviderRoutes(app: FastifyInstance) {
     "/api/admin/product-lines",
     { preHandler: [requireRoles("admin")] },
     async (req, reply) => {
-      const body = z
-        .object({
-          providerId: z.number().int().positive(),
-          code: z.string().min(1).max(64),
-          name: z.string().min(1).max(100),
-          productType: z.enum(["api", "coding_plan"]),
-          baseUrlOverride: z.string().nullable().optional(),
-        })
-        .safeParse(req.body);
-
-      if (!body.success) {
-        return reply.code(400).send({ success: false, message: "参数无效" });
+      const plan = planUpstreamChannelCreate(req.body ?? {});
+      if (plan.kind !== "accepted") {
+        const error = channelCreateError(plan.kind);
+        return reply.code(error.status).send({ success: false, message: error.message });
       }
 
       try {
-        const [row] = await db
-          .insert(productLines)
-          .values({
-            providerId: body.data.providerId,
-            code: body.data.code,
-            name: body.data.name,
-            productType: body.data.productType,
-            baseUrlOverride: body.data.baseUrlOverride ?? null,
-            status: "active",
-          })
-          .returning();
+        const row = await db.transaction(async (tx) => {
+          let [provider] = await tx
+            .select()
+            .from(providers)
+            .where(eq(providers.code, plan.providerCode))
+            .limit(1);
+          if (!provider) {
+            const template = getProviderTemplate(plan.providerCode);
+            [provider] = await tx
+              .insert(providers)
+              .values({
+                code: plan.providerCode,
+                name: plan.providerName,
+                defaultBaseUrl: template?.baseUrls[0]?.url
+                  ?? Object.values(plan.protocolConfigs)[0]?.baseUrl
+                  ?? "https://example.invalid",
+                authStyle: template?.authStyle ?? "bearer",
+                openaiCompatLevel: "full",
+                status: "active",
+              })
+              .onConflictDoNothing({ target: providers.code })
+              .returning();
+            if (!provider) {
+              [provider] = await tx
+                .select()
+                .from(providers)
+                .where(eq(providers.code, plan.providerCode))
+                .limit(1);
+            }
+          }
+          if (!provider) throw new Error("供应商创建失败");
 
-        await writeOpsAudit({
-          actorEmployeeId: req.employeeId,
-          action: "product_line.create",
-          targetType: "product_line",
-          targetId: String(row.id),
-          detail: body.data,
-          ip: req.ip,
+          let productLine;
+          for (let attempt = 0; attempt < 3 && !productLine; attempt += 1) {
+            const [inserted] = await tx
+              .insert(productLines)
+              .values({
+                providerId: provider.id,
+                code: plan.allocateCode(),
+                name: plan.name,
+                tag: plan.tag,
+                productType: plan.productType,
+                protocolConfigs: plan.protocolConfigs,
+                configVersion: 1,
+                seatCount: plan.seatCount,
+                status: plan.status,
+              })
+              .onConflictDoNothing({
+                target: [productLines.providerId, productLines.code],
+              })
+              .returning();
+            productLine = inserted;
+          }
+          if (!productLine) throw new Error("渠道创建失败");
+
+          await tx.insert(opsAuditLogs).values({
+            actorEmployeeId: req.employeeId ?? null,
+            action: "product_line.create",
+            targetType: "product_line",
+            targetId: String(productLine.id),
+            detail: {
+              name: plan.name,
+              tag: plan.tag,
+              providerCode: plan.providerCode,
+              variant: plan.providerCode === "glm" ? "domestic" : plan.providerCode,
+              seatCount: plan.seatCount,
+              status: plan.status,
+              supportedProtocols: plan.protocols,
+            },
+            ip: req.ip,
+          });
+          return productLine;
         });
 
-        return {
-          success: true,
-          data: {
-            id: row.id,
-            providerId: row.providerId,
-            code: row.code,
-            name: row.name,
-            productType: row.productType,
-            baseUrlOverride: row.baseUrlOverride,
-            protocolConfigs: row.protocolConfigs,
-            configVersion: row.configVersion,
-            allowAutoRoute: row.allowAutoRoute,
-            retryPolicy: row.retryPolicy,
-            status: row.status,
-            createdAt: row.createdAt,
-            updatedAt: row.updatedAt,
-          },
-        };
+        return { success: true, data: row };
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         if (msg.includes("unique")) {
-          return reply.code(409).send({ success: false, message: "该供应商下产品线 code 已存在" });
+          return reply.code(409).send({ success: false, message: "渠道已存在，请重试" });
         }
         throw e;
       }
@@ -302,12 +339,17 @@ export async function adminProviderRoutes(app: FastifyInstance) {
           const template = getProviderTemplate(provider.code);
           let resolution;
           if (template) {
-            resolution = resolveTemplateProtocolConfigs(
+            const option = resolveTemplateOptionForStoredChannel(
               template,
               existing.code,
+              existing.protocolConfigs,
+            );
+            resolution = resolveTemplateProtocolConfigs(
+              template,
+              option?.productLineCode ?? existing.code,
               protocolPlan.nextProtocols,
             );
-          } else if (isCustomProvider(provider.code)) {
+          } else if (isSelfHostedProvider(provider.code)) {
             resolution = resolveCustomProtocolConfigs(
               mergeCustomProtocolConfigs(
                 existing.protocolConfigs,
@@ -366,13 +408,28 @@ export async function adminProviderRoutes(app: FastifyInstance) {
           }
         }
 
+        if (body.data.seatCount !== undefined && body.data.seatCount > 0) {
+          const [registered] = await tx
+            .select({ n: count() })
+            .from(channelSeats)
+            .where(eq(channelSeats.productLineId, existing.id));
+          if (body.data.seatCount < Number(registered?.n ?? 0)) {
+            return {
+              kind: "seat_count_below_registered" as const,
+              registered: Number(registered?.n ?? 0),
+            };
+          }
+        }
+
         const storedProtocolConfigs = parseProductLineProtocolConfigs(existing.protocolConfigs);
         const protocolConfigsStorageChanged = updatingProtocolSurface &&
           (storedProtocolConfigs === null || nextProtocolConfigs === null ||
             !protocolConfigsEqual(storedProtocolConfigs, nextProtocolConfigs));
         const metadataChanged =
           (body.data.name !== undefined && body.data.name !== existing.name) ||
-          (body.data.status !== undefined && body.data.status !== existing.status);
+          (body.data.status !== undefined && body.data.status !== existing.status) ||
+          (body.data.seatCount !== undefined && body.data.seatCount !== existing.seatCount) ||
+          (body.data.tag !== undefined && body.data.tag !== existing.tag);
         const shouldResetCredentialHealth =
           configActuallyChanged || protocolPlan.protocolsChanged;
         const anyChannelFieldChanged = metadataChanged || protocolConfigsStorageChanged ||
@@ -386,6 +443,8 @@ export async function adminProviderRoutes(app: FastifyInstance) {
           .set({
             ...(body.data.name !== undefined ? { name: body.data.name } : {}),
             ...(body.data.status !== undefined ? { status: body.data.status } : {}),
+            ...(body.data.seatCount !== undefined ? { seatCount: body.data.seatCount } : {}),
+            ...(body.data.tag !== undefined ? { tag: body.data.tag } : {}),
             ...(updatingProtocolSurface
               ? { protocolConfigs: nextProtocolConfigs }
               : {}),
@@ -426,6 +485,8 @@ export async function adminProviderRoutes(app: FastifyInstance) {
             before: {
               ...(body.data.name !== undefined ? { name: existing.name } : {}),
               ...(body.data.status !== undefined ? { status: existing.status } : {}),
+              ...(body.data.seatCount !== undefined ? { seatCount: existing.seatCount } : {}),
+              ...(body.data.tag !== undefined ? { tag: existing.tag } : {}),
               ...(updatingProtocolSurface
                 ? {
                   supportedProtocols: protocolPlan.currentProtocols,
@@ -437,6 +498,8 @@ export async function adminProviderRoutes(app: FastifyInstance) {
             after: {
               ...(body.data.name !== undefined ? { name: row.name } : {}),
               ...(body.data.status !== undefined ? { status: row.status } : {}),
+              ...(body.data.seatCount !== undefined ? { seatCount: row.seatCount } : {}),
+              ...(body.data.tag !== undefined ? { tag: row.tag } : {}),
               ...(updatingProtocolSurface
                 ? {
                   supportedProtocols: protocolPlan.nextProtocols,
@@ -464,6 +527,12 @@ export async function adminProviderRoutes(app: FastifyInstance) {
 
       if (result.kind === "not_found") {
         return reply.code(404).send({ success: false, message: "产品线不存在" });
+      }
+      if (result.kind === "seat_count_below_registered") {
+        return reply.code(409).send({
+          success: false,
+          message: `${SEAT_COUNT_BELOW_REGISTERED_MESSAGE}（已登记 ${result.registered}）`,
+        });
       }
       if (result.kind === "config_stale") {
         return reply.code(409).send({

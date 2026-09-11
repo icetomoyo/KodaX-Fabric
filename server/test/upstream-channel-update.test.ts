@@ -13,11 +13,15 @@ test("channel update validation accepts the simplified editable surface", () => 
     expectedConfigVersion: 3,
     name: "  GLM Anthropic  ",
     status: "active",
+    seatCount: 40,
     supportedProtocols: ["anthropic_messages"],
   });
 
   assert.equal(result.success, true);
-  if (result.success) assert.equal(result.data.name, "GLM Anthropic");
+  if (result.success) {
+    assert.equal(result.data.name, "GLM Anthropic");
+    assert.equal(result.data.seatCount, 40);
+  }
 });
 
 test("channel update validation accepts custom protocol configs", () => {

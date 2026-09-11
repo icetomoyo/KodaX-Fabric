@@ -267,6 +267,34 @@
       "when": 1789019000000,
       "tag": "0037_nested_departments",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1789100000000,
+      "tag": "0038_channel_seats",
+      "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1789101000000,
+      "tag": "0039_channel_seat_tag",
+      "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1789115000000,
+      "tag": "0040_channel_seat_count",
+      "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1789118000000,
+      "tag": "0041_channel_tag",
+      "breakpoints": true
     }
   ]
 }

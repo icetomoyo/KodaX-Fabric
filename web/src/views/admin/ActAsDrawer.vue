@@ -266,6 +266,9 @@ async function goToRoleHome(role: ActAsPayload["role"] | "admin") {
   }
   if (
     path.startsWith("/admin/credentials")
+    || path.startsWith("/admin/channels")
+    || path.startsWith("/admin/channel-keys")
+    || path.startsWith("/admin/seats")
     || path.startsWith("/admin/model-prices")
     || path.startsWith("/admin/logs")
     || path.startsWith("/admin/ops-audit")

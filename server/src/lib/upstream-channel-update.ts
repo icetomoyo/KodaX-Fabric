@@ -40,6 +40,8 @@ export const upstreamChannelUpdateSchema = z
     expectedConfigVersion: z.number().int().positive(),
     name: z.string().trim().min(1).max(100).optional(),
     status: z.enum(["active", "disabled"]).optional(),
+    seatCount: z.number().int().min(0).max(100_000).optional(),
+    tag: z.string().trim().max(32).optional(),
     supportedProtocols: configurableSupportedProtocolsSchema.optional(),
     protocolConfigs: customProtocolConfigsInputSchema.optional(),
   })

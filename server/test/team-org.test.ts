@@ -249,6 +249,7 @@ test("editing an employee team only lists teams in the same department", () => {
 test("live console pages do not repeat sidebar titles or tutorial subtitles", () => {
   const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
   const credentials = readFileSync(resolve(root, "web/src/views/admin/CredentialsView.vue"), "utf8");
+  const seats = readFileSync(resolve(root, "web/src/views/admin/SeatsView.vue"), "utf8");
   const dashboard = readFileSync(resolve(root, "web/src/views/admin/DashboardView.vue"), "utf8");
   const enterprises = readFileSync(resolve(root, "web/src/views/admin/EnterprisesView.vue"), "utf8");
   const prices = readFileSync(resolve(root, "web/src/views/admin/ModelPricesView.vue"), "utf8");
@@ -263,8 +264,8 @@ test("live console pages do not repeat sidebar titles or tutorial subtitles", ()
 
   for (const view of [
     credentials,
+    seats,
     dashboard,
-    enterprises,
     prices,
     logs,
     errorLogs,
@@ -365,6 +366,11 @@ test("admin shell uses org board for all console roles", () => {
   assert.match(layout, /isOrgAdmin \|\| auth.isDeptAdmin \|\| auth.isTeamAdmin" index="\/admin\/keys">API Key/);
   assert.match(layout, /index="\/admin\/guide">接入教程/);
   assert.match(layout, /isSuperAdmin \|\| auth.isOrgAdmin" index="\/admin\/key-bindings">调度画布/);
+  assert.match(layout, />上游</);
+  assert.match(layout, /index="\/admin\/channels">渠道/);
+  assert.match(layout, /index="\/admin\/seats">席位/);
+  assert.match(layout, /index="\/admin\/channel-keys">渠道 KEY/);
+  assert.doesNotMatch(layout, /index="\/admin\/credentials">上游渠道/);
   assert.doesNotMatch(layout, /index="\/admin\/departments"/);
   assert.doesNotMatch(layout, /index="\/admin\/teams"/);
   assert.doesNotMatch(layout, /index="\/admin\/members"/);
