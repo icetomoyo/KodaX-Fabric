@@ -48,6 +48,14 @@
           </el-dropdown>
         </div>
 
+        <el-input
+          v-if="orgTree.length"
+          v-model="orgTreeQuery"
+          class="tree-search"
+          clearable
+          placeholder="搜索部门"
+          :prefix-icon="Search"
+        />
         <el-empty v-if="!loading && !orgTree.length" description="暂无编制" :image-size="64">
           <el-button v-if="canCreateEnterprise" type="primary" @click="openCreateEnterprise">
             新建企业
@@ -63,6 +71,7 @@
             default-expand-all
             :expand-on-click-node="false"
             :current-node-key="currentTreeKey"
+            :filter-node-method="filterOrgNode"
             @node-click="onOrgNodeClick"
           >
             <template #default="{ data }">
@@ -431,6 +440,7 @@ import {
   OfficeBuilding,
   Plus,
   Refresh,
+  Search,
   Upload,
 } from "@element-plus/icons-vue";
 import { http } from "@/api/http";
@@ -529,7 +539,11 @@ const selectedEnterpriseId = ref<number | null>(null);
 const selectedDepartmentId = ref<number | null>(null);
 const selectedTeamId = ref<number | null>(null);
 const selectedNodeKind = ref<OrgNodeKind>("enterprise");
-const orgTreeRef = ref<{ setCurrentKey: (key: string | number | null) => void } | null>(null);
+const orgTreeRef = ref<{
+  setCurrentKey: (key: string | number | null) => void;
+  filter: (value: string) => void;
+} | null>(null);
+const orgTreeQuery = ref("");
 
 const showCreateEnterprise = ref(false);
 const showEditEnterprise = ref(false);
@@ -778,9 +792,20 @@ function syncQuery() {
   void router.replace({ query });
 }
 
+function filterOrgNode(query: string, data: OrgTreeNode) {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return true;
+  return data.label.toLowerCase().includes(needle);
+}
+
+watch([orgTreeQuery, orgTree], () => {
+  orgTreeRef.value?.filter(orgTreeQuery.value);
+});
+
 function highlightTree() {
   void nextTick(() => {
     orgTreeRef.value?.setCurrentKey(currentTreeKey.value ?? null);
+    orgTreeRef.value?.filter(orgTreeQuery.value);
   });
 }
 
@@ -1632,7 +1657,7 @@ onMounted(() => {
   min-height: 0;
 }
 .split-layout.layout-tree {
-  grid-template-columns: 252px minmax(0, 1fr);
+  grid-template-columns: 378px minmax(0, 1fr);
 }
 .split-layout.layout-people {
   grid-template-columns: 1fr;
@@ -1676,6 +1701,11 @@ onMounted(() => {
 
 .pane-header-action {
   flex-shrink: 0;
+}
+
+.tree-search {
+  flex-shrink: 0;
+  margin-bottom: 8px;
 }
 
 .tree-scroll {
