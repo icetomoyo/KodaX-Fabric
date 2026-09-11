@@ -83,6 +83,11 @@ test("GLM create plan rejects the old custom line", () => {
   assert.match(allocateDomesticProductLineCode(), /^cn_/);
 });
 
+test("create plan treats an empty request body as name_required", () => {
+  assert.equal(planUpstreamChannelCreate({}).kind, "name_required");
+  assert.equal(planUpstreamChannelCreate(undefined).kind, "name_required");
+});
+
 test("stored GLM channels with unique codes still resolve to 国内版 or 国际版 by URL", () => {
   const template = getProviderTemplate("glm");
   assert.ok(template);

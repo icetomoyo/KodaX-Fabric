@@ -58,41 +58,34 @@ export type UpstreamChannelCreatePlan =
   | { kind: "custom_configs_required" }
   | { kind: "protocol_unsupported"; unsupportedProtocols: RelayProtocol[] };
 
-export function planUpstreamChannelCreate(input: {
-  name: unknown;
-  tag?: unknown;
-  seatCount: unknown;
-  status?: unknown;
-  supportedProtocols: unknown;
-  provider: unknown;
-  variant: unknown;
-  protocolConfigs?: unknown;
-}): UpstreamChannelCreatePlan {
-  const name = typeof input.name === "string" ? input.name.trim() : "";
+export function planUpstreamChannelCreate(input: unknown): UpstreamChannelCreatePlan {
+  const body = input && typeof input === "object" ? input as Record<string, unknown> : {};
+  const name = typeof body.name === "string" ? body.name.trim() : "";
   if (!name || name.length > 100) return { kind: "name_required" };
-  const tag = normalizeChannelTag(input.tag);
+  const tag = normalizeChannelTag(body.tag);
   if (tag == null) return { kind: "tag_invalid" };
+  const seatCount = body.seatCount;
   if (
-    typeof input.seatCount !== "number"
-    || !Number.isInteger(input.seatCount)
-    || input.seatCount < 0
-    || input.seatCount > 100_000
+    typeof seatCount !== "number"
+    || !Number.isInteger(seatCount)
+    || seatCount < 0
+    || seatCount > 100_000
   ) {
     return { kind: "seat_count_invalid" };
   }
-  const status = input.status === "disabled" ? "disabled" : "active";
-  const protocolsParsed = configurableSupportedProtocolsSchema.safeParse(input.supportedProtocols);
+  const status = body.status === "disabled" ? "disabled" : "active";
+  const protocolsParsed = configurableSupportedProtocolsSchema.safeParse(body.supportedProtocols);
   if (!protocolsParsed.success) return { kind: "protocols_required" };
   const protocols = RELAY_PROTOCOLS.filter((protocol) => protocolsParsed.data.includes(protocol));
 
-  if (input.provider === "haizhi") {
-    const resolution = resolveCustomProtocolConfigs(input.protocolConfigs, protocols);
+  if (body.provider === "haizhi") {
+    const resolution = resolveCustomProtocolConfigs(body.protocolConfigs, protocols);
     if (!resolution.ok) return { kind: "custom_configs_required" };
     return {
       kind: "accepted",
       name,
       tag,
-      seatCount: input.seatCount,
+      seatCount,
       status,
       protocols,
       protocolConfigs: resolution.configs,
@@ -103,13 +96,13 @@ export function planUpstreamChannelCreate(input: {
     };
   }
 
-  if (input.provider !== "glm") return { kind: "provider_unsupported" };
-  if (input.variant !== "domestic" && input.variant !== "international") {
+  if (body.provider !== "glm") return { kind: "provider_unsupported" };
+  if (body.variant !== "domestic" && body.variant !== "international") {
     return { kind: "provider_unsupported" };
   }
 
   const template = getProviderTemplate("glm");
-  const line = input.variant === "international"
+  const line = body.variant === "international"
     ? template?.baseUrls.find((option) => option.productLineCode === "api_intl") ?? template?.baseUrls[1]
     : template?.baseUrls[0];
   if (!template || !line) return { kind: "provider_unsupported" };
@@ -124,14 +117,14 @@ export function planUpstreamChannelCreate(input: {
     kind: "accepted",
     name,
     tag,
-    seatCount: input.seatCount,
+    seatCount,
     status,
     protocols,
     protocolConfigs: resolution.configs,
     productType: line.productType,
     providerCode: template.code,
     providerName: template.name,
-    allocateCode: input.variant === "international"
+    allocateCode: body.variant === "international"
       ? allocateInternationalProductLineCode
       : allocateDomesticProductLineCode,
   };
