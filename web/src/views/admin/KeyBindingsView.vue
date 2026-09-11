@@ -33,25 +33,16 @@
       append-to-body
     >
       <el-form label-position="top">
-        <el-form-item label="企业">
-          <el-select v-model="filterEnterpriseKey" style="width: 100%" placeholder="选择企业">
-            <el-option
-              v-for="item in filterEnterprises"
-              :key="item.key"
-              :label="item.title"
-              :value="item.key"
-            />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="部门">
-          <el-select v-model="orgBoardKey" style="width: 100%" placeholder="选择部门">
-            <el-option
-              v-for="board in filterDepartments"
-              :key="board.key"
-              :label="board.title"
-              :value="board.key"
-            />
-          </el-select>
+        <el-form-item label="组织">
+          <el-cascader
+            v-model="orgFilterPath"
+            :options="orgCascaderOptions"
+            :props="orgCascaderProps"
+            clearable
+            filterable
+            placeholder="企业 / 部门 / 子部门"
+            style="width: 100%"
+          />
         </el-form-item>
       </el-form>
       <template #footer>
@@ -161,11 +152,21 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import KeyBindingCanvas from "@/components/KeyBindingCanvas.vue";
 import { MarkerType, type Edge, type Node, type NodeMouseEvent } from "@vue-flow/core";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { http } from "@/api/http";
+import {
+  buildOrgCascaderOptions,
+  employeeInOrgSelection,
+  enterpriseCascaderValue,
+  groupingDepartmentId,
+  parseOrgFilterPath,
+  subtreeIdsForSelection,
+  type OrgFilterDepartment,
+  type OrgFilterSelection,
+} from "@/lib/key-binding-org-filter";
 
 type BindingKind =
   | "org"
@@ -207,6 +208,8 @@ type GraphDepartment = {
   id: number;
   name: string;
   enterpriseId: number | null;
+  parentId?: number | null;
+  isDefault?: boolean;
 };
 
 type GraphTeam = {
@@ -350,8 +353,6 @@ const filterOpen = ref(false);
 const resourceOpen = ref(false);
 const credentialOpen = ref(false);
 const releasing = ref(false);
-const emptyScope: CanvasScope = { enterpriseId: null, departmentId: null, teamId: null };
-
 const activeBoard = computed(() => boards.value.find((board) => board.key === activeBoardKey.value) ?? null);
 const resourceKeys = computed(() => {
   const source = graph.value;
@@ -404,42 +405,25 @@ const credentialUsers = computed(() => {
 const canvasNodes = computed(() => activeBoard.value?.nodes ?? []);
 const canvasEdges = computed(() => activeBoard.value?.edges ?? []);
 
-function enterpriseKeyOf(scope: CanvasScope): string {
-  return scope.enterpriseId == null ? "none" : `ent:${scope.enterpriseId}`;
-}
-
-const filterEnterprises = computed(() => {
-  const seen = new Set<string>();
-  const list: Array<{ key: string; title: string }> = [];
-  for (const board of boards.value) {
-    const key = enterpriseKeyOf(board.scope);
-    if (seen.has(key)) continue;
-    seen.add(key);
-    list.push({ key, title: board.enterpriseTitle });
-  }
-  return list;
-});
-const filterDepartments = computed(() => {
-  const enterpriseKey = activeBoard.value ? enterpriseKeyOf(activeBoard.value.scope) : filterEnterprises.value[0]?.key;
-  if (!enterpriseKey) return [];
-  return boards.value.filter((board) => enterpriseKeyOf(board.scope) === enterpriseKey);
-});
-const filterEnterpriseKey = computed({
-  get: () => (activeBoard.value ? enterpriseKeyOf(activeBoard.value.scope) : ""),
-  set: (value: string) => {
-    const first = boards.value.find((board) => enterpriseKeyOf(board.scope) === value);
-    if (!first) return;
-    activeBoardKey.value = first.key;
-    onTabChange();
-  },
-});
-const orgBoardKey = computed({
-  get: () => activeBoardKey.value,
-  set: (value: string) => {
-    activeBoardKey.value = value;
-    onTabChange();
-  },
-});
+const orgFilterPath = ref<string[]>([]);
+const orgCascaderProps = {
+  checkStrictly: true,
+  emitPath: true,
+  expandTrigger: "click" as const,
+};
+const orgFilterDepartments = computed((): OrgFilterDepartment[] =>
+  (graph.value?.departments ?? []).map((row) => ({
+    id: row.id,
+    name: row.name,
+    parentId: row.parentId ?? null,
+    enterpriseId: row.enterpriseId ?? 0,
+    isDefault: row.isDefault,
+  })),
+);
+const orgCascaderOptions = computed(() =>
+  buildOrgCascaderOptions(graph.value?.enterprises ?? [], orgFilterDepartments.value),
+);
+const orgFilterSelection = computed(() => parseOrgFilterPath(orgFilterPath.value));
 
 function nodeId(type: NodeKind, id: number): string {
   return `${type}:${id}`;
@@ -550,6 +534,8 @@ type DepartmentLookup = {
   id: number;
   name: string;
   enterpriseId: number;
+  parentId?: number | null;
+  isDefault?: boolean;
 };
 
 function isHiddenTeam(employee: GraphEmployee, team?: TeamLookup | GraphTeam): boolean {
@@ -586,6 +572,8 @@ function hydrateOrgChain(
       id: department.id,
       name: department.name,
       enterpriseId: department.enterpriseId,
+      parentId: department.parentId ?? null,
+      isDefault: department.isDefault,
     });
   }
   for (const employee of employees) {
@@ -595,6 +583,8 @@ function hydrateOrgChain(
       id: employee.departmentId,
       name: employee.departmentName || department?.name || "部门",
       enterpriseId: employee.enterpriseId ?? department?.enterpriseId ?? null,
+      parentId: department?.parentId ?? null,
+      isDefault: department?.isDefault,
     });
   }
 
@@ -735,125 +725,103 @@ function subgraphForEmployees(source: KeyBindingGraph, employees: GraphEmployee[
   };
 }
 
-function splitIntoBoards(source: KeyBindingGraph): Array<{
-  key: string;
-  title: string;
-  enterpriseTitle: string;
-  mode: "enterprise";
-  scope: CanvasScope;
-  graph: KeyBindingGraph;
-}> {
-  const groups = new Map<string, {
-    key: string;
-    title: string;
-    enterpriseTitle: string;
-    trailingEnterprise: boolean;
-    trailingDepartment: boolean;
-    employees: GraphEmployee[];
-    scope: CanvasScope;
-  }>();
-  const enterpriseNameById = new Map(source.enterprises.map((row) => [row.id, row.name]));
-
-  const putGroup = (
-    key: string,
-    title: string,
-    enterpriseTitle: string,
-    scope: CanvasScope,
-    flags: { trailingEnterprise?: boolean; trailingDepartment?: boolean } = {},
-  ) => {
-    const existing = groups.get(key);
-    if (existing) return existing;
-    const group = {
-      key,
-      title,
-      enterpriseTitle,
-      trailingEnterprise: Boolean(flags.trailingEnterprise),
-      trailingDepartment: Boolean(flags.trailingDepartment),
-      employees: [] as GraphEmployee[],
-      scope,
-    };
-    groups.set(key, group);
-    return group;
+function orgEdgesForGroupedEmployees(
+  employees: GraphEmployee[],
+  selection: OrgFilterSelection,
+): GraphEdge[] {
+  const edges: GraphEdge[] = [];
+  const seen = new Set<string>();
+  const push = (edge: GraphEdge) => {
+    if (seen.has(edge.id)) return;
+    seen.add(edge.id);
+    edges.push(edge);
   };
-
-  for (const department of source.departments ?? []) {
-    if (department.enterpriseId == null) continue;
-    putGroup(
-      `ent:${department.enterpriseId}:dept:${department.id}`,
-      department.name,
-      enterpriseNameById.get(department.enterpriseId) || "企业",
-      {
-        enterpriseId: department.enterpriseId,
-        departmentId: department.id,
-        teamId: null,
-      },
-    );
-  }
-
-  for (const employee of source.employees) {
-    if (employee.enterpriseId == null) {
-      putGroup("none", "未加入企业", "未加入企业", emptyScope, { trailingEnterprise: true })
-        .employees.push(employee);
-      continue;
+  for (const employee of employees) {
+    if (selection.kind === "enterprise" && employee.enterpriseId != null && employee.departmentId != null) {
+      push({
+        id: `org:ent:${employee.enterpriseId}:dept:${employee.departmentId}`,
+        sourceType: "enterprise",
+        sourceId: employee.enterpriseId,
+        targetType: "department",
+        targetId: employee.departmentId,
+        kind: "org",
+      });
     }
-    const departmentId = employee.departmentId;
-    const enterpriseTitle = employee.enterpriseName
-      || enterpriseNameById.get(employee.enterpriseId)
-      || "企业";
-    if (departmentId == null) {
-      putGroup(
-        `ent:${employee.enterpriseId}:dept:none`,
-        "未加入部门",
-        enterpriseTitle,
-        { enterpriseId: employee.enterpriseId, departmentId: null, teamId: null },
-        { trailingDepartment: true },
-      ).employees.push(employee);
-      continue;
+    if (employee.departmentId != null) {
+      push({
+        id: `org:dept:${employee.departmentId}:emp:${employee.id}`,
+        sourceType: "department",
+        sourceId: employee.departmentId,
+        targetType: "employee",
+        targetId: employee.id,
+        kind: "org",
+      });
+    } else if (employee.enterpriseId != null) {
+      push({
+        id: `org:ent:${employee.enterpriseId}:emp:${employee.id}`,
+        sourceType: "enterprise",
+        sourceId: employee.enterpriseId,
+        targetType: "employee",
+        targetId: employee.id,
+        kind: "org",
+      });
     }
-    putGroup(
-      `ent:${employee.enterpriseId}:dept:${departmentId}`,
-      employee.departmentName || "部门",
-      enterpriseTitle,
-      { enterpriseId: employee.enterpriseId, departmentId, teamId: null },
-    ).employees.push(employee);
   }
-
-  return [...groups.values()]
-    .sort((a, b) => {
-      if (a.trailingEnterprise !== b.trailingEnterprise) return a.trailingEnterprise ? 1 : -1;
-      const enterpriseA = a.scope.enterpriseId ?? Number.MAX_SAFE_INTEGER;
-      const enterpriseB = b.scope.enterpriseId ?? Number.MAX_SAFE_INTEGER;
-      if (enterpriseA !== enterpriseB) return enterpriseA - enterpriseB;
-      if (a.trailingDepartment !== b.trailingDepartment) return a.trailingDepartment ? 1 : -1;
-      return (a.scope.departmentId ?? Number.MAX_SAFE_INTEGER)
-        - (b.scope.departmentId ?? Number.MAX_SAFE_INTEGER);
-    })
-    .map((group) => ({
-      key: group.key,
-      title: group.title,
-      enterpriseTitle: group.enterpriseTitle,
-      mode: "enterprise" as const,
-      scope: group.scope,
-      graph: subgraphForScope(source, group.employees, group.scope),
-    }));
+  return edges;
 }
 
-function subgraphForScope(
+function graphForOrgSelection(
   source: KeyBindingGraph,
-  employees: GraphEmployee[],
-  scope: CanvasScope,
-): KeyBindingGraph {
-  const graph = subgraphForEmployees(source, employees);
-  const departments = graph.departments ?? [];
-  if (scope.departmentId != null && !departments.some((row) => row.id === scope.departmentId)) {
-    const department = (source.departments ?? []).find((row) => row.id === scope.departmentId);
-    if (department) graph.departments = [...departments, department];
+  selection: OrgFilterSelection,
+): { graph: KeyBindingGraph; title: string; enterpriseTitle: string; scope: CanvasScope; depth: CanvasDepth } {
+  const departments = orgFilterDepartments.value;
+  const subtree = subtreeIdsForSelection(selection, departments);
+  const employees = source.employees.filter((employee) =>
+    employeeInOrgSelection(employee, selection, subtree),
+  );
+  const grouped = employees.map((employee) => {
+    const groupedId = groupingDepartmentId(employee.departmentId, selection, departments);
+    const department = groupedId != null
+      ? (source.departments ?? []).find((row) => row.id === groupedId)
+      : undefined;
+    return {
+      ...employee,
+      departmentId: groupedId,
+      departmentName: department?.name ?? employee.departmentName,
+    };
+  });
+  const scoped = subgraphForEmployees(source, grouped);
+  const departmentIds = new Set(
+    grouped.map((row) => row.departmentId).filter((id): id is number => id != null),
+  );
+  if (selection.kind === "department") departmentIds.add(selection.departmentId);
+  scoped.departments = (source.departments ?? []).filter((row) => departmentIds.has(row.id));
+  if (
+    selection.enterpriseId != null
+    && !scoped.enterprises.some((row) => row.id === selection.enterpriseId)
+  ) {
+    const enterprise = source.enterprises.find((row) => row.id === selection.enterpriseId);
+    if (enterprise) scoped.enterprises = [...scoped.enterprises, enterprise];
   }
-  if (scope.enterpriseId != null && !graph.enterprises.some((row) => row.id === scope.enterpriseId)) {
-    const enterprise = source.enterprises.find((row) => row.id === scope.enterpriseId);
-    if (enterprise) graph.enterprises = [...graph.enterprises, enterprise];
-  }
-  return graph;
+  scoped.edges = [
+    ...orgEdgesForGroupedEmployees(grouped, selection),
+    ...scoped.edges.filter((edge) => edge.kind !== "org"),
+  ];
+  const enterpriseTitle = source.enterprises.find((row) => row.id === selection.enterpriseId)?.name || "企业";
+  const title = selection.kind === "department"
+    ? (source.departments ?? []).find((row) => row.id === selection.departmentId)?.name || "部门"
+    : enterpriseTitle;
+  return {
+    graph: scoped,
+    title,
+    enterpriseTitle,
+    scope: {
+      enterpriseId: selection.enterpriseId,
+      departmentId: selection.kind === "department" ? selection.departmentId : null,
+      teamId: null,
+    },
+    depth: selection.kind === "enterprise" ? "enterprise" : "department",
+  };
 }
 
 function makeNode(type: NodeKind, id: number, x: number, y: number, data: Record<string, unknown>): Node {
@@ -1182,28 +1150,37 @@ function parseNodeNumericId(id: string): number | null {
   return Number.isSafeInteger(value) ? value : null;
 }
 
+function boardKeyForSelection(selection: OrgFilterSelection): string {
+  return selection.kind === "department"
+    ? `ent:${selection.enterpriseId}:dept:${selection.departmentId}`
+    : `ent:${selection.enterpriseId}`;
+}
+
 function renderGraph() {
   if (!graph.value) {
     boards.value = [];
     activeBoardKey.value = "";
     return;
   }
-  const nextBoards = splitIntoBoards(graph.value).map((item) => {
-    const laid = layoutGraph(item.graph, item.mode, "department");
-    return {
-      key: item.key,
-      title: item.title,
-      enterpriseTitle: item.enterpriseTitle,
-      mode: item.mode,
-      scope: item.scope,
-      nodes: laid.nodes,
-      edges: laid.edges,
-    };
-  });
-  boards.value = nextBoards;
-  if (!nextBoards.some((board) => board.key === activeBoardKey.value)) {
-    activeBoardKey.value = nextBoards[0]?.key ?? "";
+  const selection = orgFilterSelection.value;
+  if (!selection) {
+    boards.value = [];
+    activeBoardKey.value = "";
+    return;
   }
+  const item = graphForOrgSelection(graph.value, selection);
+  const laid = layoutGraph(item.graph, "enterprise", item.depth);
+  const board: CanvasBoard = {
+    key: boardKeyForSelection(selection),
+    title: item.title,
+    enterpriseTitle: item.enterpriseTitle,
+    mode: "enterprise",
+    scope: item.scope,
+    nodes: laid.nodes,
+    edges: laid.edges,
+  };
+  boards.value = [board];
+  activeBoardKey.value = board.key;
 }
 
 function onTabChange() {
@@ -1282,6 +1259,10 @@ async function load() {
     selectedNodeId.value = null;
     selectedBoardKey.value = null;
     credentialOpen.value = false;
+    if (!parseOrgFilterPath(orgFilterPath.value)) {
+      const firstEnterprise = graph.value.enterprises[0];
+      orgFilterPath.value = firstEnterprise ? [enterpriseCascaderValue(firstEnterprise.id)] : [];
+    }
     renderGraph();
   } catch (error) {
     const err = error as { response?: { data?: { message?: string } }; message?: string };
@@ -1325,6 +1306,12 @@ function onVisibilityChange() {
   if (document.hidden) return;
   void pollLive();
 }
+
+watch(orgFilterPath, () => {
+  if (loading.value) return;
+  renderGraph();
+  onTabChange();
+});
 
 onMounted(() => {
   void load();
