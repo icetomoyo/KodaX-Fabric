@@ -3,6 +3,11 @@ export type DepartmentTreeNode = {
   parentId: number | null;
 };
 
+export type DepartmentPathNode = DepartmentTreeNode & {
+  name?: string | null;
+  isDefault?: boolean;
+};
+
 function indexById(
   nodes: readonly DepartmentTreeNode[],
 ): Map<number, DepartmentTreeNode> {
@@ -57,4 +62,34 @@ export function departmentAndDescendantIds(
   nodes: readonly DepartmentTreeNode[],
 ): number[] {
   return [rootId, ...descendantDepartmentIds(rootId, nodes)];
+}
+
+export function departmentPathNames(
+  departmentId: number,
+  nodes: readonly DepartmentPathNode[],
+): string[] {
+  const byId = new Map(nodes.map((node) => [node.id, node]));
+  const names: string[] = [];
+  const seen = new Set<number>();
+  let current = byId.get(departmentId);
+  while (current && !seen.has(current.id)) {
+    seen.add(current.id);
+    if (!current.isDefault) {
+      const name = current.name?.trim();
+      if (name) names.push(name);
+    }
+    current = current.parentId != null ? byId.get(current.parentId) : undefined;
+  }
+  return names.reverse();
+}
+
+export function departmentPathLabel(input: {
+  departmentId: number;
+  departments: readonly DepartmentPathNode[];
+  enterpriseName?: string | null;
+}): string {
+  const parts = departmentPathNames(input.departmentId, input.departments);
+  const enterprise = input.enterpriseName?.trim();
+  if (enterprise) parts.unshift(enterprise);
+  return parts.join("/");
 }

@@ -589,7 +589,8 @@ async function syncUserTeam(
     const response = (error as { response?: { status?: number; data?: { message?: string } } })
       .response;
     const alreadyHere =
-      response?.status === 409 && response.data?.message === "该员工已在团队中";
+      response?.status === 409
+      && (response.data?.message === "该员工已在该部门中" || response.data?.message === "该员工已在团队中");
     if (!alreadyHere) throw error;
     await http.patch(`/api/admin/teams/${next}/members/${employeeId}`, { role: teamRole });
   }

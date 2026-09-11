@@ -37,7 +37,12 @@ export function departmentSubtreeIds(
   return ids;
 }
 
-export function visibleOrgEmployees<T extends { teamId: number | null }>(input: {
+function employeeTeamIds(row: { teamId: number | null; teamIds?: number[] }): number[] {
+  if (row.teamIds?.length) return row.teamIds;
+  return row.teamId != null ? [row.teamId] : [];
+}
+
+export function visibleOrgEmployees<T extends { teamId: number | null; teamIds?: number[] }>(input: {
   isTeamAdmin: boolean;
   selectedKind: OrgEmployeeScope;
   selectedDepartmentId: number | null;
@@ -51,7 +56,7 @@ export function visibleOrgEmployees<T extends { teamId: number | null }>(input: 
     const teamIds = new Set(
       input.teams.filter((team) => subtree.has(team.departmentId)).map((team) => team.id),
     );
-    return input.employees.filter((row) => row.teamId != null && teamIds.has(row.teamId));
+    return input.employees.filter((row) => employeeTeamIds(row).some((id) => teamIds.has(id)));
   }
   return [...input.employees];
 }
@@ -88,18 +93,43 @@ export function departmentPathLabel(input: {
 
 export function employeeDepartmentLabel(input: {
   teamId: number | null;
+  teamIds?: number[];
   fallbackName?: string | null;
   teams: readonly OrgTeamNode[];
   departments: readonly OrgDepartmentNode[];
 }): string | null {
-  if (input.teamId == null) return null;
+  const ids = employeeTeamIds(input);
+  if (ids.length === 0) {
+    const fallback = input.fallbackName ?? null;
+    if (!fallback || fallback === "默认团队") return null;
+    return fallback;
+  }
+  const names = ids
+    .map((teamId) =>
+      employeeSingleDepartmentLabel({
+        teamId,
+        teams: input.teams,
+        departments: input.departments,
+      }),
+    )
+    .filter((name): name is string => Boolean(name));
+  if (names.length > 0) return [...new Set(names)].join("、");
+  const fallback = input.fallbackName ?? null;
+  if (!fallback || fallback === "默认团队") return null;
+  return fallback;
+}
+
+function employeeSingleDepartmentLabel(input: {
+  teamId: number;
+  teams: readonly OrgTeamNode[];
+  departments: readonly OrgDepartmentNode[];
+}): string | null {
   const team = input.teams.find((item) => item.id === input.teamId);
   const department = team
     ? input.departments.find((item) => item.id === team.departmentId)
     : undefined;
   if (department) return department.isDefault ? null : (department.name ?? null);
   if (team?.departmentName && team.departmentName !== "默认部门") return team.departmentName;
-  const fallback = input.fallbackName ?? team?.name ?? null;
-  if (!fallback || fallback === "默认团队") return null;
-  return fallback;
+  if (!team?.name || team.name === "默认团队") return null;
+  return team.name;
 }

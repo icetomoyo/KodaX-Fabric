@@ -554,6 +554,7 @@ export async function resolveRelayBoundCandidate(
   protocol: RelayProtocol,
   productLineId: number,
   excludeCredentialIds?: ReadonlySet<number>,
+  teamId?: number | null,
 ): Promise<RelayBoundCandidateResolution> {
   if (!isValidRelayProductLineId(productLineId)) {
     return {
@@ -599,6 +600,7 @@ export async function resolveRelayBoundCandidate(
     employeeId,
     productLineId,
     protocol,
+    teamId,
     excludeCredentialIds,
   });
   if (!acquired.ok) {

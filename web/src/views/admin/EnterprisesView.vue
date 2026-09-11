@@ -445,7 +445,12 @@ import {
 } from "@element-plus/icons-vue";
 import { http } from "@/api/http";
 import { parseBulkRegisterText } from "@/lib/bulk-register-users";
-import { departmentPathLabel, employeeDepartmentLabel, visibleOrgEmployees } from "@/lib/org-employees";
+import {
+  departmentPathLabel,
+  departmentSubtreeIds,
+  employeeDepartmentLabel,
+  visibleOrgEmployees,
+} from "@/lib/org-employees";
 import { roleLabel } from "@/lib/roles";
 import { useTablePage } from "@/lib/table-page";
 
@@ -512,6 +517,7 @@ type EmployeeRow = {
   status: UserStatus;
   enterpriseId: number | null;
   teamId: number | null;
+  teamIds: number[];
   teamName: string | null;
   teamRole: "member" | "team_admin" | null;
   lastLoginAt: string | null;
@@ -924,26 +930,42 @@ async function loadPeople() {
     teamName?: string | null;
     lastLoginAt: string | null;
   }>;
-  const membership = new Map<number, { teamId: number; teamName: string; teamRole: "member" | "team_admin" }>();
+  const membership = new Map<number, Array<{ teamId: number; teamName: string; teamRole: "member" | "team_admin" }>>();
   const scopedTeams = teams.value.filter((team) => team.enterpriseId === selectedEnterpriseId.value);
   await Promise.all(
     scopedTeams.map(async (team) => {
       const { data } = await http.get(`/api/admin/teams/${team.id}/members`);
       if (!data.success) return;
       for (const member of data.data as Array<{ employeeId: number; role: "member" | "team_admin"; name: string }>) {
-        membership.set(member.employeeId, {
+        const list = membership.get(member.employeeId) ?? [];
+        list.push({
           teamId: team.id,
           teamName: team.name,
           teamRole: member.role,
         });
+        membership.set(member.employeeId, list);
       }
     }),
   );
-  employees.value = users
+  const selectedDepartmentTeamIds = selectedDepartmentId.value != null
+    ? new Set(
+        teams.value
+          .filter((team) =>
+            departmentSubtreeIds(selectedDepartmentId.value!, departments.value).includes(team.departmentId),
+          )
+          .map((team) => team.id),
+      )
+    : null;
+  const uniqueUsers = [...new Map(users.map((row) => [row.id, row])).values()];
+  employees.value = uniqueUsers
     .filter((row) => row.role !== "admin")
     .map((row) => {
-      const joined = membership.get(row.id);
-      const teamId = joined?.teamId ?? row.teamId ?? null;
+      const joined = membership.get(row.id) ?? [];
+      const teamIds = joined.map((item) => item.teamId);
+      const scopedJoin = selectedDepartmentTeamIds
+        ? joined.find((item) => selectedDepartmentTeamIds.has(item.teamId))
+        : joined[0];
+      const teamId = scopedJoin?.teamId ?? joined[0]?.teamId ?? row.teamId ?? null;
       return {
         id: row.id,
         name: row.name,
@@ -952,13 +974,15 @@ async function loadPeople() {
         status: row.status,
         enterpriseId: row.enterpriseId,
         teamId,
+        teamIds: teamIds.length ? teamIds : (row.teamId != null ? [row.teamId] : []),
         teamName: employeeDepartmentLabel({
           teamId,
-          fallbackName: joined?.teamName ?? row.teamName ?? null,
+          teamIds: selectedDepartmentTeamIds ? (teamId != null ? [teamId] : []) : teamIds,
+          fallbackName: joined[0]?.teamName ?? row.teamName ?? null,
           teams: teams.value,
           departments: departments.value,
         }),
-        teamRole: joined?.teamRole ?? (row.role === "team_admin" ? "team_admin" : row.teamId ? "member" : null),
+        teamRole: scopedJoin?.teamRole ?? joined[0]?.teamRole ?? (row.role === "team_admin" ? "team_admin" : row.teamId ? "member" : null),
         lastLoginAt: row.lastLoginAt,
       };
     });
@@ -1443,7 +1467,10 @@ async function syncUserTeam(
     if (!data.success) throw new Error(data.message);
   } catch (error: unknown) {
     const response = (error as { response?: { status?: number; data?: { message?: string } } }).response;
-    if (response?.status === 409 && response.data?.message === "该员工已在团队中") {
+    if (
+      response?.status === 409
+      && (response.data?.message === "该员工已在该部门中" || response.data?.message === "该员工已在团队中")
+    ) {
       await http.patch(`/api/admin/teams/${next}/members/${employeeId}`, { role: teamRole });
       return;
     }

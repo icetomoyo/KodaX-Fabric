@@ -77,6 +77,20 @@ test("department path joins enterprise and nested departments with slashes", () 
   );
 });
 
+test("selecting a department includes people who also belong to other departments", () => {
+  const rows = visibleOrgEmployees({
+    isTeamAdmin: false,
+    selectedKind: "department",
+    selectedDepartmentId: 8,
+    employees: [
+      { id: 9, name: "邓华亮", teamId: 103, teamIds: [101, 103] },
+    ],
+    teams,
+    departments,
+  });
+  assert.deepEqual(rows.map((row) => row.id), [9]);
+});
+
 test("employee department column uses the department name, not 默认团队", () => {
   assert.equal(
     employeeDepartmentLabel({ teamId: 101, fallbackName: "默认团队", teams, departments }),
@@ -93,5 +107,14 @@ test("employee department column uses the department name, not 默认团队", ()
   assert.equal(
     employeeDepartmentLabel({ teamId: null, fallbackName: "默认团队", teams, departments }),
     null,
+  );
+  assert.equal(
+    employeeDepartmentLabel({
+      teamId: 101,
+      teamIds: [101, 102],
+      teams,
+      departments,
+    }),
+    "产品技术部、平台组",
   );
 });

@@ -13,7 +13,7 @@
     <el-alert
       v-else-if="hasEnterprise && !hasTeam"
       class="join-alert"
-      title="尚未加入团队，仍是普通注册用户。被邀请进团队后才有员工权限（API Key / 调用）。"
+      title="尚未加入部门，仍是普通注册用户。被邀请进部门后才有员工权限（API Key / 调用）。"
       type="info"
       show-icon
       :closable="false"
@@ -114,7 +114,7 @@ async function loadUsage() {
     const org = await http.get("/api/me/org");
     if (org.data.success) {
       hasEnterprise.value = org.data.data.enterprise?.status === "active";
-      hasTeam.value = (org.data.data.teams ?? []).length > 0;
+      hasTeam.value = (org.data.data.departments ?? org.data.data.teams ?? []).length > 0;
     } else {
       hasEnterprise.value = false;
       hasTeam.value = false;

@@ -83,7 +83,7 @@
 
       <ul class="notes">
         <li>工作台仍提示「普通注册用户」，表示尚未加入团队。</li>
-        <li>「API Key」页的「创建 Key」为灰色，表示尚未加入团队。</li>
+        <li>「API Key」页的「创建 Key」为灰色，表示尚未加入部门。</li>
         <li>管理员无法找到你时，请确认对方使用的是上方手机号，且该号码已完成注册。</li>
       </ul>
     </section>
@@ -162,7 +162,7 @@
       <el-alert
         v-if="loaded && !inTeam"
         class="status-alert"
-        title="尚未加入团队时，「创建 Key」不可用。请先完成第一步。"
+        title="尚未加入部门时，「创建 Key」不可用。请先完成第一步。"
         type="warning"
         show-icon
         :closable="false"

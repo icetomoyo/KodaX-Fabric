@@ -488,6 +488,7 @@ export async function chatCompletionRoutes(app: FastifyInstance) {
             principal.protocol,
             principal.productLineId,
             excludeCredentialIds,
+            principal.teamId,
           );
           const candidate = resolution.candidate;
           if (!candidate) {

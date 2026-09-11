@@ -179,7 +179,7 @@ async function authenticateRelayApiKey(
         reply,
         principal.protocol,
         403,
-        "未加入该团队，无法使用此 API Key",
+        "未加入该部门，无法使用此 API Key",
         "permission_error",
         "team_required",
       );

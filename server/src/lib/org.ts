@@ -175,13 +175,39 @@ export function canCreateTeam(
   return false;
 }
 
-export function employeeSingleTeamConflictMessage(
-  existing: { teamId: number; teamName: string } | null,
-  targetTeamId: number,
+export type EmployeeDepartmentMembership = {
+  teamId: number;
+  departmentId: number;
+  departmentName: string;
+  isDefault: boolean;
+  status: string;
+};
+
+export function employeeDepartmentConflictMessage(
+  existing: readonly EmployeeDepartmentMembership[],
+  target: { teamId: number; departmentId: number },
 ): string | null {
-  if (!existing) return null;
-  if (existing.teamId === targetTeamId) return "该员工已在团队中";
-  return `该员工已加入团队 ${existing.teamName}，一名员工只能属于一个团队`;
+  if (existing.some((row) => row.teamId === target.teamId || row.departmentId === target.departmentId)) {
+    return "该员工已在该部门中";
+  }
+  return null;
+}
+
+export function resolveEmployeeApiKeyTeam(input: {
+  memberships: readonly EmployeeDepartmentMembership[];
+  departmentId?: number;
+  teamId?: number;
+}): EmployeeDepartmentMembership | null {
+  const active = input.memberships.filter((row) => row.status === "active");
+  if (input.departmentId != null) {
+    const inDepartment = active.filter((row) => row.departmentId === input.departmentId);
+    return inDepartment.find((row) => row.isDefault) ?? inDepartment[0] ?? null;
+  }
+  if (input.teamId != null) {
+    return active.find((row) => row.teamId === input.teamId) ?? null;
+  }
+  if (active.length === 1) return active[0] ?? null;
+  return null;
 }
 
 export function resolveTeamListScope(

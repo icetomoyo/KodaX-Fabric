@@ -87,6 +87,7 @@ export type AcquireBindingParams = {
   employeeId: number;
   productLineId: number;
   protocol: RelayProtocol;
+  teamId?: number | null;
   now?: Date;
   excludeCredentialIds?: ReadonlySet<number>;
   /**
@@ -423,6 +424,7 @@ export async function resolveEmployeeBindingScope(
 async function resolveEmployeeBinding(
   employeeId: number,
   now: Date,
+  teamId?: number | null,
 ): Promise<ResolvedEmployeeBinding | null> {
   const [employee, membership, usage] = await Promise.all([
     db
@@ -439,7 +441,12 @@ async function resolveEmployeeBinding(
       .select({ teamId: teamMembers.teamId, departmentId: teams.departmentId })
       .from(teamMembers)
       .innerJoin(teams, eq(teamMembers.teamId, teams.id))
-      .where(eq(teamMembers.employeeId, employeeId))
+      .where(
+        and(
+          eq(teamMembers.employeeId, employeeId),
+          teamId != null ? eq(teams.id, teamId) : sql`true`,
+        ),
+      )
       .limit(1)
       .then((rows): TeamMembershipRow | undefined => rows[0]),
     loadRecentUsage(employeeId, now),
@@ -547,7 +554,7 @@ export async function acquireBoundCredential(
   if (await isOpenPoolProductLine(params.productLineId)) {
     return acquireOpenPoolCredential(params, now);
   }
-  const resolved = await resolveEmployeeBinding(params.employeeId, now);
+  const resolved = await resolveEmployeeBinding(params.employeeId, now, params.teamId);
   if (!resolved) {
     return { ok: false, reason: "no_scope", retryAt: null };
   }
@@ -621,6 +628,7 @@ export async function rebindEmployeesToCurrentScope(
       employeeId: employeeApiKeys.employeeId,
       productLineId: employeeApiKeys.productLineId,
       protocol: employeeApiKeys.protocol,
+      teamId: employeeApiKeys.teamId,
       providerCode: providers.code,
     })
     .from(employeeApiKeys)
@@ -644,6 +652,7 @@ export async function rebindEmployeesToCurrentScope(
       employeeId: key.employeeId,
       productLineId: key.productLineId,
       protocol: key.protocol,
+      teamId: key.teamId,
       now,
       promoteIdle: false,
     });
@@ -711,20 +720,38 @@ async function loadEmployeesForEligibility(_now: Date): Promise<BindingEligibili
       .select({ id: departments.id, parentId: departments.parentId })
       .from(departments),
   ]);
-  const membershipByEmployee = new Map(
-    memberships.map((row) => [row.employeeId, { teamId: row.teamId, departmentId: row.departmentId }]),
-  );
-  return people.map((row) => {
-    const membership = membershipByEmployee.get(row.id);
-    return {
-      id: row.id,
-      usageTier: row.usageTier,
-      enterpriseId: row.enterpriseId,
-      teamId: membership?.teamId ?? null,
-      departmentId: membership
-        ? firstLevelDepartmentId(membership.departmentId, departmentRows)
-        : null,
-    };
+  const membershipsByEmployee = new Map<number, { teamId: number; departmentId: number }[]>();
+  for (const row of memberships) {
+    const list = membershipsByEmployee.get(row.employeeId) ?? [];
+    list.push({ teamId: row.teamId, departmentId: row.departmentId });
+    membershipsByEmployee.set(row.employeeId, list);
+  }
+  return people.flatMap((row) => {
+    const personMemberships = membershipsByEmployee.get(row.id) ?? [];
+    if (personMemberships.length === 0) {
+      return [{
+        id: row.id,
+        usageTier: row.usageTier,
+        enterpriseId: row.enterpriseId,
+        teamId: null,
+        departmentId: null,
+      }];
+    }
+    const seen = new Set<number>();
+    const views: BindingEligibilityPerson[] = [];
+    for (const membership of personMemberships) {
+      const departmentId = firstLevelDepartmentId(membership.departmentId, departmentRows);
+      if (seen.has(departmentId)) continue;
+      seen.add(departmentId);
+      views.push({
+        id: row.id,
+        usageTier: row.usageTier,
+        enterpriseId: row.enterpriseId,
+        teamId: membership.teamId,
+        departmentId,
+      });
+    }
+    return views;
   });
 }
 

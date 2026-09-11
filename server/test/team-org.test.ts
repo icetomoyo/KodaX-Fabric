@@ -17,7 +17,8 @@ const {
   canAdminTeam,
   canCreateTeam,
   canReadTeam,
-  employeeSingleTeamConflictMessage,
+  employeeDepartmentConflictMessage,
+  resolveEmployeeApiKeyTeam,
   resolveTeamListScope,
 } = await import("../src/lib/org.js");
 
@@ -405,25 +406,76 @@ test("admin shell uses org board for all console roles", () => {
   assert.match(orgView, /pagedEmployees/);
 });
 
-test("joining a second team is rejected with a named 409 message", () => {
+test("joining a second department is allowed; the same department is a 409", () => {
+  const existing = [
+    {
+      teamId: 2,
+      departmentId: 8,
+      departmentName: "产品组",
+      isDefault: true,
+      status: "active",
+    },
+  ];
   assert.equal(
-    employeeSingleTeamConflictMessage({ teamId: 2, teamName: "研发一组" }, 8),
-    "该员工已加入团队 研发一组，一名员工只能属于一个团队",
+    employeeDepartmentConflictMessage(existing, { teamId: 9, departmentId: 10 }),
+    null,
+  );
+  assert.equal(
+    employeeDepartmentConflictMessage(existing, { teamId: 2, departmentId: 8 }),
+    "该员工已在该部门中",
   );
   const teamsRoute = readFileSync(
     resolve(dirname(fileURLToPath(import.meta.url)), "../src/routes/admin/teams.ts"),
     "utf8",
   );
-  assert.match(teamsRoute, /employeeSingleTeamConflictMessage/);
+  assert.match(teamsRoute, /employeeDepartmentConflictMessage/);
   assert.match(teamsRoute, /code\(409\)/);
+  assert.doesNotMatch(teamsRoute, /一名员工只能属于一个团队/);
 });
 
-test("re-adding a member to the same team keeps the existing 409 copy", () => {
+test("re-adding a member to the same department keeps the 409 copy", () => {
   assert.equal(
-    employeeSingleTeamConflictMessage({ teamId: 8, teamName: "研发一组" }, 8),
-    "该员工已在团队中",
+    employeeDepartmentConflictMessage(
+      [{ teamId: 8, departmentId: 3, departmentName: "产品组", isDefault: true, status: "active" }],
+      { teamId: 8, departmentId: 3 },
+    ),
+    "该员工已在该部门中",
   );
-  assert.equal(employeeSingleTeamConflictMessage(null, 8), null);
+  assert.equal(employeeDepartmentConflictMessage([], { teamId: 8, departmentId: 3 }), null);
+});
+
+test("API Key department binding uses the only membership or the chosen department", () => {
+  const memberships = [
+    { teamId: 11, departmentId: 8, departmentName: "产品组", isDefault: true, status: "active" },
+    { teamId: 12, departmentId: 9, departmentName: "售前咨询部", isDefault: true, status: "active" },
+  ];
+  assert.equal(resolveEmployeeApiKeyTeam({ memberships, departmentId: 9 })?.teamId, 12);
+  assert.equal(resolveEmployeeApiKeyTeam({ memberships }) , null);
+  assert.equal(
+    resolveEmployeeApiKeyTeam({ memberships: memberships.slice(0, 1) })?.teamId,
+    11,
+  );
+});
+
+test("API Key create form binds a department and locks it when there is only one", () => {
+  const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+  const keysView = readFileSync(resolve(root, "web/src/views/me/KeysView.vue"), "utf8");
+  assert.match(keysView, /所属部门/);
+  assert.match(keysView, /departmentChoices.length > 1/);
+  assert.match(keysView, /departmentId: createForm.departmentId/);
+  assert.match(keysView, /尚未加入部门/);
+  assert.doesNotMatch(keysView, /尚未加入团队，没有员工权限/);
+});
+
+test("later migration drops the single-team unique index", () => {
+  const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+  const journal = JSON.parse(
+    readFileSync(resolve(root, "drizzle/meta/_journal.json"), "utf8"),
+  ) as { entries: Array<{ tag: string }> };
+  const drop = journal.entries
+    .map((entry) => readFileSync(resolve(root, `drizzle/${entry.tag}.sql`), "utf8"))
+    .find((sql) => sql.includes('DROP INDEX IF EXISTS "team_members_employee_uidx"'));
+  assert.ok(drop, "expected a migration that drops team_members_employee_uidx");
 });
 
 test("team member add dialog surfaces backend 409 messages", () => {

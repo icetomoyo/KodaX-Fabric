@@ -4,18 +4,18 @@
         <el-button type="primary" :disabled="!canIssueKey" @click="openCreate">创建 Key</el-button>
       </div>
       <el-alert
-        v-if="!hasTeam"
+        v-if="!hasDepartment"
         class="join-alert"
-        title="尚未加入团队，没有员工权限。请等待团队管理员用你的注册手机号邀请。"
+        title="尚未加入部门，没有员工权限。请等待部门管理员用你的注册手机号邀请。"
         type="warning"
         show-icon
         :closable="false"
       />
 
       <el-table v-loading="loading" :data="pagedKeys" stripe empty-text="暂无 API Key">
-        <el-table-column label="团队" min-width="140">
+        <el-table-column label="部门" min-width="180">
           <template #default="{ row }">
-            {{ row.teamName || "未绑定团队" }}
+            {{ row.departmentName || row.teamName || "未绑定部门" }}
           </template>
         </el-table-column>
         <el-table-column label="名称" min-width="140">
@@ -133,6 +133,27 @@
         />
 
         <el-form v-else label-position="top" @submit.prevent>
+          <el-form-item label="所属部门" required>
+            <el-select
+              v-if="departmentChoices.length > 1"
+              v-model="createForm.departmentId"
+              placeholder="选择要绑定的部门"
+              style="width: 100%"
+              :disabled="creating"
+            >
+              <el-option
+                v-for="department in departmentChoices"
+                :key="department.id"
+                :label="department.path || department.name"
+                :value="department.id"
+              />
+            </el-select>
+            <el-input
+              v-else
+              :model-value="departmentChoices[0]?.path || departmentChoices[0]?.name || ''"
+              disabled
+            />
+          </el-form-item>
           <el-form-item label="名称" required>
             <el-input
               v-model="createForm.name"
@@ -222,9 +243,17 @@ import {
 } from "@/views/relay-protocol";
 
 const auth = useAuthStore();
-const teams = ref<Array<{ id: number; name: string }>>([]);
-const hasTeam = computed(() => teams.value.length > 0);
-const canIssueKey = computed(() => hasTeam.value);
+type OrgDepartment = {
+  id: number;
+  name: string;
+  path?: string;
+  teamId: number;
+};
+
+const departments = ref<OrgDepartment[]>([]);
+const hasDepartment = computed(() => departments.value.length > 0);
+const canIssueKey = computed(() => hasDepartment.value);
+const departmentChoices = computed(() => departments.value);
 
 type KeyRow = {
   id: number;
@@ -234,6 +263,8 @@ type KeyRow = {
   productLineId: number;
   teamId?: number | null;
   teamName?: string | null;
+  departmentId?: number | null;
+  departmentName?: string | null;
   productLineName: string;
   providerCode: string;
   providerName: string;
@@ -284,7 +315,7 @@ const createdResult = ref<CreatedKeyResult | null>(null);
 const copyingCreatedKey = ref(false);
 const createForm = reactive({
   name: "",
-  teamId: null as number | null,
+  departmentId: null as number | null,
   productLineId: null as number | null,
   protocol: null as RelayProtocol | null,
 });
@@ -304,7 +335,7 @@ const compatibleProtocolOptions = computed(() => {
 const canCreate = computed(() =>
   !channelsLoading.value
   && !channelsError.value
-  && Boolean(createForm.teamId)
+  && Boolean(createForm.departmentId)
   && Boolean(createForm.name.trim())
   && Boolean(selectedChannel.value)
   && Boolean(createForm.protocol)
@@ -325,19 +356,31 @@ function keyStatusLabel(status: string) {
   return status === "active" ? "正常" : status === "revoked" ? "已吊销" : status;
 }
 
-async function loadTeams() {
+async function loadDepartments() {
   try {
     const { data } = await http.get("/api/me/org");
-    if (data.success) teams.value = Array.isArray(data.data?.teams) ? data.data.teams : [];
+    if (data.success && Array.isArray(data.data?.departments) && data.data.departments.length > 0) {
+      departments.value = data.data.departments;
+      return;
+    }
+    const teams = Array.isArray(data.data?.teams) ? data.data.teams : [];
+    departments.value = teams
+      .filter((team: { isDefault?: boolean }) => team.isDefault !== false)
+      .map((team: { id: number; departmentId?: number; departmentName?: string; name: string }) => ({
+        id: team.departmentId ?? team.id,
+        name: team.departmentName ?? team.name,
+        path: team.departmentName ?? team.name,
+        teamId: team.id,
+      }));
   } catch {
-    teams.value = [];
+    departments.value = [];
   }
 }
 
 async function load() {
   loading.value = true;
   try {
-    await loadTeams();
+    await loadDepartments();
     const { data } = await http.get("/api/me/api-keys");
     if (data.success) keys.value = Array.isArray(data.data) ? data.data : [];
   } catch (error) {
@@ -360,7 +403,7 @@ function onCreateClosed() {
 function resetCreateState() {
   channelRequestSequence += 1;
   createForm.name = "";
-  createForm.teamId = teams.value[0]?.id ?? null;
+  createForm.departmentId = departments.value.length === 1 ? departments.value[0]?.id ?? null : null;
   createForm.productLineId = null;
   createForm.protocol = null;
   upstreamChannels.value = [];
@@ -448,8 +491,8 @@ async function createKey() {
     ElMessage.warning("请填写名称");
     return;
   }
-  if (!createForm.teamId) {
-    ElMessage.warning("尚未加入团队");
+  if (!createForm.departmentId) {
+    ElMessage.warning(departments.value.length > 1 ? "请选择要绑定的部门" : "尚未加入部门");
     return;
   }
 
@@ -461,7 +504,7 @@ async function createKey() {
   try {
     const { data } = await http.post("/api/me/api-keys", {
       name,
-      teamId: createForm.teamId,
+      departmentId: createForm.departmentId,
       productLineId: channel.productLineId,
       protocol,
     });

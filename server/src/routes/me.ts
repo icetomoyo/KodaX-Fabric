@@ -9,6 +9,7 @@ import {
   employees,
   enterprises,
   opsAuditLogs,
+  departments,
   productLines,
   providers,
   teamMembers,
@@ -53,18 +54,23 @@ import {
   resolveProtocolUpstreamConfig,
 } from "../lib/upstream-protocol-config.js";
 import { actingEmployeeId } from "../lib/act-as.js";
+import { departmentPathLabel } from "../lib/department-tree.js";
+import { resolveEmployeeApiKeyTeam } from "../lib/org.js";
 import {
   requirePasswordChanged,
   requireRoles,
   requireSession,
 } from "../middleware/auth.js";
 
-const createApiKeySchema = z.object({
-  name: z.string().trim().min(1).max(100),
-  teamId: z.number().int().positive(),
-  productLineId: z.number().int().positive(),
-  protocol: z.enum(RELAY_PROTOCOLS),
-});
+const createApiKeySchema = z
+  .object({
+    name: z.string().trim().min(1).max(100),
+    departmentId: z.number().int().positive().optional(),
+    teamId: z.number().int().positive().optional(),
+    productLineId: z.number().int().positive(),
+    protocol: z.enum(RELAY_PROTOCOLS),
+  })
+  .refine((data) => data.departmentId != null || data.teamId != null);
 
 const submitUpstreamCredentialCoreSchema = z.object({
   seatId: z.number().int().positive(),
@@ -156,19 +162,69 @@ export async function meRoutes(app: FastifyInstance) {
       enterprise = row ?? null;
     }
 
-    const teamRows = await db
+    const membershipRows = await db
       .select({
         id: teams.id,
         name: teams.name,
         status: teams.status,
         role: teamMembers.role,
+        isDefault: teams.isDefault,
+        departmentId: departments.id,
+        departmentName: departments.name,
+        departmentParentId: departments.parentId,
+        departmentIsDefault: departments.isDefault,
       })
       .from(teamMembers)
       .innerJoin(teams, eq(teamMembers.teamId, teams.id))
+      .innerJoin(departments, eq(teams.departmentId, departments.id))
       .where(eq(teamMembers.employeeId, meId(req)))
       .orderBy(desc(teams.id));
 
-    return { success: true, data: { enterprise, teams: teamRows } };
+    const departmentIds = [...new Set(membershipRows.map((row) => row.departmentId))];
+    const treeRows = departmentIds.length
+      ? await db
+          .select({
+            id: departments.id,
+            parentId: departments.parentId,
+            name: departments.name,
+            isDefault: departments.isDefault,
+          })
+          .from(departments)
+          .where(
+            me?.enterpriseId != null
+              ? eq(departments.enterpriseId, me.enterpriseId)
+              : inArray(departments.id, departmentIds),
+          )
+      : [];
+
+    const departmentById = new Map<number, (typeof membershipRows)[number]>();
+    for (const row of membershipRows) {
+      const current = departmentById.get(row.departmentId);
+      if (!current || (row.isDefault && !current.isDefault)) {
+        departmentById.set(row.departmentId, row);
+      }
+    }
+    const departmentRows = [...departmentById.values()].map((row) => ({
+      id: row.departmentId,
+      name: row.departmentName,
+      parentId: row.departmentParentId,
+      isDefault: row.departmentIsDefault,
+      teamId: row.id,
+      path: departmentPathLabel({
+        departmentId: row.departmentId,
+        departments: treeRows,
+        enterpriseName: enterprise?.name,
+      }),
+    }));
+
+    return {
+      success: true,
+      data: {
+        enterprise,
+        departments: departmentRows,
+        teams: membershipRows,
+      },
+    };
   });
 
   app.get("/api/me/upstream-channels", async (req) => {
@@ -670,6 +726,8 @@ export async function meRoutes(app: FastifyInstance) {
         productLineId: employeeApiKeys.productLineId,
         teamId: employeeApiKeys.teamId,
         teamName: teams.name,
+        departmentId: teams.departmentId,
+        departmentName: departments.name,
         productLineName: productLines.name,
         providerCode: providers.code,
         providerName: providers.name,
@@ -681,6 +739,7 @@ export async function meRoutes(app: FastifyInstance) {
       .innerJoin(productLines, eq(employeeApiKeys.productLineId, productLines.id))
       .innerJoin(providers, eq(productLines.providerId, providers.id))
       .leftJoin(teams, eq(employeeApiKeys.teamId, teams.id))
+      .leftJoin(departments, eq(teams.departmentId, departments.id))
       .where(eq(employeeApiKeys.employeeId, meId(req)))
       .orderBy(desc(employeeApiKeys.id));
 
@@ -737,23 +796,29 @@ export async function meRoutes(app: FastifyInstance) {
         return { outcome: "no_enterprise" } as const;
       }
 
-      const [membership] = await tx
+      const membershipRows = await tx
         .select({
           teamId: teams.id,
-          teamName: teams.name,
-          teamStatus: teams.status,
+          departmentId: teams.departmentId,
+          departmentName: departments.name,
+          isDefault: teams.isDefault,
+          status: teams.status,
         })
         .from(teamMembers)
         .innerJoin(teams, eq(teamMembers.teamId, teams.id))
-        .where(
-          and(
-            eq(teamMembers.employeeId, meId(req)),
-            eq(teamMembers.teamId, body.data.teamId),
-          ),
-        )
-        .limit(1);
-      if (!membership || membership.teamStatus !== "active") {
-        return { outcome: "no_team" } as const;
+        .innerJoin(departments, eq(teams.departmentId, departments.id))
+        .where(eq(teamMembers.employeeId, meId(req)));
+      const membership = resolveEmployeeApiKeyTeam({
+        memberships: membershipRows,
+        departmentId: body.data.departmentId,
+        teamId: body.data.teamId,
+      });
+      if (!membership) {
+        return {
+          outcome: membershipRows.filter((row) => row.status === "active").length > 1
+            ? "department_required"
+            : "no_team",
+        } as const;
       }
 
       // Serialize employee Key creation with channel protocol/config edits.
@@ -809,12 +874,19 @@ export async function meRoutes(app: FastifyInstance) {
           providerName: channel.providerName,
           protocol: created.protocol,
           teamId: created.teamId,
-          teamName: membership.teamName,
+          departmentId: membership.departmentId,
+          departmentName: membership.departmentName,
         },
         ip: req.ip,
       });
 
-      return { outcome: "created", row: created, channel, teamName: membership.teamName } as const;
+      return {
+        outcome: "created",
+        row: created,
+        channel,
+        departmentId: membership.departmentId,
+        departmentName: membership.departmentName,
+      } as const;
     });
 
     if (result.outcome === "forbidden") {
@@ -835,7 +907,14 @@ export async function meRoutes(app: FastifyInstance) {
       return reply.code(403).send({
         success: false,
         code: "team_required",
-        message: "请先加入团队后再创建 API Key",
+        message: "请先加入部门后再创建 API Key",
+      });
+    }
+    if (result.outcome === "department_required") {
+      return reply.code(400).send({
+        success: false,
+        code: "department_required",
+        message: "加入了多个部门，请选择要绑定的部门",
       });
     }
     if (result.outcome === "channel_unavailable") {
@@ -852,12 +931,20 @@ export async function meRoutes(app: FastifyInstance) {
         message: "所选协议与上游渠道不兼容",
       });
     }
+    if (result.outcome !== "created") {
+      return reply.code(500).send({
+        success: false,
+        code: "create_failed",
+        message: "创建 API Key 失败",
+      });
+    }
 
     return {
       success: true,
       data: {
         ...result.row,
-        teamName: result.teamName,
+        departmentId: result.departmentId,
+        departmentName: result.departmentName,
         productLineName: result.channel.productLineName,
         providerCode: result.channel.providerCode,
         providerName: result.channel.providerName,

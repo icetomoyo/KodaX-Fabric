@@ -29,7 +29,7 @@ import {
   canAdminTeam,
   canCreateTeam,
   canReadTeam,
-  employeeSingleTeamConflictMessage,
+  employeeDepartmentConflictMessage,
   listAdminTeamIds,
   loadOrgActor,
   scopedTeamIds,
@@ -117,17 +117,19 @@ async function actorFrom(req: {
   });
 }
 
-async function loadEmployeeTeamMembership(employeeId: number) {
-  const [row] = await db
+async function loadEmployeeDepartmentMemberships(employeeId: number) {
+  return db
     .select({
       teamId: teamMembers.teamId,
-      teamName: teams.name,
+      departmentId: teams.departmentId,
+      departmentName: departments.name,
+      isDefault: teams.isDefault,
+      status: teams.status,
     })
     .from(teamMembers)
     .innerJoin(teams, eq(teamMembers.teamId, teams.id))
-    .where(eq(teamMembers.employeeId, employeeId))
-    .limit(1);
-  return row ?? null;
+    .innerJoin(departments, eq(teams.departmentId, departments.id))
+    .where(eq(teamMembers.employeeId, employeeId));
 }
 
 async function refreshConsoleRole(employeeId: number) {
@@ -568,8 +570,11 @@ export async function adminTeamRoutes(app: FastifyInstance) {
         .set({ enterpriseId: access.enterpriseId, updatedAt: new Date() })
         .where(eq(employees.id, target.id));
     }
-    const existingMembership = await loadEmployeeTeamMembership(target.id);
-    const conflict = employeeSingleTeamConflictMessage(existingMembership, access.teamId);
+    const existingMemberships = await loadEmployeeDepartmentMemberships(target.id);
+    const conflict = employeeDepartmentConflictMessage(existingMemberships, {
+      teamId: access.teamId,
+      departmentId: access.departmentId,
+    });
     if (conflict) {
       return reply.code(409).send({ success: false, message: conflict });
     }
@@ -598,15 +603,15 @@ export async function adminTeamRoutes(app: FastifyInstance) {
       return { success: true, data: row };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      if (
-        message.includes("team_members_team_employee_uidx") ||
-        message.includes("team_members_employee_uidx") ||
-        message.includes("unique")
-      ) {
-        const raced = await loadEmployeeTeamMembership(target.id);
+      if (message.includes("team_members_team_employee_uidx") || message.includes("unique")) {
+        const raced = await loadEmployeeDepartmentMemberships(target.id);
         return reply.code(409).send({
           success: false,
-          message: employeeSingleTeamConflictMessage(raced, access.teamId) ?? "该员工已在团队中",
+          message:
+            employeeDepartmentConflictMessage(raced, {
+              teamId: access.teamId,
+              departmentId: access.departmentId,
+            }) ?? "该员工已在该部门中",
         });
       }
       throw error;

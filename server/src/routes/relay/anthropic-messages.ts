@@ -441,6 +441,7 @@ async function handleNativeRequest(
         config.protocol,
         principal.productLineId,
         excludeCredentialIds,
+        principal.teamId,
       );
       const candidate = resolution.candidate;
       if (!candidate) {
