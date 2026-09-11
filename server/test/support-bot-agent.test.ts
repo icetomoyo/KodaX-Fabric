@@ -15,6 +15,10 @@ process.env.CREDENTIAL_ENCRYPT_KEY ??= "unit-test-credential-secret";
 
 const { extractAssistantText, runSupportAgent } = await import("../src/lib/support-bot/agent.js");
 const { selectInviteContacts } = await import("../src/lib/support-bot/invite-contacts.js");
+const {
+  planDepartmentJoin,
+  selectDepartmentForJoin,
+} = await import("../src/lib/support-bot/join-department.js");
 const { EMPTY_USAGE, contextToOpenAiMessages, supportBotModel } = await import(
   "../src/lib/support-bot/stream.js"
 );
@@ -88,12 +92,160 @@ test("invite lookup requires names, stays read-only, and never mentions phones",
   assert.match(enterpriseOnly.message, /团队名/);
 });
 
-test("Token Bot tools are account, request, and invite lookup only", async () => {
+const joinDirectory = {
+  departments: [
+    {
+      id: 101,
+      name: "研发部",
+      parentId: null,
+      enterpriseId: 1,
+      enterpriseName: "海致科技",
+      isDefault: false,
+      teamId: 11,
+    },
+    {
+      id: 201,
+      name: "产品组",
+      parentId: 200,
+      enterpriseId: 1,
+      enterpriseName: "海致科技",
+      isDefault: false,
+      teamId: 21,
+    },
+    {
+      id: 200,
+      name: "业务产品技术部",
+      parentId: null,
+      enterpriseId: 1,
+      enterpriseName: "海致科技",
+      isDefault: false,
+      teamId: 20,
+    },
+    {
+      id: 301,
+      name: "图数据库研发",
+      parentId: 300,
+      enterpriseId: 2,
+      enterpriseName: "海致星图",
+      isDefault: false,
+      teamId: 31,
+    },
+    {
+      id: 300,
+      name: "产品研发中心",
+      parentId: null,
+      enterpriseId: 2,
+      enterpriseName: "海致星图",
+      isDefault: false,
+      teamId: 30,
+    },
+    {
+      id: 9,
+      name: "默认部门",
+      parentId: null,
+      enterpriseId: 1,
+      enterpriseName: "海致科技",
+      isDefault: true,
+      teamId: 99,
+    },
+    {
+      id: 15,
+      name: "总裁办",
+      parentId: null,
+      enterpriseId: 1,
+      enterpriseName: "海致科技",
+      isDefault: false,
+      teamId: 15,
+    },
+    {
+      id: 16,
+      name: "总裁办",
+      parentId: null,
+      enterpriseId: 2,
+      enterpriseName: "海致星图",
+      isDefault: false,
+      teamId: 16,
+    },
+  ],
+};
+
+test("department join matches a unique name and asks when the same name exists in two enterprises", () => {
+  const found = selectDepartmentForJoin(joinDirectory, { departmentName: "产品组" });
+  assert.equal(found.status, "found");
+  assert.equal(found.match?.departmentId, 201);
+  assert.match(found.match?.path ?? "", /海致科技\/业务产品技术部\/产品组/);
+
+  const pathFound = selectDepartmentForJoin(joinDirectory, {
+    departmentName: "业务产品技术部/产品组",
+  });
+  assert.equal(pathFound.match?.departmentId, 201);
+
+  const missing = selectDepartmentForJoin(joinDirectory, { departmentName: "不存在的组" });
+  assert.equal(missing.status, "not_found");
+
+  const needName = selectDepartmentForJoin(joinDirectory, {});
+  assert.equal(needName.status, "need_name");
+
+  const scoped = selectDepartmentForJoin(joinDirectory, {
+    departmentName: "图数据库研发",
+    employeeEnterpriseId: 1,
+  });
+  assert.equal(scoped.status, "not_found");
+
+  const ambiguous = selectDepartmentForJoin(joinDirectory, { departmentName: "总裁办" });
+  assert.equal(ambiguous.status, "ambiguous");
+  assert.match(ambiguous.message, /海致科技/);
+  assert.match(ambiguous.message, /海致星图/);
+  const disambiguated = selectDepartmentForJoin(joinDirectory, {
+    departmentName: "总裁办",
+    enterpriseName: "海致星图",
+  });
+  assert.equal(disambiguated.match?.enterpriseId, 2);
+});
+
+test("department join refuses admins and a second enterprise, and no-ops when already in", () => {
+  const lookup = selectDepartmentForJoin(joinDirectory, { departmentName: "产品组" });
+  assert.equal(
+    planDepartmentJoin({
+      employee: { id: 1, role: "org_admin", status: "active", enterpriseId: 1 },
+      membershipDepartmentIds: [],
+      lookup,
+    }).action,
+    "forbidden",
+  );
+  assert.equal(
+    planDepartmentJoin({
+      employee: { id: 2, role: "employee", status: "active", enterpriseId: 2 },
+      membershipDepartmentIds: [],
+      lookup,
+    }).action,
+    "other_enterprise",
+  );
+  assert.equal(
+    planDepartmentJoin({
+      employee: { id: 3, role: "employee", status: "active", enterpriseId: null },
+      membershipDepartmentIds: [201],
+      lookup,
+    }).action,
+    "already",
+  );
+  assert.equal(
+    planDepartmentJoin({
+      employee: { id: 4, role: "employee", status: "active", enterpriseId: null },
+      membershipDepartmentIds: [],
+      lookup,
+    }).action,
+    "join",
+  );
+});
+
+test("Token Bot tools are account, request, invite lookup, and join department", async () => {
   const tools = createSupportAgentTools({
     account,
     lookupAccount: async () => "角色：employee",
     lookupRequest: async () => "找不到这条调用",
     lookupInvite: async () => "need names",
+    joinDepartment: async () => "已把你加入「海致科技/产品组」。",
   });
   assert.deepEqual(
     tools.map((tool) => tool.name).sort(),
@@ -104,6 +256,9 @@ test("Token Bot tools are account, request, and invite lookup only", async () =>
   const result = await lookup!.execute("call_1", { requestId: "threq_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" });
   assert.equal(result.content[0]?.type, "text");
   assert.match(result.content[0]?.type === "text" ? result.content[0].text : "", /找不到这条调用/);
+  const join = tools.find((tool) => tool.name === "join_department");
+  const joined = await join!.execute("call_2", { departmentName: "产品组" });
+  assert.match(joined.content[0]?.type === "text" ? joined.content[0].text : "", /已把你加入/);
 });
 
 function assistantFrom(input: {

@@ -17,10 +17,9 @@
         </p>
       </div>
       <div v-if="!loaded || !inTeam" class="pin-item">
-        <span class="pin-label">尚未加入团队</span>
+        <span class="pin-label">尚未加入部门</span>
         <p class="pin-copy">
-          点击右下角 Token Bot，说明你所属的企业和团队（或部门），再询问应将你加入团队的联系人。
-          需提供团队信息，才能匹配到对应负责人。
+          点击右下角 Token Bot，直接说出你所属的部门（有同名时再补企业名），即可加入该部门。
         </p>
       </div>
     </section>
@@ -29,26 +28,26 @@
       <div class="step-heading">
         <span class="step-index">1</span>
         <div>
-          <h3>加入团队</h3>
-          <p>注册完成后需加入团队，才能创建 API Key。当前账号为普通注册用户，加入团队后即为员工身份。</p>
+          <h3>加入部门</h3>
+          <p>注册完成后需加入部门，才能创建 API Key。当前账号为普通注册用户，加入部门后即为员工身份。</p>
         </div>
       </div>
 
       <el-alert
         v-if="loaded && inTeam"
         class="status-alert"
-        title="第一步已完成：你已加入团队"
+        title="第一步已完成：你已加入部门"
         type="success"
         show-icon
         :closable="false"
       >
-        <p v-if="teamNames">当前团队：{{ teamNames }}</p>
+        <p v-if="teamNames">当前部门：{{ teamNames }}</p>
         <p>下一步请确认所用产品，创建 API Key 时选择对应协议。</p>
       </el-alert>
       <el-alert
         v-else-if="loaded"
         class="status-alert"
-        title="你尚未加入团队。请先完成本步，再创建 API Key 或配置客户端。"
+        title="你尚未加入部门。请先完成本步，再创建 API Key 或配置客户端。"
         type="warning"
         show-icon
         :closable="false"
@@ -57,15 +56,15 @@
       <ol class="steps">
         <li>使用手机号注册并登录，即当前账号。</li>
         <li>
-          将注册手机号发给负责团队成员管理的人员，请其将你加入团队。
-          通常为组长、部门负责人，或企业内账号管理员
-          （产品中称为团队管理员、部门管理员、企业管理员）。
+          打开右下角 Token Bot，说出你的部门名（有同名时再补企业名），由助手加入该部门。
         </li>
-        <li>对方仅能邀请<strong>已经注册好的手机号</strong>，无法代为注册。</li>
+        <li>
+          也可以把注册手机号发给部门管理员，请其邀请你加入。对方只能邀请已经注册的手机号，无法代为注册。
+        </li>
       </ol>
 
       <div class="phone-card">
-        <span class="phone-label">用于加入团队的手机号</span>
+        <span class="phone-label">用于加入部门的手机号</span>
         <code class="phone-value">{{ phone || "登录后显示" }}</code>
         <el-button
           type="primary"
@@ -78,11 +77,11 @@
 
       <div class="script-card">
         <strong>参考话术</strong>
-        <p>「我已经在 Token Hub 注册了，手机号是 {{ phone || "（你的注册手机号）" }}，请把我加进团队。」</p>
+        <p>「我已经在 Token Hub 注册了，部门是（你的部门名），请把我加进去。」</p>
       </div>
 
       <ul class="notes">
-        <li>工作台仍提示「普通注册用户」，表示尚未加入团队。</li>
+        <li>工作台仍提示「普通注册用户」，表示尚未加入部门。</li>
         <li>「API Key」页的「创建 Key」为灰色，表示尚未加入部门。</li>
         <li>管理员无法找到你时，请确认对方使用的是上方手机号，且该号码已完成注册。</li>
       </ul>
@@ -155,7 +154,7 @@
         <span class="step-index">3</span>
         <div>
           <h3>创建 API Key</h3>
-          <p>加入团队后，在「API Key」页按所用产品创建 API Key。协议按上一步对照表选择，创建后不可修改。</p>
+          <p>加入部门后，在「API Key」页按所用产品创建 API Key。协议按上一步对照表选择，创建后不可修改。</p>
         </div>
       </div>
 

@@ -68,7 +68,6 @@
             :data="orgTree"
             node-key="key"
             highlight-current
-            default-expand-all
             :expand-on-click-node="false"
             :current-node-key="currentTreeKey"
             :filter-node-method="filterOrgNode"

@@ -91,6 +91,7 @@ test("knowledge covers GuideView facts and refuses invented features", () => {
   assert.match(prompt, /lookup_my_account/);
   assert.match(prompt, /lookup_request/);
   assert.match(prompt, /lookup_invite_contacts/);
+  assert.match(prompt, /join_department/);
   assert.match(prompt, /不要编造/);
   assert.match(prompt, /不要写 \{origin\}/);
   assert.doesNotMatch(prompt, /retrieve_docs/);
@@ -331,6 +332,7 @@ test("successful turn writes user + assistant and never mentions relay quota", a
     "src/lib/support-bot/agent.ts",
     "src/lib/support-bot/tools.ts",
     "src/lib/support-bot/invite-contacts.ts",
+    "src/lib/support-bot/join-department.ts",
     "src/lib/support-bot/lookup-request.ts",
   ]) {
     const source = readFileSync(resolve(root, rel), "utf8");

@@ -390,6 +390,7 @@ test("admin shell uses org board for all console roles", () => {
   const orgView = readFileSync(resolve(root, "web/src/views/admin/EnterprisesView.vue"), "utf8");
   assert.match(orgView, /el-tree/);
   assert.match(orgView, /orgTree/);
+  assert.doesNotMatch(orgView, /default-expand-all/);
   assert.match(orgView, /搜索部门/);
   assert.match(orgView, /filterOrgNode/);
   assert.match(orgView, /378px/);
