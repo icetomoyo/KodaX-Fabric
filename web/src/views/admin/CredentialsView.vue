@@ -66,6 +66,13 @@
                 <el-tag v-if="!canWrite" type="info" effect="plain">只读查看</el-tag>
                 <template v-if="canWrite && pageKind === 'channels'">
                   <el-button @click="openEditChannel(selectedChannel)">编辑渠道</el-button>
+                  <el-button
+                    type="danger"
+                    :loading="channelDeleting"
+                    @click="removeChannel(selectedChannel)"
+                  >
+                    删除渠道
+                  </el-button>
                 </template>
                 <template v-if="canWrite && pageKind === 'keys'">
                   <el-button type="primary" @click="openAddKeys(selectedChannel)">
@@ -1104,6 +1111,7 @@ const bulkSaving = ref(false);
 
 const showChannelEdit = ref(false);
 const channelEditSaving = ref(false);
+const channelDeleting = ref(false);
 const channelEditProtocolConfigs = ref<RelayProtocolConfigs>({});
 const channelEditProtocolsTouched = ref(false);
 const channelEditRoutingConfigDrift = ref(false);
@@ -2052,6 +2060,38 @@ async function saveChannelCreate() {
     ElMessage.error(getErrorMessage(error, "创建渠道失败"));
   } finally {
     createSaving.value = false;
+  }
+}
+
+async function removeChannel(channel: ChannelGroup) {
+  if (!canWrite.value || channelDeleting.value) return;
+  try {
+    await ElMessageBox.confirm(
+      `删除「${channelDisplayName(channel)}」会同时销毁该渠道下的席位、渠道 KEY，以及绑定该渠道的个人 API Key。删除后不可恢复，历史调用日志仍会保留。`,
+      "删除渠道",
+      {
+        type: "warning",
+        confirmButtonText: "删除",
+        cancelButtonText: "取消",
+        confirmButtonClass: "el-button--danger",
+      },
+    );
+  } catch {
+    return;
+  }
+
+  channelDeleting.value = true;
+  try {
+    await http.delete(`/api/admin/product-lines/${channel.id}`);
+    showChannelEdit.value = false;
+    showChannelDetails.value = false;
+    await loadCredentials();
+    reconcileSelection();
+    ElMessage.success("渠道已删除");
+  } catch (error) {
+    ElMessage.error(getErrorMessage(error, "删除渠道失败"));
+  } finally {
+    channelDeleting.value = false;
   }
 }
 

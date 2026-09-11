@@ -42,6 +42,7 @@ export const OPS_AUDIT_ACTION_LABELS: Record<string, string> = {
   "provider.update": "更新上游平台",
   "product_line.create": "新建上游渠道",
   "product_line.update": "更新上游渠道",
+  "product_line.delete": "删除上游渠道",
   "credential.quick_create": "新增上游 Key",
   "credential.create": "新增上游 Key",
   "credential.bulk_create": "批量导入上游 Key",

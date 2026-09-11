@@ -5,6 +5,7 @@ import { db } from "../../db/client.js";
 import {
   channelSeats,
   employeeApiKeys,
+  modelRoutes,
   opsAuditLogs,
   productLines,
   providers,
@@ -590,6 +591,86 @@ export async function adminProviderRoutes(app: FastifyInstance) {
           credentialHealthReset: result.credentialHealthReset,
         },
       };
+    },
+  );
+
+  app.delete(
+    "/api/admin/product-lines/:id",
+    { preHandler: [requireRoles("admin")] },
+    async (req, reply) => {
+      const params = z
+        .object({ id: z.coerce.number().int().positive() })
+        .safeParse(req.params);
+      if (!params.success) {
+        return reply.code(400).send({ success: false, message: "参数无效" });
+      }
+
+      const deleted = await db.transaction(async (tx) => {
+        await tx.execute(sql`select pg_advisory_xact_lock(${params.data.id})`);
+        const [existing] = await tx
+          .select({
+            id: productLines.id,
+            name: productLines.name,
+            code: productLines.code,
+            providerId: productLines.providerId,
+          })
+          .from(productLines)
+          .where(eq(productLines.id, params.data.id))
+          .limit(1)
+          .for("update");
+        if (!existing) return null;
+
+        const [seatRow] = await tx
+          .select({ n: count() })
+          .from(channelSeats)
+          .where(eq(channelSeats.productLineId, existing.id));
+        const [credentialRow] = await tx
+          .select({ n: count() })
+          .from(upstreamCredentials)
+          .where(eq(upstreamCredentials.productLineId, existing.id));
+        const [apiKeyRow] = await tx
+          .select({ n: count() })
+          .from(employeeApiKeys)
+          .where(eq(employeeApiKeys.productLineId, existing.id));
+        const seatCount = Number(seatRow?.n ?? 0);
+        const credentialCount = Number(credentialRow?.n ?? 0);
+        const apiKeyCount = Number(apiKeyRow?.n ?? 0);
+
+        await tx.delete(employeeApiKeys).where(eq(employeeApiKeys.productLineId, existing.id));
+        await tx.delete(modelRoutes).where(eq(modelRoutes.productLineId, existing.id));
+        await tx.delete(channelSeats).where(eq(channelSeats.productLineId, existing.id));
+        await tx.delete(upstreamCredentials).where(eq(upstreamCredentials.productLineId, existing.id));
+        await tx.delete(productLines).where(eq(productLines.id, existing.id));
+
+        await tx.insert(opsAuditLogs).values({
+          actorEmployeeId: req.employeeId ?? null,
+          action: "product_line.delete",
+          targetType: "product_line",
+          targetId: String(existing.id),
+          detail: {
+            name: existing.name,
+            code: existing.code,
+            providerId: existing.providerId,
+            seatCount,
+            credentialCount,
+            apiKeyCount,
+          },
+          ip: req.ip,
+        });
+
+        return {
+          id: existing.id,
+          name: existing.name,
+          seatCount,
+          credentialCount,
+          apiKeyCount,
+        };
+      });
+
+      if (!deleted) {
+        return reply.code(404).send({ success: false, message: "渠道不存在" });
+      }
+      return { success: true, data: deleted };
     },
   );
 

@@ -119,3 +119,37 @@ test("create channel dialog is a standalone form and no longer imports keys", ()
   assert.doesNotMatch(fields, /协议路由/);
   assert.doesNotMatch(view, /协议路由/);
 });
+
+test("channel page can delete a channel and destroy seats, keys, and employee API keys", () => {
+  const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+  const view = readFileSync(resolve(root, "web/src/views/admin/CredentialsView.vue"), "utf8");
+  const providers = readFileSync(resolve(root, "server/src/routes/admin/providers.ts"), "utf8");
+  assert.match(view, /删除渠道/);
+  assert.match(view, /removeChannel/);
+  assert.match(view, /http.delete\(`\/api\/admin\/product-lines\/\$\{channel.id\}`\)/);
+  assert.match(view, /席位、渠道 KEY/);
+  assert.match(view, /个人 API Key/);
+  assert.match(providers, /app.delete\(\s*"\/api\/admin\/product-lines\/:id"/);
+  assert.match(providers, /product_line.delete/);
+  assert.match(
+    providers,
+    /tx.delete\(employeeApiKeys\)[\s\S]*tx.delete\(modelRoutes\)[\s\S]*tx.delete\(channelSeats\)[\s\S]*tx.delete\(upstreamCredentials\)[\s\S]*tx.delete\(productLines\)/,
+  );
+});
+
+test("deleting a channel requires a session", async () => {
+  process.env.DATABASE_URL ??= "postgresql://test:test@127.0.0.1:5432/test";
+  process.env.REDIS_URL ??= "redis://127.0.0.1:6379/15";
+  process.env.JWT_SECRET ??= "unit-test-jwt-secret";
+  process.env.CREDENTIAL_ENCRYPT_KEY ??= "unit-test-credential-secret";
+  const Fastify = (await import("fastify")).default;
+  const { adminProviderRoutes } = await import("../src/routes/admin/providers.js");
+  const app = Fastify();
+  await app.register(adminProviderRoutes);
+  const removed = await app.inject({
+    method: "DELETE",
+    url: "/api/admin/product-lines/1",
+  });
+  assert.equal(removed.statusCode, 401);
+  await app.close();
+});
