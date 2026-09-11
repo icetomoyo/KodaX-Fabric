@@ -116,6 +116,10 @@
           <strong>OpenAI Chat Completion 协议</strong>
         </div>
         <div class="protocol-row">
+          <span>ZCode（自定义供应商）</span>
+          <span>常用 <strong>OpenAI Chat Completion 协议</strong>（API 格式选 Chat Completions）。若填 Anthropic 接口则用 Anthropic Message 协议，须与 Key 一致。</span>
+        </div>
+        <div class="protocol-row">
           <span>KodaX、KodaX Space</span>
           <span>支持两种协议，推荐选 <strong>OpenAI Chat Completion 协议</strong></span>
         </div>
@@ -220,6 +224,13 @@
         <div class="protocol-row">
           <span>Cursor</span>
           <span>自定义模型 / OpenAI 兼容：Base URL 填写上方地址，API Key 填写第三步创建的 API Key。</span>
+        </div>
+        <div class="protocol-row">
+          <span>ZCode</span>
+          <span>
+            添加自定义供应商，Base URL 填写上方地址，API 格式与 Key 协议一致。
+            添加模型 <code>glm-5.3-flash</code> 时必须勾选输入类型「图片」；只勾默认「文本」则贴图不会发给上游。
+          </span>
         </div>
         <div class="protocol-row">
           <span>KodaX、KodaX Space</span>

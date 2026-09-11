@@ -151,6 +151,7 @@ const suggestions = [
   "三种协议怎么选？",
   "我的 Key 为什么会 401？",
   "现在可用哪些模型？",
+  "ZCode 贴图为什么看不了？",
 ] as const;
 
 type DragSession = {
@@ -486,5 +487,14 @@ async function sendMessage(message: string) {
   margin-bottom: 8px;
   color: #2563eb;
   font-size: 12px;
+}
+
+.panel-body :deep(img) {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 8px 0;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
 }
 </style>

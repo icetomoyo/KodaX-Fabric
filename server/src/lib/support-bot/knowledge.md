@@ -25,7 +25,21 @@ Base URL 一律是当前站点的 `{origin}/ai`。不要使用 :3000 或 :3100�
 
 ## 模型列表
 
-模型名称请到「模型」页复制，不要手打。当前智谱常见模型：`glm-5.3`（文本）、`glm-5.3-flash`（多模态）。
+模型名称请到「模型」页复制，不要手打。当前智谱常见模型：`glm-5.3`（文本）、`glm-5.3-flash`（多模态，识图用这个）。
+
+## ZCode 接 Token Hub 与识图
+
+ZCode 把 Token Hub 当成「自定义供应商」，不会套用官方编程套餐里「Flash 自动支持图片」的规则。Token Hub `/ai/models` 也不声明视觉能力，所以「添加模型」时输入类型默认只有「文本」。不勾「图片」，ZCode 会在发请求前把图删掉，换成文字提示，上游收不到图。
+
+用户问 ZCode、贴图、识图、看图、多模态、图片、glm-5.3-flash 看图时：用中文分步答，并必须贴下面两张图（Markdown 图片，回答里用完整 https URL，不要写 `{origin}`）。先供应商页，再添加模型页。
+
+1. 设置 → 模型供应商 → 添加供应商。名称可填 TokenHub。Base URL 填当前站点的 `/ai`（完整 URL 见下方「当前这次请求」）。API Key 填 `th_` 员工 Key。API 格式与 Key 协议一致：Chat Completions 对应 OpenAI Chat Completion Key。
+![ZCode 添加 TokenHub 供应商]({origin}/guides/zcode-add-provider.png)
+2. 点「添加模型」。模型 ID 填 `glm-5.3-flash`，不要填 `glm-5.3`（纯文本，OpenAI Chat 传图会 400）。上下文窗口 1000000，最大输出 128000。输入类型必须勾选「图片」；只勾默认「文本」就看不见图。
+![ZCode 添加 glm-5.3-flash 并勾选图片]({origin}/guides/zcode-add-model.png)
+3. 保存后在聊天里选这个模型再贴图。
+
+识图至少勾「图片」。视频 / PDF 勾了也不代表 Token Hub 已支持，不要承诺。
 
 ## 注册与邀请进部门
 
@@ -50,3 +64,4 @@ Base URL 一律是当前站点的 `{origin}/ai`。不要使用 :3000 或 :3100�
 - CC Switch 持续 API error / Retrying：上游必须是 Fabric 的 `{origin}/ai`，禁止填 127.0.0.1:15721（那是 CC Switch 本地代理，填成上游会循环）。重启 CC Switch 后再试。
 - 403 team_required：API Key 未绑定团队。确认 Key 已绑定团队后再调用。
 - 调用失败且用户提供了 Request ID：用 lookup_request 查询该次调用，根据状态和错误码解答。没有 ID 时引导到「我的调用」复制。
+- ZCode 自定义供应商贴图没反应 / 模型说看不到图：添加 `glm-5.3-flash` 时勾选输入类型「图片」，不要只用默认「文本」。按「ZCode 接 Token Hub 与识图」带图回答。

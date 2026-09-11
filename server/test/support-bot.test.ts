@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
@@ -72,8 +72,22 @@ test("knowledge covers GuideView facts and refuses invented features", () => {
   assert.match(SUPPORT_BOT_KNOWLEDGE, /工单系统已删除/);
   assert.match(SUPPORT_BOT_KNOWLEDGE, /飞书 Bot/);
   assert.match(SUPPORT_BOT_KNOWLEDGE, /不要要求用户粘贴完整 API Key/);
+  assert.match(SUPPORT_BOT_KNOWLEDGE, /ZCode/);
+  assert.match(SUPPORT_BOT_KNOWLEDGE, /勾选「图片」/);
+  assert.match(SUPPORT_BOT_KNOWLEDGE, /zcode-add-provider\.png/);
+  assert.match(SUPPORT_BOT_KNOWLEDGE, /zcode-add-model\.png/);
   const prompt = buildSupportAgentSystemPrompt("https://tokenhub.haizhi.com/ai");
   assert.match(prompt, /https:\/\/tokenhub\.haizhi\.com\/ai/);
+  assert.match(prompt, /https:\/\/tokenhub\.haizhi\.com\/guides\/zcode-add-provider\.png/);
+  assert.match(prompt, /https:\/\/tokenhub\.haizhi\.com\/guides\/zcode-add-model\.png/);
+  assert.equal(
+    existsSync(resolve(dirname(fileURLToPath(import.meta.url)), "../../web/public/guides/zcode-add-provider.png")),
+    true,
+  );
+  assert.equal(
+    existsSync(resolve(dirname(fileURLToPath(import.meta.url)), "../../web/public/guides/zcode-add-model.png")),
+    true,
+  );
   assert.match(prompt, /lookup_my_account/);
   assert.match(prompt, /lookup_request/);
   assert.match(prompt, /lookup_invite_contacts/);
