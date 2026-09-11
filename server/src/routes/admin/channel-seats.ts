@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import { and, count, desc, eq, inArray } from "drizzle-orm";
+import { and, count, desc, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../../db/client.js";
 import {
@@ -11,15 +11,19 @@ import {
   providers,
   upstreamCredentials,
 } from "../../db/schema/index.js";
-import { isEmployeeSubmittedCredentialMeta } from "../../lib/channel-credential-submit.js";
+import { isEmployeeSubmittedCredentialMeta, planEmployeeChannelCredentialSubmit } from "../../lib/channel-credential-submit.js";
+import { inspectCredentialSecretDuplicates } from "../../lib/credential-bulk.js";
+import { decryptSecret, encryptSecret, secretSuffix } from "../../lib/crypto-secret.js";
 import {
   normalizeSeatTag,
   planBulkChannelSeats,
+  planBulkSeatKeys,
   planChannelSeatCreate,
   planSeatCapacity,
   SEAT_BULK_MAX,
   SEAT_CHANNEL_FULL_MESSAGE,
   SEAT_CONFLICT_MESSAGE,
+  SEAT_KEY_DUPLICATE_SECRET_MESSAGE,
   seatCreateError,
 } from "../../lib/channel-seats.js";
 import { requirePasswordChanged, requireRoles, requireSession } from "../../middleware/auth.js";
@@ -361,6 +365,197 @@ export async function adminChannelSeatRoutes(app: FastifyInstance) {
         success: true,
         data: {
           created: result.created,
+          skipped: result.skipped,
+          failed: result.failed,
+        },
+      };
+    },
+  );
+
+  app.post(
+    "/api/admin/channel-seats/bulk-keys",
+    async (req, reply) => {
+      const body = z
+        .object({
+          productLineId: z.number().int().positive(),
+          entries: z
+            .array(
+              z.object({
+                name: z.string().trim().min(1).max(100),
+                secret: z.string().trim().min(8).max(4096),
+              }),
+            )
+            .min(1)
+            .max(SEAT_BULK_MAX),
+        })
+        .safeParse(req.body);
+      if (!body.success) {
+        return reply.code(400).send({ success: false, message: "请选择渠道并粘贴姓名和渠道 KEY" });
+      }
+
+      const batchDuplicates = inspectCredentialSecretDuplicates(
+        body.data.entries.map((entry) => entry.secret),
+      );
+      if (batchDuplicates.batchDuplicateIndexes.length) {
+        return reply.code(409).send({
+          success: false,
+          message: `名单中存在重复渠道 KEY（第 ${batchDuplicates.batchDuplicateIndexes.join("、")} 项）`,
+        });
+      }
+
+      const result = await db.transaction(async (tx) => {
+        await tx.execute(sql`select pg_advisory_xact_lock(${body.data.productLineId})`);
+        const [located] = await tx
+          .select({
+            productLine: productLines,
+            provider: providers,
+          })
+          .from(productLines)
+          .innerJoin(providers, eq(productLines.providerId, providers.id))
+          .where(eq(productLines.id, body.data.productLineId))
+          .limit(1);
+        if (!located) return { kind: "channel_missing" as const };
+
+        const seatRows = await tx
+          .select({
+            id: channelSeats.id,
+            employeeId: channelSeats.employeeId,
+            employeeName: employees.name,
+            tag: channelSeats.tag,
+            credentialId: channelSeats.credentialId,
+          })
+          .from(channelSeats)
+          .innerJoin(employees, eq(channelSeats.employeeId, employees.id))
+          .where(eq(channelSeats.productLineId, located.productLine.id))
+          .for("update");
+
+        const plan = planBulkSeatKeys({
+          entries: body.data.entries,
+          seats: seatRows,
+        });
+
+        const existingRows = await tx
+          .select({
+            id: upstreamCredentials.id,
+            secretEncrypted: upstreamCredentials.secretEncrypted,
+            supportedProtocols: upstreamCredentials.supportedProtocols,
+          })
+          .from(upstreamCredentials)
+          .where(eq(upstreamCredentials.productLineId, located.productLine.id))
+          .for("update");
+        const existingSecrets: string[] = [];
+        const unreadableCredentialIds: number[] = [];
+        for (const row of existingRows) {
+          try {
+            existingSecrets.push(decryptSecret(row.secretEncrypted));
+          } catch {
+            unreadableCredentialIds.push(row.id);
+          }
+        }
+
+        const assigned = [];
+        const skipped = [];
+        const failed = [];
+        for (const item of plan) {
+          if (item.kind === "skip") {
+            skipped.push({ name: item.name, message: item.message });
+            continue;
+          }
+          if (item.kind === "fail") {
+            failed.push({ name: item.name, message: item.message });
+            continue;
+          }
+          const submitPlan = planEmployeeChannelCredentialSubmit({
+            productLineStatus: located.productLine.status,
+            providerStatus: located.provider.status,
+            channelName: located.productLine.name,
+            employeeName: item.name,
+            protocolConfigs: located.productLine.protocolConfigs,
+            existingCredentials: existingRows,
+            existingSecrets,
+            unreadableCredentialIds,
+            secret: item.secret,
+          });
+          if (submitPlan.kind === "existing_duplicate") {
+            failed.push({ name: item.name, message: SEAT_KEY_DUPLICATE_SECRET_MESSAGE });
+            continue;
+          }
+          if (submitPlan.kind !== "accepted") {
+            failed.push({
+              name: item.name,
+              message: submitPlan.kind === "channel_unavailable"
+                ? "渠道不可用"
+                : submitPlan.kind === "channel_protocol_unset"
+                  ? "渠道尚未配置协议"
+                  : "渠道 KEY 无法导入",
+            });
+            continue;
+          }
+
+          const [credential] = await tx
+            .insert(upstreamCredentials)
+            .values({
+              productLineId: located.productLine.id,
+              label: submitPlan.label,
+              secretEncrypted: encryptSecret(item.secret),
+              secretSuffix: secretSuffix(item.secret),
+              supportedProtocols: submitPlan.protocols,
+              weight: 100,
+              priority: 0,
+              meta: {
+                createdBy: "employee_submit",
+                submittedByEmployeeId: item.employeeId,
+                importedByAdmin: true,
+              },
+              status: "active",
+            })
+            .returning({
+              id: upstreamCredentials.id,
+              secretSuffix: upstreamCredentials.secretSuffix,
+            });
+          await tx
+            .update(channelSeats)
+            .set({ credentialId: credential.id, updatedAt: new Date() })
+            .where(eq(channelSeats.id, item.seatId));
+          existingRows.push({
+            id: credential.id,
+            secretEncrypted: "",
+            supportedProtocols: submitPlan.protocols,
+          });
+          existingSecrets.push(item.secret);
+          assigned.push({
+            seatId: item.seatId,
+            name: item.name,
+            secretSuffix: credential.secretSuffix,
+          });
+        }
+
+        await tx.insert(opsAuditLogs).values({
+          actorEmployeeId: req.employeeId ?? null,
+          action: "channel_seat.bulk_keys",
+          targetType: "product_line",
+          targetId: String(located.productLine.id),
+          detail: {
+            productLineId: located.productLine.id,
+            assigned: assigned.length,
+            skipped: skipped.length,
+            failed: failed.length,
+            secretSuffixes: assigned.map((row) => row.secretSuffix),
+          },
+          ip: req.ip,
+        });
+
+        return { kind: "ok" as const, assigned, skipped, failed };
+      });
+
+      if (result.kind === "channel_missing") {
+        const error = seatCreateError("channel_missing");
+        return reply.code(error.status).send({ success: false, message: error.message });
+      }
+      return {
+        success: true,
+        data: {
+          assigned: result.assigned,
           skipped: result.skipped,
           failed: result.failed,
         },

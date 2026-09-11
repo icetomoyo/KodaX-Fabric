@@ -224,3 +224,115 @@ export function planBulkChannelSeats(input: {
   }
   return items;
 }
+
+export type BulkSeatKeyEntry = {
+  name: string;
+  secret: string;
+};
+
+export type BulkSeatKeySeat = {
+  id: number;
+  employeeId: number;
+  employeeName: string;
+  tag: string;
+  credentialId: number | null;
+};
+
+export type BulkSeatKeyPlanItem =
+  | {
+    kind: "assign";
+    seatId: number;
+    employeeId: number;
+    name: string;
+    secret: string;
+  }
+  | {
+    kind: "skip";
+    name: string;
+    reason: "already_submitted";
+    message: string;
+  }
+  | {
+    kind: "fail";
+    name: string;
+    reason: "not_seated" | "ambiguous_name";
+    message: string;
+  };
+
+export const SEAT_KEY_NOT_SEATED_MESSAGE = "该员工在此渠道没有席位";
+export const SEAT_KEY_AMBIGUOUS_NAME_MESSAGE = "该姓名对应多个席位，无法自动匹配";
+export const SEAT_KEY_ALREADY_SUBMITTED_MESSAGE = "该席位已提交渠道 KEY";
+export const SEAT_KEY_DUPLICATE_SECRET_MESSAGE = "渠道中已存在相同 KEY";
+
+export function planBulkSeatKeys(input: {
+  entries: readonly BulkSeatKeyEntry[];
+  seats: readonly BulkSeatKeySeat[];
+}): BulkSeatKeyPlanItem[] {
+  const seatsByName = new Map<string, BulkSeatKeySeat[]>();
+  for (const seat of input.seats) {
+    const name = seat.employeeName.trim();
+    const list = seatsByName.get(name) ?? [];
+    list.push(seat);
+    seatsByName.set(name, list);
+  }
+
+  const items: BulkSeatKeyPlanItem[] = [];
+  const reservedSeatIds = new Set<number>();
+  for (const entry of input.entries) {
+    const name = entry.name.trim();
+    const seats = seatsByName.get(name) ?? [];
+    if (!seats.length) {
+      items.push({
+        kind: "fail",
+        name,
+        reason: "not_seated",
+        message: SEAT_KEY_NOT_SEATED_MESSAGE,
+      });
+      continue;
+    }
+    const employeeIds = new Set(seats.map((seat) => seat.employeeId));
+    if (employeeIds.size > 1) {
+      items.push({
+        kind: "fail",
+        name,
+        reason: "ambiguous_name",
+        message: SEAT_KEY_AMBIGUOUS_NAME_MESSAGE,
+      });
+      continue;
+    }
+    const open = seats.filter((seat) => seat.credentialId == null && !reservedSeatIds.has(seat.id));
+    if (!open.length) {
+      items.push({
+        kind: "skip",
+        name,
+        reason: "already_submitted",
+        message: SEAT_KEY_ALREADY_SUBMITTED_MESSAGE,
+      });
+      continue;
+    }
+    const untaggedOpen = open.filter((seat) => seat.tag === "");
+    const chosen = untaggedOpen.length === 1
+      ? untaggedOpen[0]
+      : open.length === 1
+        ? open[0]
+        : null;
+    if (!chosen) {
+      items.push({
+        kind: "fail",
+        name,
+        reason: "ambiguous_name",
+        message: SEAT_KEY_AMBIGUOUS_NAME_MESSAGE,
+      });
+      continue;
+    }
+    reservedSeatIds.add(chosen.id);
+    items.push({
+      kind: "assign",
+      seatId: chosen.id,
+      employeeId: seats[0].employeeId,
+      name,
+      secret: entry.secret,
+    });
+  }
+  return items;
+}

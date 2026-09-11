@@ -15,6 +15,7 @@ const {
   collectSubmitableSeats,
   normalizeSeatTag,
   planBulkChannelSeats,
+  planBulkSeatKeys,
   planChannelSeatCreate,
   planSeatCapacity,
   SEAT_CHANNEL_FULL_MESSAGE,
@@ -214,6 +215,28 @@ test("bulk seat plan matches phones, skips duplicates, and fails missing account
   assert.equal(plan[5]?.kind === "skip" && plan[5].reason, "duplicate");
 });
 
+test("bulk seat keys match unique seated names and skip already submitted", () => {
+  const plan = planBulkSeatKeys({
+    entries: [
+      { name: "张三", secret: "secret-aaa-111" },
+      { name: "李四", secret: "secret-bbb-222" },
+      { name: "王五", secret: "secret-ccc-333" },
+      { name: "钱七", secret: "secret-ddd-444" },
+    ],
+    seats: [
+      { id: 10, employeeId: 1, employeeName: "张三", tag: "", credentialId: null },
+      { id: 11, employeeId: 2, employeeName: "李四", tag: "", credentialId: 88 },
+      { id: 12, employeeId: 3, employeeName: "王五", tag: "", credentialId: null },
+      { id: 13, employeeId: 4, employeeName: "王五", tag: "", credentialId: null },
+    ],
+  });
+  assert.equal(plan[0]?.kind, "assign");
+  assert.equal(plan[0]?.kind === "assign" && plan[0].seatId, 10);
+  assert.equal(plan[1]?.kind === "skip" && plan[1].reason, "already_submitted");
+  assert.equal(plan[2]?.kind === "fail" && plan[2].reason, "ambiguous_name");
+  assert.equal(plan[3]?.kind === "fail" && plan[3].reason, "not_seated");
+});
+
 test("seat copy is the product language", () => {
   assert.match(SEAT_REQUIRED_MESSAGE, /席位/);
   assert.match(SEAT_ALREADY_SUBMITTED_MESSAGE, /已提交/);
@@ -236,6 +259,12 @@ test("admin seat routes exist and require a session", async () => {
     payload: { productLineId: 1, people: [{ name: "张三", phone: "13800138000" }] },
   });
   assert.equal(bulk.statusCode, 401);
+  const bulkKeys = await app.inject({
+    method: "POST",
+    url: "/api/admin/channel-seats/bulk-keys",
+    payload: { productLineId: 1, entries: [{ name: "张三", secret: "abcdefghijkl" }] },
+  });
+  assert.equal(bulkKeys.statusCode, 401);
   const removed = await app.inject({
     method: "DELETE",
     url: "/api/admin/channel-seats/1",
@@ -280,6 +309,10 @@ test("seat registry and personal-center gate use the product language", async ()
   assert.match(seatsView, /标签/);
   assert.match(seatsView, /parseBulkRegisterText/);
   assert.match(seatsView, /\/api\/admin\/channel-seats\/bulk/);
+  assert.match(seatsView, /\/api\/admin\/channel-seats\/bulk-keys/);
+  assert.match(seatsView, /批量添加 KEY/);
+  assert.match(seatsView, /parseBulkSeatKeysText/);
+  assert.match(adminSeats, /channel-seats\/bulk-keys/);
   assert.match(seatsView, /回收/);
   assert.match(seatsView, /销毁已提交的渠道 KEY/);
   assert.doesNotMatch(seatsView, /class="page-title"/);

@@ -49,6 +49,7 @@ export const OPS_AUDIT_ACTION_LABELS: Record<string, string> = {
   "credential.employee_submit": "员工提交上游 Key",
   "channel_seat.create": "登记席位",
   "channel_seat.bulk_create": "批量登记席位",
+  "channel_seat.bulk_keys": "批量添加席位渠道 KEY",
   "channel_seat.delete": "回收席位",
   "credential.update": "更新上游 Key",
   "credential.bulk_status": "批量更新上游 Key 状态",

@@ -6,6 +6,7 @@
         <div class="head-actions">
           <el-button :loading="loading" @click="refresh">刷新</el-button>
           <el-button :disabled="!selectedChannel || channelFull" @click="openBulk">批量添加</el-button>
+          <el-button :disabled="!selectedChannel" @click="openBulkKeys">批量添加 KEY</el-button>
           <el-button type="primary" :disabled="!selectedChannel || channelFull" @click="openCreate">登记席位</el-button>
         </div>
       </div>
@@ -234,6 +235,64 @@
         </el-button>
       </template>
     </el-dialog>
+
+    <el-dialog v-model="showBulkKeys" title="批量添加 KEY" width="560px" destroy-on-close>
+      <el-form label-position="top">
+        <el-form-item label="渠道">
+          <el-input :model-value="selectedChannelLabel" disabled />
+        </el-form-item>
+        <el-form-item label="姓名和渠道 KEY" required>
+          <el-input
+            v-model="bulkKeysRaw"
+            type="textarea"
+            :rows="10"
+            resize="vertical"
+            placeholder="每行一人：姓名 渠道KEY&#10;也支持用逗号或 Tab 分隔"
+          />
+          <el-text class="form-help" type="info" size="small">
+            按姓名匹配当前渠道已登记席位。已提交的会跳过。同名多个席位无法自动匹配。单次最多 200 把。
+            <b v-if="bulkKeysParse.entries.length">已识别 {{ bulkKeysParse.entries.length }} 把</b>
+          </el-text>
+          <el-alert
+            v-if="bulkKeysParse.errors.length"
+            class="parse-errors"
+            type="error"
+            :closable="false"
+            show-icon
+          >
+            <div v-for="error in bulkKeysParse.errors.slice(0, 4)" :key="error">{{ error }}</div>
+            <div v-if="bulkKeysParse.errors.length > 4">
+              另有 {{ bulkKeysParse.errors.length - 4 }} 项格式错误
+            </div>
+          </el-alert>
+        </el-form-item>
+        <el-table
+          v-if="bulkKeysParse.entries.length"
+          :data="bulkKeysParse.entries.slice(0, 5)"
+          size="small"
+          stripe
+        >
+          <el-table-column prop="name" label="姓名" />
+          <el-table-column label="KEY">
+            <template #default="{ row }">{{ maskSeatKeySecret(row.secret) }}</template>
+          </el-table-column>
+        </el-table>
+        <el-text v-if="bulkKeysParse.entries.length > 5" class="form-help" type="info" size="small">
+          其余 {{ bulkKeysParse.entries.length - 5 }} 把将一并导入
+        </el-text>
+      </el-form>
+      <template #footer>
+        <el-button @click="showBulkKeys = false">取消</el-button>
+        <el-button
+          type="primary"
+          :loading="bulkKeysSaving"
+          :disabled="!bulkKeysParse.entries.length || Boolean(bulkKeysParse.errors.length)"
+          @click="createBulkKeys"
+        >
+          导入 {{ bulkKeysParse.entries.length || "" }} 把 KEY
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -242,6 +301,7 @@ import { computed, nextTick, onMounted, reactive, ref, watch } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { http } from "@/api/http";
 import { parseBulkRegisterText } from "@/lib/bulk-register-users";
+import { maskSeatKeySecret, parseBulkSeatKeysText } from "@/lib/bulk-seat-keys";
 import { channelDisplayName } from "@/lib/channel-display";
 import { formatDateTime } from "@/lib/date-time";
 import { useTablePage } from "@/lib/table-page";
@@ -285,6 +345,9 @@ const employeeLoading = ref(false);
 const removingId = ref<number | null>(null);
 const showCreate = ref(false);
 const showBulk = ref(false);
+const showBulkKeys = ref(false);
+const bulkKeysSaving = ref(false);
+const bulkKeysRaw = ref("");
 const seats = ref<SeatRow[]>([]);
 const employees = ref<EmployeeOption[]>([]);
 const channels = ref<ChannelOption[]>([]);
@@ -337,6 +400,7 @@ const channelFull = computed(() => {
   return registeredCount(channel.id) >= channel.seatCount;
 });
 const bulkParse = computed(() => parseBulkRegisterText(bulkRaw.value));
+const bulkKeysParse = computed(() => parseBulkSeatKeysText(bulkKeysRaw.value));
 
 function channelTitle(channel: ChannelOption) {
   return channelDisplayName({
@@ -463,6 +527,15 @@ function openBulk() {
   showBulk.value = true;
 }
 
+function openBulkKeys() {
+  if (!selectedProductLineId.value) {
+    ElMessage.warning("请先选择渠道");
+    return;
+  }
+  bulkKeysRaw.value = "";
+  showBulkKeys.value = true;
+}
+
 async function createSeat() {
   if (!selectedProductLineId.value) {
     ElMessage.warning("请先选择渠道");
@@ -532,6 +605,51 @@ async function createBulkSeats() {
     ElMessage.error(requestMessage(error, "批量登记失败"));
   } finally {
     bulkSaving.value = false;
+  }
+}
+
+async function createBulkKeys() {
+  if (!selectedProductLineId.value) {
+    ElMessage.warning("请先选择渠道");
+    return;
+  }
+  const parsed = bulkKeysParse.value;
+  if (!parsed.entries.length) {
+    ElMessage.warning("请粘贴姓名和渠道 KEY");
+    return;
+  }
+  if (parsed.errors.length) {
+    ElMessage.warning("请先修正格式错误");
+    return;
+  }
+  bulkKeysSaving.value = true;
+  try {
+    const { data } = await http.post("/api/admin/channel-seats/bulk-keys", {
+      productLineId: selectedProductLineId.value,
+      entries: parsed.entries.map((row) => ({ name: row.name, secret: row.secret })),
+    });
+    if (!data.success) throw new Error(data.message || "批量添加 KEY 失败");
+    const assigned = Array.isArray(data.data?.assigned) ? data.data.assigned.length : 0;
+    const skipped = Array.isArray(data.data?.skipped) ? data.data.skipped.length : 0;
+    const failed = Array.isArray(data.data?.failed) ? data.data.failed.length : 0;
+    if (failed) {
+      const first = data.data.failed[0];
+      ElMessage.warning(
+        `已导入 ${assigned} 把，跳过 ${skipped} 把，失败 ${failed} 把${first?.name ? `（${first.name} ${first.message}）` : ""}`,
+      );
+    } else if (skipped && assigned) {
+      ElMessage.success(`已导入 ${assigned} 把，跳过 ${skipped} 把`);
+    } else if (assigned) {
+      ElMessage.success(`已导入 ${assigned} 把 KEY`);
+    } else {
+      ElMessage.warning(skipped ? `没有新增 KEY，跳过 ${skipped} 把` : "没有新增 KEY");
+    }
+    showBulkKeys.value = false;
+    await refresh();
+  } catch (error) {
+    ElMessage.error(requestMessage(error, "批量添加 KEY 失败"));
+  } finally {
+    bulkKeysSaving.value = false;
   }
 }
 
