@@ -3,7 +3,6 @@ import type { SubmitableChannel, SubmitableChannelRow } from "./channel-credenti
 export const SEAT_CONFLICT_MESSAGE = "该员工在此渠道已有该席位";
 export const SEAT_REQUIRED_MESSAGE = "没有该渠道的席位，不能提交渠道 KEY";
 export const SEAT_ALREADY_SUBMITTED_MESSAGE = "该席位已提交渠道 KEY";
-export const SEAT_SUPER_ADMIN_MESSAGE = "超级管理员不登记席位";
 export const SEAT_EMPLOYEE_MISSING_MESSAGE = "员工不存在";
 export const SEAT_CHANNEL_MISSING_MESSAGE = "渠道不存在";
 export const SEAT_TAG_INVALID_MESSAGE = "席位标签最多 32 个字符";
@@ -100,7 +99,6 @@ export function collectSubmitableSeats(
 
 export type SeatCreatePlan =
   | { kind: "accepted" }
-  | { kind: "super_admin" }
   | { kind: "employee_missing" }
   | { kind: "channel_missing" }
   | { kind: "conflict" }
@@ -115,7 +113,6 @@ export function planChannelSeatCreate(input: {
 }): SeatCreatePlan {
   if (input.tagValid === false) return { kind: "tag_invalid" };
   if (!input.employeeExists) return { kind: "employee_missing" };
-  if (input.employeeRole === "admin") return { kind: "super_admin" };
   if (!input.channelExists) return { kind: "channel_missing" };
   if (input.alreadySeated) return { kind: "conflict" };
   return { kind: "accepted" };
@@ -126,8 +123,6 @@ export function seatCreateError(kind: Exclude<SeatCreatePlan["kind"], "accepted"
   message: string;
 } {
   switch (kind) {
-    case "super_admin":
-      return { status: 400, message: SEAT_SUPER_ADMIN_MESSAGE };
     case "employee_missing":
       return { status: 404, message: SEAT_EMPLOYEE_MISSING_MESSAGE };
     case "channel_missing":
@@ -157,7 +152,7 @@ export type BulkSeatPlanItem =
     kind: "skip";
     name: string;
     phone: string;
-    reason: "duplicate" | "super_admin";
+    reason: "duplicate";
     message: string;
   }
   | {
@@ -197,16 +192,6 @@ export function planBulkChannelSeats(input: {
         phone,
         reason: "not_found",
         message: "未注册",
-      });
-      continue;
-    }
-    if (employee.role === "admin") {
-      items.push({
-        kind: "skip",
-        name: employee.name,
-        phone,
-        reason: "super_admin",
-        message: SEAT_SUPER_ADMIN_MESSAGE,
       });
       continue;
     }

@@ -53,17 +53,29 @@
                 </h3>
                 <p class="muted">{{ registeredSeatLabel(selectedChannel) }}</p>
               </div>
-              <div class="detail-actions">
-                <el-button :disabled="channelFull" @click="openBulk">批量添加</el-button>
-                <el-button type="primary" :disabled="channelFull" @click="openCreate">登记席位</el-button>
+              <div class="seat-filters">
+                <el-input
+                  v-model="seatNameQuery"
+                  clearable
+                  placeholder="按姓名查找"
+                  class="seat-filter-input"
+                />
+                <el-input
+                  v-model="seatPhoneQuery"
+                  clearable
+                  placeholder="按手机号查找"
+                  class="seat-filter-input"
+                />
+                <el-checkbox v-model="onlyUnsubmitted">只看未提交</el-checkbox>
               </div>
             </div>
 
             <div class="seats-table-wrap">
             <el-table
-              :data="selectedSeats"
+              ref="seatsTableRef"
+              :data="pagedSeats"
               stripe
-              empty-text="这个渠道还没有登记席位"
+              :empty-text="seatTableEmptyText"
               class="seats-table"
               height="100%"
             >
@@ -80,10 +92,15 @@
                   <span v-else class="muted-cell">—</span>
                 </template>
               </el-table-column>
-              <el-table-column label="渠道 KEY" min-width="120">
+              <el-table-column label="是否提交" width="112" align="center">
                 <template #default="{ row }">
-                  <span v-if="row.secretSuffix">•••• {{ row.secretSuffix }}</span>
-                  <el-tag v-else type="warning" effect="plain">未提交</el-tag>
+                  <el-tag
+                    class="submit-status-tag"
+                    :type="row.secretSuffix ? 'success' : 'warning'"
+                    effect="plain"
+                  >
+                    {{ row.secretSuffix ? "已提交" : "未提交" }}
+                  </el-tag>
                 </template>
               </el-table-column>
               <el-table-column label="登记时间" min-width="170">
@@ -97,6 +114,15 @@
                 </template>
               </el-table-column>
             </el-table>
+            </div>
+            <div v-if="seatTotal > 0" class="pager">
+              <el-pagination
+                v-model:current-page="seatPage"
+                background
+                layout="total, prev, pager, next"
+                :total="seatTotal"
+                :page-size="seatPageSize"
+              />
             </div>
           </template>
           <el-empty
@@ -212,12 +238,13 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from "vue";
+import { computed, nextTick, onMounted, reactive, ref, watch } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { http } from "@/api/http";
 import { parseBulkRegisterText } from "@/lib/bulk-register-users";
 import { channelDisplayName } from "@/lib/channel-display";
 import { formatDateTime } from "@/lib/date-time";
+import { useTablePage } from "@/lib/table-page";
 
 type SeatRow = {
   id: number;
@@ -250,6 +277,7 @@ type ChannelOption = {
   seatCount: number;
 };
 
+const seatsTableRef = ref<{ doLayout?: () => void } | null>(null);
 const loading = ref(false);
 const saving = ref(false);
 const bulkSaving = ref(false);
@@ -261,6 +289,9 @@ const seats = ref<SeatRow[]>([]);
 const employees = ref<EmployeeOption[]>([]);
 const channels = ref<ChannelOption[]>([]);
 const selectedProductLineId = ref<number | null>(null);
+const seatNameQuery = ref("");
+const seatPhoneQuery = ref("");
+const onlyUnsubmitted = ref(false);
 const bulkRaw = ref("");
 const createForm = reactive({
   employeeId: undefined as number | undefined,
@@ -276,9 +307,30 @@ const selectedChannelLabel = computed(() => {
   const title = channelTitle(channel);
   return channel.tag ? `${title} · ${channel.tag}` : title;
 });
-const selectedSeats = computed(() =>
-  seats.value.filter((seat) => seat.productLineId === selectedProductLineId.value),
-);
+const selectedSeats = computed(() => {
+  const nameQuery = seatNameQuery.value.trim();
+  const phoneQuery = seatPhoneQuery.value.trim();
+  return seats.value.filter((seat) => {
+    if (seat.productLineId !== selectedProductLineId.value) return false;
+    if (onlyUnsubmitted.value && seat.secretSuffix) return false;
+    if (nameQuery && !seat.employeeName.includes(nameQuery)) return false;
+    if (phoneQuery && !seat.employeePhone.includes(phoneQuery)) return false;
+    return true;
+  });
+});
+const {
+  page: seatPage,
+  paged: pagedSeats,
+  total: seatTotal,
+  pageSize: seatPageSize,
+  resetPage: resetSeatPage,
+} = useTablePage(selectedSeats);
+const seatTableEmptyText = computed(() => {
+  if (!seats.value.some((seat) => seat.productLineId === selectedProductLineId.value)) {
+    return "这个渠道还没有登记席位";
+  }
+  return "没有符合条件的席位";
+});
 const channelFull = computed(() => {
   const channel = selectedChannel.value;
   if (!channel || channel.seatCount <= 0) return false;
@@ -312,6 +364,17 @@ function requestMessage(error: unknown, fallback: string): string {
   }
   return error instanceof Error ? error.message : fallback;
 }
+
+watch(selectedProductLineId, () => {
+  seatNameQuery.value = "";
+  seatPhoneQuery.value = "";
+  onlyUnsubmitted.value = false;
+  resetSeatPage();
+});
+
+watch([seatNameQuery, seatPhoneQuery, onlyUnsubmitted], () => {
+  resetSeatPage();
+});
 
 function rememberSelectedChannel() {
   if (selectedProductLineId.value != null
@@ -355,6 +418,8 @@ async function refresh() {
     ElMessage.error(requestMessage(error, "加载席位失败"));
   } finally {
     loading.value = false;
+    await nextTick();
+    seatsTableRef.value?.doLayout?.();
   }
 }
 
@@ -367,7 +432,6 @@ async function searchEmployees(query: string) {
     if (!data.success) throw new Error(data.message || "搜索员工失败");
     employees.value = Array.isArray(data.data)
       ? data.data
-          .filter((row: EmployeeOption & { role?: string }) => row.role !== "admin")
           .map((row: EmployeeOption) => ({ id: row.id, name: row.name, phone: row.phone }))
       : [];
   } catch (error) {
@@ -538,8 +602,7 @@ onMounted(() => {
   line-height: 1.5;
 }
 
-.head-actions,
-.detail-actions {
+.head-actions {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
@@ -683,6 +746,18 @@ onMounted(() => {
   margin-bottom: 14px;
 }
 
+.seat-filters {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.seat-filter-input {
+  width: 168px;
+}
+
 .detail-title {
   display: flex;
   flex-wrap: wrap;
@@ -703,6 +778,24 @@ onMounted(() => {
 .seats-table {
   width: 100%;
   height: 100%;
+}
+
+.seats-table :deep(.el-table__header),
+.seats-table :deep(.el-table__body) {
+  table-layout: fixed;
+}
+
+.submit-status-tag {
+  box-sizing: border-box;
+  justify-content: center;
+  min-width: 64px;
+}
+
+.pager {
+  display: flex;
+  flex-shrink: 0;
+  justify-content: flex-end;
+  margin-top: 12px;
 }
 
 .muted-cell {

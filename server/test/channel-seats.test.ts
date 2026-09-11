@@ -21,13 +21,12 @@ const {
   SEAT_ALREADY_SUBMITTED_MESSAGE,
   SEAT_CONFLICT_MESSAGE,
   SEAT_REQUIRED_MESSAGE,
-  SEAT_SUPER_ADMIN_MESSAGE,
   SEAT_TAG_INVALID_MESSAGE,
   seatCreateError,
 } = await import("../src/lib/channel-seats.js");
 const { adminChannelSeatRoutes } = await import("../src/routes/admin/channel-seats.js");
 
-test("seat create plan rejects super admin, missing rows, duplicates, and invalid tags", () => {
+test("seat create plan accepts super admin and rejects missing rows, duplicates, and invalid tags", () => {
   assert.deepEqual(
     planChannelSeatCreate({
       employeeExists: true,
@@ -44,7 +43,7 @@ test("seat create plan rejects super admin, missing rows, duplicates, and invali
       channelExists: true,
       alreadySeated: false,
     }).kind,
-    "super_admin",
+    "accepted",
   );
   assert.equal(
     planChannelSeatCreate({
@@ -85,7 +84,6 @@ test("seat create plan rejects super admin, missing rows, duplicates, and invali
   );
   assert.equal(seatCreateError("conflict").status, 409);
   assert.equal(seatCreateError("conflict").message, SEAT_CONFLICT_MESSAGE);
-  assert.equal(seatCreateError("super_admin").message, SEAT_SUPER_ADMIN_MESSAGE);
   assert.equal(seatCreateError("tag_invalid").message, SEAT_TAG_INVALID_MESSAGE);
 });
 
@@ -185,7 +183,7 @@ test("submitable seats keep unsubmitted tagged seats on active channels", () => 
   );
 });
 
-test("bulk seat plan matches phones, skips duplicates and super-admins, fails missing accounts", () => {
+test("bulk seat plan matches phones, skips duplicates, and fails missing accounts", () => {
   const employeesByPhone = new Map([
     ["13800138000", { id: 1, name: "张三", role: "employee", status: "active" }],
     ["13900139000", { id: 2, name: "李四", role: "admin", status: "active" }],
@@ -206,10 +204,10 @@ test("bulk seat plan matches phones, skips duplicates and super-admins, fails mi
   });
   assert.deepEqual(
     plan.map((item) => item.kind),
-    ["create", "skip", "fail", "skip", "fail", "skip"],
+    ["create", "create", "fail", "skip", "fail", "skip"],
   );
   assert.equal(plan[0]?.kind === "create" && plan[0].employeeId, 1);
-  assert.equal(plan[1]?.kind === "skip" && plan[1].reason, "super_admin");
+  assert.equal(plan[1]?.kind === "create" && plan[1].employeeId, 2);
   assert.equal(plan[2]?.kind === "fail" && plan[2].reason, "inactive");
   assert.equal(plan[3]?.kind === "skip" && plan[3].reason, "duplicate");
   assert.equal(plan[4]?.kind === "fail" && plan[4].reason, "not_found");
@@ -269,6 +267,16 @@ test("seat registry and personal-center gate use the product language", async ()
   assert.match(seatsView, /registeredSeatLabel/);
   assert.match(seatsView, /批量添加/);
   assert.match(seatsView, /登记席位/);
+  assert.match(seatsView, /按姓名查找/);
+  assert.match(seatsView, /按手机号查找/);
+  assert.match(seatsView, /只看未提交/);
+  assert.match(seatsView, /是否提交/);
+  assert.match(seatsView, /已提交/);
+  assert.doesNotMatch(seatsView, /label="渠道 KEY"/);
+  assert.match(seatsView, /onlyUnsubmitted/);
+  assert.match(seatsView, /useTablePage/);
+  assert.match(seatsView, /el-pagination/);
+  assert.match(seatsView, /pagedSeats/);
   assert.match(seatsView, /标签/);
   assert.match(seatsView, /parseBulkRegisterText/);
   assert.match(seatsView, /\/api\/admin\/channel-seats\/bulk/);
