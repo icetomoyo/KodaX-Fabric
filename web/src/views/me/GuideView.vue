@@ -119,6 +119,10 @@
           <span>常用 <strong>OpenAI Chat Completion 协议</strong>（API 格式选 Chat Completions）。若填 Anthropic 接口则用 Anthropic Message 协议，须与 Key 一致。</span>
         </div>
         <div class="protocol-row">
+          <span>WorkBuddy（自定义模型）</span>
+          <span>必须选 <strong>OpenAI Chat Completion 协议</strong>。WorkBuddy 仅支持 OpenAI 兼容协议，不能用 Anthropic Message 或 OpenAI Response Key。</span>
+        </div>
+        <div class="protocol-row">
           <span>KodaX、KodaX Space</span>
           <span>支持两种协议，推荐选 <strong>OpenAI Chat Completion 协议</strong></span>
         </div>
@@ -141,7 +145,7 @@
       </div>
 
       <ul class="notes">
-        <li>如不确定协议，先确认客户端要求填写 Anthropic 还是 OpenAI。公司产品 KodaX / KodaX Space 选择 Chat Completion；常见外部工具为 Claude Code、Cursor 或 Codex。</li>
+        <li>如不确定协议，先确认客户端要求填写 Anthropic 还是 OpenAI。公司产品 KodaX / KodaX Space 选择 Chat Completion；常见外部工具为 Claude Code、Cursor、WorkBuddy 或 Codex。</li>
         <li>Chat Completion 协议的 API Key 无法调用 Responses 接口，Responses 协议的 API Key 也无法调用 Chat Completions 接口。</li>
         <li>Codex 自定义模型默认使用 Responses 接口，应选择 OpenAI Response 协议。</li>
         <li>同时使用 Claude Code、Cursor、Codex 时，分别为每种产品创建对应协议的 API Key。</li>
@@ -169,9 +173,9 @@
 
       <ol class="steps">
         <li>打开「API Key」页，点击「创建 Key」。</li>
-        <li>填写名称，建议使用产品名，例如 <code>Cursor</code>、<code>Claude Code</code>、<code>KodaX</code>。</li>
+        <li>填写名称，建议使用产品名，例如 <code>Cursor</code>、<code>Claude Code</code>、<code>KodaX</code>、<code>workbuddy</code>。</li>
         <li>选择上游渠道。若无可选项，请联系团队管理员先配置渠道。</li>
-        <li>选择协议，须与上一步对照表一致：Claude Code 选择 Anthropic Message，Cursor / KodaX / KodaX Space 选择 OpenAI Chat Completion，Codex 选择 OpenAI Response。</li>
+        <li>选择协议，须与上一步对照表一致：Claude Code 选择 Anthropic Message，Cursor / KodaX / KodaX Space / WorkBuddy 选择 OpenAI Chat Completion，Codex 选择 OpenAI Response。</li>
         <li>创建成功后立即复制完整 API Key（<code>th_</code> 开头）。关闭窗口后将无法再次查看明文。</li>
       </ol>
 
@@ -232,6 +236,14 @@
           </span>
         </div>
         <div class="protocol-row">
+          <span>WorkBuddy</span>
+          <span>
+            设置 → 模型 → 添加模型。供应商选「自定义」，接口地址填写上方地址，不要再拼
+            <code>/chat/completions</code>。API Key 填写第三步创建的 OpenAI Chat Completion Key。
+            模型建议 <code>glm-5.3-flash</code>（多模态），必须勾选「图片输入」。点「测试连接」成功后再保存。
+          </span>
+        </div>
+        <div class="protocol-row">
           <span>KodaX、KodaX Space</span>
           <span>按 OpenAI Chat Completion 配置：Base URL 填写上方地址，API Key 填写第三步创建的 API Key。</span>
         </div>
@@ -249,6 +261,27 @@
             CC Switch 的本地代理地址 <code>127.0.0.1:15721</code> 不能作为上游地址，否则会形成请求循环。
           </span>
         </div>
+      </div>
+
+      <p class="lead">WorkBuddy 对接对照下面两张图：创建 Key 必须选 OpenAI Chat Completion；自定义模型建议用多模态并勾选「图片输入」。</p>
+      <div class="guide-shots" aria-label="WorkBuddy 配置截图">
+        <figure>
+          <img
+            :src="workbuddyCreateKeySrc"
+            alt="创建 API Key 时选择 OpenAI Chat Completion 协议"
+          />
+          <figcaption>创建 Key 时协议必须选 OpenAI Chat Completion，不能选 Anthropic Message 或 OpenAI Response。</figcaption>
+        </figure>
+        <figure>
+          <img
+            :src="workbuddyAddModelSrc"
+            alt="WorkBuddy 添加自定义模型 glm-5.3-flash 并勾选图片输入"
+          />
+          <figcaption>
+            供应商选「自定义」，接口地址填上方 Base URL，模型建议
+            <code>glm-5.3-flash</code>，必须勾选「图片输入」，测试连接成功后再保存。
+          </figcaption>
+        </figure>
       </div>
 
       <p class="lead">Claude Code 可直接复制以下配置，将其中的 Key 替换为你的 API Key：</p>
@@ -330,6 +363,8 @@ const teamNames = computed(() => teams.value.map((team) => team.name).filter(Boo
 const clientBaseUrl = computed(() =>
   relayClientBaseUrl(relayUrl.value || `${window.location.origin}${RELAY_BASE_PATH}`),
 );
+const workbuddyCreateKeySrc = "/guides/workbuddy-create-key.png";
+const workbuddyAddModelSrc = "/guides/workbuddy-add-model.png";
 const claudeSettingsSnippet = computed(() =>
   JSON.stringify(
     {
@@ -570,6 +605,34 @@ onMounted(loadGuideContext);
 .protocol-row strong {
   color: #0f172a;
   font-weight: 650;
+}
+
+.guide-shots {
+  display: grid;
+  gap: 16px;
+  margin: 0 0 16px;
+}
+
+.guide-shots figure {
+  margin: 0;
+  padding: 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  background: #f8fafc;
+}
+
+.guide-shots img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 8px;
+}
+
+.guide-shots figcaption {
+  margin-top: 8px;
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.6;
 }
 
 .step-actions {

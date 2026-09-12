@@ -48,7 +48,7 @@ export const relayProtocolOptions: readonly RelayProtocolOption[] = [
     description: "OpenAI Chat Completions 原生转发",
     endpoint: `POST ${RELAY_BASE_PATH}/chat/completions`,
     authHeaders: ["Authorization: Bearer <你的 API Key>"],
-    recommendedClients: ["Cursor", "ZCode", "OpenAI 兼容客户端"],
+    recommendedClients: ["Cursor", "ZCode", "WorkBuddy", "OpenAI 兼容客户端"],
   },
   {
     value: "openai_responses",

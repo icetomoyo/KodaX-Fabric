@@ -6,6 +6,8 @@
 
 ### Added
 
+- Token Bot 空态快捷问题改为高频接入：WorkBuddy / ZCode / Claude Code / Codex 怎么对接，以及协议怎么选
+- Token Bot / 接入教程补充 WorkBuddy：创建 Key 必须选 OpenAI Chat Completion；自定义模型建议 `glm-5.3-flash` 并勾选「图片输入」，回答里带创建 Key 和添加模型截图
 - 一名员工可以同时加入多个部门（仍只属于一家企业）。创建 API Key 时若属于多个部门必须选择绑定部门，只有一个部门则默认显示且不可改。用量记入该 Key 绑定的部门。
 - 按集团组织架构图补齐部门树，并把已注册员工挪到对应部门（含一人多部门）
 - Token Bot：员工说出自己的部门后可直接加入；同名部门再确认企业。多部门的人仍可让管理员邀请

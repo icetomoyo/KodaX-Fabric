@@ -76,16 +76,40 @@ test("knowledge covers GuideView facts and refuses invented features", () => {
   assert.match(SUPPORT_BOT_KNOWLEDGE, /勾选「图片」/);
   assert.match(SUPPORT_BOT_KNOWLEDGE, /zcode-add-provider\.png/);
   assert.match(SUPPORT_BOT_KNOWLEDGE, /zcode-add-model\.png/);
+  assert.match(SUPPORT_BOT_KNOWLEDGE, /WorkBuddy/);
+  assert.match(SUPPORT_BOT_KNOWLEDGE, /OpenAI Chat Completion 协议/);
+  assert.match(SUPPORT_BOT_KNOWLEDGE, /图片输入/);
+  assert.match(SUPPORT_BOT_KNOWLEDGE, /workbuddy-create-key\.png/);
+  assert.match(SUPPORT_BOT_KNOWLEDGE, /workbuddy-add-model\.png/);
+  assert.match(SUPPORT_BOT_KNOWLEDGE, /Claude Code 接 Token Hub/);
+  assert.match(SUPPORT_BOT_KNOWLEDGE, /ANTHROPIC_BASE_URL/);
+  assert.match(SUPPORT_BOT_KNOWLEDGE, /~\/\.claude\/settings\.json/);
+  assert.match(SUPPORT_BOT_KNOWLEDGE, /Codex 接 Token Hub/);
+  assert.match(SUPPORT_BOT_KNOWLEDGE, /wire_api = "responses"/);
+  assert.match(SUPPORT_BOT_KNOWLEDGE, /~\/\.codex\/config\.toml/);
+  assert.match(SUPPORT_BOT_KNOWLEDGE, /用户问协议怎么选/);
   const prompt = buildSupportAgentSystemPrompt("https://tokenhub.haizhi.com/ai");
   assert.match(prompt, /https:\/\/tokenhub\.haizhi\.com\/ai/);
   assert.match(prompt, /https:\/\/tokenhub\.haizhi\.com\/guides\/zcode-add-provider\.png/);
   assert.match(prompt, /https:\/\/tokenhub\.haizhi\.com\/guides\/zcode-add-model\.png/);
+  assert.match(prompt, /https:\/\/tokenhub\.haizhi\.com\/guides\/workbuddy-create-key\.png/);
+  assert.match(prompt, /https:\/\/tokenhub\.haizhi\.com\/guides\/workbuddy-add-model\.png/);
+  assert.match(prompt, /"ANTHROPIC_BASE_URL": "https:\/\/tokenhub\.haizhi\.com\/ai"/);
+  assert.match(prompt, /base_url = "https:\/\/tokenhub\.haizhi\.com\/ai"/);
   assert.equal(
     existsSync(resolve(dirname(fileURLToPath(import.meta.url)), "../../web/public/guides/zcode-add-provider.png")),
     true,
   );
   assert.equal(
     existsSync(resolve(dirname(fileURLToPath(import.meta.url)), "../../web/public/guides/zcode-add-model.png")),
+    true,
+  );
+  assert.equal(
+    existsSync(resolve(dirname(fileURLToPath(import.meta.url)), "../../web/public/guides/workbuddy-create-key.png")),
+    true,
+  );
+  assert.equal(
+    existsSync(resolve(dirname(fileURLToPath(import.meta.url)), "../../web/public/guides/workbuddy-add-model.png")),
     true,
   );
   assert.match(prompt, /lookup_my_account/);

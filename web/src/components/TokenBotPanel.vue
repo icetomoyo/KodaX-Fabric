@@ -36,7 +36,7 @@
             <template v-if="messages.length === 0 && !sending">
               <ConversationEmptyState
                 title="直接问接入问题"
-                description="我会结合你当前的 Key、最近调用和可用模型来回答。"
+                description="怎么对接、协议怎么选，都可以问。我会结合你当前的 Key 和调用记录来回答。"
               />
               <Suggestions>
                 <Suggestion
@@ -72,7 +72,7 @@
         <PromptInput @submit="onPromptSubmit">
           <PromptInputTextarea
             v-model="draft"
-            placeholder="例如：Base URL 填什么？"
+            placeholder="例如：Claude Code 怎么对接？"
             :disabled="sending"
             :maxlength="2000"
             class="pr-12"
@@ -147,11 +147,11 @@ type ChatLine = {
 };
 
 const suggestions = [
-  "Base URL 应该填什么？",
-  "三种协议怎么选？",
-  "我的 Key 为什么会 401？",
-  "现在可用哪些模型？",
-  "ZCode 贴图为什么看不了？",
+  "WorkBuddy 怎么对接？",
+  "ZCode 怎么对接？",
+  "Claude Code 怎么对接？",
+  "Codex 怎么对接？",
+  "协议怎么选？",
 ] as const;
 
 type DragSession = {
