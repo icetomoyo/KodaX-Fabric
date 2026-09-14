@@ -1,6 +1,48 @@
 <template>
   <AdminUsageDashboard v-if="auth.isSuperAdmin" />
   <div v-else class="dashboard-page">
+    <div class="panels-grid" :class="{ single: !auth.isSuperAdmin }">
+      <section class="page-card panel-card">
+        <div class="panel-head">
+          <h3 class="panel-title">今日消耗</h3>
+          <div class="rank-tools">
+            <el-radio-group v-if="rankLevels.length > 1" v-model="rankLevel">
+              <el-radio-button
+                v-for="level in rankLevels"
+                :key="level.value"
+                :value="level.value"
+              >
+                {{ level.label }}
+              </el-radio-button>
+            </el-radio-group>
+            <el-button v-if="rankLink" link type="primary" @click="router.push(rankLink.to)">
+              {{ rankLink.label }}
+            </el-button>
+          </div>
+        </div>
+        <el-empty
+          v-if="!loading && !rankRows.length"
+          description="今日暂无用量"
+          :image-size="72"
+        />
+        <div v-else class="usage-tree">
+          <div
+            v-for="row in rankRows"
+            :key="row.key"
+            class="usage-tree-row"
+            :class="{ root: !isDepartmentTree || row.depth === 0 }"
+          >
+            <span class="usage-tree-label">
+              <span v-if="row.tree" class="usage-tree-prefix">{{ row.tree }}</span>
+              <span class="usage-tree-title">{{ row.name }}</span>
+              <span v-if="row.sub" class="usage-tree-sub">{{ row.sub }}</span>
+            </span>
+            <span class="usage-tree-value">{{ formatTokenCompact(row.totalTokens) }}</span>
+          </div>
+        </div>
+      </section>
+    </div>
+
     <section class="page-card hero-card">
       <div class="page-head">
         <div class="head-actions">
@@ -44,49 +86,8 @@
       </div>
     </section>
 
-    <div class="panels-grid" :class="{ single: !auth.isSuperAdmin }">
+    <div v-if="auth.isSuperAdmin" class="panels-grid">
       <section class="page-card panel-card">
-        <div class="panel-head">
-          <h3 class="panel-title">今日消耗</h3>
-          <div class="rank-tools">
-            <el-radio-group v-if="rankLevels.length > 1" v-model="rankLevel">
-              <el-radio-button
-                v-for="level in rankLevels"
-                :key="level.value"
-                :value="level.value"
-              >
-                {{ level.label }}
-              </el-radio-button>
-            </el-radio-group>
-            <el-button v-if="rankLink" link type="primary" @click="router.push(rankLink.to)">
-              {{ rankLink.label }}
-            </el-button>
-          </div>
-        </div>
-        <el-empty
-          v-if="!loading && !rankRows.length"
-          description="今日暂无用量"
-          :image-size="72"
-        />
-        <div v-else class="usage-tree">
-          <div
-            v-for="row in rankRows"
-            :key="row.key"
-            class="usage-tree-row"
-            :class="{ root: !isDepartmentTree || row.depth === 0 }"
-          >
-            <span class="usage-tree-label">
-              <span v-if="row.tree" class="usage-tree-prefix">{{ row.tree }}</span>
-              <span class="usage-tree-title">{{ row.name }}</span>
-              <span v-if="row.sub" class="usage-tree-sub">{{ row.sub }}</span>
-            </span>
-            <span class="usage-tree-value">{{ formatTokenCompact(row.totalTokens) }}</span>
-          </div>
-        </div>
-      </section>
-
-
-      <section v-if="auth.isSuperAdmin" class="page-card panel-card">
         <div class="panel-head">
           <h3 class="panel-title">今日按接入平台</h3>
           <el-button v-if="auth.isSuperAdmin" link type="primary" @click="router.push('/admin/channels')">
@@ -411,7 +412,7 @@ const rankLevels = computed(() => {
   ];
 });
 
-const rankLevel = ref<RankLevel>("enterprise");
+const rankLevel = ref<RankLevel>("department");
 const isDepartmentTree = computed(() =>
   rankLevel.value === "department" && Boolean(data.value?.departmentUsageTree?.length),
 );

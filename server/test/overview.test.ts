@@ -8,12 +8,16 @@ process.env.CREDENTIAL_ENCRYPT_KEY ??= "unit-test-credential-secret";
 process.env.QUOTA_TIMEZONE = "Asia/Shanghai";
 
 const {
+  buildActiveEmployeesTodayQuery,
   buildAnalyticsByModelQuery,
   buildAnalyticsDailyTrendQuery,
   buildAnalyticsHourlyTrendQuery,
   buildByProviderTodayQuery,
   buildDepartmentOwnUsageQuery,
+  buildTodayAuditCompositionQuery,
   buildTodayAuditWhere,
+  buildTodayErrorsByStatusQuery,
+  buildTodayProductTypeQuery,
   buildTodayTeamTokensQuery,
   buildTopDepartmentsTodayQuery,
   buildTopEnterprisesTodayQuery,
@@ -117,6 +121,7 @@ test("workbench analytics hourly trend buckets request audits in the quota timez
   assert.match(sql, /"request_audits"/);
   assert.match(sql, /at time zone/);
   assert.match(sql, /HH24:00/);
+  assert.match(sql, /cache_read_tokens/);
   assert.doesNotMatch(sql, /current_date/);
   assert.match(sql, /group by 1/);
   assert.match(sql, /order by 1/);
@@ -131,6 +136,75 @@ test("workbench analytics model ranks group client_model in the created_at windo
   const sql = compiled.sql.replace(/\s+/g, " ");
   assert.match(sql, /"client_model"/);
   assert.match(sql, /"request_audits"\."created_at"/);
+});
+
+test("today workbench counts distinct employees with token usage", () => {
+  const compiled = buildActiveEmployeesTodayQuery({
+    now: SHANGHAI_MORNING_AFTER_UTC_MIDNIGHT,
+  }).toSQL();
+  const sql = compiled.sql.replace(/\s+/g, " ");
+  assert.match(sql, /count\(distinct "employee_id"\)/);
+  assert.match(sql, /"total_tokens" > 0/);
+  assert.ok(
+    compiled.params.map(String).includes("2026-09-04"),
+    compiled.params.map(String).join(","),
+  );
+});
+
+test("today workbench composition reads prompt, cache hit and completion from audits", () => {
+  const start = new Date("2026-09-03T16:00:00.000Z");
+  const endExclusive = new Date("2026-09-04T16:00:00.000Z");
+  const sql = buildTodayAuditCompositionQuery(start, endExclusive).toSQL().sql.replace(/\s+/g, " ");
+  assert.match(sql, /"prompt_tokens"/);
+  assert.match(sql, /"cache_read_tokens"/);
+  assert.match(sql, /"completion_tokens"/);
+  assert.match(sql, /"request_audits"\."created_at"/);
+});
+
+test("today workbench splits product type and failed audit status", () => {
+  const start = new Date("2026-09-03T16:00:00.000Z");
+  const endExclusive = new Date("2026-09-04T16:00:00.000Z");
+  const product = buildTodayProductTypeQuery(start, endExclusive).toSQL().sql.replace(/\s+/g, " ");
+  const errors = buildTodayErrorsByStatusQuery(start, endExclusive).toSQL().sql.replace(/\s+/g, " ");
+  assert.match(product, /"product_type"/);
+  assert.match(product, /group by/);
+  assert.match(errors, /"status"/);
+  assert.match(errors, /<> 'success'/);
+});
+
+test("super-admin overview assembles the today workbench payload", async () => {
+  const { readFileSync } = await import("node:fs");
+  const { dirname, resolve } = await import("node:path");
+  const { fileURLToPath } = await import("node:url");
+  const source = readFileSync(
+    resolve(dirname(fileURLToPath(import.meta.url)), "../src/routes/admin/overview.ts"),
+    "utf8",
+  );
+  assert.match(source, /percentChange/);
+  assert.match(source, /cacheHitRate/);
+  assert.match(source, /peakHour/);
+  assert.match(source, /tokenComposition/);
+  assert.match(source, /activeEmployees/);
+  assert.match(source, /productTypes/);
+  assert.match(source, /errorsByStatus/);
+  assert.match(source, /yesterday/);
+});
+
+test("platform department ranks keep only first-level rows with descendant totals", async () => {
+  const { readFileSync } = await import("node:fs");
+  const { dirname, resolve } = await import("node:path");
+  const { fileURLToPath } = await import("node:url");
+  const source = readFileSync(
+    resolve(dirname(fileURLToPath(import.meta.url)), "../src/routes/admin/overview.ts"),
+    "utf8",
+  );
+  assert.match(source, /firstLevelDepartmentUsage/);
+  assert.match(source, /topDepartmentsToday: topDepartments/);
+  assert.match(source, /loadFirstLevelDepartmentRanks/);
+  assert.doesNotMatch(
+    source.slice(source.indexOf("async function usageRanksToday")),
+    /buildTopDepartmentsTodayQuery/,
+  );
 });
 
 test("platform analytics endpoint is super-admin only", async () => {

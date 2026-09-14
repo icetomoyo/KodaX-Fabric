@@ -16,10 +16,24 @@ import {
   usageCountersTeamDaily,
 } from "../../db/schema/index.js";
 import { getChannelOverviewStats } from "../../lib/channel-overview.js";
-import { departmentUsageRows } from "../../lib/department-usage-tree.js";
+import { departmentUsageRows, firstLevelDepartmentUsage } from "../../lib/department-usage-tree.js";
 import { scopedDepartmentIds, scopedTeamIds, listTeamIdsInDepartments } from "../../lib/org.js";
-import { inclusiveDayCount, quotaDayAt, zonedDateRange, zonedMonthRange } from "../../lib/quota-time.js";
-import { fillDailyUsage, summarizeDailyUsage } from "../../lib/user-usage.js";
+import {
+  addCalendarDays,
+  inclusiveDayCount,
+  quotaDayAt,
+  zonedDateRange,
+  zonedMonthRange,
+} from "../../lib/quota-time.js";
+import { billedCacheReadTokensSql } from "../../lib/usage-cache.js";
+import { appendOtherBucket, fillDailyUsage, summarizeDailyUsage } from "../../lib/user-usage.js";
+import {
+  avgTokensPerRequest,
+  cacheHitRate,
+  peakHour,
+  percentChange,
+  tokenComposition,
+} from "../../lib/workbench-today.js";
 import {
   requirePasswordChanged,
   requireRoles,
@@ -149,7 +163,7 @@ export function buildDepartmentOwnUsageQuery(options: TodayQueryOptions = {}) {
     .groupBy(teams.departmentId);
 }
 
-async function loadDepartmentUsageTree(options: TodayQueryOptions) {
+async function loadDepartmentUsageInputs(options: TodayQueryOptions) {
   const scope = and(
     options.enterpriseId != null ? eq(departments.enterpriseId, options.enterpriseId) : undefined,
     options.departmentIds?.length ? inArray(departments.id, options.departmentIds) : undefined,
@@ -161,12 +175,24 @@ async function loadDepartmentUsageTree(options: TodayQueryOptions) {
         parentId: departments.parentId,
         name: departments.name,
         isDefault: departments.isDefault,
+        enterpriseName: enterprises.name,
       })
       .from(departments)
+      .innerJoin(enterprises, eq(departments.enterpriseId, enterprises.id))
       .where(scope),
     buildDepartmentOwnUsageQuery(options),
   ]);
+  return { tree, own };
+}
+
+async function loadDepartmentUsageTree(options: TodayQueryOptions) {
+  const { tree, own } = await loadDepartmentUsageInputs(options);
   return departmentUsageRows(tree, own);
+}
+
+async function loadFirstLevelDepartmentRanks(options: TodayQueryOptions, limit = 10) {
+  const { tree, own } = await loadDepartmentUsageInputs(options);
+  return firstLevelDepartmentUsage(tree, own, limit);
 }
 
 export function buildTopDepartmentsTodayQuery(options: TodayQueryOptions = {}) {
@@ -272,6 +298,7 @@ export function buildAnalyticsHourlyTrendQuery(start: Date, endExclusive: Date, 
     .select({
       bucket,
       promptTokens: sql<number>`coalesce(sum(${requestAudits.promptTokens}), 0)`,
+      cacheReadTokens: sql<number>`coalesce(sum(${billedCacheReadTokensSql}), 0)`,
       completionTokens: sql<number>`coalesce(sum(${requestAudits.completionTokens}), 0)`,
       totalTokens: sql<number>`coalesce(sum(${requestAudits.totalTokens}), 0)`,
       requestCount: sql<number>`count(*)::int`,
@@ -351,6 +378,7 @@ function fillHourlyTrend(
   rows: Array<{
     bucket: string;
     promptTokens: number;
+    cacheReadTokens?: number;
     completionTokens: number;
     totalTokens: number;
     requestCount: number;
@@ -362,6 +390,7 @@ function fillHourlyTrend(
     const bucket = `${day} ${padHour(hour)}:00`;
     const row = byBucket.get(bucket);
     const promptTokens = Number(row?.promptTokens) || 0;
+    const cacheReadTokens = Number(row?.cacheReadTokens) || 0;
     const completionTokens = Number(row?.completionTokens) || 0;
     const totalTokens = Number(row?.totalTokens) || 0;
     const requestCount = Number(row?.requestCount) || 0;
@@ -369,6 +398,7 @@ function fillHourlyTrend(
     return {
       day: bucket,
       promptTokens,
+      cacheReadTokens,
       completionTokens,
       totalTokens,
       requestCount,
@@ -376,6 +406,67 @@ function fillHourlyTrend(
       successRate: requestCount === 0 ? null : Math.max(0, requestCount - errorCount) / requestCount,
     };
   });
+}
+
+export function buildActiveEmployeesTodayQuery(options: TodayQueryOptions = {}) {
+  return db
+    .select({
+      n: sql<number>`count(distinct ${usageCountersTeamDaily.employeeId})::int`,
+    })
+    .from(usageCountersTeamDaily)
+    .where(and(
+      usageDayFilter(options),
+      sql`${usageCountersTeamDaily.totalTokens} > 0`,
+    ));
+}
+
+export function buildTodayAuditCompositionQuery(start: Date, endExclusive: Date) {
+  return db
+    .select({
+      promptTokens: sql<number>`coalesce(sum(${requestAudits.promptTokens}), 0)`,
+      cacheReadTokens: sql<number>`coalesce(sum(${billedCacheReadTokensSql}), 0)`,
+      completionTokens: sql<number>`coalesce(sum(${requestAudits.completionTokens}), 0)`,
+      totalTokens: sql<number>`coalesce(sum(${requestAudits.totalTokens}), 0)`,
+      requestCount: sql<number>`count(*)::int`,
+    })
+    .from(requestAudits)
+    .where(and(
+      gte(requestAudits.createdAt, start),
+      lt(requestAudits.createdAt, endExclusive),
+    ));
+}
+
+export function buildTodayProductTypeQuery(start: Date, endExclusive: Date) {
+  const typeKey = sql<string>`coalesce(${requestAudits.productType}::text, 'unknown')`;
+  return db
+    .select({
+      key: typeKey,
+      totalTokens: sql<number>`coalesce(sum(${requestAudits.totalTokens}), 0)`,
+      requestCount: sql<number>`count(*)::int`,
+    })
+    .from(requestAudits)
+    .where(and(
+      gte(requestAudits.createdAt, start),
+      lt(requestAudits.createdAt, endExclusive),
+    ))
+    .groupBy(typeKey)
+    .orderBy(desc(sql`coalesce(sum(${requestAudits.totalTokens}), 0)`));
+}
+
+export function buildTodayErrorsByStatusQuery(start: Date, endExclusive: Date) {
+  return db
+    .select({
+      key: requestAudits.status,
+      requestCount: sql<number>`count(*)::int`,
+    })
+    .from(requestAudits)
+    .where(and(
+      gte(requestAudits.createdAt, start),
+      lt(requestAudits.createdAt, endExclusive),
+      sql`${requestAudits.status} <> 'success'`,
+    ))
+    .groupBy(requestAudits.status)
+    .orderBy(desc(sql`count(*)`));
 }
 
 async function loadPlatformAnalytics(from: string, to: string) {
@@ -394,6 +485,7 @@ async function loadPlatformAnalytics(from: string, to: string) {
     ? fillHourlyTrend(from, trendRows.map((row) => ({
       bucket: String((row as { bucket: string }).bucket),
       promptTokens: Number(row.promptTokens) || 0,
+      cacheReadTokens: Number((row as { cacheReadTokens?: number }).cacheReadTokens) || 0,
       completionTokens: Number(row.completionTokens) || 0,
       totalTokens: Number(row.totalTokens) || 0,
       requestCount: Number(row.requestCount) || 0,
@@ -432,7 +524,7 @@ async function loadPlatformAnalytics(from: string, to: string) {
 async function usageRanksToday(options: TodayQueryOptions = {}) {
   const [topEnterprises, topDepartments, topTeams, topMembers] = await Promise.all([
     buildTopEnterprisesTodayQuery(options),
-    buildTopDepartmentsTodayQuery(options),
+    loadFirstLevelDepartmentRanks(options),
     buildTopTeamsTodayQuery(options),
     buildTopMembersTodayQuery(options),
   ]);
@@ -479,6 +571,7 @@ export function buildByProviderTodayQuery(whereClause: ReturnType<typeof and> | 
       providerCode: resolvedProviderCodeSql,
       requests: sql<number>`count(*)::int`,
       tokens: sql<number>`coalesce(sum(${requestAudits.totalTokens}), 0)`,
+      errors: sql<number>`count(*) filter (where ${requestAudits.status} <> 'success')::int`,
     })
     .from(requestAudits)
     .leftJoin(productLines, eq(requestAudits.productLineId, productLines.id))
@@ -519,36 +612,116 @@ async function recentErrors(whereClause: ReturnType<typeof and> | undefined) {
 
 async function platformOverview() {
   const now = new Date();
-  const [enterpriseCount] = await db.select({ n: count() }).from(enterprises);
-  const [activeEnterprises] = await db
-    .select({ n: count() })
-    .from(enterprises)
-    .where(eq(enterprises.status, "active"));
-  const channels = await getChannelOverviewStats(now);
-  const [providerCount] = await db.select({ n: count() }).from(providers);
-  const [routeCount] = await db
-    .select({ n: count() })
-    .from(modelRoutes)
-    .where(eq(modelRoutes.enabled, true));
+  const todayDay = quotaToday(now);
+  const yesterdayDay = addCalendarDays(todayDay, -1);
+  const { start, endExclusive } = zonedDateRange(todayDay, todayDay, env.QUOTA_TIMEZONE);
+  const yesterdayRange = zonedDateRange(yesterdayDay, yesterdayDay, env.QUOTA_TIMEZONE);
   const todayWhere = todayAuditFilter(now);
-  const [today, tokenRow, ranks, byProvider, errors] = await Promise.all([
+  const yesterdayWhere = and(
+    gte(requestAudits.createdAt, yesterdayRange.start),
+    lt(requestAudits.createdAt, yesterdayRange.endExclusive),
+  );
+  const [
+    enterpriseCount,
+    activeEnterprises,
+    channels,
+    providerCount,
+    routeCount,
+    today,
+    yesterday,
+    tokenRow,
+    yesterdayTokenRow,
+    activeEmployees,
+    ranks,
+    byProvider,
+    errors,
+    hourlyRows,
+    compositionRow,
+    productTypes,
+    errorsByStatus,
+    modelRows,
+  ] = await Promise.all([
+    db.select({ n: count() }).from(enterprises).then((rows) => rows[0]),
+    db.select({ n: count() }).from(enterprises).where(eq(enterprises.status, "active")).then((rows) => rows[0]),
+    getChannelOverviewStats(now),
+    db.select({ n: count() }).from(providers).then((rows) => rows[0]),
+    db.select({ n: count() }).from(modelRoutes).where(eq(modelRoutes.enabled, true)).then((rows) => rows[0]),
     todayStats(todayWhere),
+    todayStats(yesterdayWhere),
     buildTodayTeamTokensQuery({ now }).then((rows) => rows[0]),
+    buildTodayTeamTokensQuery({ from: yesterdayDay, to: yesterdayDay }).then((rows) => rows[0]),
+    buildActiveEmployeesTodayQuery({ now }).then((rows) => rows[0]),
     usageRanksToday({ now }),
     byProviderToday(todayWhere),
-    recentErrors(undefined),
+    recentErrors(todayWhere),
+    buildAnalyticsHourlyTrendQuery(start, endExclusive, env.QUOTA_TIMEZONE),
+    buildTodayAuditCompositionQuery(start, endExclusive).then((rows) => rows[0]),
+    buildTodayProductTypeQuery(start, endExclusive),
+    buildTodayErrorsByStatusQuery(start, endExclusive),
+    buildAnalyticsByModelQuery(start, endExclusive),
   ]);
+  const tokens = Number(tokenRow?.tokens ?? 0);
+  const yesterdayTokens = Number(yesterdayTokenRow?.tokens ?? 0);
+  const promptTokens = Number(compositionRow?.promptTokens) || 0;
+  const cacheReadTokens = Number(compositionRow?.cacheReadTokens) || 0;
+  const completionTokens = Number(compositionRow?.completionTokens) || 0;
+  const auditTotalTokens = Number(compositionRow?.totalTokens) || 0;
+  const auditRequests = Number(compositionRow?.requestCount) || 0;
+  const trend = fillHourlyTrend(todayDay, hourlyRows.map((row) => ({
+    bucket: String((row as { bucket: string }).bucket),
+    promptTokens: Number(row.promptTokens) || 0,
+    cacheReadTokens: Number((row as { cacheReadTokens?: number }).cacheReadTokens) || 0,
+    completionTokens: Number(row.completionTokens) || 0,
+    totalTokens: Number(row.totalTokens) || 0,
+    requestCount: Number(row.requestCount) || 0,
+    errorCount: Number(row.errorCount) || 0,
+  })));
+  const byModel = appendOtherBucket(
+    modelRows.map((row) => ({
+      key: row.key || "unknown",
+      totalTokens: Number(row.totalTokens) || 0,
+      requestCount: Number(row.requestCount) || 0,
+    })),
+    { totalTokens: auditTotalTokens, requestCount: auditRequests },
+  );
   return {
     role: "admin" as const,
-    enterprises: { total: enterpriseCount.n, active: activeEnterprises.n },
+    range: { from: todayDay, to: todayDay, timezone: env.QUOTA_TIMEZONE, granularity: "hour" as const },
+    enterprises: { total: enterpriseCount?.n ?? 0, active: activeEnterprises?.n ?? 0 },
     channels,
-    providers: providerCount.n,
-    modelRoutesEnabled: routeCount.n,
+    providers: providerCount?.n ?? 0,
+    modelRoutesEnabled: routeCount?.n ?? 0,
     today: {
       requests: today.requests,
-      tokens: Number(tokenRow?.tokens ?? 0),
+      tokens,
       errors: today.errors,
+      promptTokens,
+      cacheReadTokens,
+      completionTokens,
+      cacheHitRate: cacheHitRate(cacheReadTokens, promptTokens),
+      avgTokens: avgTokensPerRequest(tokens, today.requests),
+      activeEmployees: Number(activeEmployees?.n ?? 0),
+      tokensChange: percentChange(tokens, yesterdayTokens),
+      requestsChange: percentChange(today.requests, yesterday.requests),
     },
+    yesterday: {
+      requests: yesterday.requests,
+      tokens: yesterdayTokens,
+      errors: yesterday.errors,
+    },
+    composition: tokenComposition({ promptTokens, cacheReadTokens, completionTokens }),
+    peakHour: peakHour(trend),
+    productTypes: productTypes.map((row) => ({
+      key: row.key || "unknown",
+      totalTokens: Number(row.totalTokens) || 0,
+      requestCount: Number(row.requestCount) || 0,
+    })),
+    errorsByStatus: errorsByStatus.map((row) => ({
+      key: String(row.key),
+      requestCount: Number(row.requestCount) || 0,
+    })),
+    trend,
+    byModel,
     ...ranks,
     byProviderToday: byProvider,
     recentErrors: errors,

@@ -319,10 +319,25 @@ test("super-admin workbench is a usage chart board", () => {
   assert.match(charts, /模型消耗/);
   assert.match(charts, /渠道消耗/);
   assert.match(charts, /组织消耗/);
-  assert.match(charts, /失败分布/);
-  assert.match(charts, /\/api\/admin\/overview\/analytics/);
+  assert.match(charts, /今天的问题/);
+  assert.match(charts, /今日 Tokens/);
+  assert.match(charts, /活跃员工/);
+  assert.match(charts, /缓存命中/);
+  assert.match(charts, /次均 Token/);
+  assert.match(charts, /\/api\/admin\/overview"/);
+  assert.doesNotMatch(charts, /\/api\/admin\/overview\/analytics/);
+  assert.doesNotMatch(charts, /rangePreset/);
+  assert.doesNotMatch(charts, /近 7 天/);
+  assert.doesNotMatch(charts, /近 30 天/);
+  assert.match(charts, /label: "企业"/);
+  assert.match(charts, /label: "部门"/);
+  assert.match(charts, /label: "员工"/);
+  assert.doesNotMatch(charts, /label: "团队"/);
+  assert.doesNotMatch(charts, /rankLevel.value === "team"/);
+  assert.doesNotMatch(charts, /topTeamsToday/);
+  assert.doesNotMatch(charts, /departmentUsageTree/);
+  assert.doesNotMatch(charts, /usage-tree-prefix/);
   assert.doesNotMatch(charts, /quick-links/);
-  assert.doesNotMatch(charts, /kpi-grid/);
   assert.doesNotMatch(charts, /el-table/);
 });
 
