@@ -449,6 +449,8 @@ const rankRows = computed(() => {
     return (data.value?.topEnterprisesToday ?? []).map((row, index) => ({
       key: String(row.enterpriseId ?? index),
       name: row.enterpriseName || "—",
+      tree: "",
+      depth: 0,
       sub: "",
       totalTokens: Number(row.totalTokens) || 0,
       requestCount: Number(row.requestCount) || 0,
@@ -470,6 +472,8 @@ const rankRows = computed(() => {
     return (data.value?.topDepartmentsToday ?? []).map((row, index) => ({
       key: String(row.departmentId ?? index),
       name: row.departmentName || "—",
+      tree: "",
+      depth: 0,
       sub: row.enterpriseName || "",
       totalTokens: Number(row.totalTokens) || 0,
       requestCount: Number(row.requestCount) || 0,
@@ -479,6 +483,8 @@ const rankRows = computed(() => {
     return (data.value?.topTeamsToday ?? []).map((row, index) => ({
       key: String(row.teamId ?? index),
       name: row.teamName || "—",
+      tree: "",
+      depth: 0,
       sub: orgPath({
         enterpriseName: row.enterpriseName,
         departmentName: row.departmentName,
@@ -490,6 +496,8 @@ const rankRows = computed(() => {
   return (data.value?.topMembersToday ?? []).map((row, index) => ({
     key: String(row.employeeId ?? index),
     name: row.employeeName || "—",
+    tree: "",
+    depth: 0,
     sub: orgPath(row),
     totalTokens: Number(row.totalTokens) || 0,
     requestCount: Number(row.requestCount) || 0,
