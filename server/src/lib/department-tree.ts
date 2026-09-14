@@ -64,6 +64,15 @@ export function departmentAndDescendantIds(
   return [rootId, ...descendantDepartmentIds(rootId, nodes)];
 }
 
+export function teamIdsInDepartmentSubtree(
+  departmentId: number,
+  departments: readonly DepartmentTreeNode[],
+  teams: readonly { id: number; departmentId: number }[],
+): number[] {
+  const allowed = new Set(departmentAndDescendantIds(departmentId, departments));
+  return teams.filter((team) => allowed.has(team.departmentId)).map((team) => team.id);
+}
+
 export function departmentPathNames(
   departmentId: number,
   nodes: readonly DepartmentPathNode[],

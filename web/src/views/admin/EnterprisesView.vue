@@ -114,7 +114,7 @@
       <section class="pane people-pane">
         <div class="pane-header">
           <span class="pane-title">{{ employeeSectionTitle }}</span>
-          <el-tag type="info" size="small" round>{{ visibleEmployees.length }} 人</el-tag>
+          <el-tag type="info" size="small" round>{{ employeeTotal }} 人</el-tag>
           <el-button
             class="pane-header-action"
             type="primary"
@@ -175,13 +175,14 @@
               </el-table-column>
             </el-table>
           </div>
-          <div v-if="visibleEmployees.length" class="pager">
+          <div v-if="employeeTotal" class="pager">
             <el-pagination
               v-model:current-page="page"
               background
               layout="total, prev, pager, next"
-              :total="total"
+              :total="employeeTotal"
               :page-size="pageSize"
+              @current-change="loadPeople"
             />
           </div>
         </template>
@@ -444,14 +445,10 @@ import {
 } from "@element-plus/icons-vue";
 import { http } from "@/api/http";
 import { parseBulkRegisterText } from "@/lib/bulk-register-users";
-import {
-  departmentPathLabel,
-  departmentSubtreeIds,
-  employeeDepartmentLabel,
-  visibleOrgEmployees,
-} from "@/lib/org-employees";
+import { departmentPathLabel } from "@/lib/org-employees";
+import { orgConsoleUserListParams } from "@/lib/org-console-loads";
 import { roleLabel } from "@/lib/roles";
-import { useTablePage } from "@/lib/table-page";
+import { TABLE_PAGE_SIZE } from "@/lib/table-page";
 
 import { useAuthStore } from "@/stores/auth";
 import EmployeeUsageDrawer from "./EmployeeUsageDrawer.vue";
@@ -604,7 +601,7 @@ const editUserForm = reactive({
 const bulkRegisterParse = computed(() => parseBulkRegisterText(bulkRegisterRaw.value));
 
 const canInvite = computed(() => {
-  if (auth.isTeamAdmin) return teams.value.length > 0;
+  if (auth.isTeamAdmin) return teams.value.length > 0 || selectedTeamId.value != null;
   return selectedEnterpriseId.value != null;
 });
 const selectedEnterprise = computed(
@@ -728,22 +725,11 @@ const editUserDepartmentOptions = computed(() => {
   return options;
 });
 
-const visibleEmployees = computed(() =>
-  visibleOrgEmployees({
-    isTeamAdmin: auth.isTeamAdmin,
-    selectedKind: selectedNodeKind.value === "department" ? "department" : "enterprise",
-    selectedDepartmentId: selectedDepartmentId.value,
-    employees: employees.value,
-    teams: teams.value,
-    departments: departments.value,
-  }),
-);
-const { page, paged: pagedEmployees, total, pageSize, resetPage } = useTablePage(visibleEmployees);
-
-watch(
-  [selectedNodeKind, selectedEnterpriseId, selectedDepartmentId],
-  () => resetPage(),
-);
+const pagedEmployees = computed(() => employees.value);
+const page = ref(1);
+const pageSize = TABLE_PAGE_SIZE;
+const employeeTotal = ref(0);
+let peopleLoadSeq = 0;
 
 const employeeSectionTitle = computed(() => {
   if (auth.isTeamAdmin) return "员工";
@@ -828,10 +814,10 @@ function applyOrgNode(node: Pick<OrgTreeNode, "kind" | "id" | "enterpriseId" | "
 }
 
 async function onOrgNodeClick(data: OrgTreeNode) {
-  const enterpriseChanged = data.enterpriseId !== selectedEnterpriseId.value;
   applyOrgNode(data);
   syncQuery();
-  if (enterpriseChanged) await loadPeople();
+  page.value = 1;
+  await loadPeople();
   highlightTree();
 }
 
@@ -884,6 +870,7 @@ function onNodeAction(action: string, node: OrgTreeNode) {
 function selectEnterprise(id: number) {
   applyOrgNode({ kind: "enterprise", id, enterpriseId: id });
   syncQuery();
+  page.value = 1;
   void loadPeople();
 }
 
@@ -911,14 +898,29 @@ async function loadEnterprises() {
 }
 
 async function loadPeople() {
-  if (selectedEnterpriseId.value == null) {
-    employees.value = [];
+  const seq = ++peopleLoadSeq;
+  if (selectedEnterpriseId.value == null && !auth.isTeamAdmin) {
+    if (seq === peopleLoadSeq) {
+      employees.value = [];
+      employeeTotal.value = 0;
+    }
     return;
   }
-  const userRes = await http.get("/api/admin/users", {
-    params: { enterpriseId: selectedEnterpriseId.value, limit: 200 },
-  });
-  const users = (userRes.data.success ? userRes.data.data : []) as Array<{
+  const params = selectedEnterpriseId.value != null
+    ? orgConsoleUserListParams({
+        enterpriseId: selectedEnterpriseId.value,
+        departmentId: selectedNodeKind.value === "department" ? selectedDepartmentId.value : null,
+        page: page.value,
+      })
+    : { limit: pageSize, offset: (Math.max(1, page.value) - 1) * pageSize };
+  const userRes = await http.get("/api/admin/users", { params });
+  if (seq !== peopleLoadSeq) return;
+  if (!userRes.data.success) {
+    employees.value = [];
+    employeeTotal.value = 0;
+    return;
+  }
+  const users = userRes.data.data as Array<{
     id: number;
     name: string;
     phone: string;
@@ -926,45 +928,20 @@ async function loadPeople() {
     status: UserStatus;
     enterpriseId: number | null;
     teamId?: number | null;
+    teamIds?: number[];
     teamName?: string | null;
+    teamRole?: "member" | "team_admin" | null;
+    departmentName?: string | null;
     lastLoginAt: string | null;
   }>;
-  const membership = new Map<number, Array<{ teamId: number; teamName: string; teamRole: "member" | "team_admin" }>>();
-  const scopedTeams = teams.value.filter((team) => team.enterpriseId === selectedEnterpriseId.value);
-  await Promise.all(
-    scopedTeams.map(async (team) => {
-      const { data } = await http.get(`/api/admin/teams/${team.id}/members`);
-      if (!data.success) return;
-      for (const member of data.data as Array<{ employeeId: number; role: "member" | "team_admin"; name: string }>) {
-        const list = membership.get(member.employeeId) ?? [];
-        list.push({
-          teamId: team.id,
-          teamName: team.name,
-          teamRole: member.role,
-        });
-        membership.set(member.employeeId, list);
-      }
-    }),
-  );
-  const selectedDepartmentTeamIds = selectedDepartmentId.value != null
-    ? new Set(
-        teams.value
-          .filter((team) =>
-            departmentSubtreeIds(selectedDepartmentId.value!, departments.value).includes(team.departmentId),
-          )
-          .map((team) => team.id),
-      )
-    : null;
   const uniqueUsers = [...new Map(users.map((row) => [row.id, row])).values()];
+  employeeTotal.value = typeof userRes.data.total === "number" ? userRes.data.total : uniqueUsers.length;
   employees.value = uniqueUsers
     .filter((row) => row.role !== "admin")
     .map((row) => {
-      const joined = membership.get(row.id) ?? [];
-      const teamIds = joined.map((item) => item.teamId);
-      const scopedJoin = selectedDepartmentTeamIds
-        ? joined.find((item) => selectedDepartmentTeamIds.has(item.teamId))
-        : joined[0];
-      const teamId = scopedJoin?.teamId ?? joined[0]?.teamId ?? row.teamId ?? null;
+      const teamIds = row.teamIds?.length
+        ? row.teamIds
+        : (row.teamId != null ? [row.teamId] : []);
       return {
         id: row.id,
         name: row.name,
@@ -972,24 +949,20 @@ async function loadPeople() {
         role: row.role,
         status: row.status,
         enterpriseId: row.enterpriseId,
-        teamId,
-        teamIds: teamIds.length ? teamIds : (row.teamId != null ? [row.teamId] : []),
-        teamName: employeeDepartmentLabel({
-          teamId,
-          teamIds: selectedDepartmentTeamIds ? (teamId != null ? [teamId] : []) : teamIds,
-          fallbackName: joined[0]?.teamName ?? row.teamName ?? null,
-          teams: teams.value,
-          departments: departments.value,
-        }),
-        teamRole: scopedJoin?.teamRole ?? joined[0]?.teamRole ?? (row.role === "team_admin" ? "team_admin" : row.teamId ? "member" : null),
+        teamId: row.teamId ?? teamIds[0] ?? null,
+        teamIds,
+        teamName: row.departmentName || row.teamName || null,
+        teamRole: row.teamRole ?? (row.role === "team_admin" ? "team_admin" : row.teamId ? "member" : null),
         lastLoginAt: row.lastLoginAt,
       };
     });
 }
 
 async function loadTeamsAndPeople() {
-  const teamRes = await http.get("/api/admin/teams");
-  teams.value = teamRes.data.success ? teamRes.data.data : [];
+  if (auth.isTeamAdmin) {
+    const teamRes = await http.get("/api/admin/teams");
+    teams.value = teamRes.data.success ? teamRes.data.data : [];
+  }
   await loadPeople();
 }
 
@@ -1006,11 +979,12 @@ async function refreshAll() {
     ) {
       selectedEnterpriseId.value = enterprises.value[0]?.id ?? null;
     }
-    await loadTeamsAndPeople();
     const requestedDepartment = parseQueryId(route.query.departmentId);
     const requestedTeam = parseQueryId(route.query.teamId);
     const teamDepartmentId = requestedTeam
-      ? teams.value.find((row) => row.id === requestedTeam)?.departmentId ?? null
+      ? departments.value.find((row) => row.defaultTeamId === requestedTeam)?.id
+        ?? teams.value.find((row) => row.id === requestedTeam)?.departmentId
+        ?? null
       : null;
     if (teamDepartmentId && namedDepartments.value.some((row) => row.id === teamDepartmentId)) {
       selectedNodeKind.value = "department";
@@ -1034,6 +1008,8 @@ async function refreshAll() {
         selectedTeamId.value = null;
       }
     }
+    page.value = 1;
+    await loadTeamsAndPeople();
     syncQuery();
     highlightTree();
   } catch (error) {
@@ -1217,7 +1193,10 @@ async function deleteDepartment(department: DepartmentRow) {
     return;
   }
   const departmentTeamIds = new Set(
-    teams.value.filter((team) => team.departmentId === department.id).map((team) => team.id),
+    [
+      department.defaultTeamId,
+      ...teams.value.filter((team) => team.departmentId === department.id).map((team) => team.id),
+    ].filter((id): id is number => id != null),
   );
   const hasMembers =
     (department.memberCount ?? 0) > 0 ||

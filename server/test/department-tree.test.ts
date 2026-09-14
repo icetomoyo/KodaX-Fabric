@@ -5,6 +5,7 @@ import {
   departmentPathLabel,
   descendantDepartmentIds,
   firstLevelDepartmentId,
+  teamIdsInDepartmentSubtree,
 } from "../src/lib/department-tree.js";
 
 const nodes = [
@@ -28,6 +29,21 @@ test("descendants include every nested child and not siblings", () => {
   assert.deepEqual(departmentAndDescendantIds(8, nodes).sort((a, b) => a - b), [8, 18, 41]);
   assert.deepEqual(descendantDepartmentIds(9, nodes), [26]);
   assert.deepEqual(descendantDepartmentIds(41, nodes), []);
+});
+
+test("department log filter includes teams of the node and nested children", () => {
+  const teams = [
+    { id: 101, departmentId: 8 },
+    { id: 102, departmentId: 18 },
+    { id: 103, departmentId: 41 },
+    { id: 201, departmentId: 9 },
+  ];
+  assert.deepEqual(
+    teamIdsInDepartmentSubtree(8, nodes, teams).sort((a, b) => a - b),
+    [101, 102, 103],
+  );
+  assert.deepEqual(teamIdsInDepartmentSubtree(41, nodes, teams), [103]);
+  assert.deepEqual(teamIdsInDepartmentSubtree(9, nodes, teams), [201]);
 });
 
 test("department path skips 默认部门 and joins nested names", () => {

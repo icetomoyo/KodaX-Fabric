@@ -7,7 +7,14 @@ process.env.REDIS_URL ??= "redis://127.0.0.1:6379/15";
 process.env.JWT_SECRET ??= "unit-test-jwt-secret";
 process.env.CREDENTIAL_ENCRYPT_KEY ??= "unit-test-credential-secret";
 
-const { adminUserRoutes, buildAdminUserListQuery, buildEmployeeLogsQuery } = await import(
+const {
+  adminUserRoutes,
+  aggregateAdminUserListRows,
+  buildAdminUserCountQuery,
+  buildAdminUserIdPageQuery,
+  buildAdminUserListQuery,
+  buildEmployeeLogsQuery,
+} = await import(
   "../src/routes/admin/users.js"
 );
 
@@ -40,8 +47,71 @@ test("admin user list selects employee data without API-key joins", () => {
   assert.match(compiledSql, /from "employees"/);
   assert.match(compiledSql, /left join "team_members"/);
   assert.match(compiledSql, /left join "teams"/);
+  assert.match(compiledSql, /left join "departments"/);
   assert.doesNotMatch(compiledSql, /employee_api_keys/);
   assert.doesNotMatch(compiledSql, /active_api_key_count/);
+});
+
+test("admin user count and id page collapse memberships to one employee", () => {
+  const countSql = buildAdminUserCountQuery({ enterpriseId: 3 })
+    .toSQL()
+    .sql.replace(/\s+/g, " ");
+  assert.match(countSql, /count\(distinct/);
+  assert.doesNotMatch(countSql, /employee_api_keys/);
+
+  const pageSql = buildAdminUserIdPageQuery({
+    enterpriseId: 3,
+    limit: 10,
+    offset: 0,
+  })
+    .toSQL();
+  const compiled = pageSql.sql.replace(/\s+/g, " ");
+  assert.match(compiled, /select distinct/);
+  assert.equal(pageSql.params.includes(3), true);
+  assert.equal(pageSql.params.includes(10), true);
+});
+
+test("admin user list aggregation keeps one row and joins department names", () => {
+  const rows = aggregateAdminUserListRows([
+    {
+      id: 9,
+      name: "邓华亮",
+      phone: "13800000009",
+      dept: null,
+      role: "employee",
+      status: "active",
+      enterpriseId: 3,
+      lastLoginAt: null,
+      createdAt: new Date("2026-09-01T00:00:00.000Z"),
+      teamId: 101,
+      teamName: "默认团队",
+      teamRole: "member",
+      departmentId: 8,
+      departmentName: "产品技术部",
+      departmentIsDefault: false,
+    },
+    {
+      id: 9,
+      name: "邓华亮",
+      phone: "13800000009",
+      dept: null,
+      role: "employee",
+      status: "active",
+      enterpriseId: 3,
+      lastLoginAt: null,
+      createdAt: new Date("2026-09-01T00:00:00.000Z"),
+      teamId: 102,
+      teamName: "默认团队",
+      teamRole: "member",
+      departmentId: 18,
+      departmentName: "平台组",
+      departmentIsDefault: false,
+    },
+  ]);
+  assert.equal(rows.length, 1);
+  assert.deepEqual(rows[0]?.teamIds, [101, 102]);
+  assert.equal(rows[0]?.departmentName, "产品技术部、平台组");
+  assert.equal(rows[0]?.teamName, "产品技术部、平台组");
 });
 
 test("admin routes do not expose employee API-key metadata or plaintext", async () => {

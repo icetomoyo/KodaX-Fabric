@@ -3,12 +3,18 @@ import { and, desc, eq, inArray, sql, type SQL } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../../db/client.js";
 import {
+  departments,
   employees,
   enterprises,
   requestErrorLogs,
   teams,
 } from "../../db/schema/index.js";
-import { scopedDepartmentIds, scopedTeamIds, listTeamIdsInDepartments } from "../../lib/org.js";
+import {
+  scopedDepartmentIds,
+  scopedTeamIds,
+  listTeamIdsInDepartments,
+  resolveLogTeamIds,
+} from "../../lib/org.js";
 import { REQUEST_CONTEXT_ID_PATTERN } from "../../lib/relay/request-context.js";
 import {
   requirePasswordChanged,
@@ -24,6 +30,7 @@ const listQuerySchema = z.object({
   errorCode: z.string().trim().max(64).optional(),
   status: z.enum(["upstream_error", "client_error", "cancelled"]).optional(),
   enterpriseId: z.coerce.number().int().positive().optional(),
+  departmentId: z.coerce.number().int().positive().optional(),
   teamId: z.coerce.number().int().positive().optional(),
 });
 
@@ -63,6 +70,7 @@ export function buildErrorLogListQuery(input: ErrorLogListInput) {
       employeeId: employees.id,
       employeeName: employees.name,
       enterpriseName: enterprises.name,
+      departmentName: departments.name,
       teamName: teams.name,
       clientModel: requestErrorLogs.clientModel,
       providerCode: requestErrorLogs.providerCode,
@@ -78,6 +86,7 @@ export function buildErrorLogListQuery(input: ErrorLogListInput) {
     .innerJoin(employees, eq(requestErrorLogs.employeeId, employees.id))
     .leftJoin(enterprises, eq(employees.enterpriseId, enterprises.id))
     .leftJoin(teams, eq(requestErrorLogs.teamId, teams.id))
+    .leftJoin(departments, eq(teams.departmentId, departments.id))
     .where(whereExpr)
     .orderBy(desc(requestErrorLogs.createdAt), desc(requestErrorLogs.id))
     .limit(input.limit)
@@ -102,7 +111,11 @@ async function resolveListScope(
   if (role === "org_admin") {
     if (session.enterpriseId == null) return { forbidden: true };
     input.enterpriseId = session.enterpriseId;
-    if (query.teamId != null) input.teamIds = [query.teamId];
+    input.teamIds = await resolveLogTeamIds({
+      departmentId: query.departmentId,
+      teamId: query.teamId,
+      enterpriseId: session.enterpriseId,
+    });
     return input;
   }
   if (role === "dept_admin") {
@@ -117,7 +130,11 @@ async function resolveListScope(
     return input;
   }
   input.enterpriseId = query.enterpriseId;
-  input.teamIds = query.teamId != null ? [query.teamId] : undefined;
+  input.teamIds = await resolveLogTeamIds({
+    departmentId: query.departmentId,
+    teamId: query.teamId,
+    enterpriseId: query.enterpriseId,
+  });
   return input;
 }
 
@@ -178,6 +195,7 @@ export async function adminErrorLogRoutes(app: FastifyInstance) {
         enterpriseId: employees.enterpriseId,
         enterpriseName: enterprises.name,
         teamId: requestErrorLogs.teamId,
+        departmentName: departments.name,
         teamName: teams.name,
         clientModel: requestErrorLogs.clientModel,
         providerCode: requestErrorLogs.providerCode,
@@ -195,6 +213,7 @@ export async function adminErrorLogRoutes(app: FastifyInstance) {
       .innerJoin(employees, eq(requestErrorLogs.employeeId, employees.id))
       .leftJoin(enterprises, eq(employees.enterpriseId, enterprises.id))
       .leftJoin(teams, eq(requestErrorLogs.teamId, teams.id))
+      .leftJoin(departments, eq(teams.departmentId, departments.id))
       .where(eq(requestErrorLogs.requestId, params.data.requestId))
       .limit(1);
     if (!row) {

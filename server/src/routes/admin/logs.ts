@@ -1,17 +1,19 @@
 import { createReadStream } from "node:fs";
 import { createGunzip } from "node:zlib";
 import type { FastifyInstance } from "fastify";
-import { and, desc, eq, gt, gte, lt, lte, sql, type SQL } from "drizzle-orm";
+import { and, desc, eq, gt, gte, inArray, lt, lte, sql, type SQL } from "drizzle-orm";
 import { z } from "zod";
 import { env } from "../../config.js";
 import { db } from "../../db/client.js";
 import {
+  departments,
   employees,
   enterprises,
   requestAudits,
   requestErrorLogs,
   teams,
 } from "../../db/schema/index.js";
+import { resolveLogTeamIds } from "../../lib/org.js";
 import { computeRequestCredits, defaultCreditRateFor } from "../../lib/relay/credit-cost.js";
 import {
   findRequestContextFile,
@@ -67,6 +69,7 @@ export async function adminLogRoutes(app: FastifyInstance) {
         limit: z.coerce.number().min(1).max(200).default(50),
         offset: z.coerce.number().min(0).default(0),
         enterpriseId: z.coerce.number().int().positive().optional(),
+        departmentId: z.coerce.number().int().positive().optional(),
         teamId: z.coerce.number().int().positive().optional(),
         employeeId: z.coerce.number().int().positive().optional(),
         model: z.string().optional(),
@@ -85,8 +88,14 @@ export async function adminLogRoutes(app: FastifyInstance) {
     if (query.enterpriseId) {
       conditions.push(eq(employees.enterpriseId, query.enterpriseId));
     }
-    if (query.teamId) {
-      conditions.push(eq(requestAudits.teamId, query.teamId));
+    const teamIds = await resolveLogTeamIds({
+      departmentId: query.departmentId,
+      teamId: query.teamId,
+      enterpriseId: query.enterpriseId,
+    });
+    if (teamIds) {
+      if (teamIds.length === 0) conditions.push(sql`false`);
+      else conditions.push(inArray(requestAudits.teamId, teamIds));
     }
     if (query.employeeId) {
       conditions.push(eq(requestAudits.employeeId, query.employeeId));
@@ -116,6 +125,7 @@ export async function adminLogRoutes(app: FastifyInstance) {
         employeeId: employees.id,
         employeeName: employees.name,
         enterpriseName: enterprises.name,
+        departmentName: departments.name,
         teamName: teams.name,
         clientModel: requestAudits.clientModel,
         providerCode: requestAudits.providerCode,
@@ -131,6 +141,7 @@ export async function adminLogRoutes(app: FastifyInstance) {
       .innerJoin(employees, eq(requestAudits.employeeId, employees.id))
       .leftJoin(enterprises, eq(employees.enterpriseId, enterprises.id))
       .leftJoin(teams, eq(requestAudits.teamId, teams.id))
+      .leftJoin(departments, eq(teams.departmentId, departments.id))
       .where(whereExpr)
       .orderBy(desc(requestAudits.createdAt), desc(requestAudits.id))
       .limit(query.limit)
@@ -164,6 +175,7 @@ export async function adminLogRoutes(app: FastifyInstance) {
         employeeName: employees.name,
         employeePhone: employees.phone,
         enterpriseName: enterprises.name,
+        departmentName: departments.name,
         teamName: teams.name,
         clientModel: requestAudits.clientModel,
         providerCode: requestAudits.providerCode,
@@ -181,6 +193,7 @@ export async function adminLogRoutes(app: FastifyInstance) {
       .innerJoin(employees, eq(requestAudits.employeeId, employees.id))
       .leftJoin(enterprises, eq(employees.enterpriseId, enterprises.id))
       .leftJoin(teams, eq(requestAudits.teamId, teams.id))
+      .leftJoin(departments, eq(teams.departmentId, departments.id))
       .where(eq(requestAudits.requestId, params.data.requestId))
       .limit(1);
     if (!row) {

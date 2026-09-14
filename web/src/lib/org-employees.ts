@@ -15,6 +15,28 @@ export type OrgTeamNode = {
   isDefault?: boolean;
 };
 
+export function collectOrgEmployeeOptions(
+  rows: readonly { id: number; name: string; role?: string; teamId?: number | null }[],
+): Array<{ id: number; name: string; teamId: number | null; teamIds: number[] }> {
+  const byId = new Map<number, { id: number; name: string; teamId: number | null; teamIds: number[] }>();
+  for (const row of rows) {
+    if (row.role === "admin") continue;
+    const teamId = row.teamId ?? null;
+    const existing = byId.get(row.id);
+    if (!existing) {
+      byId.set(row.id, {
+        id: row.id,
+        name: row.name,
+        teamId,
+        teamIds: teamId != null ? [teamId] : [],
+      });
+      continue;
+    }
+    if (teamId != null && !existing.teamIds.includes(teamId)) existing.teamIds.push(teamId);
+  }
+  return [...byId.values()];
+}
+
 export function departmentSubtreeIds(
   rootId: number,
   departments: readonly OrgDepartmentNode[],

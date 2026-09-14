@@ -64,6 +64,45 @@ export async function listTeamIdsInDepartments(departmentIds: readonly number[])
   return rows.map((row) => row.id);
 }
 
+export async function listTeamIdsInDepartmentSubtree(departmentId: number): Promise<number[]> {
+  const tree = await db
+    .select({ id: departments.id, parentId: departments.parentId })
+    .from(departments);
+  if (!tree.some((row) => row.id === departmentId)) return [];
+  return listTeamIdsInDepartments(departmentAndDescendantIds(departmentId, tree));
+}
+
+export async function departmentBelongsToEnterprise(
+  departmentId: number,
+  enterpriseId: number,
+): Promise<boolean> {
+  const [row] = await db
+    .select({ enterpriseId: departments.enterpriseId })
+    .from(departments)
+    .where(eq(departments.id, departmentId))
+    .limit(1);
+  return row?.enterpriseId === enterpriseId;
+}
+
+/** `undefined` = no team filter; empty array = match nothing. */
+export async function resolveLogTeamIds(input: {
+  departmentId?: number;
+  teamId?: number;
+  enterpriseId?: number;
+}): Promise<number[] | undefined> {
+  if (input.departmentId != null) {
+    if (
+      input.enterpriseId != null
+      && !(await departmentBelongsToEnterprise(input.departmentId, input.enterpriseId))
+    ) {
+      return [];
+    }
+    return listTeamIdsInDepartmentSubtree(input.departmentId);
+  }
+  if (input.teamId != null) return [input.teamId];
+  return undefined;
+}
+
 export async function loadOrgActor(input: {
   role: SessionRole;
   enterpriseId: number | null;

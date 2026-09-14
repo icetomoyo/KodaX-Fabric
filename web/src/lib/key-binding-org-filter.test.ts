@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  buildDepartmentCascaderOptions,
   buildOrgCascaderOptions,
   employeeInOrgSelection,
   groupingDepartmentId,
   orgFilterPathOf,
   parseOrgFilterPath,
+  selectedDepartmentIdFromPath,
   subtreeIdsForSelection,
 } from "./key-binding-org-filter.ts";
 
@@ -67,6 +69,28 @@ test("canvas grouping uses the selected org level, not the leaf", () => {
 
   const frontend = { kind: "department" as const, enterpriseId: 2, departmentId: 80 };
   assert.equal(groupingDepartmentId(80, frontend, departments), 80);
+});
+
+test("department cascader nests children and skips 默认部门", () => {
+  const options = buildDepartmentCascaderOptions(
+    departments.filter((row) => row.enterpriseId === 2),
+  );
+  assert.deepEqual(options.map((row) => row.label), ["产品技术部", "业务产品技术部"]);
+  const product = options.find((row) => row.value === 8);
+  assert.deepEqual(product?.children?.map((row) => row.label), ["研发中心"]);
+  assert.deepEqual(product?.children?.[0]?.children?.map((row) => row.value), [80]);
+  assert.equal(JSON.stringify(options).includes("默认部门"), false);
+  assert.equal(selectedDepartmentIdFromPath([8, 23, 80]), 80);
+  assert.equal(selectedDepartmentIdFromPath([]), null);
+});
+
+test("department cascader lifts children of 默认部门 to the root", () => {
+  const options = buildDepartmentCascaderOptions([
+    { id: 1, name: "默认部门", parentId: null, enterpriseId: 2, isDefault: true },
+    { id: 12, name: "临时组", parentId: 1, enterpriseId: 2 },
+    { id: 8, name: "产品技术部", parentId: null, enterpriseId: 2 },
+  ]);
+  assert.deepEqual(options.map((row) => row.label), ["产品技术部", "临时组"]);
 });
 
 test("employees follow the selected subtree", () => {

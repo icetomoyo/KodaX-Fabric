@@ -4,6 +4,7 @@ import { z } from "zod";
 import { env } from "../../config.js";
 import { db } from "../../db/client.js";
 import {
+  departments,
   employeeApiKeys,
   employees,
   opsAuditLogs,
@@ -27,6 +28,8 @@ import {
   scopedDepartmentIds,
   scopedTeamIds,
   listTeamIdsInDepartments,
+  listTeamIdsInDepartmentSubtree,
+  departmentBelongsToEnterprise,
 } from "../../lib/org.js";
 import type { SessionRole } from "../../lib/jwt.js";
 import {
@@ -75,8 +78,64 @@ type AdminUserListQuery = {
   status?: "pending" | "active" | "disabled";
   enterpriseId?: number;
   teamIds?: number[];
+  employeeIds?: number[];
   excludeRoles?: SessionRole[];
 };
+
+export type AdminUserListRow = {
+  id: number;
+  name: string;
+  phone: string;
+  dept: string | null;
+  role: SessionRole;
+  status: "pending" | "active" | "disabled";
+  enterpriseId: number | null;
+  lastLoginAt: Date | null;
+  createdAt: Date;
+  teamId: number | null;
+  teamName: string | null;
+  teamRole: "member" | "team_admin" | null;
+  departmentId: number | null;
+  departmentName: string | null;
+  departmentIsDefault: boolean | null;
+};
+
+function adminUserListWhere(query: AdminUserListQuery) {
+  return and(
+    query.q
+      ? sql`(${employees.name} ilike ${"%" + query.q + "%"} or ${employees.phone} ilike ${"%" + query.q + "%"})`
+      : sql`true`,
+    query.status ? eq(employees.status, query.status) : sql`true`,
+    query.enterpriseId != null ? eq(employees.enterpriseId, query.enterpriseId) : sql`true`,
+    query.employeeIds?.length ? inArray(employees.id, query.employeeIds) : sql`true`,
+    query.teamIds?.length ? inArray(teamMembers.teamId, query.teamIds) : sql`true`,
+    query.excludeRoles?.length ? notInArray(employees.role, query.excludeRoles) : sql`true`,
+  );
+}
+
+export function buildAdminUserCountQuery(query: Omit<AdminUserListQuery, "limit" | "offset">) {
+  const scoped = Boolean(query.teamIds?.length);
+  const from = db
+    .select({ n: sql<number>`count(distinct ${employees.id})::int` })
+    .from(employees);
+  const joined = scoped
+    ? from.innerJoin(teamMembers, eq(teamMembers.employeeId, employees.id))
+    : from;
+  return joined.where(adminUserListWhere({ ...query, limit: 1, offset: 0 }));
+}
+
+export function buildAdminUserIdPageQuery(query: AdminUserListQuery) {
+  const scoped = Boolean(query.teamIds?.length);
+  const from = db.selectDistinct({ id: employees.id }).from(employees);
+  const joined = scoped
+    ? from.innerJoin(teamMembers, eq(teamMembers.employeeId, employees.id))
+    : from;
+  return joined
+    .where(adminUserListWhere(query))
+    .orderBy(desc(employees.id))
+    .limit(query.limit)
+    .offset(query.offset);
+}
 
 export function buildAdminUserListQuery(query: AdminUserListQuery) {
   return db
@@ -92,24 +151,58 @@ export function buildAdminUserListQuery(query: AdminUserListQuery) {
       createdAt: employees.createdAt,
       teamId: teams.id,
       teamName: teams.name,
+      teamRole: teamMembers.role,
+      departmentId: departments.id,
+      departmentName: departments.name,
+      departmentIsDefault: departments.isDefault,
     })
     .from(employees)
     .leftJoin(teamMembers, eq(teamMembers.employeeId, employees.id))
     .leftJoin(teams, eq(teams.id, teamMembers.teamId))
-    .where(
-      and(
-        query.q
-          ? sql`(${employees.name} ilike ${"%" + query.q + "%"} or ${employees.phone} ilike ${"%" + query.q + "%"})`
-          : sql`true`,
-        query.status ? eq(employees.status, query.status) : sql`true`,
-        query.enterpriseId != null ? eq(employees.enterpriseId, query.enterpriseId) : sql`true`,
-        query.teamIds?.length ? inArray(teamMembers.teamId, query.teamIds) : sql`true`,
-        query.excludeRoles?.length ? notInArray(employees.role, query.excludeRoles) : sql`true`,
-      ),
-    )
+    .leftJoin(departments, eq(teams.departmentId, departments.id))
+    .where(adminUserListWhere(query))
     .orderBy(desc(employees.id))
     .limit(query.limit)
     .offset(query.offset);
+}
+
+export function aggregateAdminUserListRows(rows: readonly AdminUserListRow[]) {
+  const order: number[] = [];
+  const grouped = new Map<number, {
+    row: AdminUserListRow;
+    teamIds: number[];
+    departmentNames: string[];
+  }>();
+  for (const row of rows) {
+    let group = grouped.get(row.id);
+    if (!group) {
+      order.push(row.id);
+      group = { row, teamIds: [], departmentNames: [] };
+      grouped.set(row.id, group);
+    }
+    if (row.teamId != null && !group.teamIds.includes(row.teamId)) {
+      group.teamIds.push(row.teamId);
+    }
+    if (
+      row.departmentName
+      && row.departmentIsDefault === false
+      && !group.departmentNames.includes(row.departmentName)
+    ) {
+      group.departmentNames.push(row.departmentName);
+    }
+  }
+  return order.map((id) => {
+    const group = grouped.get(id)!;
+    const departmentName = group.departmentNames.join("、") || null;
+    const { departmentIsDefault: _ignored, ...row } = group.row;
+    return {
+      ...row,
+      teamId: group.teamIds[0] ?? row.teamId,
+      teamIds: group.teamIds,
+      departmentName,
+      teamName: departmentName,
+    };
+  });
 }
 
 export function buildEmployeeLogsQuery(input: {
@@ -193,6 +286,7 @@ export async function adminUserRoutes(app: FastifyInstance) {
         q: z.string().optional(),
         status: z.enum(["pending", "active", "disabled"]).optional(),
         enterpriseId: z.coerce.number().int().positive().optional(),
+        departmentId: z.coerce.number().int().positive().optional(),
       })
       .parse(req.query);
 
@@ -215,8 +309,21 @@ export async function adminUserRoutes(app: FastifyInstance) {
         employeeId: req.employeeId!,
       });
     }
+    if (query.departmentId != null) {
+      if (
+        scope.enterpriseId != null
+        && !(await departmentBelongsToEnterprise(query.departmentId, scope.enterpriseId))
+      ) {
+        return { success: true, data: [], total: 0 };
+      }
+      const departmentTeamIds = await listTeamIdsInDepartmentSubtree(query.departmentId);
+      teamIds = teamIds
+        ? departmentTeamIds.filter((id) => teamIds!.includes(id))
+        : departmentTeamIds;
+      if (teamIds.length === 0) return { success: true, data: [], total: 0 };
+    }
 
-    const rows = await buildAdminUserListQuery({
+    const listQuery = {
       limit: query.limit,
       offset: query.offset,
       q: query.q,
@@ -224,9 +331,24 @@ export async function adminUserRoutes(app: FastifyInstance) {
       enterpriseId: scope.enterpriseId,
       teamIds,
       excludeRoles: scope.excludeRoles,
-    });
+    };
+    const [countRow] = await buildAdminUserCountQuery(listQuery);
+    const idRows = await buildAdminUserIdPageQuery(listQuery);
+    const employeeIds = idRows.map((row) => row.id);
+    const rows = employeeIds.length
+      ? await buildAdminUserListQuery({
+          ...listQuery,
+          teamIds: undefined,
+          employeeIds,
+          limit: 200,
+          offset: 0,
+        })
+      : [];
+    const items = aggregateAdminUserListRows(rows).sort(
+      (left, right) => employeeIds.indexOf(left.id) - employeeIds.indexOf(right.id),
+    );
 
-    return { success: true, data: rows };
+    return { success: true, data: items, total: countRow?.n ?? 0 };
   });
 
   app.get("/api/admin/users/:id/usage", async (req, reply) => {

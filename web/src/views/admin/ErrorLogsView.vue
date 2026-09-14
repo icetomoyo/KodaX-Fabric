@@ -39,23 +39,18 @@
         </el-select>
       </el-form-item>
       <el-form-item v-if="auth.isSuperAdmin || auth.isOrgAdmin">
-        <el-select
-          v-model="filters.teamId"
+        <el-cascader
+          v-model="departmentPath"
+          :options="departmentOptions"
+          :props="departmentCascaderProps"
           clearable
           filterable
           :disabled="auth.isSuperAdmin && !filters.enterpriseId"
-          :loading="teamsLoading"
-          placeholder="全部团队"
-          style="width: 180px"
-          @change="onTeamChange"
-        >
-          <el-option
-            v-for="item in teams"
-            :key="item.id"
-            :label="item.name"
-            :value="item.id"
-          />
-        </el-select>
+          :loading="departmentsLoading"
+          placeholder="全部部门"
+          style="width: 240px"
+          @change="onDepartmentChange"
+        />
       </el-form-item>
       <el-form-item>
         <el-select
@@ -89,10 +84,9 @@
       stripe
       empty-text="暂无报错记录"
     >
-      <el-table-column label="企业 / 团队" min-width="160" show-overflow-tooltip>
+      <el-table-column label="企业 / 部门" min-width="160" show-overflow-tooltip>
         <template #default="{ row }">
-          {{ row.enterpriseName || "—" }}
-          <template v-if="row.teamName"> · {{ row.teamName }}</template>
+          {{ orgScopeLabel(row) }}
         </template>
       </el-table-column>
       <el-table-column label="员工" width="100" show-overflow-tooltip>
@@ -149,7 +143,7 @@
               <template v-if="detail.employeeDept"> · {{ detail.employeeDept }}</template>
             </el-descriptions-item>
             <el-descriptions-item label="企业">{{ detail.enterpriseName || "—" }}</el-descriptions-item>
-            <el-descriptions-item label="团队">{{ detail.teamName || "—" }}</el-descriptions-item>
+            <el-descriptions-item label="部门">{{ departmentLabel(detail) }}</el-descriptions-item>
             <el-descriptions-item label="模型">{{ detail.clientModel }}</el-descriptions-item>
             <el-descriptions-item label="渠道">
               {{ providerText(detail.providerCode) }} · {{ productTypeText(detail.productType) }}
@@ -183,6 +177,18 @@ import { ElMessage } from "element-plus";
 import { http } from "@/api/http";
 import { copyText } from "@/lib/clipboard";
 import { formatDateTime } from "@/lib/date-time";
+import {
+  buildDepartmentCascaderOptions,
+  departmentCascaderProps,
+  selectedDepartmentIdFromPath,
+  type DepartmentCascaderOption,
+} from "@/lib/key-binding-org-filter";
+import {
+  collectOrgEmployeeOptions,
+  visibleOrgEmployees,
+  type OrgDepartmentNode,
+  type OrgTeamNode,
+} from "@/lib/org-employees";
 import { TABLE_PAGE_SIZE } from "@/lib/table-page";
 import { useAuthStore } from "@/stores/auth";
 
@@ -195,6 +201,7 @@ interface ErrorLogRow {
   employeeId: number;
   employeeName: string | null;
   enterpriseName: string | null;
+  departmentName?: string | null;
   teamName: string | null;
   clientModel: string;
   providerCode: string | null;
@@ -220,18 +227,27 @@ interface NamedOption {
 
 const auth = useAuthStore();
 
+type EmployeeOption = {
+  id: number;
+  name: string;
+  teamId: number | null;
+  teamIds: number[];
+};
+
 const filters = reactive({
   requestId: "",
   enterpriseId: null as number | null,
-  teamId: null as number | null,
+  departmentId: null as number | null,
   employeeId: null as number | null,
 });
 const enterprises = ref<NamedOption[]>([]);
 const enterprisesLoading = ref(false);
-const teams = ref<NamedOption[]>([]);
-const teamsLoading = ref(false);
-const enterpriseEmployees = ref<NamedOption[]>([]);
-const teamEmployees = ref<NamedOption[] | null>(null);
+const departmentPath = ref<number[]>([]);
+const departments = ref<OrgDepartmentNode[]>([]);
+const departmentOptions = ref<DepartmentCascaderOption[]>([]);
+const departmentsLoading = ref(false);
+const teams = ref<OrgTeamNode[]>([]);
+const enterpriseEmployees = ref<EmployeeOption[]>([]);
 const employeesLoading = ref(false);
 const items = ref<ErrorLogRow[]>([]);
 const total = ref(0);
@@ -243,18 +259,35 @@ const detailLoading = ref(false);
 const detail = ref<ErrorLogDetail | null>(null);
 
 const hasFilters = computed(() => Boolean(
-  filters.requestId.trim() || filters.enterpriseId || filters.teamId || filters.employeeId,
+  filters.requestId.trim() || filters.enterpriseId || filters.departmentId || filters.employeeId,
 ));
 
-const visibleEmployees = computed(() => {
-  if (teamEmployees.value) return teamEmployees.value;
-  const seen = new Set<number>();
-  return enterpriseEmployees.value.filter((row) => {
-    if (seen.has(row.id)) return false;
-    seen.add(row.id);
-    return true;
-  });
-});
+const visibleEmployees = computed(() =>
+  visibleOrgEmployees({
+    isTeamAdmin: auth.isTeamAdmin,
+    selectedKind: filters.departmentId ? "department" : "enterprise",
+    selectedDepartmentId: filters.departmentId,
+    employees: enterpriseEmployees.value,
+    teams: teams.value,
+    departments: departments.value,
+  }),
+);
+
+function departmentLabel(row: { departmentName?: string | null; teamName: string | null }): string {
+  if (row.departmentName && row.departmentName !== "默认部门") return row.departmentName;
+  if (row.teamName && row.teamName !== "默认团队") return row.teamName;
+  return "—";
+}
+
+function orgScopeLabel(row: {
+  enterpriseName: string | null;
+  departmentName?: string | null;
+  teamName: string | null;
+}): string {
+  const unit = departmentLabel(row);
+  if (row.enterpriseName && unit !== "—") return `${row.enterpriseName} · ${unit}`;
+  return row.enterpriseName || (unit === "—" ? "—" : unit);
+}
 
 function statusText(status: LogStatus): string {
   return (
@@ -290,67 +323,56 @@ async function copyRequestId(requestId: string) {
 }
 
 async function onEnterpriseChange() {
-  filters.teamId = null;
+  filters.departmentId = null;
   filters.employeeId = null;
+  departmentPath.value = [];
+  departments.value = [];
+  departmentOptions.value = [];
   teams.value = [];
   enterpriseEmployees.value = [];
-  teamEmployees.value = null;
   if (!filters.enterpriseId) return;
-  await loadTeamsAndEmployees(filters.enterpriseId);
+  await loadOrgOptions(filters.enterpriseId);
 }
 
-async function onTeamChange() {
-  filters.employeeId = null;
-  if (!filters.teamId) {
-    teamEmployees.value = null;
-    return;
-  }
-  employeesLoading.value = true;
-  try {
-    const { data } = await http.get(`/api/admin/teams/${filters.teamId}/members`);
-    if (data.success) {
-      teamEmployees.value = (data.data as Array<{ employeeId: number; name: string }>).map((row) => ({
-        id: row.employeeId,
-        name: row.name,
-      }));
-    }
-  } catch (e: any) {
-    ElMessage.error(e.response?.data?.message || "员工列表加载失败");
-    teamEmployees.value = null;
-  } finally {
-    employeesLoading.value = false;
+function onDepartmentChange() {
+  filters.departmentId = selectedDepartmentIdFromPath(departmentPath.value);
+  if (filters.employeeId && !visibleEmployees.value.some((row) => row.id === filters.employeeId)) {
+    filters.employeeId = null;
   }
 }
 
-async function loadTeamsAndEmployees(enterpriseId?: number) {
-  teamsLoading.value = true;
+async function loadOrgOptions(enterpriseId?: number) {
+  departmentsLoading.value = true;
   employeesLoading.value = true;
   try {
-    const [teamRes, userRes] = await Promise.all([
-      http.get("/api/admin/teams", enterpriseId ? { params: { enterpriseId } } : undefined),
+    const params = enterpriseId ? { enterpriseId } : undefined;
+    const [deptRes, teamRes, userRes] = await Promise.all([
+      http.get("/api/admin/departments", params ? { params } : undefined),
+      http.get("/api/admin/teams", params ? { params } : undefined),
       http.get("/api/admin/users", {
         params: { ...(enterpriseId ? { enterpriseId } : {}), limit: 200 },
       }),
     ]);
-    if (teamRes.data.success) {
-      teams.value = (teamRes.data.data as NamedOption[]).map((row) => ({
-        id: row.id,
-        name: row.name,
-      }));
+    if (deptRes.data.success) {
+      departments.value = deptRes.data.data as OrgDepartmentNode[];
+      departmentOptions.value = buildDepartmentCascaderOptions(
+        (deptRes.data.data as Array<{
+          id: number;
+          name: string;
+          parentId?: number | null;
+          enterpriseId: number;
+          isDefault?: boolean;
+        }>),
+      );
     }
+    if (teamRes.data.success) teams.value = teamRes.data.data as OrgTeamNode[];
     if (userRes.data.success) {
-      enterpriseEmployees.value = (userRes.data.data as Array<{
-        id: number;
-        name: string;
-        role: string;
-      }>)
-        .filter((row) => row.role !== "admin")
-        .map((row) => ({ id: row.id, name: row.name }));
+      enterpriseEmployees.value = collectOrgEmployeeOptions(userRes.data.data);
     }
   } catch (e: any) {
     ElMessage.error(e.response?.data?.message || "筛选项加载失败");
   } finally {
-    teamsLoading.value = false;
+    departmentsLoading.value = false;
     employeesLoading.value = false;
   }
 }
@@ -371,12 +393,9 @@ async function loadTeamAdminEmployees() {
         }));
       }),
     );
-    const seen = new Set<number>();
-    enterpriseEmployees.value = members.flat().filter((row) => {
-      if (seen.has(row.id)) return false;
-      seen.add(row.id);
-      return true;
-    });
+    enterpriseEmployees.value = collectOrgEmployeeOptions(
+      members.flat().map((row) => ({ id: row.id, name: row.name, teamId: null })),
+    );
   } catch (e: any) {
     ElMessage.error(e.response?.data?.message || "员工列表加载失败");
   } finally {
@@ -410,7 +429,9 @@ function listQueryParams() {
   const requestId = filters.requestId.trim();
   if (requestId) params.requestId = requestId;
   if (auth.isSuperAdmin && filters.enterpriseId) params.enterpriseId = filters.enterpriseId;
-  if ((auth.isSuperAdmin || auth.isOrgAdmin) && filters.teamId) params.teamId = filters.teamId;
+  if ((auth.isSuperAdmin || auth.isOrgAdmin) && filters.departmentId) {
+    params.departmentId = filters.departmentId;
+  }
   if (filters.employeeId) params.employeeId = filters.employeeId;
   return params;
 }
@@ -457,10 +478,12 @@ function search() {
 function resetFilters() {
   filters.requestId = "";
   filters.enterpriseId = null;
-  filters.teamId = null;
+  filters.departmentId = null;
   filters.employeeId = null;
-  teamEmployees.value = null;
+  departmentPath.value = [];
   if (auth.isSuperAdmin) {
+    departments.value = [];
+    departmentOptions.value = [];
     teams.value = [];
     enterpriseEmployees.value = [];
   }
@@ -471,7 +494,7 @@ function resetFilters() {
 onMounted(() => {
   void load();
   void loadEnterprises();
-  if (auth.isOrgAdmin) void loadTeamsAndEmployees();
+  if (auth.isOrgAdmin) void loadOrgOptions();
   if (auth.isTeamAdmin) void loadTeamAdminEmployees();
 });
 </script>

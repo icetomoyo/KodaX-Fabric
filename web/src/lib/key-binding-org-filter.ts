@@ -105,6 +105,57 @@ export function buildOrgCascaderOptions(
     });
 }
 
+export type DepartmentCascaderOption = {
+  value: number;
+  label: string;
+  children?: DepartmentCascaderOption[];
+};
+
+export const departmentCascaderProps = {
+  checkStrictly: true,
+  emitPath: true,
+  expandTrigger: "click" as const,
+};
+
+export function selectedDepartmentIdFromPath(
+  path: readonly number[] | null | undefined,
+): number | null {
+  const last = path?.at(-1);
+  return typeof last === "number" && Number.isSafeInteger(last) && last > 0 ? last : null;
+}
+
+/** Department-only tree for a single enterprise. Skips 默认部门; its children become roots. */
+export function buildDepartmentCascaderOptions(
+  departments: readonly OrgFilterDepartment[],
+): DepartmentCascaderOption[] {
+  const named = departments.filter((row) => !row.isDefault);
+  const namedIds = new Set(named.map((row) => row.id));
+  const childrenOf = new Map<number | "root", OrgFilterDepartment[]>();
+  for (const department of named) {
+    const parentKey = department.parentId != null && namedIds.has(department.parentId)
+      ? department.parentId
+      : "root";
+    const list = childrenOf.get(parentKey) ?? [];
+    list.push(department);
+    childrenOf.set(parentKey, list);
+  }
+  const byName = (left: { name: string }, right: { name: string }) =>
+    left.name.localeCompare(right.name, "zh-CN");
+
+  function nest(parentKey: number | "root"): DepartmentCascaderOption[] {
+    return [...(childrenOf.get(parentKey) ?? [])].sort(byName).map((department) => {
+      const nested = nest(department.id);
+      return {
+        value: department.id,
+        label: department.name,
+        ...(nested.length ? { children: nested } : {}),
+      };
+    });
+  }
+
+  return nest("root");
+}
+
 export function groupingDepartmentId(
   leafDepartmentId: number | null,
   selection: OrgFilterSelection,

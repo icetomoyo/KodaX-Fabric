@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  collectOrgEmployeeOptions,
   departmentPathLabel,
   employeeDepartmentLabel,
   visibleOrgEmployees,
@@ -27,6 +28,17 @@ const employees = [
   { id: 4, name: "赵六", teamId: 104 },
   { id: 5, name: "未分配", teamId: null },
 ];
+
+test("collectOrgEmployeeOptions drops super-admins and merges multi-department membership", () => {
+  const rows = collectOrgEmployeeOptions([
+    { id: 1, name: "张三", role: "employee", teamId: 101 },
+    { id: 1, name: "张三", role: "employee", teamId: 102 },
+    { id: 9, name: "超管", role: "admin", teamId: null },
+  ]);
+  assert.deepEqual(rows, [
+    { id: 1, name: "张三", teamId: 101, teamIds: [101, 102] },
+  ]);
+});
 
 test("selecting an enterprise lists department members even when every remaining team is default", () => {
   const rows = visibleOrgEmployees({
