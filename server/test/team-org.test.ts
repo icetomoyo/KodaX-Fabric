@@ -441,6 +441,7 @@ test("admin shell uses org board for all console roles", () => {
   assert.match(orgView, /orgTree/);
   assert.doesNotMatch(orgView, /default-expand-all/);
   assert.match(orgView, /搜索部门/);
+  assert.match(orgView, /搜索姓名或手机号/);
   assert.match(orgView, /filterOrgNode/);
   assert.match(orgView, /378px/);
   assert.match(orgView, /kind: "enterprise"/);

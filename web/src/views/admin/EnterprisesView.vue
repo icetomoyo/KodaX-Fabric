@@ -133,6 +133,15 @@
           :image-size="64"
         />
         <template v-else>
+          <el-input
+            v-model="employeeQuery"
+            class="people-search"
+            clearable
+            placeholder="搜索姓名或手机号"
+            :prefix-icon="Search"
+            @keyup.enter="searchPeopleNow"
+            @clear="searchPeopleNow"
+          />
           <div class="people-table-wrap">
             <el-table
               class="people-table"
@@ -546,6 +555,8 @@ const orgTreeRef = ref<{
   filter: (value: string) => void;
 } | null>(null);
 const orgTreeQuery = ref("");
+const employeeQuery = ref("");
+let employeeSearchTimer: ReturnType<typeof setTimeout> | null = null;
 
 const showCreateEnterprise = ref(false);
 const showEditEnterprise = ref(false);
@@ -732,12 +743,14 @@ const employeeTotal = ref(0);
 let peopleLoadSeq = 0;
 
 const employeeSectionTitle = computed(() => {
+  if (employeeQuery.value.trim()) return "搜索结果";
   if (auth.isTeamAdmin) return "员工";
   if (selectedNodeKind.value === "department") return selectedDepartment.value?.name ?? "部门成员";
   return selectedEnterprise.value?.name ?? "员工";
 });
 
 const employeeEmptyText = computed(() => {
+  if (employeeQuery.value.trim()) return "未找到匹配的员工";
   if (auth.isTeamAdmin) return "本部门暂无员工";
   if (selectedNodeKind.value === "department") return "该部门暂无员工";
   return "该企业暂无员工";
@@ -911,8 +924,13 @@ async function loadPeople() {
         enterpriseId: selectedEnterpriseId.value,
         departmentId: selectedNodeKind.value === "department" ? selectedDepartmentId.value : null,
         page: page.value,
+        q: employeeQuery.value,
       })
-    : { limit: pageSize, offset: (Math.max(1, page.value) - 1) * pageSize };
+    : {
+        limit: pageSize,
+        offset: (Math.max(1, page.value) - 1) * pageSize,
+        ...(employeeQuery.value.trim() ? { q: employeeQuery.value.trim() } : {}),
+      };
   const userRes = await http.get("/api/admin/users", { params });
   if (seq !== peopleLoadSeq) return;
   if (!userRes.data.success) {
@@ -1592,6 +1610,24 @@ async function resetPassword() {
   }
 }
 
+function searchPeopleNow() {
+  if (employeeSearchTimer) {
+    clearTimeout(employeeSearchTimer);
+    employeeSearchTimer = null;
+  }
+  page.value = 1;
+  void loadPeople();
+}
+
+watch(employeeQuery, () => {
+  if (employeeSearchTimer) clearTimeout(employeeSearchTimer);
+  employeeSearchTimer = setTimeout(() => {
+    employeeSearchTimer = null;
+    page.value = 1;
+    void loadPeople();
+  }, 300);
+});
+
 watch(
   () => [route.query.enterpriseId, route.query.departmentId, route.query.teamId],
   () => {
@@ -1708,7 +1744,8 @@ onMounted(() => {
   flex-shrink: 0;
 }
 
-.tree-search {
+.tree-search,
+.people-search {
   flex-shrink: 0;
   margin-bottom: 8px;
 }
