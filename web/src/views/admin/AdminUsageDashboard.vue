@@ -485,7 +485,7 @@ const modelRows = computed(() => {
     totalTokens: Number(row.totalTokens) || 0,
     requestCount: Number(row.requestCount) || 0,
     share: shareOf(Number(row.totalTokens) || 0, total),
-  })).filter((row) => row.totalTokens > 0 || row.requestCount > 0);
+  })).filter((row) => row.totalTokens > 0);
 });
 
 const channelRows = computed(() => {

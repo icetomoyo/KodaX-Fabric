@@ -136,6 +136,9 @@ test("workbench analytics model ranks group client_model in the created_at windo
   const sql = compiled.sql.replace(/\s+/g, " ");
   assert.match(sql, /"client_model"/);
   assert.match(sql, /"request_audits"\."created_at"/);
+  assert.match(sql, /lower\(btrim\(/);
+  assert.match(sql, /having/);
+  assert.match(sql, /sum\("request_audits"\."total_tokens"\)/);
 });
 
 test("today workbench counts distinct employees with token usage", () => {

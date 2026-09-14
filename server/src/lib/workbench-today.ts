@@ -59,3 +59,42 @@ export function splitHourlyTokens(row: {
     completionTokens: row.completionTokens,
   });
 }
+
+export function canonicalizeClientModel(name: string | null | undefined): string {
+  const trimmed = (name ?? "").trim().toLowerCase();
+  return trimmed || "unknown";
+}
+
+export function modelUsageRanks(
+  rows: ReadonlyArray<{ key: string; totalTokens: number; requestCount: number }>,
+  totals: { totalTokens: number; requestCount: number },
+  limit = 12,
+): Array<{ key: string; totalTokens: number; requestCount: number }> {
+  const merged = new Map<string, { key: string; totalTokens: number; requestCount: number }>();
+  for (const row of rows) {
+    const key = canonicalizeClientModel(row.key);
+    const totalTokens = Math.max(0, Number(row.totalTokens) || 0);
+    const requestCount = Math.max(0, Number(row.requestCount) || 0);
+    const current = merged.get(key);
+    if (current) {
+      current.totalTokens += totalTokens;
+      current.requestCount += requestCount;
+    } else {
+      merged.set(key, { key, totalTokens, requestCount });
+    }
+  }
+  const top = [...merged.values()]
+    .filter((row) => row.totalTokens > 0)
+    .sort((left, right) => right.totalTokens - left.totalTokens || left.key.localeCompare(right.key))
+    .slice(0, limit);
+  const shownTokens = top.reduce((sum, row) => sum + row.totalTokens, 0);
+  const leftoverTokens = Math.max(0, (Number(totals.totalTokens) || 0) - shownTokens);
+  if (leftoverTokens <= 0) return top;
+  const shownRequests = top.reduce((sum, row) => sum + row.requestCount, 0);
+  top.push({
+    key: "other",
+    totalTokens: leftoverTokens,
+    requestCount: Math.max(0, (Number(totals.requestCount) || 0) - shownRequests),
+  });
+  return top;
+}

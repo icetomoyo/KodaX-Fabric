@@ -26,10 +26,11 @@ import {
   zonedMonthRange,
 } from "../../lib/quota-time.js";
 import { billedCacheReadTokensSql } from "../../lib/usage-cache.js";
-import { appendOtherBucket, fillDailyUsage, summarizeDailyUsage } from "../../lib/user-usage.js";
+import { fillDailyUsage, summarizeDailyUsage } from "../../lib/user-usage.js";
 import {
   avgTokensPerRequest,
   cacheHitRate,
+  modelUsageRanks,
   peakHour,
   percentChange,
   tokenComposition,
@@ -314,7 +315,7 @@ export function buildAnalyticsHourlyTrendQuery(start: Date, endExclusive: Date, 
 }
 
 export function buildAnalyticsByModelQuery(start: Date, endExclusive: Date) {
-  const modelKey = sql<string>`coalesce(${requestAudits.clientModel}, 'unknown')`;
+  const modelKey = sql<string>`lower(btrim(coalesce(${requestAudits.clientModel}, 'unknown')))`;
   return db
     .select({
       key: modelKey,
@@ -327,6 +328,7 @@ export function buildAnalyticsByModelQuery(start: Date, endExclusive: Date) {
       lt(requestAudits.createdAt, endExclusive),
     ))
     .groupBy(modelKey)
+    .having(sql`coalesce(sum(${requestAudits.totalTokens}), 0) > 0`)
     .orderBy(desc(sql`coalesce(sum(${requestAudits.totalTokens}), 0)`), asc(modelKey))
     .limit(12);
 }
@@ -499,15 +501,19 @@ async function loadPlatformAnalytics(from: string, to: string) {
       requestCount: Number(row.requestCount) || 0,
       errorCount: Number(row.errorCount) || 0,
     })));
+  const summary = summarizeDailyUsage(trend);
   return {
     range: { from, to, timezone: env.QUOTA_TIMEZONE, granularity: hourly ? "hour" : "day" },
-    summary: summarizeDailyUsage(trend),
+    summary,
     trend,
-    byModel: byModel.map((row) => ({
-      key: row.key || "unknown",
-      totalTokens: Number(row.totalTokens) || 0,
-      requestCount: Number(row.requestCount) || 0,
-    })),
+    byModel: modelUsageRanks(
+      byModel.map((row) => ({
+        key: row.key || "unknown",
+        totalTokens: Number(row.totalTokens) || 0,
+        requestCount: Number(row.requestCount) || 0,
+      })),
+      { totalTokens: summary.totalTokens, requestCount: summary.requestCount },
+    ),
     byProvider: byProvider.map((row) => ({
       key: row.key || "unknown",
       totalTokens: Number(row.totalTokens) || 0,
@@ -676,7 +682,7 @@ async function platformOverview() {
     requestCount: Number(row.requestCount) || 0,
     errorCount: Number(row.errorCount) || 0,
   })));
-  const byModel = appendOtherBucket(
+  const byModel = modelUsageRanks(
     modelRows.map((row) => ({
       key: row.key || "unknown",
       totalTokens: Number(row.totalTokens) || 0,
