@@ -16,8 +16,7 @@
       >
         <el-menu-item index="/admin">工作台</el-menu-item>
         <el-menu-item v-if="auth.isSuperAdmin" index="/admin/enterprises">企业管理</el-menu-item>
-        <el-menu-item v-if="auth.isOrgAdmin" index="/admin/enterprises">本企业编制</el-menu-item>
-        <el-menu-item v-if="auth.isDeptAdmin" index="/admin/enterprises">本部门编制</el-menu-item>
+        <el-menu-item v-if="auth.isOrgAdmin || auth.isDeptAdmin" index="/admin/enterprises">部门管理</el-menu-item>
         <el-menu-item v-if="auth.isTeamAdmin" index="/admin/enterprises">员工</el-menu-item>
         <el-menu-item v-if="auth.isOrgAdmin || auth.isDeptAdmin || auth.isTeamAdmin" index="/admin/keys">API Key</el-menu-item>
         <el-menu-item v-if="auth.isOrgAdmin || auth.isDeptAdmin || auth.isTeamAdmin" index="/admin/models">模型列表</el-menu-item>
@@ -29,10 +28,10 @@
           <el-menu-item index="/admin/seats">席位</el-menu-item>
           <el-menu-item index="/admin/channel-keys">渠道 KEY</el-menu-item>
         </el-sub-menu>
-        <el-menu-item v-if="auth.isSuperAdmin || auth.isOrgAdmin" index="/admin/key-bindings">调度画布</el-menu-item>
+        <el-menu-item v-if="auth.isSuperAdmin" index="/admin/key-bindings">调度画布</el-menu-item>
         <el-menu-item v-if="auth.isSuperAdmin" index="/admin/model-prices">模型列表</el-menu-item>
         <el-menu-item v-if="auth.isSuperAdmin" index="/admin/logs">调用日志</el-menu-item>
-        <el-menu-item index="/admin/error-logs">报错日志</el-menu-item>
+        <el-menu-item v-if="auth.isSuperAdmin" index="/admin/error-logs">报错日志</el-menu-item>
         <el-menu-item v-if="auth.isSuperAdmin" index="/admin/ops-audit">操作审计</el-menu-item>
         <el-menu-item index="/admin/profile">个人中心</el-menu-item>
       </el-menu>

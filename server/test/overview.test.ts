@@ -12,6 +12,7 @@ const {
   buildAnalyticsDailyTrendQuery,
   buildAnalyticsHourlyTrendQuery,
   buildByProviderTodayQuery,
+  buildDepartmentOwnUsageQuery,
   buildTodayAuditWhere,
   buildTodayTeamTokensQuery,
   buildTopDepartmentsTodayQuery,
@@ -66,6 +67,17 @@ test("workbench top teams today read the same quota day as the token total", () 
     compiled.params.map(String).includes("2026-09-04"),
     compiled.params.map(String).join(","),
   );
+});
+
+test("department own usage is unscoped by top-N so the tree can roll up parents", () => {
+  const compiled = buildDepartmentOwnUsageQuery({
+    now: SHANGHAI_MORNING_AFTER_UTC_MIDNIGHT,
+    enterpriseId: 3,
+  }).toSQL();
+  const sql = compiled.sql.replace(/\s+/g, " ");
+  assert.match(sql, /group by "teams"\."department_id"/);
+  assert.doesNotMatch(sql, /limit/i);
+  assert.match(sql, /"usage_counters_team_daily"/);
 });
 
 test("workbench today ranks roll up the org chain from team daily counters", () => {

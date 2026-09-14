@@ -90,6 +90,29 @@ test("unauthenticated error-log calls return 401", async () => {
   }
 });
 
+test("org_admin cannot list error logs", async () => {
+  const app = Fastify();
+  app.addHook("onRequest", async (req) => {
+    req.session = {
+      sub: "9",
+      role: "org_admin",
+      phone: "13800000009",
+      name: "OrgAdmin",
+      mustChangePassword: false,
+      enterpriseId: 3,
+    };
+    req.employeeId = 9;
+  });
+  await app.register(adminErrorLogRoutes);
+  await app.ready();
+  try {
+    const orgAdmin = await app.inject({ method: "GET", url: "/api/admin/error-logs" });
+    assert.equal(orgAdmin.statusCode, 403);
+  } finally {
+    await app.close();
+  }
+});
+
 test("employees cannot list error logs", async () => {
   const app = Fastify();
   app.addHook("onRequest", async (req) => {

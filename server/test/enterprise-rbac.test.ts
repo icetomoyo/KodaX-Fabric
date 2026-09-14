@@ -192,7 +192,7 @@ test("org_admin canvas is locked to that enterprise", () => {
   assert.equal(resolveActorEnterpriseFilter("admin", null, undefined), undefined);
 });
 
-test("org_admin can poll canvas live load and is rejected for an invalid release id", async () => {
+test("org_admin cannot open the scheduling canvas or release a channel Key", async () => {
   const app = Fastify();
   app.addHook("onRequest", attachSession(orgAdminSession));
   await app.register(adminKeyBindingRoutes);
@@ -203,8 +203,8 @@ test("org_admin can poll canvas live load and is rejected for an invalid release
       method: "POST",
       url: "/api/admin/key-bindings/credentials/abc/release",
     });
-    assert.equal(live.statusCode, 200);
-    assert.equal(release.statusCode, 400);
+    assert.equal(live.statusCode, 403);
+    assert.equal(release.statusCode, 403);
   } finally {
     await app.close();
   }
@@ -396,7 +396,7 @@ test("admin shell source includes 企业管理 and org_admin lands on workbench"
   assert.match(layout, /企业管理/);
   assert.match(layout, /isSuperAdmin/);
   assert.match(layout, /\/admin\/enterprises/);
-  assert.match(layout, /本企业编制/);
+  assert.match(layout, /部门管理/);
   assert.match(layout, /isOrgAdmin/);
   assert.match(layout, />上游</);
   assert.match(layout, /index="\/admin\/channels">渠道/);

@@ -1,130 +1,74 @@
 <template>
   <el-card shadow="never">
-      <el-form inline class="filters" @keyup.enter="search">
-        <el-form-item>
-          <el-select
-            v-model="filters.productLineId"
-            clearable
-            filterable
-            placeholder="全部渠道"
-            style="width: 200px"
-            @change="onChannelChange"
+    <el-table v-loading="loading" :data="items" stripe empty-text="暂无记录">
+      <el-table-column label="Request ID" min-width="240">
+        <template #default="{ row }">
+          <el-button link type="primary" @click="copyRequestId(row.requestId)">
+            {{ row.requestId }}
+          </el-button>
+        </template>
+      </el-table-column>
+      <el-table-column label="渠道" min-width="160">
+        <template #default="{ row }">
+          <span>
+            {{ providerText(row.providerCode) }}
+            <el-tag v-if="row.productType === 'coding_plan'" effect="plain">套餐</el-tag>
+          </span>
+        </template>
+      </el-table-column>
+      <el-table-column label="模型" min-width="140" show-overflow-tooltip>
+        <template #default="{ row }">{{ row.clientModel }}</template>
+      </el-table-column>
+      <el-table-column label="Tokens" width="110">
+        <template #default="{ row }">
+          <el-tooltip :content="tokenTooltip(row)" placement="top">
+            <span>{{ formatNumber(row.totalTokens) }}</span>
+          </el-tooltip>
+        </template>
+      </el-table-column>
+      <el-table-column label="缓存命中" width="120">
+        <template #default="{ row }">
+          <el-tooltip
+            :disabled="row.cacheReadTokens == null"
+            :content="cacheHitText(row.cacheReadTokens, row.promptTokens)"
+            placement="top"
           >
-            <el-option
-              v-for="channel in channels"
-              :key="channel.id"
-              :label="channelLabel(channel)"
-              :value="channel.id"
-            />
-          </el-select>
-        </el-form-item>
-        <el-form-item>
-          <el-select
-            v-model="filters.model"
-            clearable
-            filterable
-            placeholder="全部模型"
-            style="width: 200px"
-          >
-            <el-option v-for="model in modelOptions" :key="model" :label="model" :value="model" />
-          </el-select>
-        </el-form-item>
-        <el-form-item>
-          <el-select v-model="filters.status" clearable placeholder="全部状态" style="width: 140px">
-            <el-option label="成功" value="success" />
-            <el-option label="上游错误" value="upstream_error" />
-            <el-option label="请求错误" value="client_error" />
-            <el-option label="已取消" value="cancelled" />
-          </el-select>
-        </el-form-item>
-        <el-form-item>
-          <el-date-picker
-            v-model="filters.range"
-            type="daterange"
-            value-format="YYYY-MM-DD"
-            range-separator="至"
-            start-placeholder="开始日期"
-            end-placeholder="结束日期"
-            :disabled-date="disableFutureDate"
-            style="width: 260px"
-          />
-        </el-form-item>
-        <el-form-item>
-          <el-button type="primary" @click="search">查询</el-button>
-          <el-button v-if="hasFilters" @click="resetFilters">重置</el-button>
-        </el-form-item>
-      </el-form>
+            <span>{{ formatNumber(row.cacheReadTokens) }}</span>
+          </el-tooltip>
+        </template>
+      </el-table-column>
+      <el-table-column label="状态" width="120">
+        <template #default="{ row }">
+          <el-tag :type="statusTagType(row.status)">
+            {{ statusText(row.status) }}
+          </el-tag>
+        </template>
+      </el-table-column>
+      <el-table-column label="时间" width="180">
+        <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
+      </el-table-column>
+    </el-table>
 
-      <el-table v-loading="loading" :data="items" stripe empty-text="暂无记录">
-        <el-table-column label="Request ID" min-width="240">
-          <template #default="{ row }">
-            <el-button link type="primary" @click="copyRequestId(row.requestId)">
-              {{ row.requestId }}
-            </el-button>
-          </template>
-        </el-table-column>
-        <el-table-column label="渠道" min-width="160">
-          <template #default="{ row }">
-            <span>
-              {{ providerText(row.providerCode) }}
-              <el-tag v-if="row.productType === 'coding_plan'" effect="plain">套餐</el-tag>
-            </span>
-          </template>
-        </el-table-column>
-        <el-table-column label="模型" min-width="140" show-overflow-tooltip>
-          <template #default="{ row }">{{ row.clientModel }}</template>
-        </el-table-column>
-        <el-table-column label="Tokens" width="110">
-          <template #default="{ row }">
-            <el-tooltip :content="tokenTooltip(row)" placement="top">
-              <span>{{ formatNumber(row.totalTokens) }}</span>
-            </el-tooltip>
-          </template>
-        </el-table-column>
-        <el-table-column label="缓存命中" width="120">
-          <template #default="{ row }">
-            <el-tooltip
-              :disabled="row.cacheReadTokens == null"
-              :content="cacheHitText(row.cacheReadTokens, row.promptTokens)"
-              placement="top"
-            >
-              <span>{{ formatNumber(row.cacheReadTokens) }}</span>
-            </el-tooltip>
-          </template>
-        </el-table-column>
-        <el-table-column label="状态" width="120">
-          <template #default="{ row }">
-            <el-tag :type="statusTagType(row.status)">
-              {{ statusText(row.status) }}
-            </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="时间" width="180">
-          <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
-        </el-table-column>
-      </el-table>
-
-      <div class="pager">
-        <el-pagination
-          v-model:current-page="page"
-          background
-          layout="total, prev, pager, next"
-          :total="total"
-          :page-size="limit"
-          @current-change="load"
-        />
-      </div>
+    <div class="pager">
+      <el-pagination
+        v-model:current-page="page"
+        background
+        layout="total, prev, pager, next"
+        :total="total"
+        :page-size="limit"
+        @current-change="load"
+      />
+    </div>
   </el-card>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from "vue";
+import { onMounted, ref } from "vue";
 import { ElMessage } from "element-plus";
 import { http } from "@/api/http";
 import { copyText } from "@/lib/clipboard";
 import { formatDateTime } from "@/lib/date-time";
 import { TABLE_PAGE_SIZE } from "@/lib/table-page";
-
 
 type LogStatus = "success" | "upstream_error" | "client_error" | "cancelled";
 type ProductType = "api" | "coding_plan";
@@ -143,13 +87,6 @@ interface MeLogRow {
   createdAt: string;
 }
 
-type CatalogChannel = {
-  id: number;
-  name: string;
-  providerName: string;
-  models: Array<{ model: string }>;
-};
-
 const providerNames: Record<string, string> = {
   glm: "智谱/GLM",
   kimi: "月之暗面/Kimi",
@@ -158,53 +95,11 @@ const providerNames: Record<string, string> = {
 };
 
 const numberFormatter = new Intl.NumberFormat("zh-CN");
-const filters = reactive({
-  productLineId: undefined as number | undefined,
-  model: "" as string,
-  status: "" as "" | LogStatus,
-  range: null as [string, string] | null,
-});
-const channels = ref<CatalogChannel[]>([]);
 const items = ref<MeLogRow[]>([]);
 const total = ref(0);
 const page = ref(1);
 const limit = TABLE_PAGE_SIZE;
 const loading = ref(false);
-
-const hasFilters = computed(() => Boolean(
-  filters.productLineId
-  || filters.model
-  || filters.status
-  || filters.range,
-));
-
-const modelOptions = computed(() => {
-  const source = filters.productLineId
-    ? channels.value.filter((channel) => channel.id === filters.productLineId)
-    : channels.value;
-  return [...new Set(source.flatMap((channel) => channel.models.map((item) => item.model)))];
-});
-
-function channelLabel(channel: Pick<CatalogChannel, "providerName" | "name">): string {
-  const company = channel.providerName.trim();
-  const model = channel.name.trim();
-  if (!company) return model;
-  if (!model) return company;
-  if (company === model || model.startsWith(`${company}/`)) return model;
-  return `${company}/${model}`;
-}
-
-function onChannelChange() {
-  if (filters.model && !modelOptions.value.includes(filters.model)) {
-    filters.model = "";
-  }
-}
-
-function disableFutureDate(date: Date) {
-  const today = new Date();
-  today.setHours(23, 59, 59, 999);
-  return date.getTime() > today.getTime();
-}
 
 function statusText(status: LogStatus): string {
   return {
@@ -251,20 +146,6 @@ async function copyRequestId(requestId: string) {
   else ElMessage.error("复制失败");
 }
 
-async function loadChannels() {
-  try {
-    const { data } = await http.get("/api/me/models");
-    if (data.success) {
-      channels.value = Array.isArray(data.data?.channels) ? data.data.channels : [];
-    }
-  } catch (error) {
-    ElMessage.error(
-      (error as { response?: { data?: { message?: string } } }).response?.data?.message
-        ?? "渠道列表加载失败",
-    );
-  }
-}
-
 async function load() {
   loading.value = true;
   try {
@@ -272,11 +153,6 @@ async function load() {
       params: {
         limit,
         offset: (page.value - 1) * limit,
-        productLineId: filters.productLineId,
-        model: filters.model || undefined,
-        status: filters.status || undefined,
-        from: filters.range?.[0],
-        to: filters.range?.[1],
       },
     });
     if (data.success) {
@@ -293,30 +169,12 @@ async function load() {
   }
 }
 
-function search() {
-  page.value = 1;
-  load();
-}
-
-function resetFilters() {
-  filters.productLineId = undefined;
-  filters.model = "";
-  filters.status = "";
-  filters.range = null;
-  page.value = 1;
-  load();
-}
-
 onMounted(() => {
-  void loadChannels();
   load();
 });
 </script>
 
 <style scoped>
-.filters {
-  margin-bottom: 12px;
-}
 .pager {
   display: flex;
   justify-content: flex-end;

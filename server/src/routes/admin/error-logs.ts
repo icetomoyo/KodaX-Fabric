@@ -141,7 +141,7 @@ async function resolveListScope(
 export async function adminErrorLogRoutes(app: FastifyInstance) {
   app.addHook("preHandler", requireSession);
   app.addHook("preHandler", requirePasswordChanged);
-  app.addHook("preHandler", requireRoles("admin", "org_admin", "dept_admin", "team_admin"));
+  app.addHook("preHandler", requireRoles("admin"));
 
   app.get("/api/admin/error-logs", async (req, reply) => {
     const parsed = listQuerySchema.safeParse(req.query);

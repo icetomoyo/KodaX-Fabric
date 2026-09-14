@@ -297,6 +297,9 @@ test("admin workbench ranks today usage across the org chain", () => {
   assert.match(dashboard, /label: "企业"/);
   assert.match(dashboard, /label: "部门"/);
   assert.match(dashboard, /label: "团队"/);
+  assert.match(dashboard, /departmentUsageTree/);
+  assert.match(dashboard, /usage-tree/);
+  assert.doesNotMatch(dashboard, /is-tree/);
   assert.match(dashboard, /label: "员工"/);
   assert.match(dashboard, /topEnterprisesToday/);
   assert.match(dashboard, /topDepartmentsToday/);
@@ -364,12 +367,14 @@ test("admin shell uses org board for all console roles", () => {
   const home = readFileSync(resolve(root, "web/src/lib/home.ts"), "utf8");
   const router = readFileSync(resolve(root, "web/src/router/index.ts"), "utf8");
   assert.match(layout, /企业管理/);
-  assert.match(layout, /本企业编制/);
-  assert.match(layout, /本部门编制/);
+  assert.match(layout, /部门管理/);
+  assert.doesNotMatch(layout, /本企业编制/);
+  assert.doesNotMatch(layout, /本部门编制/);
   assert.match(layout, /v-if="auth.isTeamAdmin" index="\/admin\/enterprises">员工/);
   assert.match(layout, /isOrgAdmin \|\| auth.isDeptAdmin \|\| auth.isTeamAdmin" index="\/admin\/keys">API Key/);
   assert.match(layout, /index="\/admin\/guide">接入教程/);
-  assert.match(layout, /isSuperAdmin \|\| auth.isOrgAdmin" index="\/admin\/key-bindings">调度画布/);
+  assert.match(layout, /isSuperAdmin" index="\/admin\/key-bindings">调度画布/);
+  assert.match(layout, /isSuperAdmin" index="\/admin\/error-logs">报错日志/);
   assert.match(layout, />上游</);
   assert.match(layout, /index="\/admin\/channels">渠道/);
   assert.match(layout, /index="\/admin\/seats">席位/);
@@ -389,7 +394,8 @@ test("admin shell uses org board for all console roles", () => {
   assert.match(router, /admin-keys/);
   assert.match(router, /admin-guide/);
   assert.match(router, /team_admin/);
-  assert.match(router, /name: "admin-key-bindings"[\s\S]*roles: \["admin", "org_admin"\]/);
+  assert.match(router, /name: "admin-key-bindings"[\s\S]*roles: \["admin"\]/);
+  assert.match(router, /name: "admin-error-logs"[\s\S]*roles: \["admin"\]/);
   const orgView = readFileSync(resolve(root, "web/src/views/admin/EnterprisesView.vue"), "utf8");
   assert.match(orgView, /el-tree/);
   assert.match(orgView, /orgTree/);

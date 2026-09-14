@@ -16,6 +16,7 @@ import {
   usageCountersTeamDaily,
 } from "../../db/schema/index.js";
 import { getChannelOverviewStats } from "../../lib/channel-overview.js";
+import { departmentUsageRows } from "../../lib/department-usage-tree.js";
 import { scopedDepartmentIds, scopedTeamIds, listTeamIdsInDepartments } from "../../lib/org.js";
 import { inclusiveDayCount, quotaDayAt, zonedDateRange, zonedMonthRange } from "../../lib/quota-time.js";
 import { fillDailyUsage, summarizeDailyUsage } from "../../lib/user-usage.js";
@@ -133,6 +134,39 @@ export function buildTopEnterprisesTodayQuery(options: TodayQueryOptions = {}) {
     .groupBy(enterprises.id, enterprises.name)
     .orderBy(sql`sum(${usageCountersTeamDaily.totalTokens}) desc`)
     .limit(10);
+}
+
+export function buildDepartmentOwnUsageQuery(options: TodayQueryOptions = {}) {
+  return db
+    .select({
+      departmentId: teams.departmentId,
+      totalTokens: sql<number>`coalesce(sum(${usageCountersTeamDaily.totalTokens}), 0)`,
+      requestCount: sql<number>`coalesce(sum(${usageCountersTeamDaily.requestCount}), 0)`,
+    })
+    .from(usageCountersTeamDaily)
+    .innerJoin(teams, eq(usageCountersTeamDaily.teamId, teams.id))
+    .where(scopeUsageWhere(usageDayFilter(options), options))
+    .groupBy(teams.departmentId);
+}
+
+async function loadDepartmentUsageTree(options: TodayQueryOptions) {
+  const scope = and(
+    options.enterpriseId != null ? eq(departments.enterpriseId, options.enterpriseId) : undefined,
+    options.departmentIds?.length ? inArray(departments.id, options.departmentIds) : undefined,
+  );
+  const [tree, own] = await Promise.all([
+    db
+      .select({
+        id: departments.id,
+        parentId: departments.parentId,
+        name: departments.name,
+        isDefault: departments.isDefault,
+      })
+      .from(departments)
+      .where(scope),
+    buildDepartmentOwnUsageQuery(options),
+  ]);
+  return departmentUsageRows(tree, own);
 }
 
 export function buildTopDepartmentsTodayQuery(options: TodayQueryOptions = {}) {
@@ -539,7 +573,7 @@ async function enterpriseOverview(enterpriseId: number) {
     .where(eq(employees.enterpriseId, enterpriseId));
   const now = new Date();
   const todayWhere = and(todayAuditFilter(now), eq(employees.enterpriseId, enterpriseId));
-  const [today, tokenRow, monthRow, ranks, byProvider, errors] = await Promise.all([
+  const [today, tokenRow, monthRow, ranks, byProvider, errors, departmentUsageTree] = await Promise.all([
     db
       .select({
         requests: sql<number>`count(*)::int`,
@@ -557,6 +591,7 @@ async function enterpriseOverview(enterpriseId: number) {
     usageRanksToday({ now, enterpriseId }),
     byProviderToday(todayWhere),
     recentErrors(and(eq(employees.enterpriseId, enterpriseId))),
+    loadDepartmentUsageTree({ now, enterpriseId }),
   ]);
   return {
     role: "org_admin" as const,
@@ -572,6 +607,7 @@ async function enterpriseOverview(enterpriseId: number) {
       errors: today.errors,
     },
     ...ranks,
+    departmentUsageTree,
     byProviderToday: byProvider,
     recentErrors: errors,
   };
@@ -587,6 +623,7 @@ async function teamScopeOverview(teamIds: number[]) {
       topDepartmentsToday: [],
       topTeamsToday: [],
       topMembersToday: [],
+      departmentUsageTree: [],
       byProviderToday: [],
       recentErrors: [],
     };
@@ -597,13 +634,19 @@ async function teamScopeOverview(teamIds: number[]) {
     .where(inArray(teamMembers.teamId, teamIds));
   const now = new Date();
   const todayWhere = and(todayAuditFilter(now), inArray(requestAudits.teamId, teamIds));
-  const [today, tokenRow, monthRow, ranks, byProvider, errors] = await Promise.all([
+  const departmentIdRows = await db
+    .select({ departmentId: teams.departmentId })
+    .from(teams)
+    .where(inArray(teams.id, teamIds));
+  const departmentIds = [...new Set(departmentIdRows.map((row) => row.departmentId))];
+  const [today, tokenRow, monthRow, ranks, byProvider, errors, departmentUsageTree] = await Promise.all([
     todayStats(todayWhere),
     buildTodayTeamTokensQuery({ now, teamIds }).then((rows) => rows[0]),
     buildMonthTeamTokensQuery({ now, teamIds }).then((rows) => rows[0]),
     usageRanksToday({ now, teamIds }),
     byProviderToday(todayWhere),
     recentErrors(and(inArray(requestAudits.teamId, teamIds))),
+    loadDepartmentUsageTree({ now, teamIds, departmentIds }),
   ]);
   return {
     role: "team_admin" as const,
@@ -618,6 +661,7 @@ async function teamScopeOverview(teamIds: number[]) {
       errors: today.errors,
     },
     ...ranks,
+    departmentUsageTree,
     byProviderToday: byProvider,
     recentErrors: errors,
   };

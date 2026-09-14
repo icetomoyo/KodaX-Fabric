@@ -68,24 +68,19 @@
           description="今日暂无用量"
           :image-size="72"
         />
-        <div v-else class="rank-list">
+        <div v-else class="usage-tree">
           <div
-            v-for="(row, index) in rankRows"
+            v-for="row in rankRows"
             :key="row.key"
-            class="rank-row"
+            class="usage-tree-row"
+            :class="{ root: !isDepartmentTree || row.depth === 0 }"
           >
-            <span class="rank-index" :class="{ top: index < 3 }">{{ index + 1 }}</span>
-            <div class="rank-main">
-              <div class="rank-name">{{ row.name }}</div>
-              <div v-if="row.sub" class="rank-sub">{{ row.sub }}</div>
-            </div>
-            <div class="rank-metrics">
-              <strong>{{ formatTokenCompact(row.totalTokens) }}</strong>
-              <span v-if="row.requestCount">{{ formatNumber(row.requestCount) }} 次</span>
-            </div>
-            <div class="rank-bar-track">
-              <div class="rank-bar" :style="{ width: topUserBarWidth(row) }" />
-            </div>
+            <span class="usage-tree-label">
+              <span v-if="row.tree" class="usage-tree-prefix">{{ row.tree }}</span>
+              <span class="usage-tree-title">{{ row.name }}</span>
+              <span v-if="row.sub" class="usage-tree-sub">{{ row.sub }}</span>
+            </span>
+            <span class="usage-tree-value">{{ formatTokenCompact(row.totalTokens) }}</span>
           </div>
         </div>
       </section>
@@ -133,62 +128,6 @@
         </div>
       </section>
     </div>
-
-    <section class="page-card panel-card errors-card">
-      <div class="panel-head">
-        <h3 class="panel-title">最近失败请求</h3>
-        <el-button link type="primary" @click="router.push('/admin/error-logs')">
-          报错日志
-        </el-button>
-      </div>
-
-      <el-empty
-        v-if="!loading && !(data?.recentErrors?.length)"
-        description="暂无失败记录"
-        :image-size="72"
-      />
-      <el-table
-        v-else
-        v-loading="loading"
-        :data="pagedErrors"
-        class="errors-table"
-        empty-text="暂无失败记录"
-      >
-        <el-table-column label="时间" min-width="170">
-          <template #default="{ row }">
-            <span class="mono-cell">{{ formatDateTime(row.createdAt) }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="员工" min-width="110">
-          <template #default="{ row }">{{ row.employeeName || "—" }}</template>
-        </el-table-column>
-        <el-table-column label="组织" min-width="200">
-          <template #default="{ row }">{{ orgPath(row) }}</template>
-        </el-table-column>
-        <el-table-column prop="clientModel" label="模型" min-width="120" show-overflow-tooltip />
-        <el-table-column label="上游" min-width="100">
-          <template #default="{ row }">
-            {{ providerLabel(String(row.providerCode ?? "—")) }}
-          </template>
-        </el-table-column>
-        <el-table-column label="状态" width="120">
-          <template #default="{ row }">
-            <el-tag type="danger" effect="light">
-              {{ statusLabel(String(row.status ?? "")) }}
-            </el-tag>
-          </template>
-        </el-table-column>
-      </el-table>
-      <div v-if="errorTotal" class="pager">
-        <el-pagination
-          v-model:current-page="errorPage"
-          background
-          layout="total, prev, pager, next"
-          :total="errorTotal"
-          :page-size="errorPageSize"
-        />
-      </div>
-    </section>
   </div>
 </template>
 
@@ -198,8 +137,8 @@ import { useRouter } from "vue-router";
 import { ElMessage } from "element-plus";
 import AdminUsageDashboard from "@/views/admin/AdminUsageDashboard.vue";
 import { http } from "@/api/http";
-import { formatDateTime } from "@/lib/date-time";
 import { formatTokenCompact } from "@/lib/tokens";
+import { departmentUsageRows } from "@/lib/department-usage-tree";
 import {
   ranksFromMemberUsage,
   ranksFromTeamUsage,
@@ -207,7 +146,6 @@ import {
   type TeamUsageRow,
 } from "@/lib/workbench-ranks";
 
-import { useTablePage } from "@/lib/table-page";
 import { useAuthStore } from "@/stores/auth";
 
 type OverviewData = {
@@ -259,6 +197,14 @@ type OverviewData = {
     totalTokens?: number;
     requestCount?: number;
   }>;
+  departmentUsageTree?: Array<{
+    id: number;
+    name: string;
+    prefix: string;
+    depth: number;
+    totalTokens: number;
+    requestCount: number;
+  }>;
   byProviderToday?: Array<{
     providerCode?: string | null;
     requests?: number;
@@ -291,17 +237,12 @@ const router = useRouter();
 const auth = useAuthStore();
 const loading = ref(false);
 const data = ref<OverviewData | null>(null);
-const {
-  page: errorPage,
-  paged: pagedErrors,
-  total: errorTotal,
-  pageSize: errorPageSize,
-} = useTablePage(() => data.value?.recentErrors ?? []);
 const role = computed(() => data.value?.role ?? auth.user?.role ?? "admin");
 
 const primaryAction = computed(() => {
-  if (role.value === "org_admin") return { to: "/admin/enterprises", label: "本企业编制" };
-  if (role.value === "dept_admin") return { to: "/admin/enterprises", label: "本部门编制" };
+  if (role.value === "org_admin" || role.value === "dept_admin") {
+    return { to: "/admin/enterprises", label: "部门管理" };
+  }
   if (role.value === "team_admin") return { to: "/admin/enterprises", label: "员工" };
   return { to: "/admin/channels", label: "管理渠道" };
 });
@@ -422,16 +363,14 @@ const kpis = computed((): KpiCard[] => {
 const quickLinks = computed(() => {
   if (role.value === "org_admin") {
     return [
-      { to: "/admin/enterprises", title: "本企业编制", desc: "部门 · 团队 · 员工", dot: "blue" },
-      { to: "/admin/error-logs", title: "报错日志", desc: "本企业异常", dot: "violet" },
+      { to: "/admin/enterprises", title: "部门管理", desc: "部门 · 员工", dot: "blue" },
       { to: "/admin/keys", title: "API Key", desc: "我的调用凭据", dot: "teal" },
       { to: "/admin/profile", title: "个人中心", desc: "账号、密码与渠道 KEY", dot: "amber" },
     ];
   }
   if (role.value === "dept_admin") {
     return [
-      { to: "/admin/enterprises", title: "本部门编制", desc: "团队 · 员工", dot: "blue" },
-      { to: "/admin/error-logs", title: "报错日志", desc: "本部门异常", dot: "violet" },
+      { to: "/admin/enterprises", title: "部门管理", desc: "部门 · 员工", dot: "blue" },
       { to: "/admin/keys", title: "API Key", desc: "我的调用凭据", dot: "teal" },
       { to: "/admin/profile", title: "个人中心", desc: "账号、密码与渠道 KEY", dot: "amber" },
     ];
@@ -439,7 +378,6 @@ const quickLinks = computed(() => {
   if (role.value === "team_admin") {
     return [
       { to: "/admin/enterprises", title: "员工", desc: "本团队成员", dot: "blue" },
-      { to: "/admin/error-logs", title: "报错日志", desc: "本团队异常", dot: "violet" },
       { to: "/admin/keys", title: "API Key", desc: "我的调用凭据", dot: "teal" },
       { to: "/admin/profile", title: "个人中心", desc: "账号、密码与渠道 KEY", dot: "amber" },
     ];
@@ -461,23 +399,22 @@ const rankLevels = computed(() => {
       { value: "employee" as const, label: "员工" },
     ];
   }
-  if (role.value === "org_admin") {
+  if (role.value === "org_admin" || role.value === "dept_admin") {
     return [
       { value: "department" as const, label: "部门" },
-      { value: "team" as const, label: "团队" },
       { value: "employee" as const, label: "员工" },
     ];
   }
-  if (role.value === "dept_admin") {
-    return [
-      { value: "team" as const, label: "团队" },
-      { value: "employee" as const, label: "员工" },
-    ];
-  }
-  return [{ value: "employee" as const, label: "员工" }];
+  return [
+    { value: "department" as const, label: "部门" },
+    { value: "employee" as const, label: "员工" },
+  ];
 });
 
 const rankLevel = ref<RankLevel>("enterprise");
+const isDepartmentTree = computed(() =>
+  rankLevel.value === "department" && Boolean(data.value?.departmentUsageTree?.length),
+);
 watch(
   rankLevels,
   (levels) => {
@@ -489,15 +426,20 @@ watch(
 );
 
 const rankLink = computed(() => {
-  if (role.value === "org_admin") return { to: "/admin/enterprises", label: "编制" };
-  if (role.value === "dept_admin") return { to: "/admin/enterprises", label: "编制" };
+  if (role.value === "org_admin" || role.value === "dept_admin") {
+    return { to: "/admin/enterprises", label: "部门管理" };
+  }
   if (role.value === "team_admin") return { to: "/admin/enterprises", label: "员工" };
   return { to: "/admin/logs", label: "查看日志" };
 });
 
 function rowsFor(level: RankLevel) {
   if (level === "enterprise") return data.value?.topEnterprisesToday ?? [];
-  if (level === "department") return data.value?.topDepartmentsToday ?? [];
+  if (level === "department") {
+    return data.value?.departmentUsageTree?.length
+      ? data.value.departmentUsageTree
+      : data.value?.topDepartmentsToday ?? [];
+  }
   if (level === "team") return data.value?.topTeamsToday ?? [];
   return data.value?.topMembersToday ?? [];
 }
@@ -513,6 +455,18 @@ const rankRows = computed(() => {
     }));
   }
   if (rankLevel.value === "department") {
+    const tree = data.value?.departmentUsageTree ?? [];
+    if (tree.length) {
+      return tree.map((row) => ({
+        key: `dept:${row.id}`,
+        name: row.name,
+        tree: row.prefix,
+        depth: row.depth,
+        sub: "",
+        totalTokens: Number(row.totalTokens) || 0,
+        requestCount: Number(row.requestCount) || 0,
+      }));
+    }
     return (data.value?.topDepartmentsToday ?? []).map((row, index) => ({
       key: String(row.departmentId ?? index),
       name: row.departmentName || "—",
@@ -540,11 +494,6 @@ const rankRows = computed(() => {
     totalTokens: Number(row.totalTokens) || 0,
     requestCount: Number(row.requestCount) || 0,
   }));
-});
-
-const maxTopTokens = computed(() => {
-  const list = rankRows.value;
-  return Math.max(1, ...list.map((row) => Number(row.totalTokens) || 0));
 });
 
 const maxProviderRequests = computed(() => {
@@ -578,25 +527,9 @@ function providerDotStyle(code: string): Record<string, string> {
   return { background: PROVIDER_META[code]?.color ?? "#94a3b8" };
 }
 
-function topUserBarWidth(row: { totalTokens?: number }): string {
-  const tokens = Number(row.totalTokens) || 0;
-  return `${Math.max(6, Math.round((tokens / maxTopTokens.value) * 100))}%`;
-}
-
 function providerBarWidth(row: { requests?: number }): string {
   const requests = Number(row.requests) || 0;
   return `${Math.max(6, Math.round((requests / maxProviderRequests.value) * 100))}%`;
-}
-
-function statusLabel(status: string): string {
-  return (
-    {
-      upstream_error: "上游错误",
-      client_error: "客户端错误",
-      cancelled: "已取消",
-      success: "成功",
-    }[status] ?? (status || "失败")
-  );
 }
 
 type TeamListRow = TeamUsageRow & {
@@ -663,7 +596,8 @@ async function load() {
     const needsOrgRanks = !Array.isArray(overview.topEnterprisesToday)
       || !Array.isArray(overview.topDepartmentsToday);
     const needsMembers = !Array.isArray(overview.topMembersToday);
-    if (needsOrgRanks || needsMembers) {
+    const needsDepartmentTree = !Array.isArray(overview.departmentUsageTree);
+    if (needsOrgRanks || needsMembers || needsDepartmentTree) {
       const teams = await loadTeamUsage();
       if (needsOrgRanks) {
         const ranks = ranksFromTeamUsage(teams);
@@ -672,6 +606,37 @@ async function load() {
           ...ranks,
           topTeamsToday: withRequestCounts(ranks.topTeamsToday, overview.topTeamsToday ?? []),
         };
+      }
+      if (needsDepartmentTree) {
+        try {
+          const deptRes = await http.get("/api/admin/departments");
+          const departments = deptRes.data.success
+            ? (deptRes.data.data as Array<{
+              id: number;
+              name: string;
+              parentId?: number | null;
+              isDefault?: boolean;
+            }>)
+            : [];
+          const own = new Map<number, { departmentId: number; totalTokens: number; requestCount: number }>();
+          for (const team of teams) {
+            if (team.departmentId == null) continue;
+            const current = own.get(team.departmentId);
+            const tokens = Number(team.todayTotalTokens) || 0;
+            const requests = Number(team.requestCount) || 0;
+            own.set(team.departmentId, {
+              departmentId: team.departmentId,
+              totalTokens: (current?.totalTokens ?? 0) + tokens,
+              requestCount: (current?.requestCount ?? 0) + requests,
+            });
+          }
+          next = {
+            ...next,
+            departmentUsageTree: departmentUsageRows(departments, [...own.values()]),
+          };
+        } catch {
+          next = { ...next, departmentUsageTree: [] };
+        }
       }
       if (needsMembers) {
         next = {
@@ -902,14 +867,12 @@ onMounted(() => {
   gap: 8px;
 }
 
-.rank-list,
 .provider-list {
   display: flex;
   flex-direction: column;
   gap: 10px;
 }
 
-.rank-row,
 .provider-row {
   display: grid;
   gap: 8px 12px;
@@ -919,66 +882,92 @@ onMounted(() => {
   background: #f8fafc;
 }
 
-.rank-row {
-  grid-template-columns: 28px minmax(0, 1fr) auto;
-  align-items: center;
+.usage-tree {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 0 8px;
 }
 
-.rank-index {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
+.usage-tree-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 24px;
+  min-height: 34px;
+  padding: 4px 12px;
   border-radius: 8px;
-  background: #e2e8f0;
-  color: #475569;
-  font-size: 12px;
+}
+
+.usage-tree-row:hover {
+  background: #f1f5f9;
+}
+
+.usage-tree-label {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+}
+
+.usage-tree-prefix {
+  flex: none;
+  color: #94a3b8;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre;
+}
+
+.usage-tree-title {
+  overflow: hidden;
+  color: #334155;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.6;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.usage-tree-row.root .usage-tree-title {
+  color: #0f172a;
   font-weight: 700;
 }
 
-.rank-index.top {
-  background: #dbeafe;
-  color: #1d4ed8;
+.usage-tree-value {
+  flex: none;
+  color: #64748b;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  letter-spacing: 0.01em;
 }
 
-.rank-main {
-  min-width: 0;
+.usage-tree-row.root .usage-tree-value {
+  color: #0f172a;
+  font-size: 14px;
 }
 
-.rank-name,
+.usage-tree-sub {
+  overflow: hidden;
+  margin-left: 8px;
+  color: #94a3b8;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .provider-name {
   color: #0f172a;
   font-size: 14px;
   font-weight: 600;
 }
 
-.rank-sub,
 .provider-code {
   margin-top: 2px;
   color: #94a3b8;
   font-size: 12px;
 }
 
-.rank-metrics {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 2px;
-  font-variant-numeric: tabular-nums;
-}
-
-.rank-metrics strong {
-  color: #0f172a;
-  font-size: 14px;
-}
-
-.rank-metrics span {
-  color: #94a3b8;
-  font-size: 12px;
-}
-
-.rank-bar-track,
 .provider-bar-track {
   grid-column: 1 / -1;
   height: 6px;
@@ -987,7 +976,6 @@ onMounted(() => {
   background: #e2e8f0;
 }
 
-.rank-bar,
 .provider-bar {
   height: 100%;
   border-radius: inherit;

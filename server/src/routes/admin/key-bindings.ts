@@ -47,7 +47,7 @@ const querySchema = z.object({
 export async function adminKeyBindingRoutes(app: FastifyInstance) {
   app.addHook("preHandler", requireSession);
   app.addHook("preHandler", requirePasswordChanged);
-  app.addHook("preHandler", requireRoles("admin", "org_admin"));
+  app.addHook("preHandler", requireRoles("admin"));
 
   app.get("/api/admin/key-bindings", async (req, reply) => {
     const query = querySchema.safeParse(req.query);

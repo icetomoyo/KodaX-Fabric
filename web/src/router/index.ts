@@ -165,7 +165,7 @@ export const router = createRouter({
           path: "key-bindings",
           name: "admin-key-bindings",
           component: () => import("@/views/admin/KeyBindingsView.vue"),
-          meta: { roles: ["admin", "org_admin"] },
+          meta: { roles: ["admin"] },
         },
         {
           path: "model-prices",
@@ -188,7 +188,7 @@ export const router = createRouter({
           path: "error-logs",
           name: "admin-error-logs",
           component: () => import("@/views/admin/ErrorLogsView.vue"),
-          meta: { roles: ["admin", "org_admin", "dept_admin", "team_admin"] },
+          meta: { roles: ["admin"] },
         },
         {
           path: "ops-audit",
