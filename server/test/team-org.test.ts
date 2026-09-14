@@ -329,6 +329,8 @@ test("super-admin workbench is a usage chart board", () => {
   assert.doesNotMatch(charts, /rangePreset/);
   assert.doesNotMatch(charts, /近 7 天/);
   assert.doesNotMatch(charts, /近 30 天/);
+  assert.match(charts, /用量分析/);
+  assert.match(charts, /\/admin\/usage/);
   assert.match(charts, /label: "企业"/);
   assert.match(charts, /label: "部门"/);
   assert.match(charts, /label: "员工"/);
@@ -339,6 +341,29 @@ test("super-admin workbench is a usage chart board", () => {
   assert.doesNotMatch(charts, /usage-tree-prefix/);
   assert.doesNotMatch(charts, /quick-links/);
   assert.doesNotMatch(charts, /el-table/);
+});
+
+test("super-admin usage analysis is a dated range board", () => {
+  const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+  const view = readFileSync(resolve(root, "web/src/views/admin/AdminUsageAnalysisView.vue"), "utf8");
+  const layout = readFileSync(resolve(root, "web/src/layouts/AdminLayout.vue"), "utf8");
+  const router = readFileSync(resolve(root, "web/src/router/index.ts"), "utf8");
+  assert.match(layout, /isSuperAdmin" index="\/admin\/usage">用量分析/);
+  assert.match(router, /path: "usage"/);
+  assert.match(router, /name: "admin-usage"/);
+  assert.match(view, /\/api\/admin\/overview\/analytics/);
+  assert.match(view, /近 7 天/);
+  assert.match(view, /近 30 天/);
+  assert.match(view, /rangePreset = ref<RangePreset>\("7d"\)/);
+  assert.match(view, /组织消耗/);
+  assert.match(view, /模型消耗/);
+  assert.match(view, /渠道消耗/);
+  assert.match(view, /label: "企业"/);
+  assert.match(view, /label: "部门"/);
+  assert.match(view, /label: "员工"/);
+  assert.doesNotMatch(view, /label: "团队"/);
+  assert.doesNotMatch(view, /今天的问题/);
+  assert.doesNotMatch(view, /value="today"/);
 });
 
 test("key binding page is a full canvas with a filter drawer and unbound-key entry", () => {

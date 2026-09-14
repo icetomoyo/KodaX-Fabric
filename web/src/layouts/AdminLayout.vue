@@ -15,6 +15,7 @@
         active-text-color="#ffffff"
       >
         <el-menu-item index="/admin">工作台</el-menu-item>
+        <el-menu-item v-if="auth.isSuperAdmin" index="/admin/usage">用量分析</el-menu-item>
         <el-menu-item v-if="auth.isSuperAdmin" index="/admin/enterprises">企业管理</el-menu-item>
         <el-menu-item v-if="auth.isOrgAdmin || auth.isDeptAdmin" index="/admin/enterprises">部门管理</el-menu-item>
         <el-menu-item v-if="auth.isTeamAdmin" index="/admin/enterprises">员工</el-menu-item>

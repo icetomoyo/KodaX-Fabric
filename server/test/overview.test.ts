@@ -210,6 +210,22 @@ test("platform department ranks keep only first-level rows with descendant total
   );
 });
 
+test("platform analytics compares the previous window and rolls up range composition", async () => {
+  const { readFileSync } = await import("node:fs");
+  const { dirname, resolve } = await import("node:path");
+  const { fileURLToPath } = await import("node:url");
+  const source = readFileSync(
+    resolve(dirname(fileURLToPath(import.meta.url)), "../src/routes/admin/overview.ts"),
+    "utf8",
+  );
+  const fn = source.slice(source.indexOf("async function loadPlatformAnalytics"));
+  assert.match(fn, /tokensChange/);
+  assert.match(fn, /cacheHitRate/);
+  assert.match(fn, /buildTodayAuditCompositionQuery/);
+  assert.match(fn, /buildActiveEmployeesTodayQuery/);
+  assert.match(fn, /addCalendarDays\(from, -dayCount\)/);
+});
+
 test("platform analytics endpoint is super-admin only", async () => {
   const { readFileSync } = await import("node:fs");
   const { dirname, resolve } = await import("node:path");

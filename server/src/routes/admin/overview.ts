@@ -339,6 +339,7 @@ export function buildAnalyticsByProviderQuery(start: Date, endExclusive: Date) {
       key: resolvedProviderCodeSql,
       totalTokens: sql<number>`coalesce(sum(${requestAudits.totalTokens}), 0)`,
       requestCount: sql<number>`count(*)::int`,
+      errors: sql<number>`count(*) filter (where ${requestAudits.status} <> 'success')::int`,
     })
     .from(requestAudits)
     .leftJoin(productLines, eq(requestAudits.productLineId, productLines.id))
@@ -474,7 +475,20 @@ export function buildTodayErrorsByStatusQuery(start: Date, endExclusive: Date) {
 async function loadPlatformAnalytics(from: string, to: string) {
   const { start, endExclusive } = zonedDateRange(from, to, env.QUOTA_TIMEZONE);
   const hourly = from === to;
-  const [trendRows, byModel, byProvider, errorsByProvider, ranks] = await Promise.all([
+  const dayCount = inclusiveDayCount(from, to) ?? 1;
+  const prevFrom = addCalendarDays(from, -dayCount);
+  const prevTo = addCalendarDays(from, -1);
+  const [
+    trendRows,
+    byModel,
+    byProvider,
+    errorsByProvider,
+    ranks,
+    compositionRow,
+    productTypes,
+    activeEmployees,
+    prevTrendRows,
+  ] = await Promise.all([
     hourly
       ? buildAnalyticsHourlyTrendQuery(start, endExclusive, env.QUOTA_TIMEZONE)
       : buildAnalyticsDailyTrendQuery(from, to),
@@ -482,6 +496,10 @@ async function loadPlatformAnalytics(from: string, to: string) {
     buildAnalyticsByProviderQuery(start, endExclusive),
     buildAnalyticsErrorsByProviderQuery(start, endExclusive),
     usageRanksToday({ from, to }),
+    buildTodayAuditCompositionQuery(start, endExclusive).then((rows) => rows[0]),
+    buildTodayProductTypeQuery(start, endExclusive),
+    buildActiveEmployeesTodayQuery({ from, to }).then((rows) => rows[0]),
+    buildAnalyticsDailyTrendQuery(prevFrom, prevTo),
   ]);
   const trend = hourly
     ? fillHourlyTrend(from, trendRows.map((row) => ({
@@ -502,9 +520,40 @@ async function loadPlatformAnalytics(from: string, to: string) {
       errorCount: Number(row.errorCount) || 0,
     })));
   const summary = summarizeDailyUsage(trend);
+  const previous = summarizeDailyUsage(fillDailyUsage(prevFrom, prevTo, prevTrendRows.map((row) => ({
+    day: String((row as { day: string }).day),
+    promptTokens: Number(row.promptTokens) || 0,
+    completionTokens: Number(row.completionTokens) || 0,
+    totalTokens: Number(row.totalTokens) || 0,
+    requestCount: Number(row.requestCount) || 0,
+    errorCount: Number(row.errorCount) || 0,
+  }))));
+  const promptTokens = Number(compositionRow?.promptTokens) || 0;
+  const cacheReadTokens = Number(compositionRow?.cacheReadTokens) || 0;
+  const completionTokens = Number(compositionRow?.completionTokens) || 0;
   return {
     range: { from, to, timezone: env.QUOTA_TIMEZONE, granularity: hourly ? "hour" : "day" },
-    summary,
+    summary: {
+      ...summary,
+      cacheHitRate: cacheHitRate(cacheReadTokens, promptTokens),
+      avgTokens: avgTokensPerRequest(summary.totalTokens, summary.requestCount),
+      activeEmployees: Number(activeEmployees?.n ?? 0),
+      tokensChange: percentChange(summary.totalTokens, previous.totalTokens),
+      requestsChange: percentChange(summary.requestCount, previous.requestCount),
+    },
+    previous: {
+      from: prevFrom,
+      to: prevTo,
+      tokens: previous.totalTokens,
+      requests: previous.requestCount,
+      errors: previous.errorCount,
+    },
+    composition: tokenComposition({ promptTokens, cacheReadTokens, completionTokens }),
+    productTypes: productTypes.map((row) => ({
+      key: row.key || "unknown",
+      totalTokens: Number(row.totalTokens) || 0,
+      requestCount: Number(row.requestCount) || 0,
+    })),
     trend,
     byModel: modelUsageRanks(
       byModel.map((row) => ({
@@ -518,6 +567,7 @@ async function loadPlatformAnalytics(from: string, to: string) {
       key: row.key || "unknown",
       totalTokens: Number(row.totalTokens) || 0,
       requestCount: Number(row.requestCount) || 0,
+      errors: Number((row as { errors?: number }).errors) || 0,
     })),
     errorsByProvider: errorsByProvider.map((row) => ({
       key: row.key || "unknown",
