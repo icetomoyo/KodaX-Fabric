@@ -297,27 +297,29 @@ test("shared bindings stay when someone still resolves onto them", () => {
   );
 });
 
-test("a bound channel Key with no tokens and no credits for 5 hours is released", () => {
+test("a bound channel Key unused for 2 hours is released", () => {
   const now = new Date("2026-09-07T12:00:00.000Z");
-  const boundAt = new Date("2026-09-07T07:00:00.000Z");
   assert.deepEqual(
     idleBindingIds(
       [
         {
           id: 1,
-          boundAt,
+          boundAt: new Date("2026-09-07T10:00:00.000Z"),
           lastUsedAt: null,
-          fiveHourTokens: 0,
-          fiveHourCredits: 0,
+        },
+        {
+          id: 2,
+          boundAt: new Date("2026-09-07T01:00:00.000Z"),
+          lastUsedAt: new Date("2026-09-07T10:00:00.000Z"),
         },
       ],
       now,
     ),
-    [1],
+    [1, 2],
   );
 });
 
-test("a channel Key used in the last 5 hours stays bound", () => {
+test("a channel Key used in the last 2 hours stays bound", () => {
   const now = new Date("2026-09-07T12:00:00.000Z");
   const boundAt = new Date("2026-09-07T01:00:00.000Z");
   assert.deepEqual(
@@ -326,30 +328,12 @@ test("a channel Key used in the last 5 hours stays bound", () => {
         {
           id: 11,
           boundAt,
-          lastUsedAt: new Date("2026-09-07T08:00:00.000Z"),
-          fiveHourTokens: 0,
-          fiveHourCredits: 0,
+          lastUsedAt: new Date("2026-09-07T10:00:00.001Z"),
         },
         {
           id: 12,
-          boundAt,
+          boundAt: new Date("2026-09-07T10:00:00.001Z"),
           lastUsedAt: null,
-          fiveHourTokens: 100,
-          fiveHourCredits: 0,
-        },
-        {
-          id: 13,
-          boundAt,
-          lastUsedAt: null,
-          fiveHourTokens: 0,
-          fiveHourCredits: 1.5,
-        },
-        {
-          id: 14,
-          boundAt: new Date("2026-09-07T08:00:00.000Z"),
-          lastUsedAt: null,
-          fiveHourTokens: 0,
-          fiveHourCredits: 0,
         },
       ],
       now,

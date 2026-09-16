@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- 渠道 Key 闲置解绑改为绑定满 2 小时且近 2 小时没有调用即回到待绑定池（不再等 5 小时、也不再看 5 小时积分桶）；只在进程启动和每分钟定时扫，转发请求时不再顺带释放
+
 ### Added
 
 - Token Bot 空态快捷问题改为高频接入：WorkBuddy / ZCode / Claude Code / Codex 怎么对接，以及协议怎么选

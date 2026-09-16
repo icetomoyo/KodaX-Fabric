@@ -1,6 +1,6 @@
 /**
- * Release exclusive channel Keys that have had 0 tokens and 0 credits
- * for 5 hours back to the unbound pool.
+ * Release channel Keys that have had no calls for 2 hours
+ * back to the unbound pool.
  */
 import type { FastifyBaseLogger } from "fastify";
 import { releaseIdleCredentialBindings } from "./relay/binding.js";

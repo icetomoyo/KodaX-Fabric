@@ -237,15 +237,13 @@ export function unusedBindingIds(
     .map((row) => row.id);
 }
 
-/** Bound Keys with no Token and no credit use in this window go back to the pool. */
-export const IDLE_BINDING_WINDOW_MS = 5 * 60 * 60 * 1_000;
+/** Bound Keys with no calls in this window go back to the pool. */
+export const IDLE_BINDING_WINDOW_MS = 2 * 60 * 60 * 1_000;
 
 export type IdleBindingCandidate = {
   id: number;
   boundAt: Date;
   lastUsedAt: Date | null;
-  fiveHourTokens: number;
-  fiveHourCredits: number;
 };
 
 export function idleBindingIds(
@@ -257,14 +255,12 @@ export function idleBindingIds(
     .filter((row) => {
       if (row.boundAt.getTime() > cutoff) return false;
       if (row.lastUsedAt != null && row.lastUsedAt.getTime() > cutoff) return false;
-      if ((Number(row.fiveHourTokens) || 0) > 0) return false;
-      if ((Number(row.fiveHourCredits) || 0) > 0) return false;
       return true;
     })
     .map((row) => row.id);
 }
 
-/** Drop exclusive bindings whose Key has had 0 tokens and 0 credits for 5 hours. */
+/** Drop bindings whose Key has had no calls for 2 hours. */
 export async function releaseIdleCredentialBindings(now: Date = new Date()): Promise<number> {
   const rows = await db
     .select({
@@ -277,21 +273,12 @@ export async function releaseIdleCredentialBindings(now: Date = new Date()): Pro
     .innerJoin(upstreamCredentials, eq(upstreamCredentials.id, credentialBindings.credentialId));
   if (rows.length === 0) return 0;
 
-  const usageById = await getCredentialQuotaUsage(
-    rows.map((row) => row.credentialId),
-    now,
-  );
   const ids = idleBindingIds(
-    rows.map((row) => {
-      const usage = usageById.get(row.credentialId);
-      return {
-        id: row.id,
-        boundAt: row.boundAt,
-        lastUsedAt: row.lastUsedAt,
-        fiveHourTokens: usage?.fiveHourTokens ?? 0,
-        fiveHourCredits: usage?.fiveHourCredits ?? 0,
-      };
-    }),
+    rows.map((row) => ({
+      id: row.id,
+      boundAt: row.boundAt,
+      lastUsedAt: row.lastUsedAt,
+    })),
     now,
   );
   if (ids.length === 0) return 0;
@@ -579,7 +566,6 @@ export async function acquireBoundCredential(
   }
 
   await restoreExpiredCooling(params.productLineId, now);
-  await releaseIdleCredentialBindings(now);
 
   let result: AcquireBindingResult;
   const existing = await loadScopeBinding(params.productLineId, scope);
