@@ -389,7 +389,9 @@ test("key binding page is a full canvas with a filter drawer and unbound-key ent
   assert.match(view, /hydrateOrgChain/);
   assert.match(view, /\/api\/admin\/departments/);
   assert.match(view, /isScheduledUseKind/);
-  assert.match(view, /kind === "dedicated" \|\| kind === "department_shared" \|\| kind === "open_shared"/);
+  assert.match(view, /kind === "enterprise_shared"/);
+  assert.match(view, /boundOnly/);
+  assert.match(view, /只看已绑定渠道 Key/);
   assert.match(view, /fab-stack/);
   assert.match(view, /class="fab primary" @click="filterOpen = true">筛选/);
   assert.match(view, /释放到资源列表/);

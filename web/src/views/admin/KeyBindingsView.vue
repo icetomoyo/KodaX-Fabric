@@ -44,6 +44,9 @@
             style="width: 100%"
           />
         </el-form-item>
+        <el-form-item>
+          <el-checkbox v-model="boundOnly">只看已绑定渠道 Key</el-checkbox>
+        </el-form-item>
       </el-form>
       <template #footer>
         <el-button :loading="loading" @click="load">刷新</el-button>
@@ -406,6 +409,7 @@ const canvasNodes = computed(() => activeBoard.value?.nodes ?? []);
 const canvasEdges = computed(() => activeBoard.value?.edges ?? []);
 
 const orgFilterPath = ref<string[]>([]);
+const boundOnly = ref(true);
 const orgCascaderProps = {
   checkStrictly: true,
   emitPath: true,
@@ -495,7 +499,12 @@ function isUseEdgeKind(kind: BindingKind): kind is UseBindingKind {
 }
 
 function isScheduledUseKind(kind: BindingKind): boolean {
-  return kind === "dedicated" || kind === "department_shared" || kind === "open_shared";
+  return (
+    kind === "dedicated" ||
+    kind === "department_shared" ||
+    kind === "enterprise_shared" ||
+    kind === "open_shared"
+  );
 }
 
 function boundCredentialIds(source: KeyBindingGraph): Set<number> {
@@ -672,6 +681,16 @@ function hydrateOrgChain(
   };
 }
 
+function subgraphForBoundKeys(source: KeyBindingGraph): KeyBindingGraph {
+  const connectedKeyIds = new Set(
+    source.edges.filter((edge) => isUseEdgeKind(edge.kind)).map((edge) => edge.sourceId),
+  );
+  const virtualKeys = source.virtualKeys.filter((row) => connectedKeyIds.has(row.id));
+  const employeeIds = new Set(virtualKeys.map((row) => row.employeeId));
+  const employees = source.employees.filter((row) => employeeIds.has(row.id));
+  return subgraphForEmployees({ ...source, virtualKeys }, employees);
+}
+
 function subgraphForEmployees(source: KeyBindingGraph, employees: GraphEmployee[]): KeyBindingGraph {
   const employeeIds = new Set(employees.map((row) => row.id));
   const virtualKeys = source.virtualKeys.filter((row) => employeeIds.has(row.employeeId));
@@ -790,9 +809,12 @@ function graphForOrgSelection(
       departmentName: department?.name ?? employee.departmentName,
     };
   });
-  const scoped = subgraphForEmployees(source, grouped);
+  const scoped = boundOnly.value
+    ? subgraphForBoundKeys(subgraphForEmployees(source, grouped))
+    : subgraphForEmployees(source, grouped);
+  const visibleEmployees = scoped.employees;
   const departmentIds = new Set(
-    grouped.map((row) => row.departmentId).filter((id): id is number => id != null),
+    visibleEmployees.map((row) => row.departmentId).filter((id): id is number => id != null),
   );
   if (selection.kind === "department") departmentIds.add(selection.departmentId);
   scoped.departments = (source.departments ?? []).filter((row) => departmentIds.has(row.id));
@@ -804,7 +826,7 @@ function graphForOrgSelection(
     if (enterprise) scoped.enterprises = [...scoped.enterprises, enterprise];
   }
   scoped.edges = [
-    ...orgEdgesForGroupedEmployees(grouped, selection),
+    ...orgEdgesForGroupedEmployees(visibleEmployees, selection),
     ...scoped.edges.filter((edge) => edge.kind !== "org"),
   ];
   const enterpriseTitle = source.enterprises.find((row) => row.id === selection.enterpriseId)?.name || "企业";
@@ -1307,7 +1329,7 @@ function onVisibilityChange() {
   void pollLive();
 }
 
-watch(orgFilterPath, () => {
+watch([orgFilterPath, boundOnly], () => {
   if (loading.value) return;
   renderGraph();
   onTabChange();
