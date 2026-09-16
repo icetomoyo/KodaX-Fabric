@@ -1,6 +1,7 @@
 import {
   and,
   asc,
+  count,
   desc,
   eq,
   gt,
@@ -15,6 +16,7 @@ import {
 import { env } from "../../config.js";
 import { db } from "../../db/client.js";
 import {
+  credentialBindingMembers,
   credentialBindings,
   departments,
   employeeApiKeys,
@@ -92,7 +94,7 @@ export type AcquireBindingParams = {
   excludeCredentialIds?: ReadonlySet<number>;
   /**
    * Live requests omit this (default true): idle accounts are promoted to
-   * 标准 so the first call can bind a department-shared Key.
+   * 标准 so the first call can bind an enterprise-shared Key.
    * The daily rebind job sets false so idle accounts stay unbound.
    */
   promoteIdle?: boolean;
@@ -152,7 +154,17 @@ type CredentialSnapshotRow = {
 type LoadedBinding = {
   bindingId: number;
   snapshot: CredentialSnapshotRow;
+  scopeType: BindingScopeType;
+  scopeId: number;
 };
+
+type EnterpriseShard = {
+  bindingId: number;
+  credentialId: number;
+  memberCount: number;
+};
+
+type MemberJoinResult = "added" | "already" | "full";
 
 const credentialSnapshotSelect = {
   credentialId: upstreamCredentials.id,
@@ -178,19 +190,31 @@ const credentialSnapshotSelect = {
 /**
  * Map a usage-tier employee onto the binding scope that should own a Key.
  *
- * idle → none; heavy → exclusive employee Key; standard → department share.
+ * idle → none; heavy → exclusive employee Key; standard → enterprise share
+ * (max STANDARD_SHARE_CAPACITY employees per Key).
  * Returns null when the required subject is missing (idle, or standard
- * without a department). Request-time acquire may promote idle → 标准 first.
+ * without an enterprise). Request-time acquire may promote idle → 标准 first.
  */
+export const STANDARD_SHARE_CAPACITY = 5;
+
 export function resolveBindingScope(input: ResolveBindingScopeInput): BindingScope | null {
   if (input.usageTier === "idle") return null;
   if (input.usageTier === "heavy") {
     return { scopeType: "employee", scopeId: input.employeeId };
   }
-  if (input.usageTier === "standard" && input.departmentId != null) {
-    return { scopeType: "department", scopeId: input.departmentId };
+  if (input.usageTier === "standard" && input.enterpriseId != null) {
+    return { scopeType: "enterprise", scopeId: input.enterpriseId };
   }
   return null;
+}
+
+/** Fill existing enterprise shards to 5 people before allocating a new Key. */
+export function pickStandardShareSlot(
+  shards: readonly { id: number; memberCount: number }[],
+): number | null {
+  const open = shards.filter((row) => row.memberCount < STANDARD_SHARE_CAPACITY);
+  if (open.length === 0) return null;
+  return [...open].sort((a, b) => b.memberCount - a.memberCount || a.id - b.id)[0]?.id ?? null;
 }
 
 /**
@@ -211,30 +235,42 @@ export function resolveBindingScopeFromPeak(
   });
 }
 
+export type BindingNeedRow = BindingScope & {
+  id?: number;
+  memberEmployeeIds?: readonly number[];
+};
+
+function personResolvesOnto(person: BindingEligibilityPerson, binding: BindingScope): boolean {
+  const scope = resolveBindingScope({
+    employeeId: person.id,
+    usageTier: person.usageTier,
+    teamId: person.teamId,
+    departmentId: person.departmentId,
+    enterpriseId: person.enterpriseId,
+  });
+  return scope?.scopeType === binding.scopeType && scope.scopeId === binding.scopeId;
+}
+
 /** True when at least one active employee would currently resolve onto this scope. */
 export function bindingStillNeeded(
-  binding: BindingScope,
+  binding: BindingNeedRow,
   people: readonly BindingEligibilityPerson[],
 ): boolean {
-  return people.some((person) => {
-    const scope = resolveBindingScope({
-      employeeId: person.id,
-      usageTier: person.usageTier,
-      teamId: person.teamId,
-      departmentId: person.departmentId,
-      enterpriseId: person.enterpriseId,
-    });
-    return scope?.scopeType === binding.scopeType && scope.scopeId === binding.scopeId;
-  });
+  if (binding.scopeType === "enterprise") {
+    const memberIds = new Set(binding.memberEmployeeIds ?? []);
+    if (memberIds.size === 0) return false;
+    return people.some((person) => memberIds.has(person.id) && personResolvesOnto(person, binding));
+  }
+  return people.some((person) => personResolvesOnto(person, binding));
 }
 
 export function unusedBindingIds(
-  bindings: readonly { id: number; scopeType: BindingScopeType; scopeId: number }[],
+  bindings: readonly BindingNeedRow[],
   people: readonly BindingEligibilityPerson[],
 ): number[] {
   return bindings
-    .filter((row) => !bindingStillNeeded(row, people))
-    .map((row) => row.id);
+    .filter((row) => row.id != null && !bindingStillNeeded(row, people))
+    .map((row) => row.id as number);
 }
 
 /** Bound Keys with no calls in this window go back to the pool. */
@@ -568,36 +604,146 @@ export async function acquireBoundCredential(
   await restoreExpiredCooling(params.productLineId, now);
 
   let result: AcquireBindingResult;
-  const existing = await loadScopeBinding(params.productLineId, scope);
-  if (existing) {
-    const verdict = await inspectSnapshot(
-      existing.snapshot,
-      params.protocol,
-      now,
-      params.excludeCredentialIds,
-    );
-    if (verdict.kind === "usable") {
-      result = {
-        ok: true,
-        credential: verdict.credential,
-        bindingScope: scope,
-        replaced: false,
-      };
-    } else {
-      if (verdict.kind === "exhausted") {
-        await coolCredentialForQuota(existing.snapshot.credentialId, verdict.status, now);
-      }
-      await deleteBinding(existing.bindingId);
-      result = await bindFromPool(params, scope, now, true);
-    }
+  if (scope.scopeType === "enterprise") {
+    result = await acquireEnterpriseShare(params, scope, now);
   } else {
-    result = await bindFromPool(params, scope, now, false);
+    await clearEnterpriseMembership(params.employeeId, params.productLineId);
+    const existing = await loadScopeBinding(params.productLineId, scope);
+    if (existing) {
+      const verdict = await inspectSnapshot(
+        existing.snapshot,
+        params.protocol,
+        now,
+        params.excludeCredentialIds,
+      );
+      if (verdict.kind === "usable") {
+        result = {
+          ok: true,
+          credential: verdict.credential,
+          bindingScope: scope,
+          replaced: false,
+        };
+      } else {
+        if (verdict.kind === "exhausted") {
+          await coolCredentialForQuota(existing.snapshot.credentialId, verdict.status, now);
+        }
+        await deleteBinding(existing.bindingId);
+        result = await bindFromPool(params, scope, now, true);
+      }
+    } else {
+      result = await bindFromPool(params, scope, now, false);
+    }
   }
 
   if (result.ok && tierChanged) {
     await releaseOrphanBindings(now);
   }
   return result;
+}
+
+async function acquireEnterpriseShare(
+  params: AcquireBindingParams,
+  scope: BindingScope,
+  now: Date,
+): Promise<AcquireBindingResult> {
+  const existingMember = await loadMemberBinding(params.employeeId, params.productLineId);
+  if (existingMember) {
+    const verdict = await inspectSnapshot(
+      existingMember.snapshot,
+      params.protocol,
+      now,
+      params.excludeCredentialIds,
+    );
+    if (verdict.kind === "usable") {
+      return {
+        ok: true,
+        credential: verdict.credential,
+        bindingScope: scope,
+        replaced: false,
+      };
+    }
+    if (verdict.kind === "exhausted") {
+      await coolCredentialForQuota(existingMember.snapshot.credentialId, verdict.status, now);
+    }
+    await deleteBinding(existingMember.bindingId);
+  }
+
+  const exclude = new Set(params.excludeCredentialIds ?? []);
+  for (let attempt = 0; attempt < MAX_POOL_ATTEMPTS + 2; attempt += 1) {
+    const shards = await listEnterpriseShards(params.productLineId, scope.scopeId);
+    const packedId = pickStandardShareSlot(
+      shards.map((row) => ({ id: row.bindingId, memberCount: row.memberCount })),
+    );
+    if (packedId != null) {
+      const shard = shards.find((row) => row.bindingId === packedId);
+      if (!shard) continue;
+      const snapshot = await loadCredentialSnapshot(shard.credentialId);
+      if (!snapshot) {
+        await deleteBinding(shard.bindingId);
+        continue;
+      }
+      const verdict = await inspectSnapshot(snapshot, params.protocol, now, exclude);
+      if (verdict.kind === "usable") {
+        const joined = await tryAddMember(shard.bindingId, params.employeeId, params.productLineId);
+        if (joined === "added") {
+          return {
+            ok: true,
+            credential: verdict.credential,
+            bindingScope: scope,
+            replaced: false,
+          };
+        }
+        if (joined === "already") {
+          const mine = await loadMemberBinding(params.employeeId, params.productLineId);
+          if (mine) {
+            const mineVerdict = await inspectSnapshot(mine.snapshot, params.protocol, now, exclude);
+            if (mineVerdict.kind === "usable") {
+              return {
+                ok: true,
+                credential: mineVerdict.credential,
+                bindingScope: scope,
+                replaced: false,
+              };
+            }
+          }
+        }
+        continue;
+      }
+      if (verdict.kind === "exhausted") {
+        await coolCredentialForQuota(snapshot.credentialId, verdict.status, now);
+      }
+      await deleteBinding(shard.bindingId);
+      exclude.add(shard.credentialId);
+      continue;
+    }
+
+    const outcome = await tryBindFromPool(params, scope, now, exclude, false);
+    if (outcome.kind === "done") {
+      if (!outcome.result.ok) return outcome.result;
+      const created = await loadBindingByCredentialId(outcome.result.credential.credentialId);
+      if (!created) return { ok: false, reason: "no_binding_available", retryAt: null };
+      const joined = await tryAddMember(created.bindingId, params.employeeId, params.productLineId);
+      if (joined === "added") return outcome.result;
+      if (joined === "already") {
+        const mine = await loadMemberBinding(params.employeeId, params.productLineId);
+        if (mine) {
+          const mineVerdict = await inspectSnapshot(mine.snapshot, params.protocol, now, exclude);
+          if (mineVerdict.kind === "usable") {
+            return {
+              ok: true,
+              credential: mineVerdict.credential,
+              bindingScope: scope,
+              replaced: false,
+            };
+          }
+        }
+      }
+      exclude.add(outcome.result.credential.credentialId);
+      continue;
+    }
+    for (const id of outcome.excludeMore) exclude.add(id);
+  }
+  return { ok: false, reason: "no_binding_available", retryAt: null };
 }
 
 /**
@@ -652,7 +798,7 @@ export async function rebindEmployeesToCurrentScope(
  * subjects, or scopes left empty after a usage-tier upgrade/downgrade.
  */
 export async function releaseOrphanBindings(now: Date = new Date()): Promise<number> {
-  const [rows, people, openLineRows] = await Promise.all([
+  const [rows, people, openLineRows, memberRows] = await Promise.all([
     db
       .select({
         id: credentialBindings.id,
@@ -667,12 +813,31 @@ export async function releaseOrphanBindings(now: Date = new Date()): Promise<num
       .from(productLines)
       .innerJoin(providers, eq(productLines.providerId, providers.id))
       .where(eq(providers.code, OPEN_POOL_PROVIDER_CODE)),
+    db
+      .select({
+        bindingId: credentialBindingMembers.bindingId,
+        employeeId: credentialBindingMembers.employeeId,
+      })
+      .from(credentialBindingMembers),
   ]);
+  const membersByBinding = new Map<number, number[]>();
+  for (const row of memberRows) {
+    const list = membersByBinding.get(row.bindingId) ?? [];
+    list.push(row.employeeId);
+    membersByBinding.set(row.bindingId, list);
+  }
   const openLineIds = new Set(openLineRows.map((row) => row.id));
   const ids = [
     ...rows.filter((row) => openLineIds.has(row.productLineId)).map((row) => row.id),
     ...unusedBindingIds(
-      rows.filter((row) => !openLineIds.has(row.productLineId)),
+      rows
+        .filter((row) => !openLineIds.has(row.productLineId))
+        .map((row) => ({
+          id: row.id,
+          scopeType: row.scopeType,
+          scopeId: row.scopeId,
+          memberEmployeeIds: membersByBinding.get(row.id) ?? [],
+        })),
       people,
     ),
   ];
@@ -859,8 +1024,14 @@ async function tryBindFromPool(
     })
     .onConflictDoNothing();
 
-  const reread = await loadScopeBinding(params.productLineId, scope);
+  const reread =
+    scope.scopeType === "enterprise"
+      ? await loadBindingByCredentialId(picked.snapshot.credentialId)
+      : await loadScopeBinding(params.productLineId, scope);
   if (!reread) {
+    return { kind: "retry", excludeMore: [picked.snapshot.credentialId] };
+  }
+  if (reread.scopeType !== scope.scopeType || reread.scopeId !== scope.scopeId) {
     return { kind: "retry", excludeMore: [picked.snapshot.credentialId] };
   }
 
@@ -904,6 +1075,8 @@ async function loadScopeBinding(
     .select({
       bindingId: credentialBindings.id,
       credentialId: credentialBindings.credentialId,
+      scopeType: credentialBindings.scopeType,
+      scopeId: credentialBindings.scopeId,
     })
     .from(credentialBindings)
     .where(
@@ -913,8 +1086,7 @@ async function loadScopeBinding(
         eq(credentialBindings.scopeId, scope.scopeId),
       ),
     )
-    .limit(1)
-    .then((rows): BindingLocatorRow[] => rows);
+    .limit(1);
   if (!locator) return null;
 
   const snapshot = await loadCredentialSnapshot(locator.credentialId);
@@ -922,7 +1094,144 @@ async function loadScopeBinding(
     await deleteBinding(locator.bindingId);
     return null;
   }
-  return { bindingId: locator.bindingId, snapshot };
+  return {
+    bindingId: locator.bindingId,
+    snapshot,
+    scopeType: locator.scopeType,
+    scopeId: locator.scopeId,
+  };
+}
+
+async function loadBindingByCredentialId(credentialId: number): Promise<LoadedBinding | null> {
+  const [locator] = await db
+    .select({
+      bindingId: credentialBindings.id,
+      credentialId: credentialBindings.credentialId,
+      scopeType: credentialBindings.scopeType,
+      scopeId: credentialBindings.scopeId,
+    })
+    .from(credentialBindings)
+    .where(eq(credentialBindings.credentialId, credentialId))
+    .limit(1);
+  if (!locator) return null;
+  const snapshot = await loadCredentialSnapshot(locator.credentialId);
+  if (!snapshot) {
+    await deleteBinding(locator.bindingId);
+    return null;
+  }
+  return {
+    bindingId: locator.bindingId,
+    snapshot,
+    scopeType: locator.scopeType,
+    scopeId: locator.scopeId,
+  };
+}
+
+async function loadMemberBinding(
+  employeeId: number,
+  productLineId: number,
+): Promise<LoadedBinding | null> {
+  const [row] = await db
+    .select({
+      bindingId: credentialBindings.id,
+      credentialId: credentialBindings.credentialId,
+      scopeType: credentialBindings.scopeType,
+      scopeId: credentialBindings.scopeId,
+    })
+    .from(credentialBindingMembers)
+    .innerJoin(credentialBindings, eq(credentialBindings.id, credentialBindingMembers.bindingId))
+    .where(
+      and(
+        eq(credentialBindingMembers.employeeId, employeeId),
+        eq(credentialBindingMembers.productLineId, productLineId),
+      ),
+    )
+    .limit(1);
+  if (!row) return null;
+  const snapshot = await loadCredentialSnapshot(row.credentialId);
+  if (!snapshot) {
+    await deleteBinding(row.bindingId);
+    return null;
+  }
+  return {
+    bindingId: row.bindingId,
+    snapshot,
+    scopeType: row.scopeType,
+    scopeId: row.scopeId,
+  };
+}
+
+async function listEnterpriseShards(
+  productLineId: number,
+  enterpriseId: number,
+): Promise<EnterpriseShard[]> {
+  const rows = await db
+    .select({
+      bindingId: credentialBindings.id,
+      credentialId: credentialBindings.credentialId,
+      memberCount: sql<number>`coalesce(count(${credentialBindingMembers.id}), 0)`,
+    })
+    .from(credentialBindings)
+    .leftJoin(
+      credentialBindingMembers,
+      eq(credentialBindingMembers.bindingId, credentialBindings.id),
+    )
+    .where(
+      and(
+        eq(credentialBindings.productLineId, productLineId),
+        eq(credentialBindings.scopeType, "enterprise"),
+        eq(credentialBindings.scopeId, enterpriseId),
+      ),
+    )
+    .groupBy(credentialBindings.id, credentialBindings.credentialId);
+  return rows.map((row) => ({
+    bindingId: row.bindingId,
+    credentialId: row.credentialId,
+    memberCount: Number(row.memberCount) || 0,
+  }));
+}
+
+async function tryAddMember(
+  bindingId: number,
+  employeeId: number,
+  productLineId: number,
+): Promise<MemberJoinResult> {
+  return db.transaction(async (tx) => {
+    await tx.execute(sql`select id from credential_bindings where id = ${bindingId} for update`);
+    const [existing] = await tx
+      .select({ bindingId: credentialBindingMembers.bindingId })
+      .from(credentialBindingMembers)
+      .where(
+        and(
+          eq(credentialBindingMembers.employeeId, employeeId),
+          eq(credentialBindingMembers.productLineId, productLineId),
+        ),
+      )
+      .limit(1);
+    if (existing) return "already";
+    const [tally] = await tx
+      .select({ n: count() })
+      .from(credentialBindingMembers)
+      .where(eq(credentialBindingMembers.bindingId, bindingId));
+    if (Number(tally?.n) >= STANDARD_SHARE_CAPACITY) return "full";
+    await tx.insert(credentialBindingMembers).values({
+      bindingId,
+      employeeId,
+      productLineId,
+    });
+    return "added";
+  });
+}
+
+async function clearEnterpriseMembership(employeeId: number, productLineId: number): Promise<void> {
+  await db
+    .delete(credentialBindingMembers)
+    .where(
+      and(
+        eq(credentialBindingMembers.employeeId, employeeId),
+        eq(credentialBindingMembers.productLineId, productLineId),
+      ),
+    );
 }
 
 async function loadCredentialSnapshot(credentialId: number): Promise<CredentialSnapshotRow | null> {

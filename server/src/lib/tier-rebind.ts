@@ -5,7 +5,7 @@
  * after that, the last 7 calendar days' average daily tokens and call count
  * (same window as request-time binding). Idle (0 TokenHub calls) holds no
  * Key. After a tier change, rebound each employee onto the Key their new
- * scope needs (heavy exclusive → standard department share) and drop
+ * scope needs (heavy exclusive → standard enterprise share) and drop
  * bindings nobody still needs.
  */
 import { and, eq, gte, inArray, lte, sql } from "drizzle-orm";

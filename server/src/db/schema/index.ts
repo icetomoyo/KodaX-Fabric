@@ -318,7 +318,34 @@ export const credentialBindings = pgTable(
   },
   (t) => [
     uniqueIndex("credential_bindings_credential_id_uidx").on(t.credentialId),
-    uniqueIndex("credential_bindings_product_line_scope_uidx").on(t.productLineId, t.scopeType, t.scopeId),
+    uniqueIndex("credential_bindings_product_line_scope_uidx")
+      .on(t.productLineId, t.scopeType, t.scopeId)
+      .where(sql`${t.scopeType} <> 'enterprise'`),
+  ],
+);
+
+export const credentialBindingMembers = pgTable(
+  "credential_binding_members",
+  {
+    id: bigint("id", { mode: "number" }).generatedAlwaysAsIdentity().primaryKey(),
+    bindingId: bigint("binding_id", { mode: "number" })
+      .notNull()
+      .references(() => credentialBindings.id, { onDelete: "cascade", onUpdate: "no action" }),
+    employeeId: bigint("employee_id", { mode: "number" })
+      .notNull()
+      .references(() => employees.id, { onDelete: "cascade", onUpdate: "no action" }),
+    productLineId: bigint("product_line_id", { mode: "number" })
+      .notNull()
+      .references(() => productLines.id, { onDelete: "cascade", onUpdate: "no action" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("credential_binding_members_binding_employee_uidx").on(t.bindingId, t.employeeId),
+    uniqueIndex("credential_binding_members_employee_product_line_uidx").on(
+      t.employeeId,
+      t.productLineId,
+    ),
+    index("credential_binding_members_binding_idx").on(t.bindingId),
   ],
 );
 

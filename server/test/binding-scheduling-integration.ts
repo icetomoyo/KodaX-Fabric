@@ -3,7 +3,7 @@
  *
  * Covers the three tier scopes that replaced grants / public-pool routing:
  *   a) heavy employees get an exclusive Key that others do not share
- *   b) two standard users in the same department share one department Key
+ *   b) two standard users in the same enterprise share one enterprise Key
  *   c) exhausting a bound Key's 5-hour quota cools it and rebinds from the pool
  *
  * Uses local PostgreSQL, Redis, and a temporary node:http upstream.
@@ -102,6 +102,7 @@ const created = {
   employeeIds: [] as number[],
   teamIds: [] as number[],
   departmentId: 0,
+  enterpriseId: 0,
   providerIds: [] as number[],
   productLineIds: [] as number[],
   credentialIds: [] as number[],
@@ -369,6 +370,7 @@ async function insertBinding(
 async function insertFixtures(upstreamBaseUrl: string): Promise<void> {
   const enterpriseId = await getDefaultEnterpriseId();
   const departmentId = await ensureDefaultDepartment(enterpriseId);
+  created.enterpriseId = enterpriseId;
   created.departmentId = departmentId;
 
   const [exclusiveTeam] = await db
@@ -448,8 +450,8 @@ async function insertFixtures(upstreamBaseUrl: string): Promise<void> {
   await insertBinding(
     teamShare.firstCredentialId,
     teamShare.productLineId,
-    "department",
-    departmentId,
+    "enterprise",
+    enterpriseId,
   );
   await insertBinding(
     quotaRebind.firstCredentialId,
@@ -558,8 +560,8 @@ async function assertExclusive(baseUrl: string): Promise<void> {
   );
 }
 
-async function assertDepartmentShare(baseUrl: string): Promise<void> {
-  assert(teamShare && standardA && standardB && created.departmentId);
+async function assertEnterpriseShare(baseUrl: string): Promise<void> {
+  assert(teamShare && standardA && standardB && created.enterpriseId);
   const first = await callChat(baseUrl, standardA, teamShare.clientModel);
   const second = await callChat(baseUrl, standardB, teamShare.clientModel);
   assert.equal(first.status, 200);
@@ -570,9 +572,9 @@ async function assertDepartmentShare(baseUrl: string): Promise<void> {
     waitForAudit(second.requestId),
   ]);
   assert.equal(firstAudit.credentialId, teamShare.firstCredentialId);
-  assert.equal(secondAudit.credentialId, teamShare.firstCredentialId, "department members must share the department Key");
+  assert.equal(secondAudit.credentialId, teamShare.firstCredentialId, "enterprise members must share the enterprise Key");
   assert.equal(
-    await selectBinding(teamShare.productLineId, "department", created.departmentId),
+    await selectBinding(teamShare.productLineId, "enterprise", created.enterpriseId),
     teamShare.firstCredentialId,
   );
   assert.equal(await selectBinding(teamShare.productLineId, "employee", standardA.id), null);
@@ -604,13 +606,13 @@ async function assertQuotaRebind(baseUrl: string): Promise<void> {
 
 async function runAssertions(baseUrl: string): Promise<void> {
   await assertExclusive(baseUrl);
-  await assertDepartmentShare(baseUrl);
+  await assertEnterpriseShare(baseUrl);
   await assertQuotaRebind(baseUrl);
   assert.deepEqual(mockFailures, []);
   console.log(JSON.stringify({
     ok: true,
     exclusiveHeavyKeys: true,
-    standardDepartmentShare: true,
+    standardEnterpriseShare: true,
     quotaExhaustRebind: true,
   }, null, 2));
 }

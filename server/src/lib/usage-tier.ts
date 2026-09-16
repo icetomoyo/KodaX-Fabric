@@ -59,7 +59,7 @@ export function effectiveUsageTier(
 
 /**
  * Idle accounts hold no Key. A live request promotes them to 标准 so they
- * can bind a department-shared Key immediately.
+ * can bind an enterprise-shared Key immediately.
  */
 export function usageTierForRequest(tier: UsageTier): UsageTier {
   return tier === "idle" ? "standard" : tier;

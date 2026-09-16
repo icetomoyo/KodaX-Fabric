@@ -65,6 +65,7 @@ export type KeyBindingBindingInput = {
   credentialId: number;
   scopeType: KeyBindingScopeType;
   scopeId: number;
+  memberEmployeeIds?: readonly number[];
 };
 
 export type KeyBindingGraphFilter = {
@@ -373,7 +374,13 @@ function employeeMatchesBinding(
     departmentId: employee.departmentId,
     enterpriseId: employee.enterpriseId,
   });
-  return scope?.scopeType === binding.scopeType && scope.scopeId === binding.scopeId;
+  if (scope?.scopeType !== binding.scopeType || scope.scopeId !== binding.scopeId) {
+    return false;
+  }
+  if (binding.scopeType === "enterprise") {
+    return (binding.memberEmployeeIds ?? []).includes(employee.id);
+  }
+  return true;
 }
 
 /**
@@ -398,8 +405,8 @@ export function usageTierForKeyBindingGraph(
  *
  * Virtual Key → credential edges follow credential_bindings, but only for
  * employees whose current usage tier would actually use that scope:
- * idle → none; heavy → employee (`dedicated`); standard → department
- * (`department_shared`).
+ * idle → none; heavy → employee (`dedicated`); standard → enterprise
+ * (`enterprise_shared`, at most 5 employees per Key).
  * Self-hosted (`custom`) channels skip usage-tier binding: every virtual Key
  * on that channel connects to every protocol-compatible credential (`open_shared`).
  * Unbound credentials stay in the graph with `bound: false`.

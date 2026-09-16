@@ -68,8 +68,9 @@ function binding(
   credentialId: number,
   scopeType: KeyBindingBindingInput["scopeType"],
   scopeId: number,
+  memberEmployeeIds?: readonly number[],
 ): KeyBindingBindingInput {
-  return { credentialId, scopeType, scopeId };
+  return { credentialId, scopeType, scopeId, memberEmployeeIds };
 }
 
 function useEdges(graph: ReturnType<typeof buildKeyBindingGraph>) {
@@ -345,7 +346,7 @@ test("quiet first-day usage must not hide an exclusive Key still bound at stored
   assert.deepEqual(useEdges(graph), ["74->94:dedicated"]);
 });
 
-test("department binding links every department member's virtual keys as department_shared", () => {
+test("enterprise binding links only member virtual keys as enterprise_shared", () => {
   const graph = buildKeyBindingGraph({
     employees: [
       employee({ id: 1, name: "张三", teamId: 10, teamName: "平台", usageTier: "standard" }),
@@ -366,13 +367,13 @@ test("department binding links every department member's virtual keys as departm
       virtualKey({ id: 13, employeeId: 3, productLineId: 100 }),
     ],
     credentials: [credential({ id: 21, productLineId: 100 })],
-    bindings: [binding(21, "department", 5)],
+    bindings: [binding(21, "enterprise", 1, [1, 2])],
   });
 
-  assert.deepEqual(useEdges(graph), ["11->21:department_shared", "12->21:department_shared"]);
+  assert.deepEqual(useEdges(graph), ["11->21:enterprise_shared", "12->21:enterprise_shared"]);
 });
 
-test("leftover team bindings are not drawn after department share", () => {
+test("leftover team bindings are not drawn after enterprise share", () => {
   const graph = buildKeyBindingGraph({
     employees: [
       employee({ id: 1, name: "张三", teamId: 10, teamName: "平台", usageTier: "standard" }),
@@ -385,7 +386,7 @@ test("leftover team bindings are not drawn after department share", () => {
   assert.deepEqual(useEdges(graph), []);
 });
 
-test("enterprise leftover bindings are not drawn", () => {
+test("enterprise leftover bindings without members are not drawn", () => {
   const graph = buildKeyBindingGraph({
     employees: [
       employee({ id: 1, name: "张三", enterpriseId: 1, enterpriseName: "海致", usageTier: "standard" }),
@@ -402,7 +403,7 @@ test("enterprise leftover bindings are not drawn", () => {
   assert.deepEqual(useEdges(graph), []);
 });
 
-test("standard employee without a department has no binding", () => {
+test("standard employee without a department still uses the enterprise Key", () => {
   const graph = buildKeyBindingGraph({
     employees: [
       employee({
@@ -417,10 +418,10 @@ test("standard employee without a department has no binding", () => {
     ],
     virtualKeys: [virtualKey({ id: 11, employeeId: 1, productLineId: 100, teamId: null, teamName: null })],
     credentials: [credential({ id: 21, productLineId: 100 })],
-    bindings: [binding(21, "enterprise", 1)],
+    bindings: [binding(21, "enterprise", 1, [1])],
   });
 
-  assert.deepEqual(useEdges(graph), []);
+  assert.deepEqual(useEdges(graph), ["11->21:enterprise_shared"]);
 });
 
 test("idle leftover exclusive or enterprise bindings are not drawn", () => {
@@ -440,7 +441,7 @@ test("idle leftover exclusive or enterprise bindings are not drawn", () => {
   assert.deepEqual(useEdges(graph), []);
 });
 
-test("department binding skips idle and heavy teammates", () => {
+test("enterprise binding skips idle and heavy teammates", () => {
   const graph = buildKeyBindingGraph({
     employees: [
       employee({ id: 1, name: "标准", teamId: 10, teamName: "平台", usageTier: "standard" }),
@@ -453,10 +454,10 @@ test("department binding skips idle and heavy teammates", () => {
       virtualKey({ id: 13, employeeId: 3, productLineId: 100 }),
     ],
     credentials: [credential({ id: 21, productLineId: 100 })],
-    bindings: [binding(21, "department", 5)],
+    bindings: [binding(21, "enterprise", 1, [1, 2, 3])],
   });
 
-  assert.deepEqual(useEdges(graph), ["11->21:department_shared"]);
+  assert.deepEqual(useEdges(graph), ["11->21:enterprise_shared"]);
 });
 
 test("a binding on another product line does not connect this channel", () => {

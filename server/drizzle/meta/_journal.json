@@ -302,6 +302,13 @@
       "when": 1789125000000,
       "tag": "0042_multi_department_membership",
       "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1789528000000,
+      "tag": "0043_standard_enterprise_share",
+      "breakpoints": true
     }
   ]
 }

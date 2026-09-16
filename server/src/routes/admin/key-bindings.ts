@@ -3,6 +3,7 @@ import { and, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../../db/client.js";
 import {
+  credentialBindingMembers,
   credentialBindings,
   departments,
   employeeApiKeys,
@@ -65,7 +66,7 @@ export async function adminKeyBindingRoutes(app: FastifyInstance) {
     }
 
     const now = new Date();
-    const [keyRows, credentialRows, bindingRows, membershipRows] = await Promise.all([
+    const [keyRows, credentialRows, bindingRows, membershipRows, bindingMemberRows] = await Promise.all([
       db
         .select({
           id: employeeApiKeys.id,
@@ -112,6 +113,7 @@ export async function adminKeyBindingRoutes(app: FastifyInstance) {
         .innerJoin(providers, eq(productLines.providerId, providers.id)),
       db
         .select({
+          id: credentialBindings.id,
           credentialId: credentialBindings.credentialId,
           scopeType: credentialBindings.scopeType,
           scopeId: credentialBindings.scopeId,
@@ -129,6 +131,12 @@ export async function adminKeyBindingRoutes(app: FastifyInstance) {
         .from(teamMembers)
         .innerJoin(teams, eq(teamMembers.teamId, teams.id))
         .leftJoin(departments, eq(teams.departmentId, departments.id)),
+      db
+        .select({
+          bindingId: credentialBindingMembers.bindingId,
+          employeeId: credentialBindingMembers.employeeId,
+        })
+        .from(credentialBindingMembers),
     ]);
 
     const membershipByEmployee = new Map(
@@ -217,7 +225,20 @@ export async function adminKeyBindingRoutes(app: FastifyInstance) {
           binding: bindingViewById.get(row.id) ?? null,
         };
       }),
-      bindings: bindingRows,
+      bindings: (() => {
+        const membersByBinding = new Map<number, number[]>();
+        for (const row of bindingMemberRows) {
+          const list = membersByBinding.get(row.bindingId) ?? [];
+          list.push(row.employeeId);
+          membersByBinding.set(row.bindingId, list);
+        }
+        return bindingRows.map((row) => ({
+          credentialId: row.credentialId,
+          scopeType: row.scopeType,
+          scopeId: row.scopeId,
+          memberEmployeeIds: membersByBinding.get(row.id) ?? [],
+        }));
+      })(),
       filter: {
         productLineId: query.data.productLineId,
         enterpriseId: scopedEnterpriseId,
