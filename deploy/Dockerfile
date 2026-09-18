@@ -13,7 +13,7 @@ FROM dependencies AS build
 COPY server ./server
 COPY web ./web
 
-RUN npm run build
+RUN npm run build --workspace=@kodax-fabric/server && npm run build:image --workspace=@kodax-fabric/web
 
 FROM node:22-bookworm-slim AS api
 
