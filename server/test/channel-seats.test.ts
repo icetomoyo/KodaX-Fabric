@@ -17,13 +17,16 @@ const {
   planBulkChannelSeats,
   planBulkSeatKeys,
   planChannelSeatCreate,
+  planChannelSeatUpdate,
   planSeatCapacity,
   SEAT_CHANNEL_FULL_MESSAGE,
   SEAT_ALREADY_SUBMITTED_MESSAGE,
   SEAT_CONFLICT_MESSAGE,
+  SEAT_MISSING_MESSAGE,
   SEAT_REQUIRED_MESSAGE,
   SEAT_TAG_INVALID_MESSAGE,
   seatCreateError,
+  seatUpdateError,
 } = await import("../src/lib/channel-seats.js");
 const { adminChannelSeatRoutes } = await import("../src/routes/admin/channel-seats.js");
 
@@ -86,6 +89,89 @@ test("seat create plan accepts super admin and rejects missing rows, duplicates,
   assert.equal(seatCreateError("conflict").status, 409);
   assert.equal(seatCreateError("conflict").message, SEAT_CONFLICT_MESSAGE);
   assert.equal(seatCreateError("tag_invalid").message, SEAT_TAG_INVALID_MESSAGE);
+});
+
+test("seat update plan accepts employee or tag changes and rejects missing or conflicting seats", () => {
+  assert.deepEqual(
+    planChannelSeatUpdate({
+      seatExists: true,
+      employeeExists: true,
+      alreadySeated: false,
+      nextEmployeeId: 2,
+      currentEmployeeId: 1,
+      nextTag: "备用",
+      currentTag: "",
+      tagValid: true,
+    }),
+    { kind: "accepted", employeeId: 2, tag: "备用" },
+  );
+  assert.equal(
+    planChannelSeatUpdate({
+      seatExists: true,
+      employeeExists: true,
+      alreadySeated: false,
+      nextEmployeeId: 1,
+      currentEmployeeId: 1,
+      nextTag: "",
+      currentTag: "",
+      tagValid: true,
+    }).kind,
+    "unchanged",
+  );
+  assert.equal(
+    planChannelSeatUpdate({
+      seatExists: false,
+      employeeExists: true,
+      alreadySeated: false,
+      nextEmployeeId: 1,
+      currentEmployeeId: 1,
+      nextTag: "",
+      currentTag: "",
+      tagValid: true,
+    }).kind,
+    "not_found",
+  );
+  assert.equal(
+    planChannelSeatUpdate({
+      seatExists: true,
+      employeeExists: false,
+      alreadySeated: false,
+      nextEmployeeId: 9,
+      currentEmployeeId: 1,
+      nextTag: "",
+      currentTag: "",
+      tagValid: true,
+    }).kind,
+    "employee_missing",
+  );
+  assert.equal(
+    planChannelSeatUpdate({
+      seatExists: true,
+      employeeExists: true,
+      alreadySeated: true,
+      nextEmployeeId: 2,
+      currentEmployeeId: 1,
+      nextTag: "",
+      currentTag: "",
+      tagValid: true,
+    }).kind,
+    "conflict",
+  );
+  assert.equal(
+    planChannelSeatUpdate({
+      seatExists: true,
+      employeeExists: true,
+      alreadySeated: false,
+      nextEmployeeId: 1,
+      currentEmployeeId: 1,
+      nextTag: "",
+      currentTag: "",
+      tagValid: false,
+    }).kind,
+    "tag_invalid",
+  );
+  assert.equal(seatUpdateError("not_found").message, SEAT_MISSING_MESSAGE);
+  assert.equal(seatUpdateError("conflict").status, 409);
 });
 
 test("channel seat capacity accepts unconfigured channels and rejects overflow", () => {
@@ -270,6 +356,12 @@ test("admin seat routes exist and require a session", async () => {
     url: "/api/admin/channel-seats/1",
   });
   assert.equal(removed.statusCode, 401);
+  const updated = await app.inject({
+    method: "PATCH",
+    url: "/api/admin/channel-seats/1",
+    payload: { tag: "备用" },
+  });
+  assert.equal(updated.statusCode, 401);
   await app.close();
 });
 
@@ -326,4 +418,18 @@ test("seat registry and personal-center gate use the product language", async ()
   assert.match(me, /for\("update"\)/);
   assert.match(adminSeats, /tx.delete\(upstreamCredentials\)/);
   assert.match(adminSeats, /channel-seats\/bulk/);
+  assert.match(adminSeats, /app.patch\(/);
+  assert.match(adminSeats, /channel_seat.update/);
+
+  const tempChannels = readFileSync(resolve(root, "web/src/views/admin/TempChannelsView.vue"), "utf8");
+  assert.match(tempChannels, /openEditSeat/);
+  assert.match(tempChannels, /removeSeat/);
+  assert.match(tempChannels, /openEditKey/);
+  assert.match(tempChannels, /removeKey/);
+  assert.match(tempChannels, /回收/);
+  assert.match(tempChannels, /销毁已提交的渠道 KEY/);
+  assert.match(tempChannels, /title="编辑席位"/);
+  assert.match(tempChannels, /title="编辑 KEY"/);
+  assert.match(tempChannels, /\/api\/admin\/channel-seats\/\$\{editSeatForm.id\}/);
+  assert.match(tempChannels, /\/api\/admin\/credentials\/\$\{editKeyForm.id\}/);
 });

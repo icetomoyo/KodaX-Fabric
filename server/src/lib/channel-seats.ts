@@ -5,6 +5,7 @@ export const SEAT_REQUIRED_MESSAGE = "没有该渠道的席位，不能提交渠
 export const SEAT_ALREADY_SUBMITTED_MESSAGE = "该席位已提交渠道 KEY";
 export const SEAT_EMPLOYEE_MISSING_MESSAGE = "员工不存在";
 export const SEAT_CHANNEL_MISSING_MESSAGE = "渠道不存在";
+export const SEAT_MISSING_MESSAGE = "席位不存在";
 export const SEAT_TAG_INVALID_MESSAGE = "席位标签最多 32 个字符";
 export const SEAT_CHANNEL_FULL_MESSAGE = "该渠道席位已满";
 export const SEAT_COUNT_BELOW_REGISTERED_MESSAGE = "渠道席位不能少于已登记数";
@@ -132,6 +133,53 @@ export function seatCreateError(kind: Exclude<SeatCreatePlan["kind"], "accepted"
     case "tag_invalid":
       return { status: 400, message: SEAT_TAG_INVALID_MESSAGE };
   }
+}
+
+export type SeatUpdatePlan =
+  | { kind: "accepted"; employeeId: number; tag: string }
+  | { kind: "unchanged" }
+  | { kind: "not_found" }
+  | { kind: "employee_missing" }
+  | { kind: "conflict" }
+  | { kind: "tag_invalid" };
+
+export function planChannelSeatUpdate(input: {
+  seatExists: boolean;
+  employeeExists: boolean;
+  alreadySeated: boolean;
+  nextEmployeeId: number;
+  currentEmployeeId: number;
+  nextTag: string;
+  currentTag: string;
+  tagValid: boolean;
+}): SeatUpdatePlan {
+  if (!input.seatExists) return { kind: "not_found" };
+  if (!input.tagValid) return { kind: "tag_invalid" };
+  if (!input.employeeExists) return { kind: "employee_missing" };
+  if (
+    input.nextEmployeeId === input.currentEmployeeId
+    && input.nextTag === input.currentTag
+  ) {
+    return { kind: "unchanged" };
+  }
+  if (input.alreadySeated) return { kind: "conflict" };
+  return {
+    kind: "accepted",
+    employeeId: input.nextEmployeeId,
+    tag: input.nextTag,
+  };
+}
+
+export function seatUpdateError(
+  kind: Exclude<SeatUpdatePlan["kind"], "accepted" | "unchanged">,
+): {
+  status: number;
+  message: string;
+} {
+  if (kind === "not_found") {
+    return { status: 404, message: SEAT_MISSING_MESSAGE };
+  }
+  return seatCreateError(kind);
 }
 
 export type BulkSeatPerson = {

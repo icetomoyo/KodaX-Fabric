@@ -103,8 +103,9 @@
                 <el-table-column label="添加时间" min-width="160">
                   <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
                 </el-table-column>
-                <el-table-column label="操作" width="80" align="center">
+                <el-table-column label="操作" width="140" align="center">
                   <template #default="{ row }">
+                    <el-button link type="primary" @click="openEditKey(row)">编辑</el-button>
                     <el-button
                       link
                       type="danger"
@@ -162,6 +163,19 @@
                 </el-table-column>
                 <el-table-column label="登记时间" min-width="160">
                   <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
+                </el-table-column>
+                <el-table-column label="操作" width="140" align="center">
+                  <template #default="{ row }">
+                    <el-button link type="primary" @click="openEditSeat(row)">编辑</el-button>
+                    <el-button
+                      link
+                      type="danger"
+                      :loading="removingSeatId === row.id"
+                      @click="removeSeat(row)"
+                    >
+                      回收
+                    </el-button>
+                  </template>
                 </el-table-column>
               </el-table>
             </div>
@@ -320,6 +334,68 @@
         <el-button type="primary" :loading="keySaving" @click="saveKey">添加</el-button>
       </template>
     </el-dialog>
+
+    <el-dialog v-model="showEditSeat" title="编辑席位" width="480px" destroy-on-close>
+      <el-form label-width="90px">
+        <el-form-item label="模式">
+          <el-input :model-value="selectedPackage?.name ?? ''" disabled />
+        </el-form-item>
+        <el-form-item label="员工" required>
+          <el-select
+            v-model="editSeatForm.employeeId"
+            filterable
+            remote
+            :remote-method="searchEmployees"
+            :loading="employeeLoading"
+            placeholder="姓名或手机号"
+            style="width: 100%"
+          >
+            <el-option
+              v-for="item in employees"
+              :key="item.id"
+              :label="`${item.name} · ${item.phone}`"
+              :value="item.id"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="标签">
+          <el-input v-model="editSeatForm.tag" maxlength="32" show-word-limit placeholder="可选" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showEditSeat = false">取消</el-button>
+        <el-button type="primary" :loading="seatSaving" @click="saveEditSeat">保存</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="showEditKey" title="编辑 KEY" width="480px" destroy-on-close>
+      <el-form label-width="90px">
+        <el-form-item label="充值">
+          <el-input :model-value="selectedPackage?.name ?? ''" disabled />
+        </el-form-item>
+        <el-form-item label="名称" required>
+          <el-input v-model="editKeyForm.label" maxlength="200" show-word-limit />
+        </el-form-item>
+        <el-form-item label="KEY">
+          <el-input
+            v-model="editKeyForm.secret"
+            type="textarea"
+            :rows="4"
+            :placeholder="`当前 •••• ${editKeyForm.secretSuffix}，留空则不更换`"
+          />
+        </el-form-item>
+        <el-form-item label="状态">
+          <el-radio-group v-model="editKeyForm.status">
+            <el-radio-button value="active">可用</el-radio-button>
+            <el-radio-button value="disabled">停用</el-radio-button>
+          </el-radio-group>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showEditKey = false">取消</el-button>
+        <el-button type="primary" :loading="keySaving" @click="saveEditKey">保存</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -377,6 +453,7 @@ type PackageRow = {
 
 type SeatRow = {
   id: number;
+  employeeId: number;
   employeeName: string;
   employeePhone: string;
   enterpriseName: string | null;
@@ -411,13 +488,17 @@ const showCreateChannel = ref(false);
 const showCreatePackage = ref(false);
 const showEditPackage = ref(false);
 const showCreateSeat = ref(false);
+const showEditSeat = ref(false);
 const showCreateKey = ref(false);
+const showEditKey = ref(false);
 const channelSaving = ref(false);
 const packageSaving = ref(false);
 const seatSaving = ref(false);
 const keySaving = ref(false);
 const removingKeyId = ref<number | null>(null);
+const removingSeatId = ref<number | null>(null);
 const employeeLoading = ref(false);
+const editSeatCurrentEmployee = ref<EmployeeOption | null>(null);
 const createChannelCode = ref<ChannelTemplateCode>("glm");
 const employees = ref<EmployeeOption[]>([]);
 const packageForm = reactive({
@@ -448,6 +529,26 @@ const editPackageOriginal = reactive({
   name: "",
   tag: "",
   seatCount: 0,
+  status: "active" as "active" | "disabled",
+});
+const editSeatForm = reactive({
+  id: 0,
+  employeeId: undefined as number | undefined,
+  tag: "",
+});
+const editSeatOriginal = reactive({
+  employeeId: 0,
+  tag: "",
+});
+const editKeyForm = reactive({
+  id: 0,
+  label: "",
+  secret: "",
+  secretSuffix: "",
+  status: "active" as "active" | "disabled",
+});
+const editKeyOriginal = reactive({
+  label: "",
   status: "active" as "active" | "disabled",
 });
 
@@ -640,7 +741,19 @@ async function refresh() {
           configVersion: Number(row.configVersion) || 1,
         }))
       : [];
-    seats.value = Array.isArray(seatRes.data.data) ? seatRes.data.data : [];
+    seats.value = Array.isArray(seatRes.data.data)
+      ? seatRes.data.data.map((row: SeatRow) => ({
+          id: row.id,
+          employeeId: Number(row.employeeId) || 0,
+          employeeName: row.employeeName,
+          employeePhone: row.employeePhone,
+          enterpriseName: row.enterpriseName ?? null,
+          productLineId: row.productLineId,
+          tag: row.tag ?? "",
+          secretSuffix: row.secretSuffix ?? null,
+          createdAt: row.createdAt,
+        }))
+      : [];
     credentials.value = Array.isArray(credentialRes.data.data)
       ? credentialRes.data.data.map((row: CredentialRow) => ({
           id: row.id,
@@ -892,6 +1005,7 @@ function openCreateSeat() {
   seatForm.employeeId = undefined;
   seatForm.tag = "";
   employees.value = [];
+  editSeatCurrentEmployee.value = null;
   showCreateSeat.value = true;
   void searchEmployees("");
 }
@@ -906,6 +1020,14 @@ async function searchEmployees(query: string) {
     employees.value = Array.isArray(data.data)
       ? data.data.map((row: EmployeeOption) => ({ id: row.id, name: row.name, phone: row.phone }))
       : [];
+    const current = editSeatCurrentEmployee.value;
+    if (
+      showEditSeat.value
+      && current
+      && !employees.value.some((item) => item.id === current.id)
+    ) {
+      employees.value.unshift(current);
+    }
   } catch (error) {
     employees.value = [];
     ElMessage.error(requestMessage(error, "搜索员工失败"));
@@ -938,6 +1060,122 @@ async function saveSeat() {
     ElMessage.error(requestMessage(error, "登记失败"));
   } finally {
     seatSaving.value = false;
+  }
+}
+
+function openEditSeat(row: SeatRow) {
+  editSeatForm.id = row.id;
+  editSeatForm.employeeId = row.employeeId;
+  editSeatForm.tag = row.tag ?? "";
+  editSeatOriginal.employeeId = row.employeeId;
+  editSeatOriginal.tag = row.tag ?? "";
+  editSeatCurrentEmployee.value = {
+    id: row.employeeId,
+    name: row.employeeName,
+    phone: row.employeePhone,
+  };
+  employees.value = [editSeatCurrentEmployee.value];
+  showEditSeat.value = true;
+  void searchEmployees("");
+}
+
+async function saveEditSeat() {
+  if (!editSeatForm.employeeId) {
+    ElMessage.warning("请选择员工");
+    return;
+  }
+  const tag = editSeatForm.tag.trim();
+  const payload: Record<string, unknown> = {};
+  if (editSeatForm.employeeId !== editSeatOriginal.employeeId) {
+    payload.employeeId = editSeatForm.employeeId;
+  }
+  if (tag !== editSeatOriginal.tag) payload.tag = tag;
+  if (!Object.keys(payload).length) {
+    ElMessage.info("未检测到需要保存的修改");
+    return;
+  }
+  seatSaving.value = true;
+  try {
+    const { data } = await http.patch(`/api/admin/channel-seats/${editSeatForm.id}`, payload);
+    if (!data.success) throw new Error(data.message || "席位更新失败");
+    ElMessage.success("席位已更新");
+    showEditSeat.value = false;
+    editSeatCurrentEmployee.value = null;
+    await refresh();
+  } catch (error) {
+    ElMessage.error(requestMessage(error, "席位更新失败"));
+  } finally {
+    seatSaving.value = false;
+  }
+}
+
+async function removeSeat(row: SeatRow) {
+  const tagLabel = row.tag ? `（${row.tag}）` : "";
+  try {
+    await ElMessageBox.confirm(
+      row.secretSuffix
+        ? `回收 ${row.employeeName}${tagLabel} 的席位，并销毁已提交的渠道 KEY（•••• ${row.secretSuffix}）。`
+        : `回收 ${row.employeeName}${tagLabel} 的席位。`,
+      "回收席位",
+      { type: "warning", confirmButtonText: "回收", cancelButtonText: "取消" },
+    );
+  } catch {
+    return;
+  }
+  removingSeatId.value = row.id;
+  try {
+    const { data } = await http.delete(`/api/admin/channel-seats/${row.id}`);
+    if (!data.success) throw new Error(data.message || "回收失败");
+    ElMessage.success(data.data?.credentialDestroyed ? "已回收席位并销毁渠道 KEY" : "已回收席位");
+    await refresh();
+  } catch (error) {
+    ElMessage.error(requestMessage(error, "回收失败"));
+  } finally {
+    removingSeatId.value = null;
+  }
+}
+
+function openEditKey(row: CredentialRow) {
+  editKeyForm.id = row.id;
+  editKeyForm.label = row.label;
+  editKeyForm.secret = "";
+  editKeyForm.secretSuffix = row.secretSuffix;
+  editKeyForm.status = row.status === "disabled" ? "disabled" : "active";
+  editKeyOriginal.label = row.label;
+  editKeyOriginal.status = row.status === "disabled" ? "disabled" : "active";
+  showEditKey.value = true;
+}
+
+async function saveEditKey() {
+  const label = editKeyForm.label.trim();
+  if (!label) {
+    ElMessage.warning("请填写名称");
+    return;
+  }
+  const secret = editKeyForm.secret.trim();
+  if (secret && secret.length < 8) {
+    ElMessage.warning("KEY 至少 8 个字符，留空则不更换");
+    return;
+  }
+  const payload: Record<string, unknown> = {};
+  if (label !== editKeyOriginal.label) payload.label = label;
+  if (editKeyForm.status !== editKeyOriginal.status) payload.status = editKeyForm.status;
+  if (secret) payload.secret = secret;
+  if (!Object.keys(payload).length) {
+    ElMessage.info("未检测到需要保存的修改");
+    return;
+  }
+  keySaving.value = true;
+  try {
+    const { data } = await http.patch(`/api/admin/credentials/${editKeyForm.id}`, payload);
+    if (!data.success) throw new Error(data.message || "KEY 更新失败");
+    ElMessage.success("KEY 已更新");
+    showEditKey.value = false;
+    await refresh();
+  } catch (error) {
+    ElMessage.error(requestMessage(error, "KEY 更新失败"));
+  } finally {
+    keySaving.value = false;
   }
 }
 

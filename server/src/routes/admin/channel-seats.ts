@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import { and, count, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, count, desc, eq, inArray, ne, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../../db/client.js";
 import {
@@ -11,7 +11,11 @@ import {
   providers,
   upstreamCredentials,
 } from "../../db/schema/index.js";
-import { isEmployeeSubmittedCredentialMeta, planEmployeeChannelCredentialSubmit } from "../../lib/channel-credential-submit.js";
+import {
+  buildEmployeeSubmittedCredentialLabel,
+  isEmployeeSubmittedCredentialMeta,
+  planEmployeeChannelCredentialSubmit,
+} from "../../lib/channel-credential-submit.js";
 import { inspectCredentialSecretDuplicates } from "../../lib/credential-bulk.js";
 import { decryptSecret, encryptSecret, secretSuffix } from "../../lib/crypto-secret.js";
 import {
@@ -19,12 +23,14 @@ import {
   planBulkChannelSeats,
   planBulkSeatKeys,
   planChannelSeatCreate,
+  planChannelSeatUpdate,
   planSeatCapacity,
   SEAT_BULK_MAX,
   SEAT_CHANNEL_FULL_MESSAGE,
   SEAT_CONFLICT_MESSAGE,
   SEAT_KEY_DUPLICATE_SECRET_MESSAGE,
   seatCreateError,
+  seatUpdateError,
 } from "../../lib/channel-seats.js";
 import { requirePasswordChanged, requireRoles, requireSession } from "../../middleware/auth.js";
 
@@ -560,6 +566,183 @@ export async function adminChannelSeatRoutes(app: FastifyInstance) {
           failed: result.failed,
         },
       };
+    },
+  );
+
+  app.patch(
+    "/api/admin/channel-seats/:id",
+    async (req, reply) => {
+      const params = z.object({ id: z.coerce.number().int().positive() }).safeParse(req.params);
+      const body = z
+        .object({
+          employeeId: z.number().int().positive().optional(),
+          tag: z.string().optional(),
+        })
+        .strict()
+        .refine((value) => Object.keys(value).length > 0, {
+          message: "至少提供一个要修改的字段",
+        })
+        .safeParse(req.body);
+      if (!params.success || !body.success) {
+        return reply.code(400).send({ success: false, message: "参数无效" });
+      }
+
+      const result = await db.transaction(async (tx) => {
+        const [seat] = await tx
+          .select({
+            id: channelSeats.id,
+            employeeId: channelSeats.employeeId,
+            productLineId: channelSeats.productLineId,
+            tag: channelSeats.tag,
+            credentialId: channelSeats.credentialId,
+          })
+          .from(channelSeats)
+          .where(eq(channelSeats.id, params.data.id))
+          .limit(1)
+          .for("update");
+
+        const nextEmployeeId = body.data.employeeId ?? seat?.employeeId ?? 0;
+        const tagProvided = body.data.tag !== undefined;
+        const nextTag = tagProvided ? normalizeSeatTag(body.data.tag) : (seat?.tag ?? "");
+        const employeeUnchanged = Boolean(seat) && nextEmployeeId === seat!.employeeId;
+        let employeeExists = employeeUnchanged;
+        let employeeName: string | null = null;
+        if (!employeeUnchanged && nextEmployeeId > 0) {
+          const [employee] = await tx
+            .select({ id: employees.id, name: employees.name })
+            .from(employees)
+            .where(eq(employees.id, nextEmployeeId))
+            .limit(1);
+          employeeExists = Boolean(employee);
+          employeeName = employee?.name ?? null;
+        }
+
+        let alreadySeated = false;
+        if (seat && nextTag != null) {
+          const [conflict] = await tx
+            .select({ id: channelSeats.id })
+            .from(channelSeats)
+            .where(
+              and(
+                eq(channelSeats.employeeId, nextEmployeeId),
+                eq(channelSeats.productLineId, seat.productLineId),
+                eq(channelSeats.tag, nextTag),
+                ne(channelSeats.id, seat.id),
+              ),
+            )
+            .limit(1);
+          alreadySeated = Boolean(conflict);
+        }
+
+        const plan = planChannelSeatUpdate({
+          seatExists: Boolean(seat),
+          employeeExists,
+          alreadySeated,
+          nextEmployeeId,
+          currentEmployeeId: seat?.employeeId ?? 0,
+          nextTag: nextTag ?? "",
+          currentTag: seat?.tag ?? "",
+          tagValid: nextTag != null,
+        });
+        if (plan.kind !== "accepted") return plan;
+        if (!seat) return { kind: "not_found" as const };
+
+        let credentialId = seat.credentialId;
+        if (plan.employeeId !== seat.employeeId && credentialId == null) {
+          credentialId = await attachUnlinkedSubmittedCredential(
+            tx,
+            plan.employeeId,
+            seat.productLineId,
+          );
+        }
+
+        const [updated] = await tx
+          .update(channelSeats)
+          .set({
+            employeeId: plan.employeeId,
+            tag: plan.tag,
+            credentialId,
+            updatedAt: new Date(),
+          })
+          .where(eq(channelSeats.id, seat.id))
+          .returning({
+            id: channelSeats.id,
+            employeeId: channelSeats.employeeId,
+            productLineId: channelSeats.productLineId,
+            tag: channelSeats.tag,
+            credentialId: channelSeats.credentialId,
+          });
+        if (!updated) return { kind: "not_found" as const };
+
+        if (
+          updated.credentialId != null
+          && plan.employeeId !== seat.employeeId
+        ) {
+          const [credential] = await tx
+            .select({
+              id: upstreamCredentials.id,
+              meta: upstreamCredentials.meta,
+            })
+            .from(upstreamCredentials)
+            .where(eq(upstreamCredentials.id, updated.credentialId))
+            .limit(1)
+            .for("update");
+          if (
+            credential
+            && isEmployeeSubmittedCredentialMeta(credential.meta, seat.employeeId)
+          ) {
+            const [channel] = await tx
+              .select({ name: productLines.name })
+              .from(productLines)
+              .where(eq(productLines.id, seat.productLineId))
+              .limit(1);
+            const meta = credential.meta && typeof credential.meta === "object" && !Array.isArray(credential.meta)
+              ? {
+                ...(credential.meta as Record<string, unknown>),
+                submittedByEmployeeId: plan.employeeId,
+              }
+              : credential.meta;
+            await tx
+              .update(upstreamCredentials)
+              .set({
+                meta,
+                label: buildEmployeeSubmittedCredentialLabel(
+                  channel?.name ?? "",
+                  employeeName ?? "",
+                ),
+                updatedAt: new Date(),
+              })
+              .where(eq(upstreamCredentials.id, credential.id));
+          }
+        }
+
+        await tx.insert(opsAuditLogs).values({
+          actorEmployeeId: req.employeeId ?? null,
+          action: "channel_seat.update",
+          targetType: "channel_seat",
+          targetId: String(updated.id),
+          detail: {
+            employeeId: updated.employeeId,
+            previousEmployeeId: seat.employeeId,
+            productLineId: updated.productLineId,
+            tag: updated.tag,
+            previousTag: seat.tag,
+            credentialId: updated.credentialId,
+          },
+          ip: req.ip,
+        });
+
+        return { kind: "updated" as const, seat: updated };
+      });
+
+      if (result.kind === "unchanged") {
+        return { success: true, data: { id: params.data.id, unchanged: true } };
+      }
+      if (result.kind !== "updated") {
+        const error = seatUpdateError(result.kind);
+        return reply.code(error.status).send({ success: false, message: error.message });
+      }
+      return { success: true, data: result.seat };
     },
   );
 
