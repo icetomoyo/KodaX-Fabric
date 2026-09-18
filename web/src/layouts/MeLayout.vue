@@ -13,10 +13,10 @@
         text-color="#cbd5e1"
         active-text-color="#ffffff"
       >
+        <el-menu-item index="/me/guide">接入教程</el-menu-item>
         <el-menu-item index="/me">工作台</el-menu-item>
         <el-menu-item index="/me/keys">API Key</el-menu-item>
         <el-menu-item index="/me/models">模型列表</el-menu-item>
-        <el-menu-item index="/me/guide">接入教程</el-menu-item>
         <el-menu-item index="/me/logs">我的调用</el-menu-item>
         <el-menu-item index="/me/profile">个人中心</el-menu-item>
       </el-menu>

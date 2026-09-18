@@ -81,6 +81,8 @@ test("knowledge covers GuideView facts and refuses invented features", () => {
   assert.match(SUPPORT_BOT_KNOWLEDGE, /图片输入/);
   assert.match(SUPPORT_BOT_KNOWLEDGE, /workbuddy-create-key\.png/);
   assert.match(SUPPORT_BOT_KNOWLEDGE, /workbuddy-add-model\.png/);
+  assert.match(SUPPORT_BOT_KNOWLEDGE, /dingtalk-department\.png/);
+  assert.match(SUPPORT_BOT_KNOWLEDGE, /token-bot-join-department\.png/);
   assert.match(SUPPORT_BOT_KNOWLEDGE, /Claude Code 接 Token Hub/);
   assert.match(SUPPORT_BOT_KNOWLEDGE, /ANTHROPIC_BASE_URL/);
   assert.match(SUPPORT_BOT_KNOWLEDGE, /~\/\.claude\/settings\.json/);
@@ -94,6 +96,8 @@ test("knowledge covers GuideView facts and refuses invented features", () => {
   assert.match(prompt, /https:\/\/tokenhub\.haizhi\.com\/guides\/zcode-add-model\.png/);
   assert.match(prompt, /https:\/\/tokenhub\.haizhi\.com\/guides\/workbuddy-create-key\.png/);
   assert.match(prompt, /https:\/\/tokenhub\.haizhi\.com\/guides\/workbuddy-add-model\.png/);
+  assert.match(prompt, /https:\/\/tokenhub\.haizhi\.com\/guides\/dingtalk-department\.png/);
+  assert.match(prompt, /https:\/\/tokenhub\.haizhi\.com\/guides\/token-bot-join-department\.png/);
   assert.match(prompt, /"ANTHROPIC_BASE_URL": "https:\/\/tokenhub\.haizhi\.com\/ai"/);
   assert.match(prompt, /base_url = "https:\/\/tokenhub\.haizhi\.com\/ai"/);
   assert.equal(
@@ -110,6 +114,14 @@ test("knowledge covers GuideView facts and refuses invented features", () => {
   );
   assert.equal(
     existsSync(resolve(dirname(fileURLToPath(import.meta.url)), "../../web/public/guides/workbuddy-add-model.png")),
+    true,
+  );
+  assert.equal(
+    existsSync(resolve(dirname(fileURLToPath(import.meta.url)), "../../web/public/guides/dingtalk-department.png")),
+    true,
+  );
+  assert.equal(
+    existsSync(resolve(dirname(fileURLToPath(import.meta.url)), "../../web/public/guides/token-bot-join-department.png")),
     true,
   );
   assert.match(prompt, /lookup_my_account/);

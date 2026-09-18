@@ -57,33 +57,31 @@
         <li>使用手机号注册并登录，即当前账号。</li>
         <li>
           打开右下角 Token Bot，说出你的部门名（有同名时再补企业名），由助手加入该部门。
-        </li>
-        <li>
-          也可以把注册手机号发给部门管理员，请其邀请你加入。对方只能邀请已经注册的手机号，无法代为注册。
+          部门名可在钉钉个人资料的「部门」一栏查看。
         </li>
       </ol>
 
-      <div class="phone-card">
-        <span class="phone-label">用于加入部门的手机号</span>
-        <code class="phone-value">{{ phone || "登录后显示" }}</code>
-        <el-button
-          type="primary"
-          :disabled="!phone"
-          @click="copyPhone"
-        >
-          复制手机号
-        </el-button>
-      </div>
-
-      <div class="script-card">
-        <strong>参考话术</strong>
-        <p>「我已经在 Token Hub 注册了，部门是（你的部门名），请把我加进去。」</p>
+      <p class="lead">用 Token Bot 加入部门时，对照下面两张图。</p>
+      <div class="guide-shots" aria-label="Token Bot 加入部门截图">
+        <figure>
+          <img
+            :src="dingtalkDepartmentSrc"
+            alt="钉钉个人资料中的部门一栏"
+          />
+          <figcaption>在钉钉打开个人资料，部门名就是「部门」这一栏。有同名部门时再补「企业/组织」。</figcaption>
+        </figure>
+        <figure>
+          <img
+            :src="tokenBotJoinDepartmentSrc"
+            alt="Token Bot 对话中说出部门名并加入成功"
+          />
+          <figcaption>打开右下角 Token Bot，直接说出部门名。加入成功后刷新页面，即可创建 API Key。</figcaption>
+        </figure>
       </div>
 
       <ul class="notes">
         <li>工作台仍提示「普通注册用户」，表示尚未加入部门。</li>
         <li>「API Key」页的「创建 Key」为灰色，表示尚未加入部门。</li>
-        <li>管理员无法找到你时，请确认对方使用的是上方手机号，且该号码已完成注册。</li>
       </ul>
     </section>
 
@@ -116,11 +114,11 @@
         </div>
         <div class="protocol-row">
           <span>ZCode（自定义供应商）</span>
-          <span>常用 <strong>OpenAI Chat Completion 协议</strong>（API 格式选 Chat Completions）。若填 Anthropic 接口则用 Anthropic Message 协议，须与 Key 一致。</span>
+          <strong>OpenAI Chat Completion 协议</strong>
         </div>
         <div class="protocol-row">
           <span>WorkBuddy（自定义模型）</span>
-          <span>必须选 <strong>OpenAI Chat Completion 协议</strong>。WorkBuddy 仅支持 OpenAI 兼容协议，不能用 Anthropic Message 或 OpenAI Response Key。</span>
+          <strong>OpenAI Chat Completion 协议</strong>
         </div>
         <div class="protocol-row">
           <span>KodaX、KodaX Space</span>
@@ -175,7 +173,7 @@
         <li>打开「API Key」页，点击「创建 Key」。</li>
         <li>填写名称，建议使用产品名，例如 <code>Cursor</code>、<code>Claude Code</code>、<code>KodaX</code>、<code>workbuddy</code>。</li>
         <li>选择上游渠道。若无可选项，请联系团队管理员先配置渠道。</li>
-        <li>选择协议，须与上一步对照表一致：Claude Code 选择 Anthropic Message，Cursor / KodaX / KodaX Space / WorkBuddy 选择 OpenAI Chat Completion，Codex 选择 OpenAI Response。</li>
+        <li>选择协议，须与上一步对照表一致：Claude Code 选择 Anthropic Message，Cursor / ZCode / WorkBuddy / KodaX / KodaX Space 选择 OpenAI Chat Completion，Codex 选择 OpenAI Response。</li>
         <li>创建成功后立即复制完整 API Key（<code>th_</code> 开头）。关闭窗口后将无法再次查看明文。</li>
       </ol>
 
@@ -231,7 +229,7 @@
         <div class="protocol-row">
           <span>ZCode</span>
           <span>
-            添加自定义供应商，Base URL 填写上方地址，API 格式与 Key 协议一致。
+            添加自定义供应商，Base URL 填写上方地址，API 格式选 Chat Completions。
             添加模型 <code>glm-5.3-flash</code> 时必须勾选输入类型「图片」；只勾默认「文本」则贴图不会发给上游。
           </span>
         </div>
@@ -343,10 +341,8 @@ import { ElMessage } from "element-plus";
 import { useRoute, useRouter } from "vue-router";
 import { http } from "@/api/http";
 import { copyText } from "@/lib/clipboard";
-import { useAuthStore } from "@/stores/auth";
 import { RELAY_BASE_PATH, relayClientBaseUrl } from "@/views/relay-protocol";
 
-const auth = useAuthStore();
 const route = useRoute();
 const router = useRouter();
 const isAdminGuide = computed(() => route.path.startsWith("/admin"));
@@ -358,11 +354,12 @@ const inTeam = ref(false);
 const teams = ref<Array<{ id: number; name: string }>>([]);
 const relayUrl = ref("");
 
-const phone = computed(() => auth.user?.phone?.trim() || "");
 const teamNames = computed(() => teams.value.map((team) => team.name).filter(Boolean).join("、"));
 const clientBaseUrl = computed(() =>
   relayClientBaseUrl(relayUrl.value || `${window.location.origin}${RELAY_BASE_PATH}`),
 );
+const dingtalkDepartmentSrc = "/guides/dingtalk-department.png";
+const tokenBotJoinDepartmentSrc = "/guides/token-bot-join-department.png";
 const workbuddyCreateKeySrc = "/guides/workbuddy-create-key.png";
 const workbuddyAddModelSrc = "/guides/workbuddy-add-model.png";
 const claudeSettingsSnippet = computed(() =>
@@ -414,10 +411,6 @@ async function copyValue(label: string, value: string) {
   const copied = await copyText(value);
   if (copied) ElMessage.success(`${label}已复制`);
   else ElMessage.error(`${label}复制失败，请手动选择文本复制`);
-}
-
-async function copyPhone() {
-  await copyValue("手机号", phone.value);
 }
 
 onMounted(loadGuideContext);
@@ -609,13 +602,18 @@ onMounted(loadGuideContext);
 
 .guide-shots {
   display: grid;
-  gap: 16px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
   margin: 0 0 16px;
+  align-items: start;
 }
 
 .guide-shots figure {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
   margin: 0;
-  padding: 12px;
+  padding: 10px;
   border: 1px solid #e2e8f0;
   border-radius: 12px;
   background: #f8fafc;
@@ -624,8 +622,12 @@ onMounted(loadGuideContext);
 .guide-shots img {
   display: block;
   width: 100%;
+  max-height: 416px;
   height: auto;
+  object-fit: contain;
+  object-position: top center;
   border-radius: 8px;
+  background: #fff;
 }
 
 .guide-shots figcaption {
@@ -666,7 +668,8 @@ code {
 
 @media (max-width: 720px) {
   .phone-card,
-  .protocol-row {
+  .protocol-row,
+  .guide-shots {
     grid-template-columns: 1fr;
   }
 }

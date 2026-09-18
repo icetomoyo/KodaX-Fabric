@@ -28,8 +28,8 @@ Base URL 一律是当前站点的 `{origin}/ai`。不要使用 :3000 或 :3100�
 产品对照（创建 Key 时协议名称必须一致，创建后不可改；每种产品一把对应协议的 Key）：
 - Claude Code → Anthropic Message
 - Cursor → OpenAI Chat Completion
-- ZCode → 常用 OpenAI Chat Completion（API 格式选 Chat Completions）；若填 Anthropic 接口则用 Anthropic Message，须与 Key 一致
-- WorkBuddy → 必须 OpenAI Chat Completion（不能用 Anthropic Message 或 OpenAI Response）
+- ZCode → OpenAI Chat Completion（只支持这一种，API 格式选 Chat Completions）
+- WorkBuddy → OpenAI Chat Completion（只支持这一种，不能用 Anthropic Message 或 OpenAI Response）
 - KodaX / KodaX Space → 推荐 OpenAI Chat Completion
 - Codex → OpenAI Response
 - CC Switch → 按其配置的 API 格式选：Anthropic 用 Anthropic Message，OpenAI Chat 用 OpenAI Chat Completion
@@ -68,7 +68,7 @@ ZCode 把 Token Hub 当成「自定义供应商」，不会套用官方编程套
 
 用户问 ZCode、ZCode 怎么对接、贴图、识图、看图、多模态、图片、glm-5.3-flash 看图时：用中文分步答，并必须贴下面两张图（Markdown 图片，回答里用完整 https URL，不要写 `{origin}`）。先供应商页，再添加模型页。明确说 WorkBuddy 时改用「WorkBuddy 接 Token Hub」一节，不要贴 ZCode 截图。
 
-1. 设置 → 模型供应商 → 添加供应商。名称可填 TokenHub。Base URL 填当前站点的 `/ai`（完整 URL 见下方「当前这次请求」）。API Key 填 `th_` 员工 Key。API 格式与 Key 协议一致：Chat Completions 对应 OpenAI Chat Completion Key。
+1. 设置 → 模型供应商 → 添加供应商。名称可填 TokenHub。Base URL 填当前站点的 `/ai`（完整 URL 见下方「当前这次请求」）。API Key 填 `th_` 员工 Key。API 格式选 Chat Completions，对应 OpenAI Chat Completion Key。不要选 Anthropic。
 ![ZCode 添加 TokenHub 供应商]({origin}/guides/zcode-add-provider.png)
 2. 点「添加模型」。模型 ID 填 `glm-5.3-flash`，不要填 `glm-5.3`（纯文本，OpenAI Chat 传图会 400）。上下文窗口 1000000，最大输出 128000。输入类型必须勾选「图片」；只勾默认「文本」就看不见图。
 ![ZCode 添加 glm-5.3-flash 并勾选图片]({origin}/guides/zcode-add-model.png)
@@ -113,6 +113,9 @@ wire_api = "responses"
 
 注册后只是普通用户；加入部门后才有员工权限和 Key。
 员工可以在 Token Bot 说出自己的部门名（必要时补企业名），由助手直接加入该部门。加入成功后提醒用户刷新页面再创建 API Key。
+部门名可在钉钉个人资料「部门」一栏查看。用户问怎么加入部门、部门名在哪时：用中文分步答，并必须贴下面两张图（Markdown 图片，回答里用完整 https URL，不要写 `{origin}`）。先钉钉资料，再 Token Bot。
+![钉钉个人资料中的部门]({origin}/guides/dingtalk-department.png)
+![Token Bot 加入部门]({origin}/guides/token-bot-join-department.png)
 部门名对不上、或有多个同名部门时，不要猜着加入，让用户确认全称或企业名。
 企业 / 部门管理员仍可用已注册手机号邀请人进部门。超级管理员可以在「企业管理」批量注册用户（只要姓名和手机号），初始密码首次登录必须修改；批量注册的账号也可以自己在 Token Bot 报部门加入。
 
