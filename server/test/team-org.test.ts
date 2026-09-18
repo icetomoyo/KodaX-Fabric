@@ -287,6 +287,11 @@ test("live console pages do not repeat sidebar titles or tutorial subtitles", ()
   assert.doesNotMatch(dashboard, /请求量与 Tokens 分布/);
   assert.doesNotMatch(prices, /请先到上游渠道测试 Key/);
   assert.doesNotMatch(meHome, /按团队统计 Token 消耗/);
+  assert.match(profile, /\/api\/me\/org/);
+  assert.match(profile, /所属部门/);
+  assert.match(profile, /尚未加入部门/);
+  assert.doesNotMatch(profile, /auth\.user\?\.dept/);
+  assert.doesNotMatch(profile, /profileForm\.dept/);
 });
 
 test("admin workbench ranks today usage across the org chain", () => {

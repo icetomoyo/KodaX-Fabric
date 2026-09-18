@@ -28,7 +28,7 @@
             <strong>{{ auth.user?.name }}</strong>
             <span class="muted">
               · {{ auth.user?.phone }}
-              · {{ auth.user?.enterprise?.name ? `${auth.user.enterprise.name} · ${auth.user.enterprise.code}` : "普通注册用户" }}
+              · {{ auth.user?.enterprise?.name ? auth.user.enterprise.name : "普通注册用户" }}
             </span>
           </router-link>
           <el-tag

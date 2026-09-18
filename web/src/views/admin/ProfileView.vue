@@ -38,11 +38,23 @@
                   :maxlength="20"
                 />
               </el-form-item>
-              <el-form-item label="部门">
-                <el-input :model-value="profileForm.dept || '—'" disabled />
-              </el-form-item>
               <el-form-item label="角色">
                 <el-input :model-value="roleLabel" disabled />
+              </el-form-item>
+              <el-form-item label="所属部门" class="profile-field-span">
+                <div class="dept-list">
+                  <span v-if="orgLoading" class="dept-empty">加载中…</span>
+                  <template v-else-if="membershipDepartments.length">
+                    <span
+                      v-for="dept in membershipDepartments"
+                      :key="dept.id"
+                      class="dept-item"
+                    >
+                      {{ dept.path || dept.name }}
+                    </span>
+                  </template>
+                  <span v-else class="dept-empty">尚未加入部门</span>
+                </div>
               </el-form-item>
             </div>
             <div class="form-actions">
@@ -64,9 +76,23 @@
             <el-descriptions-item label="姓名">{{ auth.user?.name || "—" }}</el-descriptions-item>
             <el-descriptions-item label="手机号">{{ auth.user?.phone || "—" }}</el-descriptions-item>
             <el-descriptions-item label="角色">{{ roleLabel }}</el-descriptions-item>
-            <el-descriptions-item label="部门">{{ auth.user?.dept || "—" }}</el-descriptions-item>
             <el-descriptions-item v-if="auth.user?.enterprise?.name" label="企业">
-              {{ auth.user.enterprise.name }} · {{ auth.user.enterprise.code }}
+              {{ auth.user.enterprise.name }}
+            </el-descriptions-item>
+            <el-descriptions-item label="所属部门" :span="2">
+              <div class="dept-list">
+                <span v-if="orgLoading" class="dept-empty">加载中…</span>
+                <template v-else-if="membershipDepartments.length">
+                  <span
+                    v-for="dept in membershipDepartments"
+                    :key="dept.id"
+                    class="dept-item"
+                  >
+                    {{ dept.path || dept.name }}
+                  </span>
+                </template>
+                <span v-else class="dept-empty">尚未加入部门</span>
+              </div>
             </el-descriptions-item>
           </el-descriptions>
         </section>
@@ -249,6 +275,12 @@ type SubmittedChannelKey = {
   createdAt: string;
 };
 
+type MembershipDepartment = {
+  id: number;
+  name: string;
+  path?: string;
+};
+
 type ProfileSection = "profile" | "channel-key" | "password";
 
 const auth = useAuthStore();
@@ -265,10 +297,11 @@ const channelKeyHistoryLoading = ref(false);
 const channelKeyDeletingId = ref<number | null>(null);
 const channelKeyChannels = ref<SubmitableChannel[]>([]);
 const channelKeyHistory = ref<SubmittedChannelKey[]>([]);
+const orgLoading = ref(false);
+const membershipDepartments = ref<MembershipDepartment[]>([]);
 const profileForm = reactive({
   name: "",
   phone: "",
-  dept: "",
 });
 const passwordForm = reactive({
   oldPassword: "",
@@ -313,6 +346,14 @@ watch(
   { immediate: true },
 );
 
+watch(
+  () => [auth.user?.id, auth.actAs?.employeeId, auth.actAs?.departmentId, auth.actAs?.teamId],
+  () => {
+    void loadMemberships();
+  },
+  { immediate: true },
+);
+
 watch(canSubmitChannelKey, (enabled) => {
   if (!enabled && activeProfileSection.value === "channel-key") {
     activeProfileSection.value = "profile";
@@ -340,7 +381,28 @@ watch(
 function resetProfile() {
   profileForm.name = auth.user?.name ?? "";
   profileForm.phone = auth.user?.phone ?? "";
-  profileForm.dept = auth.user?.dept ?? "";
+}
+
+async function loadMemberships() {
+  orgLoading.value = true;
+  try {
+    const { data } = await http.get("/api/me/org");
+    if (!data.success) throw new Error(data.message || "加载部门失败");
+    membershipDepartments.value = Array.isArray(data.data?.departments)
+      ? data.data.departments
+        .map((row: MembershipDepartment) => ({
+          id: Number(row.id),
+          name: typeof row.name === "string" ? row.name : "",
+          path: typeof row.path === "string" ? row.path : "",
+        }))
+        .filter((row: MembershipDepartment) => Number.isInteger(row.id) && row.id > 0)
+      : [];
+  } catch (error) {
+    membershipDepartments.value = [];
+    ElMessage.error(requestErrorMessage(error, "加载部门失败"));
+  } finally {
+    orgLoading.value = false;
+  }
 }
 
 function unlockChannelKey() {
@@ -635,6 +697,26 @@ async function submitPassword() {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   column-gap: 24px;
+}
+
+.profile-field-span {
+  grid-column: 1 / -1;
+}
+
+.dept-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.dept-item {
+  color: #0f172a;
+  line-height: 1.45;
+  word-break: break-all;
+}
+
+.dept-empty {
+  color: var(--el-text-color-secondary);
 }
 
 .channel-key-form {
