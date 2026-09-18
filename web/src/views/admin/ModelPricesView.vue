@@ -22,7 +22,7 @@
           <div>
             <h3 class="models-title">{{ currentChannel?.name || "模型" }}</h3>
             <p class="muted" v-if="currentChannel?.providerCode === 'glm'">
-              {{ catalog.length }} 个模型。积分按每 1 万 Token 计；文本归到 glm-5.3，多模态归到 glm-5.3-flash
+              {{ catalog.length }} 个模型。积分按每 1 万 Token 计；文本归到 glm-5.3，多模态归到 glm-5.3-flash / glm-5.3-flashx
             </p>
             <p class="muted" v-else>{{ catalog.length }} 个模型。自定义渠道不按智谱积分计量</p>
           </div>

@@ -6,38 +6,80 @@ function uniqueSorted(values: string[]): string[] {
 export const GLM_TEXT_CATALOG_MODEL = "glm-5.3";
 /** Current Zhipu coding-plan multimodal model; flash / turbo / 4.7 fold here. */
 export const GLM_MULTIMODAL_CATALOG_MODEL = "glm-5.3-flash";
+/** Current Zhipu coding-plan FlashX model; historical *flashx names fold here. */
+export const GLM_FLASHX_CATALOG_MODEL = "glm-5.3-flashx";
+
+export const GLM_CATALOG_MODELS = [
+  GLM_TEXT_CATALOG_MODEL,
+  GLM_MULTIMODAL_CATALOG_MODEL,
+  GLM_FLASHX_CATALOG_MODEL,
+] as const;
 
 const GLM_CODING_PLAN_MODEL = /^glm-(\d+(?:\.\d+)?)(?:-air|-turbo|-flashx?)*$/i;
 
+/** Current DeepSeek catalog model; other deepseek-* names fold here. */
+export const DEEPSEEK_FLASH_CATALOG_MODEL = "deepseek-flash";
+export const DEEPSEEK_CATALOG_MODELS = [DEEPSEEK_FLASH_CATALOG_MODEL] as const;
+
 /**
- * Zhipu coding-plan catalog name used on the model-price and employee
- * model lists. Text models transfer to glm-5.3; multimodal / Flash / Turbo
- * / GLM-4.7 transfer to glm-5.3-flash. OCR and other product lines stay
- * as returned. Non-GLM names are unchanged.
+ * Catalog name used on the model-price and employee model lists.
+ * Zhipu coding-plan text transfers to glm-5.3; Flash / Turbo / GLM-4.7
+ * transfer to glm-5.3-flash; *flashx names transfer to glm-5.3-flashx.
+ * DeepSeek names transfer to deepseek-flash. OCR and other product lines
+ * stay as returned.
  */
 export function toCatalogModelName(model: string): string {
   const name = model.trim().toLowerCase();
-  if (!GLM_CODING_PLAN_MODEL.test(name)) return model.trim();
-  if (name.includes("flash") || name.includes("turbo") || name === "glm-4.7") {
-    return GLM_MULTIMODAL_CATALOG_MODEL;
+  if (GLM_CODING_PLAN_MODEL.test(name)) {
+    if (name.includes("flashx")) return GLM_FLASHX_CATALOG_MODEL;
+    if (name.includes("flash") || name.includes("turbo") || name === "glm-4.7") {
+      return GLM_MULTIMODAL_CATALOG_MODEL;
+    }
+    return GLM_TEXT_CATALOG_MODEL;
   }
-  return GLM_TEXT_CATALOG_MODEL;
+  if (name.startsWith("deepseek")) return DEEPSEEK_FLASH_CATALOG_MODEL;
+  return model.trim();
 }
 
 const GLM_PROVIDER_CODE = "glm";
+const DEEPSEEK_PROVIDER_CODE = "deepseek";
 
 export function isGlmProvider(providerCode: string): boolean {
   return providerCode === GLM_PROVIDER_CODE;
 }
 
+export function isDeepseekProvider(providerCode: string): boolean {
+  return providerCode === DEEPSEEK_PROVIDER_CODE;
+}
+
 /** Relay allow-list for Zhipu Keys. Other names are rejected. */
 export function isGlmClientModelAllowed(model: string): boolean {
   const name = model.trim().toLowerCase();
-  return name === GLM_TEXT_CATALOG_MODEL || name === GLM_MULTIMODAL_CATALOG_MODEL;
+  return (GLM_CATALOG_MODELS as readonly string[]).includes(name);
+}
+
+/** Relay allow-list for DeepSeek Keys. Other names are rejected. */
+export function isDeepseekClientModelAllowed(model: string): boolean {
+  return model.trim().toLowerCase() === DEEPSEEK_FLASH_CATALOG_MODEL;
 }
 
 export function glmProviderBlocksClientModel(providerCode: string, clientModel: string): boolean {
   return isGlmProvider(providerCode) && !isGlmClientModelAllowed(clientModel);
+}
+
+export function deepseekProviderBlocksClientModel(providerCode: string, clientModel: string): boolean {
+  return isDeepseekProvider(providerCode) && !isDeepseekClientModelAllowed(clientModel);
+}
+
+export function providerBlocksClientModel(providerCode: string, clientModel: string): boolean {
+  return glmProviderBlocksClientModel(providerCode, clientModel)
+    || deepseekProviderBlocksClientModel(providerCode, clientModel);
+}
+
+export function isProviderClientModelAllowed(providerCode: string, model: string): boolean {
+  if (isGlmProvider(providerCode)) return isGlmClientModelAllowed(model);
+  if (isDeepseekProvider(providerCode)) return isDeepseekClientModelAllowed(model);
+  return true;
 }
 
 function normalizeModelList(value: unknown): string[] {
@@ -120,14 +162,25 @@ export function groupDiscoveredModelsByChannel(rows: ChannelModelSource[]): Chan
     if (row.meta != null) group.metas.push(row.meta);
   }
   return [...byId.values()]
-    .map((group) => ({
-      id: group.id,
-      name: group.name,
-      code: group.code,
-      providerName: group.providerName,
-      providerCode: group.providerCode,
-      models: collectCatalogModels(group.metas),
-    }))
+    .map((group) => {
+      const discovered = collectCatalogModels(group.metas);
+      const extras = isGlmProvider(group.providerCode)
+        ? GLM_CATALOG_MODELS
+        : isDeepseekProvider(group.providerCode)
+          ? DEEPSEEK_CATALOG_MODELS
+          : [];
+      const models = extras.length > 0 && discovered.length > 0
+        ? uniqueSorted([...discovered, ...extras])
+        : discovered;
+      return {
+        id: group.id,
+        name: group.name,
+        code: group.code,
+        providerName: group.providerName,
+        providerCode: group.providerCode,
+        models,
+      };
+    })
     .sort((left, right) => left.name.localeCompare(right.name, "zh-CN"));
 }
 

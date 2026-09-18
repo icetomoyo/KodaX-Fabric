@@ -27,9 +27,8 @@ import type {
 } from "./types.js";
 import { isValidRelayProductLineId } from "./types.js";
 import {
-  glmProviderBlocksClientModel,
-  isGlmClientModelAllowed,
-  isGlmProvider,
+  isProviderClientModelAllowed,
+  providerBlocksClientModel,
 } from "../discovered-models.js";
 
 export type AvailableRelayCredential = {
@@ -452,7 +451,7 @@ export function resolveRelayCandidatesFromSnapshot(
   const scopedCredentials = filterRelayItemsToProductLine(rawCredentials, productLineId);
   if (
     scopedCredentials.some((credential) =>
-      glmProviderBlocksClientModel(credential.providerCode, clientModel)
+      providerBlocksClientModel(credential.providerCode, clientModel)
     )
   ) {
     return {
@@ -565,7 +564,7 @@ export async function resolveRelayBoundCandidate(
       retryAfterSeconds: null,
     };
   }
-  if (access.providerCode && glmProviderBlocksClientModel(access.providerCode, clientModel)) {
+  if (access.providerCode && providerBlocksClientModel(access.providerCode, clientModel)) {
     return {
       candidate: null,
       unavailableReason: "model_not_allowed",
@@ -623,7 +622,6 @@ export async function resolveAccessibleRelayModels(
   if (access.boundChannelUnavailable) {
     return { models: [], unavailableReason: "bound_channel_unavailable" };
   }
-  const glmOnly = access.providerCode != null && isGlmProvider(access.providerCode);
   const credentials = access.credentials.filter(
     (credential) =>
       credential.credentialStatus === "active" && credential.credentialWeight > 0,
@@ -652,7 +650,8 @@ export async function resolveAccessibleRelayModels(
 
   const byId = new Map<string, string>();
   const boundExplicitModels = new Set(routes.map((route) => route.clientModel));
-  const allowModel = (model: string) => !glmOnly || isGlmClientModelAllowed(model);
+  const allowModel = (model: string) =>
+    access.providerCode == null || isProviderClientModelAllowed(access.providerCode, model);
   for (const credential of credentials) {
     for (const model of discoveredModels(credential.meta)) {
       // Prefer the explicit model-list entry for a duplicate client model.

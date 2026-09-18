@@ -141,6 +141,7 @@ const glmFlash = {
 
 test("defaultCreditRateFor matches Flash GLM names case-insensitively", () => {
   assert.deepEqual(defaultCreditRateFor("glm-5.3-flash"), glmFlash);
+  assert.deepEqual(defaultCreditRateFor("glm-5.3-flashx"), glmFlash);
   assert.deepEqual(defaultCreditRateFor("GLM-5.3-FLASH"), glmFlash);
   assert.deepEqual(defaultCreditRateFor("GLM-4.6-Flash"), glmFlash);
 });

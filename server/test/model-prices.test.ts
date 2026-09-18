@@ -15,6 +15,7 @@ const {
   collectCatalogModels,
   collectDiscoveredModels,
   groupDiscoveredModelsByChannel,
+  isDeepseekClientModelAllowed,
   isGlmClientModelAllowed,
   lastUsedAtForCatalogModel,
   parseDiscoveredModels,
@@ -162,12 +163,21 @@ test("channel model groups use only that channel's discovered Key list", () => {
       providerCode: "custom",
       meta: { discoveredModels: ["qwen38-27b"] },
     },
+    {
+      productLineId: 4,
+      productLineName: "DeepSeek",
+      productLineCode: "api",
+      providerName: "深度求索",
+      providerCode: "deepseek",
+      meta: { discoveredModels: ["deepseek-v4-flash", "deepseek-chat", "deepseek-flash"] },
+    },
   ]);
   assert.deepEqual(
     grouped.map((channel) => ({ id: channel.id, name: channel.name, models: channel.models })),
     [
       { id: 3, name: "公司qwen3.8-27b", models: ["qwen38-27b"] },
-      { id: 1, name: "GLM", models: ["glm-5.3", "glm-5.3-flash"] },
+      { id: 4, name: "DeepSeek", models: ["deepseek-flash"] },
+      { id: 1, name: "GLM", models: ["glm-5.3", "glm-5.3-flash", "glm-5.3-flashx"] },
       { id: 2, name: "GLM（国际版）", models: [] },
     ],
   );
@@ -184,22 +194,32 @@ test("Zhipu coding-plan aliases collapse to glm-5.3 and glm-5.3-flash", () => {
 
   assert.equal(toCatalogModelName("glm-4.7"), "glm-5.3-flash");
   assert.equal(toCatalogModelName("glm-4.7-flash"), "glm-5.3-flash");
-  assert.equal(toCatalogModelName("glm-4.7-flashx"), "glm-5.3-flash");
+  assert.equal(toCatalogModelName("glm-4.7-flashx"), "glm-5.3-flashx");
   assert.equal(toCatalogModelName("glm-5-turbo"), "glm-5.3-flash");
   assert.equal(toCatalogModelName("glm-5.3-flash"), "glm-5.3-flash");
+  assert.equal(toCatalogModelName("glm-5.3-flashx"), "glm-5.3-flashx");
 
   assert.equal(toCatalogModelName("glm-ocr"), "glm-ocr");
   assert.equal(toCatalogModelName("qwen38-27b"), "qwen38-27b");
+  assert.equal(toCatalogModelName("deepseek-flash"), "deepseek-flash");
+  assert.equal(toCatalogModelName("DeepSeek-V4-Flash"), "deepseek-flash");
+  assert.equal(toCatalogModelName("deepseek-chat"), "deepseek-flash");
 });
 
-test("Zhipu relay whitelist accepts only glm-5.3 and glm-5.3-flash", () => {
+test("Zhipu relay whitelist accepts glm-5.3, glm-5.3-flash and glm-5.3-flashx", () => {
   assert.equal(isGlmClientModelAllowed("glm-5.3"), true);
   assert.equal(isGlmClientModelAllowed("GLM-5.3-FLASH"), true);
+  assert.equal(isGlmClientModelAllowed("glm-5.3-flashx"), true);
+  assert.equal(isGlmClientModelAllowed(" GLM-5.3-FLASHX "), true);
   assert.equal(isGlmClientModelAllowed(" glm-5.3 "), true);
   assert.equal(isGlmClientModelAllowed("glm-4.6"), false);
   assert.equal(isGlmClientModelAllowed("glm-5.2"), false);
   assert.equal(isGlmClientModelAllowed("glm-4.7-flash"), false);
   assert.equal(isGlmClientModelAllowed("qwen38-27b"), false);
+  assert.equal(isDeepseekClientModelAllowed("deepseek-flash"), true);
+  assert.equal(isDeepseekClientModelAllowed("DeepSeek-Flash"), true);
+  assert.equal(isDeepseekClientModelAllowed("deepseek-v4-flash"), false);
+  assert.equal(isDeepseekClientModelAllowed("deepseek-chat"), false);
 });
 
 test("catalog rows attach built-in GLM credit rates and leave custom models unmetered", () => {
@@ -219,6 +239,9 @@ test("catalog rows attach built-in GLM credit rates and leave custom models unme
     completionCreditsPer10k: "8",
   });
 
+  const flashx = toCatalogModelEntry("glm-5.3-flashx", null);
+  assert.deepEqual(flashx.creditRate, flash.creditRate);
+
   const custom = toCatalogModelEntry("qwen38-27b", null);
   assert.equal(custom.creditRate, null);
 });
@@ -234,11 +257,12 @@ test("pricing catalog only keeps current Zhipu coding-plan models", () => {
           "glm-5-turbo",
           "glm-5.3",
           "glm-5.3-flash",
+          "glm-5.3-flashx",
           "qwen38-27b",
         ],
       },
     ]),
-    ["glm-5.3", "glm-5.3-flash", "qwen38-27b"],
+    ["glm-5.3", "glm-5.3-flash", "glm-5.3-flashx", "qwen38-27b"],
   );
 });
 
