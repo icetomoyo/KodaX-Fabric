@@ -3,6 +3,8 @@ import { and, desc, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../../db/client.js";
 import {
+  channelSeats,
+  departments,
   employeeApiKeys,
   employees,
   enterprises,
@@ -14,6 +16,7 @@ import {
   teams,
   upstreamCredentials,
 } from "../../db/schema/index.js";
+import { formatOpsAuditTargetLabel } from "../../lib/ops-audit.js";
 import {
   requirePasswordChanged,
   requireRoles,
@@ -90,6 +93,10 @@ export async function adminOpsAuditRoutes(app: FastifyInstance) {
     const productLineIds = numericTargetIds("product_line");
     const credentialIds = numericTargetIds("upstream_credential");
     const modelRouteIds = numericTargetIds("model_route");
+    const enterpriseIds = numericTargetIds("enterprise");
+    const departmentIds = numericTargetIds("department");
+    const teamIds = numericTargetIds("team");
+    const channelSeatIds = numericTargetIds("channel_seat");
     const requestIds = targetIds("request_audit");
 
     const [
@@ -99,12 +106,22 @@ export async function adminOpsAuditRoutes(app: FastifyInstance) {
       productLineTargets,
       credentialTargets,
       modelRouteTargets,
+      enterpriseTargets,
+      departmentTargets,
+      teamTargets,
+      channelSeatTargets,
       requestTargets,
     ] = await Promise.all([
       employeeIds.length
         ? db
-            .select({ id: employees.id })
+            .select({
+              id: employees.id,
+              name: employees.name,
+              phone: employees.phone,
+              enterpriseName: enterprises.name,
+            })
             .from(employees)
+            .leftJoin(enterprises, eq(employees.enterpriseId, enterprises.id))
             .where(inArray(employees.id, employeeIds))
         : [],
       employeeApiKeyIds.length
@@ -112,8 +129,12 @@ export async function adminOpsAuditRoutes(app: FastifyInstance) {
             .select({
               id: employeeApiKeys.id,
               name: employeeApiKeys.name,
+              keyPrefix: employeeApiKeys.keyPrefix,
+              ownerName: employees.name,
+              ownerPhone: employees.phone,
             })
             .from(employeeApiKeys)
+            .leftJoin(employees, eq(employeeApiKeys.employeeId, employees.id))
             .where(inArray(employeeApiKeys.id, employeeApiKeyIds))
         : [],
       providerIds.length
@@ -152,11 +173,61 @@ export async function adminOpsAuditRoutes(app: FastifyInstance) {
             .from(modelRoutes)
             .where(inArray(modelRoutes.id, modelRouteIds))
         : [],
+      enterpriseIds.length
+        ? db
+            .select({
+              id: enterprises.id,
+              name: enterprises.name,
+              code: enterprises.code,
+            })
+            .from(enterprises)
+            .where(inArray(enterprises.id, enterpriseIds))
+        : [],
+      departmentIds.length
+        ? db
+            .select({
+              id: departments.id,
+              name: departments.name,
+              enterpriseName: enterprises.name,
+            })
+            .from(departments)
+            .innerJoin(enterprises, eq(departments.enterpriseId, enterprises.id))
+            .where(inArray(departments.id, departmentIds))
+        : [],
+      teamIds.length
+        ? db
+            .select({
+              id: teams.id,
+              name: teams.name,
+              departmentName: departments.name,
+              enterpriseName: enterprises.name,
+            })
+            .from(teams)
+            .innerJoin(departments, eq(teams.departmentId, departments.id))
+            .innerJoin(enterprises, eq(teams.enterpriseId, enterprises.id))
+            .where(inArray(teams.id, teamIds))
+        : [],
+      channelSeatIds.length
+        ? db
+            .select({
+              id: channelSeats.id,
+              tag: channelSeats.tag,
+              employeeName: employees.name,
+              employeePhone: employees.phone,
+              channelName: productLines.name,
+            })
+            .from(channelSeats)
+            .innerJoin(employees, eq(channelSeats.employeeId, employees.id))
+            .innerJoin(productLines, eq(channelSeats.productLineId, productLines.id))
+            .where(inArray(channelSeats.id, channelSeatIds))
+        : [],
       requestIds.length
         ? db
             .select({
               requestId: requestAudits.requestId,
               clientModel: requestAudits.clientModel,
+              employeeName: employees.name,
+              employeePhone: employees.phone,
               enterpriseName: enterprises.name,
               teamName: teams.name,
             })
@@ -173,11 +244,26 @@ export async function adminOpsAuditRoutes(app: FastifyInstance) {
       targetNames.set(`${targetType}:${targetId}`, name);
     };
 
-    for (const row of employeeTargets) {
-      setTargetName("employee", row.id, `员工 #${row.id}`);
+    for (const id of employeeIds) {
+      const row = employeeTargets.find((item) => item.id === id);
+      setTargetName(
+        "employee",
+        id,
+        formatOpsAuditTargetLabel(
+          [row?.enterpriseName, row?.name, row?.phone],
+          `员工 #${id}（已删除）`,
+        ),
+      );
     }
     for (const row of employeeApiKeyTargets) {
-      setTargetName("employee_api_key", row.id, row.name);
+      setTargetName(
+        "employee_api_key",
+        row.id,
+        formatOpsAuditTargetLabel(
+          [row.ownerName, row.ownerPhone, row.name, row.keyPrefix],
+          `API Key #${row.id}`,
+        ),
+      );
     }
     for (const row of providerTargets) setTargetName("provider", row.id, row.name);
     for (const row of productLineTargets) {
@@ -193,11 +279,41 @@ export async function adminOpsAuditRoutes(app: FastifyInstance) {
     for (const row of modelRouteTargets) {
       setTargetName("model_route", row.id, `${row.clientModel} → ${row.upstreamModel}`);
     }
+    for (const row of enterpriseTargets) {
+      setTargetName(
+        "enterprise",
+        row.id,
+        formatOpsAuditTargetLabel([row.name, row.code], `企业 #${row.id}`),
+      );
+    }
+    for (const row of departmentTargets) {
+      setTargetName("department", row.id, `${row.enterpriseName} / ${row.name}`);
+    }
+    for (const row of teamTargets) {
+      setTargetName(
+        "team",
+        row.id,
+        `${row.enterpriseName} / ${row.departmentName} / ${row.name}`,
+      );
+    }
+    for (const row of channelSeatTargets) {
+      setTargetName(
+        "channel_seat",
+        row.id,
+        formatOpsAuditTargetLabel(
+          [row.employeeName, row.employeePhone, row.channelName, row.tag || null],
+          `席位 #${row.id}`,
+        ),
+      );
+    }
     for (const row of requestTargets) {
       setTargetName(
         "request_audit",
         row.requestId,
-        [row.enterpriseName, row.teamName, row.clientModel].filter(Boolean).join(" / "),
+        formatOpsAuditTargetLabel(
+          [row.employeeName, row.employeePhone, row.enterpriseName, row.teamName, row.clientModel],
+          row.requestId,
+        ),
       );
     }
 

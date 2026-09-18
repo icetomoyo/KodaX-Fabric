@@ -237,8 +237,15 @@ export function buildEmployeeLogsQuery(input: {
     .offset(input.offset);
 }
 
-function actorFrom(req: { session?: { role: SessionRole; enterpriseId: number | null } }) {
-  return { role: req.session!.role, enterpriseId: req.session!.enterpriseId ?? null };
+function actorFrom(req: {
+  session?: { role: SessionRole; enterpriseId: number | null };
+  employeeId?: number;
+}) {
+  return {
+    role: req.session!.role,
+    enterpriseId: req.session!.enterpriseId ?? null,
+    id: req.employeeId,
+  };
 }
 
 async function actorTeamScopeIds(

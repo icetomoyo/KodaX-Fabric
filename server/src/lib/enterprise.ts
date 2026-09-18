@@ -16,11 +16,13 @@ export const ORG_ADMIN_ROLE = "org_admin" as const;
 export type EnterpriseActor = {
   role: SessionRole;
   enterpriseId: number | null;
+  id?: number;
 };
 
 export type EmployeeMembership = {
   role: SessionRole;
   enterpriseId: number | null;
+  id?: number;
 };
 
 export type UserListScope =
@@ -87,6 +89,7 @@ export function resolveUserListScope(
 }
 
 export function canAccessEmployee(actor: EnterpriseActor, target: EmployeeMembership): boolean {
+  if (actor.id != null && target.id != null && actor.id === target.id) return true;
   if (target.role === SUPER_ADMIN_ROLE) return false;
   if (actor.role === SUPER_ADMIN_ROLE) return true;
   if (actor.enterpriseId == null || target.enterpriseId !== actor.enterpriseId) return false;

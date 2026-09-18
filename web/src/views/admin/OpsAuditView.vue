@@ -41,12 +41,15 @@
           </el-tooltip>
         </template>
       </el-table-column>
-      <el-table-column label="对象" min-width="180">
+      <el-table-column label="对象" min-width="240">
         <template #default="{ row }">
           <el-tooltip :content="auditTargetText(row.targetType, row.targetName)" placement="top">
             <span class="target-name">{{ auditTargetText(row.targetType, row.targetName) }}</span>
           </el-tooltip>
         </template>
+      </el-table-column>
+      <el-table-column label="对象 ID" width="120">
+        <template #default="{ row }">{{ row.targetId || "—" }}</template>
       </el-table-column>
       <el-table-column label="IP" width="130">
         <template #default="{ row }">{{ row.ip || "—" }}</template>
@@ -87,8 +90,14 @@
           <el-descriptions-item label="动作">
             {{ auditActionLabel(selectedItem.action) }}
           </el-descriptions-item>
+          <el-descriptions-item label="对象类型">
+            {{ auditTargetLabel(selectedItem.targetType) }}
+          </el-descriptions-item>
           <el-descriptions-item label="对象">
             {{ auditTargetText(selectedItem.targetType, selectedItem.targetName) }}
+          </el-descriptions-item>
+          <el-descriptions-item label="对象 ID">
+            {{ selectedItem.targetId || "—" }}
           </el-descriptions-item>
         </el-descriptions>
 
@@ -118,6 +127,7 @@ import {
   OPS_AUDIT_ACTION_OPTIONS,
   auditActionLabel,
   auditDetailRows,
+  auditTargetLabel,
   auditTargetText,
   formatAuditDate,
 } from "@/lib/ops-audit-dictionary";

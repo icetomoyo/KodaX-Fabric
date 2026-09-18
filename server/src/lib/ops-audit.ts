@@ -1,6 +1,17 @@
 import { db } from "../db/client.js";
 import { opsAuditLogs } from "../db/schema/index.js";
 
+export function formatOpsAuditTargetLabel(
+  parts: Array<string | null | undefined>,
+  fallback: string,
+): string {
+  const label = parts
+    .map((part) => part?.trim())
+    .filter((part): part is string => Boolean(part))
+    .join(" · ");
+  return label || fallback;
+}
+
 export async function writeOpsAudit(input: {
   actorEmployeeId?: number | null;
   action: string;

@@ -78,6 +78,7 @@ export const OPS_AUDIT_TARGET_LABELS: Record<string, string> = {
   enterprise: "企业",
   department: "部门",
   team: "团队",
+  channel_seat: "席位",
   request_audit: "调用记录",
 };
 

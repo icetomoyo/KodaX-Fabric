@@ -385,6 +385,28 @@ test("super-admin can list and access employees in any enterprise", () => {
     ),
     false,
   );
+  assert.equal(
+    canAccessEmployee(
+      { role: "admin", enterpriseId: 1, id: 7 },
+      { role: "admin", enterpriseId: 1, id: 7 },
+    ),
+    true,
+  );
+  assert.equal(
+    canAccessEmployee(
+      { role: "admin", enterpriseId: 1, id: 7 },
+      { role: "admin", enterpriseId: 1, id: 8 },
+    ),
+    false,
+  );
+  const selfProfile = resolveUpdatedUserFields(
+    { role: "admin", enterpriseId: 1, id: 7 },
+    { role: "admin", enterpriseId: 1, id: 7 },
+    {},
+  );
+  assert.equal("error" in selfProfile, false);
+  if ("error" in selfProfile) return;
+  assert.equal(selfProfile.role, "admin");
 });
 
 test("admin shell source includes 企业管理 and org_admin lands on workbench", () => {
