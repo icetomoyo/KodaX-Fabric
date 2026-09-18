@@ -519,6 +519,15 @@ test("API Key create form binds a department and locks it when there is only one
   assert.match(keysView, /departmentId: createForm.departmentId/);
   assert.match(keysView, /尚未加入部门/);
   assert.doesNotMatch(keysView, /尚未加入团队，没有员工权限/);
+  assert.match(keysView, /class="protocol-list"/);
+  assert.match(keysView, /WarningFilled/);
+  assert.match(keysView, /relayProtocolClientHint/);
+  assert.doesNotMatch(keysView, /:value="option.value"\s+border/);
+  const protocol = readFileSync(resolve(root, "web/src/views/relay-protocol.ts"), "utf8");
+  assert.match(protocol, /Claude Code/);
+  assert.match(protocol, /WorkBuddy/);
+  assert.match(protocol, /Codex/);
+  assert.match(protocol, /适合接入：/);
 });
 
 test("later migration drops the single-team unique index", () => {

@@ -39,7 +39,7 @@ export const relayProtocolOptions: readonly RelayProtocolOption[] = [
       "x-api-key: <你的 API Key>",
       "anthropic-version: 2023-06-01",
     ],
-    recommendedClients: ["Claude Code", "CC Switch"],
+    recommendedClients: ["Claude Code", "CC Switch（Anthropic 格式）"],
   },
   {
     value: "openai_chat",
@@ -48,7 +48,13 @@ export const relayProtocolOptions: readonly RelayProtocolOption[] = [
     description: "OpenAI Chat Completions 原生转发",
     endpoint: `POST ${RELAY_BASE_PATH}/chat/completions`,
     authHeaders: ["Authorization: Bearer <你的 API Key>"],
-    recommendedClients: ["Cursor", "ZCode", "WorkBuddy", "OpenAI 兼容客户端"],
+    recommendedClients: [
+      "Cursor",
+      "WorkBuddy",
+      "KodaX / KodaX Space",
+      "ZCode",
+      "其他 OpenAI 兼容客户端",
+    ],
   },
   {
     value: "openai_responses",
@@ -57,7 +63,7 @@ export const relayProtocolOptions: readonly RelayProtocolOption[] = [
     description: "OpenAI Responses 原生转发",
     endpoint: `POST ${RELAY_BASE_PATH}/responses`,
     authHeaders: ["Authorization: Bearer <你的 API Key>"],
-    recommendedClients: ["OpenAI Responses 客户端"],
+    recommendedClients: ["Codex", "其他 Responses 客户端"],
   },
 ];
 
@@ -73,6 +79,16 @@ export function relayProtocolLabel(protocol: unknown, short = false): string {
   if (!isRelayProtocol(protocol)) return protocol ? String(protocol) : "未记录";
   const option = relayProtocolOption(protocol);
   return short ? option.shortLabel : option.label;
+}
+
+export function relayProtocolPickerLabel(option: Pick<RelayProtocolOption, "shortLabel">): string {
+  return option.shortLabel.replace(/ 协议$/, "");
+}
+
+export function relayProtocolClientHint(
+  option: Pick<RelayProtocolOption, "recommendedClients">,
+): string {
+  return `适合接入：${option.recommendedClients.join("、")}`;
 }
 
 /** 员工侧统一使用 TokenHub 提供的 Base URL，不再按协议改写路径。 */

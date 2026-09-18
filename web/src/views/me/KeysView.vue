@@ -70,7 +70,7 @@
     <el-dialog
       v-model="showCreate"
       :title="createdResult ? '复制新 API Key' : '创建 API Key'"
-      width="480px"
+      width="520px"
       destroy-on-close
       :close-on-click-modal="!creating"
       :close-on-press-escape="!creating"
@@ -185,16 +185,34 @@
             <el-radio-group
               v-if="compatibleProtocolOptions.length > 0"
               v-model="createForm.protocol"
+              class="protocol-list"
               :disabled="creating"
             >
-              <el-radio
+              <div
                 v-for="option in compatibleProtocolOptions"
                 :key="option.value"
-                :value="option.value"
-                border
+                class="protocol-option"
+                :class="{ selected: createForm.protocol === option.value }"
+                @click="selectProtocol(option.value)"
               >
-                {{ option.shortLabel }}
-              </el-radio>
+                <el-radio :value="option.value" :disabled="creating">
+                  {{ relayProtocolPickerLabel(option) }}
+                </el-radio>
+                <el-tooltip
+                  placement="top"
+                  :show-after="120"
+                  :content="relayProtocolClientHint(option)"
+                >
+                  <span
+                    class="protocol-hint"
+                    role="img"
+                    :aria-label="relayProtocolClientHint(option)"
+                    @click.stop
+                  >
+                    <el-icon :size="14"><WarningFilled /></el-icon>
+                  </span>
+                </el-tooltip>
+              </div>
             </el-radio-group>
             <div v-else class="form-help">
               该渠道暂无可用协议
@@ -235,13 +253,16 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
+import { WarningFilled } from "@element-plus/icons-vue";
 import { http } from "@/api/http";
 import { useAuthStore } from "@/stores/auth";
 import { copyText } from "@/lib/clipboard";
 import { useTablePage } from "@/lib/table-page";
 import {
+  relayProtocolClientHint,
   relayProtocolLabel,
   relayProtocolOptions,
+  relayProtocolPickerLabel,
   type RelayProtocol,
 } from "@/views/relay-protocol";
 
@@ -437,6 +458,11 @@ function onChannelChange() {
   if (!createForm.protocol || !available.includes(createForm.protocol)) {
     createForm.protocol = null;
   }
+}
+
+function selectProtocol(protocol: RelayProtocol) {
+  if (creating.value) return;
+  createForm.protocol = protocol;
 }
 
 async function loadChannels() {
@@ -652,6 +678,61 @@ onMounted(load);
 .form-help {
   margin-top: 8px;
   color: var(--el-text-color-secondary);
+}
+
+.protocol-list {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  flex-wrap: nowrap;
+  gap: 8px;
+  width: 100%;
+  font-size: inherit;
+}
+
+.protocol-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 40px;
+  padding: 8px 12px;
+  border: 1px solid var(--el-border-color);
+  border-radius: 8px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.protocol-option:hover {
+  border-color: #93c5fd;
+}
+
+.protocol-option.selected {
+  border-color: #3b82f6;
+  background: #eff6ff;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.12);
+}
+
+.protocol-option :deep(.el-radio) {
+  flex: 1;
+  margin-right: 0;
+  height: auto;
+  white-space: nowrap;
+}
+
+.protocol-option :deep(.el-radio__label) {
+  white-space: nowrap;
+}
+
+.protocol-hint {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  color: #f59e0b;
+  cursor: help;
 }
 
 .submit-error {
