@@ -23,6 +23,7 @@
         <el-menu-item v-if="auth.isOrgAdmin || auth.isDeptAdmin || auth.isTeamAdmin" index="/admin/models">模型列表</el-menu-item>
         <el-menu-item v-if="auth.isOrgAdmin || auth.isDeptAdmin || auth.isTeamAdmin" index="/admin/guide">接入教程</el-menu-item>
         <el-menu-item v-if="auth.isOrgAdmin || auth.isDeptAdmin || auth.isTeamAdmin" index="/admin/my-logs">我的调用</el-menu-item>
+        <el-menu-item v-if="auth.isSuperAdmin" index="/admin/temp-channels">临时渠道</el-menu-item>
         <el-sub-menu v-if="auth.isSuperAdmin" index="upstream">
           <template #title>上游</template>
           <el-menu-item index="/admin/channels">渠道</el-menu-item>

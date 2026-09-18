@@ -10,7 +10,7 @@ import { RELAY_PROTOCOLS, type RelayProtocol } from "./relay/protocol.js";
 import { configurableSupportedProtocolsSchema } from "./upstream-channel-update.js";
 import type { ProductLineProtocolConfigs } from "./upstream-protocol-config.js";
 
-export const CHANNEL_CREATE_PROVIDERS = ["glm", "haizhi"] as const;
+export const CHANNEL_CREATE_PROVIDERS = ["glm", "deepseek", "haizhi"] as const;
 export type ChannelCreateProvider = (typeof CHANNEL_CREATE_PROVIDERS)[number];
 export const CHANNEL_CREATE_VARIANTS = ["domestic", "international"] as const;
 export type ChannelCreateVariant = (typeof CHANNEL_CREATE_VARIANTS)[number];
@@ -34,6 +34,10 @@ export function allocateHaizhiProductLineCode(): string {
 
 export function allocateInternationalProductLineCode(): string {
   return `in_${randomBytes(8).toString("hex")}`;
+}
+
+export function allocateDeepseekProductLineCode(): string {
+  return `ds_${randomBytes(8).toString("hex")}`;
 }
 
 export type UpstreamChannelCreatePlan =
@@ -96,6 +100,32 @@ export function planUpstreamChannelCreate(input: unknown): UpstreamChannelCreate
     };
   }
 
+  if (body.provider === "deepseek") {
+    const template = getProviderTemplate("deepseek");
+    const line = template?.baseUrls[0];
+    if (!template || !line) return { kind: "provider_unsupported" };
+    const resolution = resolveTemplateProtocolConfigs(template, line.productLineCode, protocols);
+    if (!resolution.ok) {
+      return {
+        kind: "protocol_unsupported",
+        unsupportedProtocols: resolution.unsupportedProtocols,
+      };
+    }
+    return {
+      kind: "accepted",
+      name,
+      tag,
+      seatCount,
+      status,
+      protocols,
+      protocolConfigs: resolution.configs,
+      productType: "api",
+      providerCode: template.code,
+      providerName: template.name,
+      allocateCode: allocateDeepseekProductLineCode,
+    };
+  }
+
   if (body.provider !== "glm") return { kind: "provider_unsupported" };
   if (body.variant !== "domestic" && body.variant !== "international") {
     return { kind: "provider_unsupported" };
@@ -121,7 +151,7 @@ export function planUpstreamChannelCreate(input: unknown): UpstreamChannelCreate
     status,
     protocols,
     protocolConfigs: resolution.configs,
-    productType: line.productType,
+    productType: body.productType === "api" ? "api" : line.productType,
     providerCode: template.code,
     providerName: template.name,
     allocateCode: body.variant === "international"
@@ -144,7 +174,7 @@ export function channelCreateError(kind: Exclude<UpstreamChannelCreatePlan["kind
     case "tag_invalid":
       return { status: 400, message: "渠道标签最多 32 个字符" };
     case "provider_unsupported":
-      return { status: 400, message: "目前只支持智谱或海致集团" };
+      return { status: 400, message: "目前只支持智谱、DeepSeek 或海致集团" };
     case "custom_configs_required":
       return { status: 400, message: "请填写上游地址" };
     case "protocol_unsupported":

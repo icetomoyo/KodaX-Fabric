@@ -128,3 +128,66 @@ test("channels use stable provider, product-line, id ordering", () => {
 
   assert.deepEqual(channels.map((channel) => channel.productLineId), [10, 30, 20]);
 });
+
+test("zhipu coding-plan packages collapse to one employee-facing channel", () => {
+  const channels = collectEmployeeUpstreamChannels(
+    [
+      row(1, {
+        productLineId: 5,
+        productLineCode: "cn_10",
+        productLineName: "GLM-10【国内】",
+        productType: "coding_plan",
+        providerCode: "glm",
+        providerName: "智谱",
+        supportedProtocols: ["openai_chat"],
+      }),
+      row(2, {
+        productLineId: 4,
+        productLineCode: "cn_50",
+        productLineName: "GLM-50【国内】",
+        productType: "coding_plan",
+        providerCode: "glm",
+        providerName: "智谱",
+        supportedProtocols: ["anthropic_messages", "openai_chat"],
+      }),
+      row(3, {
+        productLineId: 6,
+        productLineCode: "cn_30",
+        productLineName: "GLM-30【国际】",
+        productType: "coding_plan",
+        providerCode: "glm",
+        providerName: "智谱",
+        supportedProtocols: ["openai_responses"],
+        protocolConfigs: {
+          openai_chat: { baseUrl: "https://open.bigmodel.cn/api/coding/paas/v4", authStyle: "bearer" },
+          openai_responses: { baseUrl: "https://open.bigmodel.cn/api/v1", authStyle: "bearer" },
+          anthropic_messages: { baseUrl: "https://open.bigmodel.cn/api/anthropic", authStyle: "x-api-key" },
+        },
+      }),
+      row(4, {
+        productLineId: 9,
+        productLineCode: "c_custom",
+        productLineName: "自建",
+        productType: "api",
+        providerCode: "custom",
+        providerName: "自定义",
+        supportedProtocols: ["openai_chat"],
+      }),
+    ],
+  );
+
+  assert.equal(channels.length, 2);
+  const glm = channels.find((channel) => channel.providerCode === "glm");
+  const custom = channels.find((channel) => channel.providerCode === "custom");
+  assert.equal(glm?.productLineId, 4);
+  assert.equal(glm?.productLineName, "GLM");
+  assert.equal(glm?.credentialCount, 3);
+  assert.deepEqual(glm?.memberProductLineIds, [4, 5, 6]);
+  assert.deepEqual(glm?.compatibleProtocols, [
+    "openai_chat",
+    "anthropic_messages",
+    "openai_responses",
+  ]);
+  assert.equal(custom?.productLineId, 9);
+  assert.equal(custom?.credentialCount, 1);
+});

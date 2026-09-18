@@ -156,6 +156,12 @@ export const router = createRouter({
           meta: { roles: ["admin"] },
         },
         {
+          path: "temp-channels",
+          name: "admin-temp-channels",
+          component: () => import("@/views/admin/TempChannelsView.vue"),
+          meta: { roles: ["admin"] },
+        },
+        {
           path: "channel-keys",
           name: "admin-channel-keys",
           component: () => import("@/views/admin/CredentialsView.vue"),

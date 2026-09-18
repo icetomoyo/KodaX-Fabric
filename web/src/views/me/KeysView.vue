@@ -162,7 +162,7 @@
               :disabled="creating"
             />
           </el-form-item>
-          <el-form-item label="上游渠道" required>
+          <el-form-item v-if="upstreamChannels.length > 1" label="上游渠道" required>
             <el-select
               v-model="createForm.productLineId"
               placeholder="选择渠道"
@@ -177,6 +177,9 @@
                 :value="channel.productLineId"
               />
             </el-select>
+          </el-form-item>
+          <el-form-item v-else-if="selectedChannel" label="上游渠道">
+            <el-input :model-value="channelLabel(selectedChannel)" disabled />
           </el-form-item>
           <el-form-item v-if="selectedChannel" label="协议" required>
             <el-radio-group
@@ -448,6 +451,10 @@ async function loadChannels() {
     if (requestId !== channelRequestSequence) return;
     if (!data.success) throw new Error(data.message || "加载上游渠道失败");
     upstreamChannels.value = Array.isArray(data.data) ? data.data : [];
+    if (upstreamChannels.value.length === 1) {
+      createForm.productLineId = upstreamChannels.value[0].productLineId;
+      onChannelChange();
+    }
   } catch (error) {
     if (requestId !== channelRequestSequence) return;
     upstreamChannels.value = [];

@@ -5,7 +5,7 @@ import {
   type ProtocolUpstreamConfig,
 } from "./upstream-protocol-config.js";
 
-export type ProviderTemplateCode = "glm";
+export type ProviderTemplateCode = "glm" | "deepseek";
 
 /** Catch-all provider for administrator-defined upstreams that are not official templates. */
 export const CUSTOM_PROVIDER_CODE = "custom" as const;
@@ -110,6 +110,41 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
     ],
     defaultLabel: "智谱/GLM",
     color: "#2563eb",
+  },
+  {
+    code: "deepseek",
+    name: "深度求索",
+    modelName: "DeepSeek",
+    shortName: "DeepSeek",
+    description: "DeepSeek API，支持 Anthropic Message、OpenAI Chat Completion 与 OpenAI Response。",
+    authStyle: "bearer",
+    defaultProtocols: ["anthropic_messages", "openai_chat", "openai_responses"],
+    baseUrls: [
+      {
+        label: "API",
+        url: "https://api.deepseek.com",
+        host: "api.deepseek.com",
+        productLineCode: "api",
+        productLineName: "DeepSeek",
+        productType: "api",
+        protocolConfigs: {
+          anthropic_messages: {
+            baseUrl: "https://api.deepseek.com/anthropic",
+            authStyle: "x-api-key",
+          },
+          openai_chat: {
+            baseUrl: "https://api.deepseek.com",
+            authStyle: "bearer",
+          },
+          openai_responses: {
+            baseUrl: "https://api.deepseek.com",
+            authStyle: "bearer",
+          },
+        },
+      },
+    ],
+    defaultLabel: "深度求索/DeepSeek",
+    color: "#0891b2",
   },
 ];
 

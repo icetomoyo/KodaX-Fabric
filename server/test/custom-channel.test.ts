@@ -159,6 +159,14 @@ test("connectivity tests allow custom http(s) URLs but still lock GLM to officia
     true,
   );
   assert.equal(
+    isTestableUpstreamUrl("deepseek", "https://api.deepseek.com"),
+    true,
+  );
+  assert.equal(
+    isTestableUpstreamUrl("deepseek", "https://api.deepseek.com/anthropic"),
+    true,
+  );
+  assert.equal(
     isTestableUpstreamUrl("glm", "https://gateway.example.test/v1"),
     false,
   );

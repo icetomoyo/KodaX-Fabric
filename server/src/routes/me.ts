@@ -49,6 +49,10 @@ import {
   getEmployeeUpstreamChannels,
 } from "../lib/upstream-channel-metadata.js";
 import {
+  loadRelayPool,
+  pooledProductLineDisplayName,
+} from "../lib/relay/channel-pool.js";
+import {
   configuredProtocols,
   parseProductLineProtocolConfigs,
   resolveProtocolUpstreamConfig,
@@ -679,7 +683,7 @@ export async function meRoutes(app: FastifyInstance) {
       return { success: true, data: { channels: [] } };
     }
 
-    const productLineIds = accessible.map((channel) => channel.productLineId);
+    const productLineIds = [...new Set(accessible.flatMap((channel) => channel.memberProductLineIds))];
     const channelRows = await db
       .select({
         productLineId: productLines.id,
@@ -704,13 +708,18 @@ export async function meRoutes(app: FastifyInstance) {
     const groupedById = new Map(
       groupDiscoveredModelsByChannel(channelRows).map((channel) => [channel.id, channel]),
     );
-    const channels = accessible.map((channel) => groupedById.get(channel.productLineId) ?? {
-      id: channel.productLineId,
-      name: channel.productLineName,
-      code: channel.productLineCode,
-      providerName: channel.providerName,
-      providerCode: channel.providerCode,
-      models: [],
+    const channels = accessible.map((channel) => {
+      const models = [...new Set(
+        channel.memberProductLineIds.flatMap((id) => groupedById.get(id)?.models ?? []),
+      )].sort((left, right) => left.localeCompare(right));
+      return {
+        id: channel.productLineId,
+        name: channel.productLineName,
+        code: channel.productLineCode,
+        providerName: channel.providerName,
+        providerCode: channel.providerCode,
+        models,
+      };
     });
 
     return { success: true, data: { channels } };
@@ -729,6 +738,7 @@ export async function meRoutes(app: FastifyInstance) {
         departmentId: teams.departmentId,
         departmentName: departments.name,
         productLineName: productLines.name,
+        relayPoolKey: productLines.relayPoolKey,
         providerCode: providers.code,
         providerName: providers.name,
         status: employeeApiKeys.status,
@@ -747,7 +757,16 @@ export async function meRoutes(app: FastifyInstance) {
       return { success: true, data: [] };
     }
 
-    return { success: true, data: rows };
+    return {
+      success: true,
+      data: rows.map(({ relayPoolKey, ...row }) => ({
+        ...row,
+        productLineName: pooledProductLineDisplayName({
+          relayPoolKey,
+          productLineName: row.productLineName,
+        }),
+      })),
+    };
   });
 
   app.post("/api/me/api-keys", async (req, reply) => {
@@ -821,9 +840,13 @@ export async function meRoutes(app: FastifyInstance) {
         } as const;
       }
 
+      const pool = await loadRelayPool(body.data.productLineId, tx);
+      if (!pool) {
+        return { outcome: "channel_unavailable" } as const;
+      }
       // Serialize employee Key creation with channel protocol/config edits.
       await tx.execute(
-        sql`select pg_advisory_xact_lock(${body.data.productLineId})`,
+        sql`select pg_advisory_xact_lock(hashtext(${pool.key}))`,
       );
 
       const channel = await getEmployeeUpstreamChannel(

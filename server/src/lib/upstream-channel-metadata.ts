@@ -14,9 +14,15 @@ import {
   configuredProtocols,
   parseProductLineProtocolConfigs,
 } from "./upstream-protocol-config.js";
+import {
+  pooledProductLineDisplayName,
+  relayPoolKeyForLine,
+} from "./relay/channel-pool.js";
 
 export type EmployeeUpstreamChannel = {
   productLineId: number;
+  memberProductLineIds: number[];
+  relayPoolKey: string;
   productLineCode: string;
   productLineName: string;
   productType: "api" | "coding_plan";
@@ -41,6 +47,7 @@ export type UpstreamChannelCredentialMetadataRow = {
   providerId: number;
   providerCode: string;
   providerName: string;
+  relayPoolKey?: string;
 };
 
 type UpstreamChannelMetadataDatabase = Pick<typeof db, "select">;
@@ -63,17 +70,37 @@ function compareStableText(left: string, right: string): number {
   return left < right ? -1 : 1;
 }
 
+function poolKeyOf(row: UpstreamChannelCredentialMetadataRow): string {
+  if (row.relayPoolKey) return row.relayPoolKey;
+  return relayPoolKeyForLine({
+    id: row.productLineId,
+    providerCode: row.providerCode,
+    productType: row.productType,
+  });
+}
+
+type ChannelAccumulator = {
+  relayPoolKey: string;
+  compatibleProtocols: Set<RelayProtocol>;
+  credentialCount: number;
+  memberIds: Set<number>;
+  lineMeta: Map<number, Pick<
+    UpstreamChannelCredentialMetadataRow,
+    | "productLineCode"
+    | "productLineName"
+    | "productType"
+    | "providerId"
+    | "providerCode"
+    | "providerName"
+  >>;
+};
+
 /** Pure aggregation shared by GET metadata and POST create validation. */
 export function collectEmployeeUpstreamChannels(
   rows: readonly UpstreamChannelCredentialMetadataRow[],
   now: Date = new Date(),
 ): EmployeeUpstreamChannel[] {
-  const channels = new Map<
-    number,
-    Omit<EmployeeUpstreamChannel, "compatibleProtocols"> & {
-      compatibleProtocols: Set<RelayProtocol>;
-    }
-  >();
+  const channels = new Map<string, ChannelAccumulator>();
 
   for (const row of rows) {
     if (row.credentialWeight <= 0) continue;
@@ -90,33 +117,57 @@ export function collectEmployeeUpstreamChannels(
       : credentialProtocols.filter((protocol) => channelProtocols?.has(protocol));
     if (protocols.length === 0) continue;
 
-    let channel = channels.get(row.productLineId);
+    const poolKey = poolKeyOf(row);
+    let channel = channels.get(poolKey);
     if (!channel) {
       channel = {
-        productLineId: row.productLineId,
+        relayPoolKey: poolKey,
+        compatibleProtocols: new Set<RelayProtocol>(),
+        credentialCount: 0,
+        memberIds: new Set<number>(),
+        lineMeta: new Map(),
+      };
+      channels.set(poolKey, channel);
+    }
+
+    channel.memberIds.add(row.productLineId);
+    if (!channel.lineMeta.has(row.productLineId)) {
+      channel.lineMeta.set(row.productLineId, {
         productLineCode: row.productLineCode,
         productLineName: row.productLineName,
         productType: row.productType,
         providerId: row.providerId,
         providerCode: row.providerCode,
         providerName: row.providerName,
-        compatibleProtocols: new Set<RelayProtocol>(),
-        credentialCount: 0,
-      };
-      channels.set(row.productLineId, channel);
+      });
     }
-
     channel.credentialCount += 1;
     for (const protocol of protocols) channel.compatibleProtocols.add(protocol);
   }
 
   return [...channels.values()]
-    .map((channel) => ({
-      ...channel,
-      compatibleProtocols: RELAY_PROTOCOLS.filter((protocol) =>
-        channel.compatibleProtocols.has(protocol)
-      ),
-    }))
+    .map((channel) => {
+      const representativeId = Math.min(...channel.memberIds);
+      const representative = channel.lineMeta.get(representativeId);
+      return {
+        productLineId: representativeId,
+        memberProductLineIds: [...channel.memberIds].sort((left, right) => left - right),
+        relayPoolKey: channel.relayPoolKey,
+        productLineCode: representative?.productLineCode ?? "",
+        productLineName: pooledProductLineDisplayName({
+          relayPoolKey: channel.relayPoolKey,
+          productLineName: representative?.productLineName ?? "",
+        }),
+        productType: representative?.productType ?? "api",
+        providerId: representative?.providerId ?? 0,
+        providerCode: representative?.providerCode ?? "",
+        providerName: representative?.providerName ?? "",
+        compatibleProtocols: RELAY_PROTOCOLS.filter((protocol) =>
+          channel.compatibleProtocols.has(protocol)
+        ),
+        credentialCount: channel.credentialCount,
+      };
+    })
     .filter((channel) => channel.compatibleProtocols.length > 0)
     .sort((a, b) =>
       compareStableText(a.providerName, b.providerName) ||
@@ -130,6 +181,30 @@ export async function getEmployeeUpstreamChannels(
   executor: UpstreamChannelMetadataDatabase = db,
   options: UpstreamChannelMetadataOptions = {},
 ): Promise<EmployeeUpstreamChannel[]> {
+  let poolFilter: ReturnType<typeof eq> | undefined;
+  if (options.productLineId !== undefined) {
+    const [line] = await executor
+      .select({
+        id: productLines.id,
+        relayPoolKey: productLines.relayPoolKey,
+        productType: productLines.productType,
+        providerCode: providers.code,
+      })
+      .from(productLines)
+      .innerJoin(providers, eq(productLines.providerId, providers.id))
+      .where(eq(productLines.id, options.productLineId))
+      .limit(1);
+    if (!line) return [];
+    poolFilter = eq(
+      productLines.relayPoolKey,
+      line.relayPoolKey || relayPoolKeyForLine({
+        id: line.id,
+        providerCode: line.providerCode,
+        productType: line.productType,
+      }),
+    );
+  }
+
   const rowsQuery = executor
     .select({
       credentialId: upstreamCredentials.id,
@@ -145,6 +220,7 @@ export async function getEmployeeUpstreamChannels(
       providerId: providers.id,
       providerCode: providers.code,
       providerName: providers.name,
+      relayPoolKey: productLines.relayPoolKey,
     })
     .from(upstreamCredentials)
     .innerJoin(productLines, eq(upstreamCredentials.productLineId, productLines.id))
@@ -155,9 +231,7 @@ export async function getEmployeeUpstreamChannels(
         eq(productLines.status, "active"),
         inArray(upstreamCredentials.status, ["active", "cooling"]),
         gt(upstreamCredentials.weight, 0),
-        options.productLineId === undefined
-          ? undefined
-          : eq(productLines.id, options.productLineId),
+        poolFilter,
       ),
     );
   const rows = options.lockForCreate
@@ -176,5 +250,8 @@ export async function getEmployeeUpstreamChannel(
     ...options,
     productLineId,
   });
-  return channels.find((channel) => channel.productLineId === productLineId) ?? null;
+  return channels.find((channel) =>
+    channel.productLineId === productLineId
+    || channel.memberProductLineIds.includes(productLineId)
+  ) ?? null;
 }

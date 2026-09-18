@@ -41,4 +41,13 @@ test("channel display name uses 公司/模型 and official GLM line titles", () 
     }),
     "智谱/GLM",
   );
+  assert.equal(
+    channelDisplayName({
+      providerCode: "deepseek",
+      providerName: "深度求索",
+      productLineCode: "api",
+      productLineName: "随便写的名字",
+    }),
+    "深度求索/DeepSeek",
+  );
 });

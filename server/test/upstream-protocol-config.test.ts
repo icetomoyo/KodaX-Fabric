@@ -84,9 +84,12 @@ test("every provider option exposes its supported protocol configuration", () =>
 
 test("template product lines preserve API versus Coding Plan identity", () => {
   const glm = getProviderTemplate("glm")!;
+  const deepseek = getProviderTemplate("deepseek")!;
 
   assert.equal(glm.baseUrls[0].productType, "coding_plan");
   assert.equal(glm.baseUrls.find((option) => option.productLineCode === "api_intl")?.productType, "coding_plan");
+  assert.equal(deepseek.baseUrls[0].productType, "api");
+  assert.equal(deepseek.baseUrls[0].host, "api.deepseek.com");
 });
 
 test("protocol config resolution uses explicit config and legacy fallback only for null", () => {

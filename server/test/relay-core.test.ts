@@ -109,6 +109,11 @@ test("upstream channel templates use 公司/模型 naming", async () => {
     formatChannelName(glm.name, glm.baseUrls[1].productLineName),
     "智谱/GLM（国际版）",
   );
+  const deepseek = getProviderTemplate("deepseek");
+  assert.ok(deepseek);
+  assert.equal(deepseek.name, "深度求索");
+  assert.equal(deepseek.modelName, "DeepSeek");
+  assert.equal(formatChannelName(deepseek.name, deepseek.modelName), "深度求索/DeepSeek");
 });
 
 test("relay candidates are ordered by route then credential priority", () => {

@@ -1,4 +1,4 @@
-import { and, eq, isNull, lte, or } from "drizzle-orm";
+import { and, eq, inArray, isNull, lte, or } from "drizzle-orm";
 import { db } from "../../db/client.js";
 import {
   modelRoutes,
@@ -13,7 +13,10 @@ import {
   EMPTY_CREDENTIAL_LOAD,
   getCredentialLoad,
 } from "./credential-load.js";
-import { resolveProtocolUpstreamConfig } from "../upstream-protocol-config.js";
+import {
+  loadRelayPool,
+  resolveRelayUpstreamConfig,
+} from "./channel-pool.js";
 import {
   acquireBoundCredential,
   type BoundCredential,
@@ -83,7 +86,15 @@ export function filterRelayItemsToProductLine<T extends { productLineId: number 
   productLineId: number,
 ): T[] {
   if (!isValidRelayProductLineId(productLineId)) return [];
-  return items.filter((item) => item.productLineId === productLineId);
+  return filterRelayItemsToProductLines(items, new Set([productLineId]));
+}
+
+export function filterRelayItemsToProductLines<T extends { productLineId: number }>(
+  items: readonly T[],
+  productLineIds: ReadonlySet<number>,
+): T[] {
+  if (productLineIds.size === 0) return [];
+  return items.filter((item) => productLineIds.has(item.productLineId));
 }
 
 function discoveredModels(meta: unknown): string[] {
@@ -122,9 +133,15 @@ async function loadAccessibleCredentials(
   options: { readOnly?: boolean } = {},
 ): Promise<RelayCredentialAccess> {
   const now = new Date();
-  if (!isValidRelayProductLineId(productLineId)) {
-    return { credentials: [], boundChannelUnavailable: true, providerCode: null };
+  const pool = await loadRelayPool(productLineId);
+  if (!pool || pool.activeProductLineIds.length === 0) {
+    return {
+      credentials: [],
+      boundChannelUnavailable: true,
+      providerCode: pool?.providerCode ?? null,
+    };
   }
+  const poolLineIds = pool.activeProductLineIds;
   // Cooling is a temporary state. Restore expired entries in persistent state
   // so admin views and subsequent scheduling agree that the credential is
   // active again. Model discovery is strictly read-only and instead applies
@@ -137,66 +154,43 @@ async function loadAccessibleCredentials(
         and(
           eq(upstreamCredentials.status, "cooling"),
           or(isNull(upstreamCredentials.coolUntil), lte(upstreamCredentials.coolUntil, now)),
-          eq(upstreamCredentials.productLineId, productLineId),
+          inArray(upstreamCredentials.productLineId, poolLineIds),
         ),
       );
   }
 
-  const [rows, boundChannel] = await Promise.all([
-    db
-      .select({
-        credentialId: upstreamCredentials.id,
-        credentialSuffix: upstreamCredentials.secretSuffix,
-        secretEncrypted: upstreamCredentials.secretEncrypted,
-        credentialPriority: upstreamCredentials.priority,
-        credentialWeight: upstreamCredentials.weight,
-        credentialStatus: upstreamCredentials.status,
-        coolUntil: upstreamCredentials.coolUntil,
-        meta: upstreamCredentials.meta,
-        productLineId: productLines.id,
-        productType: productLines.productType,
-        retryPolicy: productLines.retryPolicy,
-        providerCode: providers.code,
-        authStyle: providers.authStyle,
-        supportedProtocols: upstreamCredentials.supportedProtocols,
-        defaultBaseUrl: providers.defaultBaseUrl,
-        baseUrlOverride: productLines.baseUrlOverride,
-        protocolConfigs: productLines.protocolConfigs,
-      })
-      .from(upstreamCredentials)
-      .innerJoin(productLines, eq(upstreamCredentials.productLineId, productLines.id))
-      .innerJoin(providers, eq(productLines.providerId, providers.id))
-      .where(eq(upstreamCredentials.productLineId, productLineId)),
-    db
-      .select({
-        productLineId: productLines.id,
-        productLineStatus: productLines.status,
-        providerStatus: providers.status,
-        providerCode: providers.code,
-      })
-      .from(productLines)
-      .innerJoin(providers, eq(productLines.providerId, providers.id))
-      .where(eq(productLines.id, productLineId))
-      .limit(1)
-      .then((result) => result[0] ?? null),
-  ]);
-
-  const unavailable = !boundChannel ||
-    boundChannel.productLineStatus !== "active" ||
-    boundChannel.providerStatus !== "active";
-  if (unavailable) {
-    return {
-      credentials: [],
-      boundChannelUnavailable: true,
-      providerCode: boundChannel?.providerCode ?? null,
-    };
-  }
+  const rows = await db
+    .select({
+      credentialId: upstreamCredentials.id,
+      credentialSuffix: upstreamCredentials.secretSuffix,
+      secretEncrypted: upstreamCredentials.secretEncrypted,
+      credentialPriority: upstreamCredentials.priority,
+      credentialWeight: upstreamCredentials.weight,
+      credentialStatus: upstreamCredentials.status,
+      coolUntil: upstreamCredentials.coolUntil,
+      meta: upstreamCredentials.meta,
+      productLineId: productLines.id,
+      productType: productLines.productType,
+      retryPolicy: productLines.retryPolicy,
+      providerCode: providers.code,
+      authStyle: providers.authStyle,
+      supportedProtocols: upstreamCredentials.supportedProtocols,
+      defaultBaseUrl: providers.defaultBaseUrl,
+      baseUrlOverride: productLines.baseUrlOverride,
+      protocolConfigs: productLines.protocolConfigs,
+    })
+    .from(upstreamCredentials)
+    .innerJoin(productLines, eq(upstreamCredentials.productLineId, productLines.id))
+    .innerJoin(providers, eq(productLines.providerId, providers.id))
+    .where(inArray(upstreamCredentials.productLineId, poolLineIds));
 
   const credentials = rows
     .filter((row) => credentialSupportsProtocol(row, protocol))
     .map((row): AvailableRelayCredential | null => {
-      const upstreamConfig = resolveProtocolUpstreamConfig({
+      const upstreamConfig = resolveRelayUpstreamConfig({
         protocol,
+        providerCode: row.providerCode,
+        productType: row.productType,
         protocolConfigs: row.protocolConfigs,
         legacyBaseUrl: row.baseUrlOverride || row.defaultBaseUrl,
         legacyAuthStyle: row.authStyle,
@@ -227,9 +221,9 @@ async function loadAccessibleCredentials(
     .filter((credential): credential is AvailableRelayCredential => credential !== null);
 
   return {
-    credentials: filterRelayItemsToProductLine(credentials, productLineId),
+    credentials: filterRelayItemsToProductLines(credentials, new Set(poolLineIds)),
     boundChannelUnavailable: false,
-    providerCode: boundChannel.providerCode,
+    providerCode: pool.providerCode,
   };
 }
 
@@ -579,23 +573,6 @@ export async function resolveRelayBoundCandidate(
     };
   }
 
-  const routes = await loadEnabledModelRoutes(productLineId, clientModel);
-  const snapshot = resolveRelayCandidatesFromSnapshot(
-    access.credentials,
-    routes,
-    clientModel,
-    protocol,
-    productLineId,
-  );
-  const modelRoute = pickModelRoute(routes, productLineId);
-  if (modelRoute.kind === "suppressed") {
-    return {
-      candidate: null,
-      unavailableReason: "unavailable",
-      retryAfterSeconds: null,
-    };
-  }
-
   const acquired = await acquireBoundCredential({
     employeeId,
     productLineId,
@@ -612,19 +589,16 @@ export async function resolveRelayBoundCandidate(
     return { candidate: null, ...mapAcquireFailure("no_binding_available", null) };
   }
 
-  const preferred = snapshot.candidates[0];
-  const route: AvailableRelayModelRoute | undefined =
-    preferred && preferred.routeId !== null
-      ? {
-          routeId: preferred.routeId,
-          productLineId: preferred.productLineId,
-          upstreamModel: preferred.upstreamModel,
-          routePriority: preferred.routePriority,
-          routeWeight: preferred.routeWeight,
-        }
-      : modelRoute.kind === "routed"
-        ? modelRoute.route
-        : undefined;
+  const routes = await loadEnabledModelRoutes(bound.productLineId, clientModel);
+  const modelRoute = pickModelRoute(routes, bound.productLineId);
+  if (modelRoute.kind === "suppressed") {
+    return {
+      candidate: null,
+      unavailableReason: "unavailable",
+      retryAfterSeconds: null,
+    };
+  }
+  const route = modelRoute.kind === "routed" ? modelRoute.route : undefined;
 
   return {
     candidate: toRelayCandidate(bound, clientModel, protocol, route),
@@ -670,7 +644,9 @@ export async function resolveAccessibleRelayModels(
         eq(modelRoutes.enabled, true),
         eq(productLines.status, "active"),
         eq(providers.status, "active"),
-        eq(modelRoutes.productLineId, productLineId),
+        eligibleProductLines.size > 0
+          ? inArray(modelRoutes.productLineId, [...eligibleProductLines])
+          : eq(modelRoutes.productLineId, productLineId),
       ),
     );
 

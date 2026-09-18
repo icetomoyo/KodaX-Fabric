@@ -309,6 +309,13 @@
       "when": 1789528000000,
       "tag": "0043_standard_enterprise_share",
       "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "7",
+      "when": 1789600000000,
+      "tag": "0044_glm_coding_plan_pool",
+      "breakpoints": true
     }
   ]
 }

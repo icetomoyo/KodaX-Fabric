@@ -227,7 +227,7 @@ export async function loadSupportAccountSnapshot(
   const accessible = await getEmployeeUpstreamChannels(input.employeeId);
   let modelsByChannel: SupportAccountSnapshot["modelsByChannel"] = [];
   if (accessible.length > 0) {
-    const productLineIds = accessible.map((channel) => channel.productLineId);
+    const productLineIds = [...new Set(accessible.flatMap((channel) => channel.memberProductLineIds))];
     const channelRows = await db
       .select({
         productLineId: productLines.id,
@@ -251,10 +251,14 @@ export async function loadSupportAccountSnapshot(
 
     const grouped = groupDiscoveredModelsByChannel(channelRows);
     modelsByChannel = accessible.map((channel) => {
-      const group = grouped.find((item) => item.id === channel.productLineId);
+      const models = [...new Set(
+        channel.memberProductLineIds.flatMap((id) =>
+          grouped.find((item) => item.id === id)?.models ?? [],
+        ),
+      )].sort((left, right) => left.localeCompare(right));
       return {
-        channel: group?.name ?? channel.productLineName,
-        models: group?.models ?? [],
+        channel: channel.productLineName,
+        models,
       };
     });
   }

@@ -36,6 +36,18 @@ test("domestic GLM create plan copies official China endpoints and unique codes"
   for (const code of codes) assert.match(code, /^cn_[0-9a-f]{16}$/);
 });
 
+test("GLM create plan can record an API account instead of a coding-plan package", () => {
+  const plan = planUpstreamChannelCreate({
+    ...domesticConfigs,
+    productType: "api",
+    seatCount: 0,
+  });
+  assert.equal(plan.kind, "accepted");
+  if (plan.kind !== "accepted") return;
+  assert.equal(plan.productType, "api");
+  assert.equal(plan.seatCount, 0);
+});
+
 test("international GLM create plan copies official z.ai endpoints", () => {
   const plan = planUpstreamChannelCreate({
     ...domesticConfigs,
@@ -49,6 +61,26 @@ test("international GLM create plan copies official z.ai endpoints", () => {
   assert.equal(plan.protocolConfigs.openai_chat?.baseUrl, "https://api.z.ai/api/coding/paas/v4");
   assert.equal(plan.protocolConfigs.anthropic_messages?.baseUrl, "https://api.z.ai/api/anthropic");
   assert.match(plan.allocateCode(), /^in_[0-9a-f]{16}$/);
+});
+
+test("DeepSeek create plan uses official API endpoints and is always api", () => {
+  const plan = planUpstreamChannelCreate({
+    name: "主账号",
+    tag: "",
+    seatCount: 0,
+    status: "active",
+    supportedProtocols: ["anthropic_messages", "openai_chat", "openai_responses"],
+    provider: "deepseek",
+  });
+  assert.equal(plan.kind, "accepted");
+  if (plan.kind !== "accepted") return;
+  assert.equal(plan.providerCode, "deepseek");
+  assert.equal(plan.providerName, "深度求索");
+  assert.equal(plan.productType, "api");
+  assert.equal(plan.protocolConfigs.openai_chat?.baseUrl, "https://api.deepseek.com");
+  assert.equal(plan.protocolConfigs.anthropic_messages?.baseUrl, "https://api.deepseek.com/anthropic");
+  assert.equal(plan.protocolConfigs.openai_responses?.baseUrl, "https://api.deepseek.com");
+  assert.match(plan.allocateCode(), /^ds_[0-9a-f]{16}$/);
 });
 
 test("haizhi self-hosted create plan requires an upstream URL and has no GLM line", () => {

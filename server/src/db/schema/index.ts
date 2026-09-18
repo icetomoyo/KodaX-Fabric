@@ -235,10 +235,14 @@ export const productLines = pgTable(
     status: varchar("status", { length: 32 }).notNull().default("active"),
     seatCount: integer("seat_count").notNull().default(0),
     tag: varchar("tag", { length: 32 }).notNull().default(""),
+    relayPoolKey: varchar("relay_pool_key", { length: 64 }).notNull().default(""),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [uniqueIndex("product_lines_provider_code_uidx").on(t.providerId, t.code)],
+  (t) => [
+    uniqueIndex("product_lines_provider_code_uidx").on(t.providerId, t.code),
+    index("product_lines_relay_pool_key_idx").on(t.relayPoolKey),
+  ],
 );
 
 export const upstreamCredentials = pgTable(
@@ -310,6 +314,7 @@ export const credentialBindings = pgTable(
     productLineId: bigint("product_line_id", { mode: "number" })
       .notNull()
       .references(() => productLines.id, { onDelete: "cascade", onUpdate: "no action" }),
+    relayPoolKey: varchar("relay_pool_key", { length: 64 }).notNull().default(""),
     scopeType: bindingScopeTypeEnum("scope_type").notNull(),
     scopeId: bigint("scope_id", { mode: "number" }).notNull(),
     boundAt: timestamp("bound_at", { withTimezone: true }).notNull().defaultNow(),
@@ -318,8 +323,8 @@ export const credentialBindings = pgTable(
   },
   (t) => [
     uniqueIndex("credential_bindings_credential_id_uidx").on(t.credentialId),
-    uniqueIndex("credential_bindings_product_line_scope_uidx")
-      .on(t.productLineId, t.scopeType, t.scopeId)
+    uniqueIndex("credential_bindings_pool_scope_uidx")
+      .on(t.relayPoolKey, t.scopeType, t.scopeId)
       .where(sql`${t.scopeType} <> 'enterprise'`),
   ],
 );
@@ -337,13 +342,14 @@ export const credentialBindingMembers = pgTable(
     productLineId: bigint("product_line_id", { mode: "number" })
       .notNull()
       .references(() => productLines.id, { onDelete: "cascade", onUpdate: "no action" }),
+    relayPoolKey: varchar("relay_pool_key", { length: 64 }).notNull().default(""),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
     uniqueIndex("credential_binding_members_binding_employee_uidx").on(t.bindingId, t.employeeId),
-    uniqueIndex("credential_binding_members_employee_product_line_uidx").on(
+    uniqueIndex("credential_binding_members_employee_pool_uidx").on(
       t.employeeId,
-      t.productLineId,
+      t.relayPoolKey,
     ),
     index("credential_binding_members_binding_idx").on(t.bindingId),
   ],

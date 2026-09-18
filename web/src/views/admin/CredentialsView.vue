@@ -278,6 +278,7 @@
           <el-form-item label="供应商" required>
             <el-select v-model="createForm.provider" style="width: 100%">
               <el-option label="智谱" value="glm" />
+              <el-option label="DeepSeek" value="deepseek" />
               <el-option label="海致集团" value="haizhi" />
             </el-select>
           </el-form-item>
@@ -296,7 +297,7 @@
           v-model:status="createForm.status"
           v-model:protocol-configs="createFormProtocolConfigs"
           :editable="createNeedsUpstreamUrl"
-          :allow-all-protocols="createForm.provider === 'glm'"
+          :allow-all-protocols="createForm.provider === 'glm' || createForm.provider === 'deepseek'"
           :disabled="createSaving"
         />
       </el-form>
@@ -969,7 +970,7 @@ type ProviderBaseUrl = {
   protocolConfigs?: RelayProtocolConfigs;
 };
 
-type ProviderTemplateCode = "glm";
+type ProviderTemplateCode = "glm" | "deepseek";
 const CUSTOM_PROVIDER_CODE = "custom";
 const HAIZHI_PROVIDER_CODE = "haizhi";
 const CUSTOM_PROVIDER_COLOR = "#0f766e";
@@ -1180,7 +1181,7 @@ const showChannelCreate = ref(false);
 const createSaving = ref(false);
 const createFormProtocolConfigs = ref<RelayProtocolConfigs>({});
 const createForm = reactive({
-  provider: "glm" as "glm" | "haizhi",
+  provider: "glm" as "glm" | "deepseek" | "haizhi",
   variant: "domestic" as "domestic" | "international",
   name: "",
   tag: "",

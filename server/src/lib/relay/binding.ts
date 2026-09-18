@@ -39,7 +39,7 @@ import {
   effectiveCredentialStatus,
   type CredentialStatus,
 } from "../credential-status.js";
-import { resolveProtocolUpstreamConfig } from "../upstream-protocol-config.js";
+
 import type { UsageTier } from "../usage-tier.js";
 import {
   evaluateCredentialQuota,
@@ -49,6 +49,11 @@ import {
 } from "./credential-quota.js";
 import { isRelayProtocol, type RelayProtocol } from "./protocol.js";
 import { isOpenPoolProvider, OPEN_POOL_PROVIDER_CODE } from "./open-pool.js";
+import {
+  loadRelayPool,
+  resolveRelayUpstreamConfig,
+  type RelayPool,
+} from "./channel-pool.js";
 import { firstLevelDepartmentId } from "../department-tree.js";
 
 export type BindingScopeType = "employee" | "team" | "enterprise" | "department";
@@ -100,6 +105,8 @@ export type AcquireBindingParams = {
   promoteIdle?: boolean;
 };
 
+type PooledAcquireParams = AcquireBindingParams & { pool: RelayPool };
+
 export type AcquireBindingResult =
   | { ok: true; credential: BoundCredential; bindingScope: BindingScope; replaced: boolean }
   | { ok: false; reason: "no_scope" | "exhausted_pool" | "no_binding_available"; retryAt: Date | null };
@@ -139,6 +146,7 @@ type CredentialSnapshotRow = {
   credentialStatus: CredentialStatus;
   coolUntil: Date | null;
   productLineId: number;
+  relayPoolKey: string;
   productType: "api" | "coding_plan";
   retryPolicy: unknown;
   providerCode: string;
@@ -175,6 +183,7 @@ const credentialSnapshotSelect = {
   credentialStatus: upstreamCredentials.status,
   coolUntil: upstreamCredentials.coolUntil,
   productLineId: productLines.id,
+  relayPoolKey: productLines.relayPoolKey,
   productType: productLines.productType,
   retryPolicy: productLines.retryPolicy,
   providerCode: providers.code,
@@ -514,9 +523,9 @@ async function acquireOpenPoolCredential(
   params: AcquireBindingParams,
   now: Date,
 ): Promise<AcquireBindingResult> {
-  await restoreExpiredCooling(params.productLineId, now);
+  await restoreExpiredCooling([params.productLineId], now);
   const pool = await loadChannelPool(
-    params.productLineId,
+    [params.productLineId],
     params.protocol,
     params.excludeCredentialIds ?? new Set(),
     false,
@@ -560,7 +569,8 @@ async function acquireOpenPoolCredential(
 }
 
 /**
- * Return a usable Key for the employee's scope on this product line.
+ * Return a usable Key for the employee's scope on this product line's
+ * relay pool (Zhipu coding-plan packages share one pool).
  *
  * Reuses the current binding when the Key is active, in-protocol, not excluded,
  * and under quota. Keys at 85% of the 5-hour or 95% of the weekly credit
@@ -577,6 +587,11 @@ export async function acquireBoundCredential(
   if (await isOpenPoolProductLine(params.productLineId)) {
     return acquireOpenPoolCredential(params, now);
   }
+  const pool = await loadRelayPool(params.productLineId);
+  if (!pool) {
+    return { ok: false, reason: "no_binding_available", retryAt: null };
+  }
+  const pooled: PooledAcquireParams = { ...params, pool };
   const resolved = await resolveEmployeeBinding(params.employeeId, now, params.teamId);
   if (!resolved) {
     return { ok: false, reason: "no_scope", retryAt: null };
@@ -601,14 +616,14 @@ export async function acquireBoundCredential(
       .where(eq(employees.id, params.employeeId));
   }
 
-  await restoreExpiredCooling(params.productLineId, now);
+  await restoreExpiredCooling(pool.productLineIds, now);
 
   let result: AcquireBindingResult;
   if (scope.scopeType === "enterprise") {
-    result = await acquireEnterpriseShare(params, scope, now);
+    result = await acquireEnterpriseShare(pooled, scope, now);
   } else {
-    await clearEnterpriseMembership(params.employeeId, params.productLineId);
-    const existing = await loadScopeBinding(params.productLineId, scope);
+    await clearEnterpriseMembership(params.employeeId, pool.key);
+    const existing = await loadScopeBinding(pool.key, scope);
     if (existing) {
       const verdict = await inspectSnapshot(
         existing.snapshot,
@@ -628,10 +643,10 @@ export async function acquireBoundCredential(
           await coolCredentialForQuota(existing.snapshot.credentialId, verdict.status, now);
         }
         await deleteBinding(existing.bindingId);
-        result = await bindFromPool(params, scope, now, true);
+        result = await bindFromPool(pooled, scope, now, true);
       }
     } else {
-      result = await bindFromPool(params, scope, now, false);
+      result = await bindFromPool(pooled, scope, now, false);
     }
   }
 
@@ -642,11 +657,11 @@ export async function acquireBoundCredential(
 }
 
 async function acquireEnterpriseShare(
-  params: AcquireBindingParams,
+  params: PooledAcquireParams,
   scope: BindingScope,
   now: Date,
 ): Promise<AcquireBindingResult> {
-  const existingMember = await loadMemberBinding(params.employeeId, params.productLineId);
+  const existingMember = await loadMemberBinding(params.employeeId, params.pool.key);
   if (existingMember) {
     const verdict = await inspectSnapshot(
       existingMember.snapshot,
@@ -670,7 +685,7 @@ async function acquireEnterpriseShare(
 
   const exclude = new Set(params.excludeCredentialIds ?? []);
   for (let attempt = 0; attempt < MAX_POOL_ATTEMPTS + 2; attempt += 1) {
-    const shards = await listEnterpriseShards(params.productLineId, scope.scopeId);
+    const shards = await listEnterpriseShards(params.pool.key, scope.scopeId);
     const packedId = pickStandardShareSlot(
       shards.map((row) => ({ id: row.bindingId, memberCount: row.memberCount })),
     );
@@ -684,7 +699,12 @@ async function acquireEnterpriseShare(
       }
       const verdict = await inspectSnapshot(snapshot, params.protocol, now, exclude);
       if (verdict.kind === "usable") {
-        const joined = await tryAddMember(shard.bindingId, params.employeeId, params.productLineId);
+        const joined = await tryAddMember(
+          shard.bindingId,
+          params.employeeId,
+          snapshot.productLineId,
+          params.pool.key,
+        );
         if (joined === "added") {
           return {
             ok: true,
@@ -694,7 +714,7 @@ async function acquireEnterpriseShare(
           };
         }
         if (joined === "already") {
-          const mine = await loadMemberBinding(params.employeeId, params.productLineId);
+          const mine = await loadMemberBinding(params.employeeId, params.pool.key);
           if (mine) {
             const mineVerdict = await inspectSnapshot(mine.snapshot, params.protocol, now, exclude);
             if (mineVerdict.kind === "usable") {
@@ -722,10 +742,15 @@ async function acquireEnterpriseShare(
       if (!outcome.result.ok) return outcome.result;
       const created = await loadBindingByCredentialId(outcome.result.credential.credentialId);
       if (!created) return { ok: false, reason: "no_binding_available", retryAt: null };
-      const joined = await tryAddMember(created.bindingId, params.employeeId, params.productLineId);
+      const joined = await tryAddMember(
+        created.bindingId,
+        params.employeeId,
+        outcome.result.credential.productLineId,
+        params.pool.key,
+      );
       if (joined === "added") return outcome.result;
       if (joined === "already") {
-        const mine = await loadMemberBinding(params.employeeId, params.productLineId);
+        const mine = await loadMemberBinding(params.employeeId, params.pool.key);
         if (mine) {
           const mineVerdict = await inspectSnapshot(mine.snapshot, params.protocol, now, exclude);
           if (mineVerdict.kind === "usable") {
@@ -747,8 +772,8 @@ async function acquireEnterpriseShare(
 }
 
 /**
- * Bind each employee to the Key their current usage tier requires, one
- * product line at a time. Used when the daily job moves people across tiers.
+ * Bind each employee to the Key their current usage tier requires, once
+ * per relay pool. Used when the daily job moves people across tiers.
  */
 export async function rebindEmployeesToCurrentScope(
   employeeIds: readonly number[],
@@ -762,6 +787,7 @@ export async function rebindEmployeesToCurrentScope(
       protocol: employeeApiKeys.protocol,
       teamId: employeeApiKeys.teamId,
       providerCode: providers.code,
+      relayPoolKey: productLines.relayPoolKey,
     })
     .from(employeeApiKeys)
     .innerJoin(productLines, eq(employeeApiKeys.productLineId, productLines.id))
@@ -775,7 +801,7 @@ export async function rebindEmployeesToCurrentScope(
   const seen = new Set<string>();
   let bound = 0;
   for (const key of keys) {
-    const stamp = `${key.employeeId}:${key.productLineId}`;
+    const stamp = `${key.employeeId}:${key.relayPoolKey || key.productLineId}`;
     if (seen.has(stamp)) continue;
     seen.add(stamp);
     if (isOpenPoolProvider(key.providerCode)) continue;
@@ -946,7 +972,7 @@ async function inspectSnapshot(
 }
 
 async function bindFromPool(
-  params: AcquireBindingParams,
+  params: PooledAcquireParams,
   scope: BindingScope,
   now: Date,
   replaced: boolean,
@@ -965,13 +991,13 @@ type PoolAttempt =
   | { kind: "retry"; excludeMore: number[] };
 
 async function tryBindFromPool(
-  params: AcquireBindingParams,
+  params: PooledAcquireParams,
   scope: BindingScope,
   now: Date,
   exclude: ReadonlySet<number>,
   replaced: boolean,
 ): Promise<PoolAttempt> {
-  const pool = await loadUnboundPool(params.productLineId, params.protocol, exclude);
+  const pool = await loadUnboundPool(params.pool, params.protocol, exclude);
   const usageMap = await getCredentialQuotaUsage(
     pool.map((row) => row.credentialId),
     now,
@@ -1018,7 +1044,8 @@ async function tryBindFromPool(
     .insert(credentialBindings)
     .values({
       credentialId: picked.snapshot.credentialId,
-      productLineId: params.productLineId,
+      productLineId: picked.snapshot.productLineId,
+      relayPoolKey: params.pool.key,
       scopeType: scope.scopeType,
       scopeId: scope.scopeId,
     })
@@ -1027,7 +1054,7 @@ async function tryBindFromPool(
   const reread =
     scope.scopeType === "enterprise"
       ? await loadBindingByCredentialId(picked.snapshot.credentialId)
-      : await loadScopeBinding(params.productLineId, scope);
+      : await loadScopeBinding(params.pool.key, scope);
   if (!reread) {
     return { kind: "retry", excludeMore: [picked.snapshot.credentialId] };
   }
@@ -1054,7 +1081,8 @@ async function tryBindFromPool(
   return { kind: "retry", excludeMore: [reread.snapshot.credentialId, picked.snapshot.credentialId] };
 }
 
-async function restoreExpiredCooling(productLineId: number, now: Date): Promise<void> {
+async function restoreExpiredCooling(productLineIds: readonly number[], now: Date): Promise<void> {
+  if (productLineIds.length === 0) return;
   await db
     .update(upstreamCredentials)
     .set({ status: "active", coolUntil: null, updatedAt: now })
@@ -1062,13 +1090,13 @@ async function restoreExpiredCooling(productLineId: number, now: Date): Promise<
       and(
         eq(upstreamCredentials.status, "cooling"),
         or(isNull(upstreamCredentials.coolUntil), lte(upstreamCredentials.coolUntil, now)),
-        eq(upstreamCredentials.productLineId, productLineId),
+        inArray(upstreamCredentials.productLineId, [...productLineIds]),
       ),
     );
 }
 
 async function loadScopeBinding(
-  productLineId: number,
+  relayPoolKey: string,
   scope: BindingScope,
 ): Promise<LoadedBinding | null> {
   const [locator] = await db
@@ -1081,7 +1109,7 @@ async function loadScopeBinding(
     .from(credentialBindings)
     .where(
       and(
-        eq(credentialBindings.productLineId, productLineId),
+        eq(credentialBindings.relayPoolKey, relayPoolKey),
         eq(credentialBindings.scopeType, scope.scopeType),
         eq(credentialBindings.scopeId, scope.scopeId),
       ),
@@ -1129,7 +1157,7 @@ async function loadBindingByCredentialId(credentialId: number): Promise<LoadedBi
 
 async function loadMemberBinding(
   employeeId: number,
-  productLineId: number,
+  relayPoolKey: string,
 ): Promise<LoadedBinding | null> {
   const [row] = await db
     .select({
@@ -1143,7 +1171,7 @@ async function loadMemberBinding(
     .where(
       and(
         eq(credentialBindingMembers.employeeId, employeeId),
-        eq(credentialBindingMembers.productLineId, productLineId),
+        eq(credentialBindingMembers.relayPoolKey, relayPoolKey),
       ),
     )
     .limit(1);
@@ -1162,7 +1190,7 @@ async function loadMemberBinding(
 }
 
 async function listEnterpriseShards(
-  productLineId: number,
+  relayPoolKey: string,
   enterpriseId: number,
 ): Promise<EnterpriseShard[]> {
   const rows = await db
@@ -1178,7 +1206,7 @@ async function listEnterpriseShards(
     )
     .where(
       and(
-        eq(credentialBindings.productLineId, productLineId),
+        eq(credentialBindings.relayPoolKey, relayPoolKey),
         eq(credentialBindings.scopeType, "enterprise"),
         eq(credentialBindings.scopeId, enterpriseId),
       ),
@@ -1195,6 +1223,7 @@ async function tryAddMember(
   bindingId: number,
   employeeId: number,
   productLineId: number,
+  relayPoolKey: string,
 ): Promise<MemberJoinResult> {
   return db.transaction(async (tx) => {
     await tx.execute(sql`select id from credential_bindings where id = ${bindingId} for update`);
@@ -1204,7 +1233,7 @@ async function tryAddMember(
       .where(
         and(
           eq(credentialBindingMembers.employeeId, employeeId),
-          eq(credentialBindingMembers.productLineId, productLineId),
+          eq(credentialBindingMembers.relayPoolKey, relayPoolKey),
         ),
       )
       .limit(1);
@@ -1218,18 +1247,19 @@ async function tryAddMember(
       bindingId,
       employeeId,
       productLineId,
+      relayPoolKey,
     });
     return "added";
   });
 }
 
-async function clearEnterpriseMembership(employeeId: number, productLineId: number): Promise<void> {
+async function clearEnterpriseMembership(employeeId: number, relayPoolKey: string): Promise<void> {
   await db
     .delete(credentialBindingMembers)
     .where(
       and(
         eq(credentialBindingMembers.employeeId, employeeId),
-        eq(credentialBindingMembers.productLineId, productLineId),
+        eq(credentialBindingMembers.relayPoolKey, relayPoolKey),
       ),
     );
 }
@@ -1246,19 +1276,20 @@ async function loadCredentialSnapshot(credentialId: number): Promise<CredentialS
 }
 
 async function loadUnboundPool(
-  productLineId: number,
+  pool: RelayPool,
   protocol: RelayProtocol,
   exclude: ReadonlySet<number>,
 ): Promise<CredentialSnapshotRow[]> {
-  return loadChannelPool(productLineId, protocol, exclude, true);
+  return loadChannelPool(pool.activeProductLineIds, protocol, exclude, true);
 }
 
 async function loadChannelPool(
-  productLineId: number,
+  productLineIds: readonly number[],
   protocol: RelayProtocol,
   exclude: ReadonlySet<number>,
   unboundOnly: boolean,
 ): Promise<CredentialSnapshotRow[]> {
+  if (productLineIds.length === 0) return [];
   const excludeIds = [...exclude];
   const rows = await db
     .select(credentialSnapshotSelect)
@@ -1268,7 +1299,7 @@ async function loadChannelPool(
     .leftJoin(credentialBindings, eq(credentialBindings.credentialId, upstreamCredentials.id))
     .where(
       and(
-        eq(upstreamCredentials.productLineId, productLineId),
+        inArray(upstreamCredentials.productLineId, [...productLineIds]),
         gt(upstreamCredentials.weight, 0),
         unboundOnly ? isNull(credentialBindings.id) : undefined,
         or(
@@ -1332,8 +1363,10 @@ function toBoundCredential(
   protocol: RelayProtocol,
   now: Date,
 ): BoundCredential | null {
-  const upstreamConfig = resolveProtocolUpstreamConfig({
+  const upstreamConfig = resolveRelayUpstreamConfig({
     protocol,
+    providerCode: snapshot.providerCode,
+    productType: snapshot.productType,
     protocolConfigs: snapshot.protocolConfigs,
     legacyBaseUrl: snapshot.baseUrlOverride || snapshot.defaultBaseUrl,
     legacyAuthStyle: snapshot.legacyAuthStyle,
