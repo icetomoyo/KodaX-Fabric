@@ -955,7 +955,6 @@ async function loadPeople() {
   const uniqueUsers = [...new Map(users.map((row) => [row.id, row])).values()];
   employeeTotal.value = typeof userRes.data.total === "number" ? userRes.data.total : uniqueUsers.length;
   employees.value = uniqueUsers
-    .filter((row) => row.role !== "admin")
     .map((row) => {
       const teamIds = row.teamIds?.length
         ? row.teamIds

@@ -37,6 +37,7 @@ test("org console does not fan out one members request per department team", () 
   assert.doesNotMatch(view, /\/api\/admin\/teams\/\$\{team\.id\}\/members/);
   assert.match(view, /orgConsoleUserListParams/);
   assert.doesNotMatch(view, /limit:\s*200/);
+  assert.doesNotMatch(view, /filter\(\(row\) => row\.role !== "admin"\)/);
 });
 
 test("org console people pane searches employees by name or phone", () => {

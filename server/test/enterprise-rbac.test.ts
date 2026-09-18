@@ -359,11 +359,16 @@ test("super-admin can assign org_admin but not another super-admin", () => {
 });
 
 test("super-admin can list and access employees in any enterprise", () => {
+  const unscoped = resolveUserListScope({ role: "admin", enterpriseId: 1 });
+  assert.equal("forbidden" in unscoped, false);
+  if ("forbidden" in unscoped) return;
+  assert.deepEqual(unscoped.excludeRoles, ["admin"]);
+
   const scoped = resolveUserListScope({ role: "admin", enterpriseId: 1 }, 3);
   assert.equal("forbidden" in scoped, false);
   if ("forbidden" in scoped) return;
   assert.equal(scoped.enterpriseId, 3);
-  assert.deepEqual(scoped.excludeRoles, ["admin"]);
+  assert.equal(scoped.excludeRoles, undefined);
   assert.equal(
     canAccessEmployee(
       { role: "admin", enterpriseId: 1 },

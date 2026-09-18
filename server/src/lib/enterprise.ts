@@ -65,7 +65,7 @@ export function resolveUserListScope(
   if (actor.role === SUPER_ADMIN_ROLE) {
     return {
       enterpriseId: requestedEnterpriseId,
-      excludeRoles: [SUPER_ADMIN_ROLE],
+      ...(requestedEnterpriseId == null ? { excludeRoles: [SUPER_ADMIN_ROLE] } : {}),
     };
   }
   if (actor.role === ORG_ADMIN_ROLE) {
