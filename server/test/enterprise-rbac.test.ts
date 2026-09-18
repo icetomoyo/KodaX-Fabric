@@ -422,6 +422,11 @@ test("admin shell source includes 企业管理 and org_admin lands on workbench"
 
   assert.match(layout, /企业管理/);
   assert.match(layout, /isSuperAdmin/);
+  assert.match(layout, /index="\/admin\/enterprise-dingtalk">企业钉钉/);
+  assert.match(
+    layout,
+    /index="\/admin\/enterprise-dingtalk">企业钉钉[\s\S]*index="\/admin\/enterprises">企业管理/,
+  );
   assert.match(layout, /\/admin\/enterprises/);
   assert.match(layout, /部门管理/);
   assert.match(layout, /isOrgAdmin/);
@@ -437,6 +442,7 @@ test("admin shell source includes 企业管理 and org_admin lands on workbench"
   assert.match(home, /return \"\/admin\"/);
   assert.doesNotMatch(home, /org_admin.*\/me/);
   assert.match(router, /admin-enterprises/);
+  assert.match(router, /name: "admin-enterprise-dingtalk"[\s\S]*roles: \["admin"\]/);
   assert.match(router, /org_admin/);
   const login = readFileSync(resolve(root, "web/src/views/LoginView.vue"), "utf8");
   const register = readFileSync(resolve(root, "web/src/views/RegisterView.vue"), "utf8");

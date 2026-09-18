@@ -257,6 +257,10 @@ test("live console pages do not repeat sidebar titles or tutorial subtitles", ()
   const logs = readFileSync(resolve(root, "web/src/views/admin/LogsView.vue"), "utf8");
   const errorLogs = readFileSync(resolve(root, "web/src/views/admin/ErrorLogsView.vue"), "utf8");
   const opsAudit = readFileSync(resolve(root, "web/src/views/admin/OpsAuditView.vue"), "utf8");
+  const enterpriseDingtalk = readFileSync(
+    resolve(root, "web/src/views/admin/EnterpriseDingtalkView.vue"),
+    "utf8",
+  );
   const profile = readFileSync(resolve(root, "web/src/views/admin/ProfileView.vue"), "utf8");
   const meHome = readFileSync(resolve(root, "web/src/views/me/HomeView.vue"), "utf8");
   const meKeys = readFileSync(resolve(root, "web/src/views/me/KeysView.vue"), "utf8");
@@ -271,6 +275,7 @@ test("live console pages do not repeat sidebar titles or tutorial subtitles", ()
     logs,
     errorLogs,
     opsAudit,
+    enterpriseDingtalk,
     profile,
     meHome,
     meKeys,
@@ -419,6 +424,11 @@ test("admin shell uses org board for all console roles", () => {
   const home = readFileSync(resolve(root, "web/src/lib/home.ts"), "utf8");
   const router = readFileSync(resolve(root, "web/src/router/index.ts"), "utf8");
   assert.match(layout, /企业管理/);
+  assert.match(layout, /index="\/admin\/enterprise-dingtalk">企业钉钉/);
+  assert.match(
+    layout,
+    /index="\/admin\/enterprise-dingtalk">企业钉钉[\s\S]*index="\/admin\/enterprises">企业管理/,
+  );
   assert.match(layout, /部门管理/);
   assert.doesNotMatch(layout, /本企业编制/);
   assert.doesNotMatch(layout, /本部门编制/);
@@ -446,6 +456,7 @@ test("admin shell uses org board for all console roles", () => {
   assert.match(router, /admin-keys/);
   assert.match(router, /admin-guide/);
   assert.match(router, /team_admin/);
+  assert.match(router, /name: "admin-enterprise-dingtalk"[\s\S]*roles: \["admin"\]/);
   assert.match(router, /name: "admin-key-bindings"[\s\S]*roles: \["admin"\]/);
   assert.match(router, /name: "admin-error-logs"[\s\S]*roles: \["admin"\]/);
   const orgView = readFileSync(resolve(root, "web/src/views/admin/EnterprisesView.vue"), "utf8");

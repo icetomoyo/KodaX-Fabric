@@ -90,6 +90,7 @@ export async function adminDepartmentRoutes(app: FastifyInstance) {
         status: departments.status,
         isDefault: departments.isDefault,
         parentId: departments.parentId,
+        dingtalkDeptId: departments.dingtalkDeptId,
         enterpriseId: departments.enterpriseId,
         enterpriseName: enterprises.name,
         teamCount,
@@ -179,6 +180,7 @@ export async function adminDepartmentRoutes(app: FastifyInstance) {
           status: departments.status,
           isDefault: departments.isDefault,
           parentId: departments.parentId,
+          dingtalkDeptId: departments.dingtalkDeptId,
           enterpriseId: departments.enterpriseId,
           createdAt: departments.createdAt,
         });

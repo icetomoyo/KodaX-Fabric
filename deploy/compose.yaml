@@ -80,6 +80,8 @@ services:
       SUPPORT_BOT_MODEL: ${SUPPORT_BOT_MODEL:-glm-5.3-flash}
       SUPPORT_BOT_UPSTREAM_BASE_URL: ${SUPPORT_BOT_UPSTREAM_BASE_URL:-https://open.bigmodel.cn/api/coding/paas/v4}
       SUPPORT_BOT_UPSTREAM_API_KEY: ${SUPPORT_BOT_UPSTREAM_API_KEY:-}
+      DINGTALK_APP_KEY: ${DINGTALK_APP_KEY:-}
+      DINGTALK_APP_SECRET: ${DINGTALK_APP_SECRET:-}
     volumes:
       - request_context:/var/lib/tokenhub/request-context
     depends_on:
