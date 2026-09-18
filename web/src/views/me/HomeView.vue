@@ -19,6 +19,30 @@
       :closable="false"
     />
 
+    <section class="page-card tips-card" aria-label="友情提示">
+      <h3 class="tips-title">友情提示</h3>
+      <ol class="tips-list">
+        <li>
+          <button type="button" class="tip-link" @click="router.push('/me/guide')">
+            <strong>教程看了吗？</strong>
+            <span>先看接入教程，按所用产品选对协议再创建 Key。</span>
+          </button>
+        </li>
+        <li>
+          <button type="button" class="tip-link" @click="router.push('/me/keys')">
+            <strong>API Key 配置了吗？</strong>
+            <span>创建后填进客户端。Base URL 不要带端口或接口路径。</span>
+          </button>
+        </li>
+        <li>
+          <button type="button" class="tip-link" @click="router.push('/me/logs')">
+            <strong>调用突然失败？</strong>
+            <span>到「我的调用」复制 Request ID，发给右下角 Token Bot，它会帮你分析原因。</span>
+          </button>
+        </li>
+      </ol>
+    </section>
+
     <section class="page-card hero-card">
       <div class="page-head">
         <div class="head-actions">
@@ -134,6 +158,60 @@ onMounted(loadUsage);
   gap: 16px;
   min-width: 0;
 }
+.tips-card {
+  padding: 16px 18px 8px;
+  border: 1px solid #93c5fd;
+  background: linear-gradient(180deg, #eff6ff 0%, #ffffff 100%);
+}
+
+.tips-title {
+  margin: 0 0 10px;
+  color: #1d4ed8;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.tips-list {
+  margin: 0;
+  padding: 0 0 8px 20px;
+  color: #1e3a8a;
+}
+
+.tips-list li + li {
+  margin-top: 6px;
+}
+
+.tip-link {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  padding: 6px 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.tip-link strong {
+  color: #0f172a;
+  font-size: 14px;
+}
+
+.tip-link span {
+  color: #1e3a8a;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.tip-link:hover strong {
+  color: #1d4ed8;
+}
+
 .hero-card {
   padding-bottom: 18px;
 }

@@ -287,6 +287,11 @@ test("live console pages do not repeat sidebar titles or tutorial subtitles", ()
   assert.doesNotMatch(dashboard, /请求量与 Tokens 分布/);
   assert.doesNotMatch(prices, /请先到上游渠道测试 Key/);
   assert.doesNotMatch(meHome, /按团队统计 Token 消耗/);
+  assert.match(meHome, /友情提示/);
+  assert.match(meHome, /教程看了吗/);
+  assert.match(meHome, /API Key 配置了吗/);
+  assert.match(meHome, /Request ID/);
+  assert.match(meHome, /Token Bot/);
   assert.match(profile, /\/api\/me\/org/);
   assert.match(profile, /所属部门/);
   assert.match(profile, /尚未加入部门/);
