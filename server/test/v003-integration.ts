@@ -199,6 +199,18 @@ async function main() {
     assert.equal(logs.items[0].cacheReadTokens, 2);
     assert.equal(logs.items[0].employeeName, `employee-${marker}`);
     assert.equal(logs.items[0].credits, 0);
+    assert.deepEqual(logs.items[0].tokenBreakdown, {
+      input: 5,
+      output: 3,
+      cacheHit: 2,
+      total: 10,
+    });
+    assert.deepEqual(logs.items[0].creditBreakdown, {
+      input: 0,
+      output: 0,
+      cacheHit: 0,
+      total: 0,
+    });
     assert.equal("requestBody" in logs.items[0], false);
     assert.equal("responseBody" in logs.items[0], false);
 
@@ -220,6 +232,18 @@ async function main() {
     assert.equal(detail.requestId, requestIds[0]);
     assert.equal(detail.employeeName, `employee-${marker}`);
     assert.equal(detail.credits, 0);
+    assert.deepEqual(detail.tokenBreakdown, {
+      input: 5,
+      output: 3,
+      cacheHit: 2,
+      total: 10,
+    });
+    assert.deepEqual(detail.creditBreakdown, {
+      input: 0,
+      output: 0,
+      cacheHit: 0,
+      total: 0,
+    });
     assert.equal(detail.hasContextFile, false);
     assert.equal(detail.omittedBodies, false);
     assert.equal(detail.context, null);

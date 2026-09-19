@@ -29,6 +29,22 @@ test("admin log routes expose list, detail, and context download", async () => {
   }
 });
 
+test("admin logs page shows token and credit input/output/cache/total columns", () => {
+  const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+  const view = readFileSync(resolve(root, "web/src/views/admin/LogsView.vue"), "utf8");
+  assert.match(view, /label="Tokens"/);
+  assert.match(view, /label="积分"/);
+  assert.match(view, /label="输入"/);
+  assert.match(view, /label="输出"/);
+  assert.match(view, /label="缓存命中"/);
+  assert.match(view, /label="合计"/);
+  assert.match(view, /tokenBreakdown/);
+  assert.match(view, /creditBreakdown/);
+  assert.doesNotMatch(view, /el-table-column label="Request ID"/);
+  assert.match(view, /el-descriptions-item label="Request ID"/);
+  assert.match(view, /下载全文/);
+});
+
 test("ops audit employee labels use name and phone, not id-only placeholders", () => {
   assert.equal(
     formatOpsAuditTargetLabel(["海致科技", "管理员", "13800000000"], "员工 #1"),

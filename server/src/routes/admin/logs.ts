@@ -14,7 +14,11 @@ import {
   teams,
 } from "../../db/schema/index.js";
 import { resolveLogTeamIds } from "../../lib/org.js";
-import { computeRequestCredits, defaultCreditRateFor } from "../../lib/relay/credit-cost.js";
+import {
+  computeRequestCreditBreakdown,
+  defaultCreditRateFor,
+  tokenBreakdownFromUsage,
+} from "../../lib/relay/credit-cost.js";
 import {
   findRequestContextFile,
   readRequestContextRecord,
@@ -40,14 +44,15 @@ function appendCompare(
   conditions.push(op === "gt" ? gt(column, value) : lt(column, value));
 }
 
-function creditsFor(row: {
+function consumptionFor(row: {
   promptTokens: number | null;
   completionTokens: number | null;
+  totalTokens: number | null;
   cacheReadTokens: number | null;
   clientModel: string;
   createdAt: Date;
-}): number {
-  return computeRequestCredits(
+}) {
+  const creditBreakdown = computeRequestCreditBreakdown(
     {
       promptTokens: row.promptTokens ?? 0,
       completionTokens: row.completionTokens ?? 0,
@@ -56,6 +61,11 @@ function creditsFor(row: {
     defaultCreditRateFor(row.clientModel),
     row.createdAt,
   );
+  return {
+    tokenBreakdown: tokenBreakdownFromUsage(row),
+    creditBreakdown,
+    credits: creditBreakdown.total,
+  };
 }
 
 export async function adminLogRoutes(app: FastifyInstance) {
@@ -153,7 +163,7 @@ export async function adminLogRoutes(app: FastifyInstance) {
         total: countRow?.n ?? 0,
         items: items.map((row) => ({
           ...row,
-          credits: creditsFor(row),
+          ...consumptionFor(row),
         })),
       },
     };
@@ -235,7 +245,7 @@ export async function adminLogRoutes(app: FastifyInstance) {
       success: true,
       data: {
         ...row,
-        credits: creditsFor(row),
+        ...consumptionFor(row),
         error: errorRow ?? null,
         hasContextFile: Boolean(filePath),
         omittedBodies,

@@ -172,6 +172,60 @@ export function intervalPeakMultiplier(start: Date, end: Date): number {
   return OFF_PEAK_MULTIPLIER + (PEAK_MULTIPLIER - OFF_PEAK_MULTIPLIER) * fraction;
 }
 
+export type TokenBreakdown = {
+  input: number | null;
+  output: number | null;
+  cacheHit: number | null;
+  total: number | null;
+};
+
+export type CreditBreakdown = {
+  input: number;
+  output: number;
+  cacheHit: number;
+  total: number;
+};
+
+const EMPTY_CREDIT_BREAKDOWN: CreditBreakdown = {
+  input: 0,
+  output: 0,
+  cacheHit: 0,
+  total: 0,
+};
+
+function roundCredits(value: number): number {
+  if (!Number.isFinite(value) || value <= 0) return 0;
+  return Math.round(value * 10_000) / 10_000;
+}
+
+/**
+ * Tokens for admin logs: 输入 is uncached prompt so
+ * 输入 + 缓存命中 + 输出 = 合计. Cache is null when upstream omitted it.
+ */
+export function tokenBreakdownFromUsage(row: {
+  promptTokens: number | null;
+  completionTokens: number | null;
+  totalTokens: number | null;
+  cacheReadTokens: number | null;
+}): TokenBreakdown {
+  const prompt = row.promptTokens == null ? null : toSafeTokens(row.promptTokens);
+  const output = row.completionTokens == null ? null : toSafeTokens(row.completionTokens);
+  const cacheHit = row.cacheReadTokens == null
+    ? null
+    : Math.min(prompt ?? toSafeTokens(row.cacheReadTokens), toSafeTokens(row.cacheReadTokens));
+  const input = prompt == null
+    ? null
+    : cacheHit == null
+      ? prompt
+      : prompt - cacheHit;
+  const total = row.totalTokens == null
+    ? prompt == null && output == null
+      ? null
+      : (prompt ?? 0) + (output ?? 0)
+    : toSafeTokens(row.totalTokens);
+  return { input, output, cacheHit, total };
+}
+
 /**
  * Zhipu coding-plan credits:
  * ((uncached prompt × Input + cache hit × Cached Input) / 10000) × start multiplier
@@ -180,29 +234,42 @@ export function intervalPeakMultiplier(start: Date, end: Date): number {
  * overlap with Mon–Fri 14:00–18:00 UTC+8. Omit `endedAt` to bill the whole
  * request at `startedAt`.
  */
+export function computeRequestCreditBreakdown(
+  usage: RequestCreditUsage,
+  rate: ModelCreditRate | null,
+  startedAt: Date,
+  endedAt: Date = startedAt,
+): CreditBreakdown {
+  if (!rate) return { ...EMPTY_CREDIT_BREAKDOWN };
+  const prompt = toSafeTokens(usage.promptTokens);
+  const completion = toSafeTokens(usage.completionTokens);
+  const cacheRead = Math.min(prompt, toSafeTokens(usage.cacheReadTokens));
+  const uncached = prompt - cacheRead;
+  const inputMultiplier = peakMultiplierAt(startedAt);
+  const outputMultiplier = intervalPeakMultiplier(startedAt, endedAt);
+  const inputRaw = uncached * toRate(rate.promptCreditsPer10k) / 10_000 * inputMultiplier;
+  const cacheRaw = cacheRead * toRate(rate.cacheHitCreditsPer10k) / 10_000 * inputMultiplier;
+  const outputRaw = completion * toRate(rate.completionCreditsPer10k) / 10_000 * outputMultiplier;
+  const combined =
+    (uncached * toRate(rate.promptCreditsPer10k) + cacheRead * toRate(rate.cacheHitCreditsPer10k))
+      / 10_000
+      * inputMultiplier
+    + outputRaw;
+  return {
+    input: roundCredits(inputRaw),
+    output: roundCredits(outputRaw),
+    cacheHit: roundCredits(cacheRaw),
+    total: roundCredits(combined),
+  };
+}
+
 export function computeRequestCredits(
   usage: RequestCreditUsage,
   rate: ModelCreditRate | null,
   startedAt: Date,
   endedAt: Date = startedAt,
 ): number {
-  if (!rate) return 0;
-  const prompt = toSafeTokens(usage.promptTokens);
-  const completion = toSafeTokens(usage.completionTokens);
-  const cacheRead = Math.min(prompt, toSafeTokens(usage.cacheReadTokens));
-  const uncached = prompt - cacheRead;
-  const inputCredits =
-    (uncached * toRate(rate.promptCreditsPer10k)
-      + cacheRead * toRate(rate.cacheHitCreditsPer10k))
-    / 10_000
-    * peakMultiplierAt(startedAt);
-  const outputCredits =
-    (completion * toRate(rate.completionCreditsPer10k))
-    / 10_000
-    * intervalPeakMultiplier(startedAt, endedAt);
-  const credits = inputCredits + outputCredits;
-  if (!Number.isFinite(credits) || credits <= 0) return 0;
-  return Math.round(credits * 10_000) / 10_000;
+  return computeRequestCreditBreakdown(usage, rate, startedAt, endedAt).total;
 }
 
 /** Metering lookup uses the built-in coding-plan table. */

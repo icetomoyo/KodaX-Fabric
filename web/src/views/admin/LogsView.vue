@@ -65,34 +65,30 @@
       empty-text="暂无日志"
       v-loading="loading"
     >
-      <el-table-column label="Request ID" min-width="220">
-        <template #default="{ row }">
-          <el-button link type="primary" @click="copyRequestId(row.requestId)">
-            {{ row.requestId }}
-          </el-button>
-        </template>
-      </el-table-column>
-      <el-table-column label="企业 / 部门" min-width="160" show-overflow-tooltip>
-        <template #default="{ row }">
-          {{ orgScopeLabel(row) }}
-        </template>
-      </el-table-column>
-      <el-table-column label="员工" width="120" show-overflow-tooltip>
+      <el-table-column label="员工" width="100" show-overflow-tooltip>
         <template #default="{ row }">
           {{ row.employeeName || "—" }}
         </template>
       </el-table-column>
-      <el-table-column prop="clientModel" label="模型" width="140" show-overflow-tooltip />
-      <el-table-column label="Tokens" width="110" align="right" header-align="right">
+      <el-table-column prop="clientModel" label="模型" min-width="120" show-overflow-tooltip />
+      <el-table-column label="Tokens" width="200">
         <template #default="{ row }">
-          <el-tooltip :content="tokenTooltip(row)" placement="top" :show-after="300">
-            <span>{{ formatNumber(row.totalTokens) }}</span>
-          </el-tooltip>
+          <dl class="metric-stack">
+            <div><dt>输入</dt><dd>{{ formatNumber(row.tokenBreakdown?.input ?? uncachedPrompt(row)) }}</dd></div>
+            <div><dt>输出</dt><dd>{{ formatNumber(row.tokenBreakdown?.output ?? row.completionTokens) }}</dd></div>
+            <div><dt>缓存命中</dt><dd>{{ formatNumber(row.tokenBreakdown?.cacheHit ?? row.cacheReadTokens) }}</dd></div>
+            <div><dt>合计</dt><dd>{{ formatNumber(row.tokenBreakdown?.total ?? row.totalTokens) }}</dd></div>
+          </dl>
         </template>
       </el-table-column>
-      <el-table-column label="积分" width="100" align="right" header-align="right">
+      <el-table-column label="积分" width="200">
         <template #default="{ row }">
-          {{ formatCredits(row.credits) }}
+          <dl class="metric-stack">
+            <div><dt>输入</dt><dd>{{ formatCreditPart(row, "input") }}</dd></div>
+            <div><dt>输出</dt><dd>{{ formatCreditPart(row, "output") }}</dd></div>
+            <div><dt>缓存命中</dt><dd>{{ formatCreditPart(row, "cacheHit") }}</dd></div>
+            <div><dt>合计</dt><dd>{{ formatCredits(row.creditBreakdown?.total ?? row.credits) }}</dd></div>
+          </dl>
         </template>
       </el-table-column>
       <el-table-column label="状态" width="120">
@@ -102,22 +98,14 @@
           </el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="时间" width="180">
+      <el-table-column label="时间" width="220" class-name="col-time">
         <template #default="{ row }">
-          {{ formatDateTime(row.createdAt) }}
+          <span class="time-cell">{{ formatDateTime(row.createdAt) }}</span>
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="120" align="right">
+      <el-table-column label="详情" width="80" align="right">
         <template #default="{ row }">
           <el-button link type="primary" @click="openDetail(row)">详情</el-button>
-          <el-button
-            link
-            type="primary"
-            :loading="downloadingId === row.requestId"
-            @click="downloadContext(row)"
-          >
-            下载
-          </el-button>
         </template>
       </el-table-column>
     </el-table>
@@ -157,6 +145,11 @@
           />
 
           <el-descriptions :column="2" border>
+            <el-descriptions-item label="Request ID">
+              <el-button link type="primary" @click="copyRequestId(detail.requestId)">
+                {{ detail.requestId }}
+              </el-button>
+            </el-descriptions-item>
             <el-descriptions-item label="员工">
               {{ detail.employeeName }} · {{ detail.employeePhone }}
             </el-descriptions-item>
@@ -168,8 +161,6 @@
               {{ detail.providerCode || "—" }} · {{ productTypeText(detail.productType) }}
             </el-descriptions-item>
             <el-descriptions-item label="状态">{{ statusText(detail.status) }}</el-descriptions-item>
-            <el-descriptions-item label="Tokens">{{ tokenTooltip(detail) }}</el-descriptions-item>
-            <el-descriptions-item label="积分">{{ formatCredits(detail.credits) }}</el-descriptions-item>
             <el-descriptions-item label="时间">{{ formatDateTime(detail.createdAt) }}</el-descriptions-item>
             <el-descriptions-item v-if="contextRecord" label="耗时">
               {{ contextRecord.latencyMs ?? "—" }} ms
@@ -184,6 +175,30 @@
               {{ detail.error.httpStatus ?? "—" }} / 上游 {{ detail.error.upstreamStatus ?? "—" }}
             </el-descriptions-item>
           </el-descriptions>
+
+          <el-table :data="consumptionRows" class="consumption-table" border>
+            <el-table-column prop="kind" label="" width="88" />
+            <el-table-column label="输入" align="right" header-align="right">
+              <template #default="{ row }">
+                <span class="metric-num">{{ row.input }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="输出" align="right" header-align="right">
+              <template #default="{ row }">
+                <span class="metric-num">{{ row.output }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="缓存命中" align="right" header-align="right">
+              <template #default="{ row }">
+                <span class="metric-num">{{ row.cacheHit }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="合计" align="right" header-align="right">
+              <template #default="{ row }">
+                <span class="metric-num">{{ row.total }}</span>
+              </template>
+            </el-table-column>
+          </el-table>
 
           <el-alert
             v-if="detail.error"
@@ -262,6 +277,13 @@ import { TABLE_PAGE_SIZE } from "@/lib/table-page";
 type LogStatus = "success" | "upstream_error" | "client_error" | "cancelled";
 type ProductType = "api" | "coding_plan";
 
+interface UsageBreakdown {
+  input: number | null;
+  output: number | null;
+  cacheHit: number | null;
+  total: number | null;
+}
+
 interface LogRow {
   id: number;
   requestId: string;
@@ -278,6 +300,8 @@ interface LogRow {
   completionTokens: number | null;
   totalTokens: number | null;
   cacheReadTokens: number | null;
+  tokenBreakdown?: UsageBreakdown;
+  creditBreakdown?: UsageBreakdown;
   credits: number;
   createdAt: string;
 }
@@ -366,6 +390,27 @@ function orgScopeLabel(row: {
   return row.enterpriseName || unit || "—";
 }
 
+const consumptionRows = computed(() => {
+  const row = detail.value;
+  if (!row) return [];
+  return [
+    {
+      kind: "Tokens",
+      input: formatNumber(row.tokenBreakdown?.input ?? uncachedPrompt(row)),
+      output: formatNumber(row.tokenBreakdown?.output ?? row.completionTokens),
+      cacheHit: formatNumber(row.tokenBreakdown?.cacheHit ?? row.cacheReadTokens),
+      total: formatNumber(row.tokenBreakdown?.total ?? row.totalTokens),
+    },
+    {
+      kind: "积分",
+      input: formatCreditPart(row, "input"),
+      output: formatCreditPart(row, "output"),
+      cacheHit: formatCreditPart(row, "cacheHit"),
+      total: formatCredits(row.creditBreakdown?.total ?? row.credits),
+    },
+  ];
+});
+
 const contextRecord = computed(() => {
   const value = detail.value?.context;
   if (!value || typeof value !== "object") return null;
@@ -419,8 +464,18 @@ function formatCredits(value: number | null | undefined): string {
   return creditFormatter.format(value);
 }
 
-function tokenTooltip(row: Pick<LogRow, "promptTokens" | "completionTokens" | "totalTokens">): string {
-  return `${formatNumber(row.promptTokens)} + ${formatNumber(row.completionTokens)} = ${formatNumber(row.totalTokens)}`;
+function uncachedPrompt(row: Pick<LogRow, "promptTokens" | "cacheReadTokens">): number | null {
+  if (row.promptTokens == null) return null;
+  if (row.cacheReadTokens == null) return row.promptTokens;
+  return Math.max(0, row.promptTokens - Math.min(row.promptTokens, row.cacheReadTokens));
+}
+
+function formatCreditPart(row: LogRow, key: "input" | "output" | "cacheHit"): string {
+  const total = row.creditBreakdown?.total ?? row.credits;
+  const value = row.creditBreakdown?.[key];
+  if (value == null || !Number.isFinite(value)) return "—";
+  if (total == null || !Number.isFinite(total) || total <= 0) return "—";
+  return creditFormatter.format(value);
 }
 
 async function loadOrgOptions(enterpriseId: number) {
@@ -608,5 +663,43 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   gap: 16px;
+}
+.metric-num {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.time-cell {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+:deep(td.col-time > .cell) {
+  overflow: hidden;
+  text-overflow: clip;
+  white-space: nowrap;
+}
+.metric-stack {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.35;
+  font-variant-numeric: tabular-nums;
+}
+.metric-stack div {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+.metric-stack dt {
+  color: #94a3b8;
+  font-weight: 400;
+}
+.metric-stack dd {
+  margin: 0;
+  color: #0f172a;
+  white-space: nowrap;
+}
+.consumption-table {
+  width: 100%;
 }
 </style>

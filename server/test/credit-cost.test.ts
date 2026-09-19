@@ -7,12 +7,14 @@ process.env.JWT_SECRET ??= "unit-test-jwt-secret";
 process.env.CREDENTIAL_ENCRYPT_KEY ??= "unit-test-credential-secret";
 
 const {
+  computeRequestCreditBreakdown,
   computeRequestCredits,
   defaultCreditRateFor,
   intervalPeakMultiplier,
   isPeakHour,
   peakOverlapMs,
   resolveEffectiveCreditRate,
+  tokenBreakdownFromUsage,
 } = await import("../src/lib/relay/credit-cost.js");
 
 const glm53 = {
@@ -130,6 +132,70 @@ test("computeRequestCredits bills uncached and cache-hit tokens separately", () 
       peak,
     ),
     5.14,
+  );
+});
+
+test("tokenBreakdownFromUsage splits uncached input from cache hits", () => {
+  assert.deepEqual(
+    tokenBreakdownFromUsage({
+      promptTokens: 10_000,
+      completionTokens: 1_000,
+      totalTokens: 11_000,
+      cacheReadTokens: 8_000,
+    }),
+    { input: 2_000, output: 1_000, cacheHit: 8_000, total: 11_000 },
+  );
+  assert.deepEqual(
+    tokenBreakdownFromUsage({
+      promptTokens: 100,
+      completionTokens: 0,
+      totalTokens: 100,
+      cacheReadTokens: 250,
+    }),
+    { input: 0, output: 0, cacheHit: 100, total: 100 },
+  );
+  assert.deepEqual(
+    tokenBreakdownFromUsage({
+      promptTokens: 7,
+      completionTokens: 3,
+      totalTokens: 10,
+      cacheReadTokens: null,
+    }),
+    { input: 7, output: 3, cacheHit: null, total: 10 },
+  );
+});
+
+test("computeRequestCreditBreakdown splits input, cache hit, and output", () => {
+  const peak = new Date("2026-08-28T06:00:00.000Z");
+  assert.deepEqual(
+    computeRequestCreditBreakdown(
+      { promptTokens: 10_000, completionTokens: 1_000, cacheReadTokens: 8_000 },
+      glm53,
+      peak,
+    ),
+    { input: 1.38, output: 2.4, cacheHit: 1.36, total: 5.14 },
+  );
+});
+
+test("computeRequestCreditBreakdown matches a Saturday glm-5.3 coding-plan request", () => {
+  const offPeak = new Date("2026-09-19T10:14:23.419Z");
+  assert.equal(isPeakHour(offPeak), false);
+  assert.deepEqual(
+    tokenBreakdownFromUsage({
+      promptTokens: 317_838,
+      completionTokens: 1_692,
+      totalTokens: 319_530,
+      cacheReadTokens: 316_736,
+    }),
+    { input: 1_102, output: 1_692, cacheHit: 316_736, total: 319_530 },
+  );
+  assert.deepEqual(
+    computeRequestCreditBreakdown(
+      { promptTokens: 317_838, completionTokens: 1_692, cacheReadTokens: 316_736 },
+      glm53,
+      offPeak,
+    ),
+    { input: 0.3802, output: 2.0304, cacheHit: 26.9226, total: 29.3332 },
   );
 });
 
