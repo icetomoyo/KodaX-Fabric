@@ -15,7 +15,7 @@
 
     <el-form class="auth-form" label-position="top" @submit.prevent="onSubmit">
       <el-form-item v-if="mode === 'ldap'" label="公司账号">
-        <el-input v-model="username" autocomplete="username" placeholder="如 zhangchuang" />
+        <el-input v-model="username" autocomplete="username" placeholder="公司账号" />
       </el-form-item>
       <el-form-item v-else label="手机号">
         <el-input v-model="phone" autocomplete="username" placeholder="11 位手机号" />
