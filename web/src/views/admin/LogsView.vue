@@ -272,7 +272,6 @@ import {
   type OrgDepartmentNode,
   type OrgTeamNode,
 } from "@/lib/org-employees";
-import { TABLE_PAGE_SIZE } from "@/lib/table-page";
 
 type LogStatus = "success" | "upstream_error" | "client_error" | "cancelled";
 type ProductType = "api" | "coding_plan";
@@ -354,7 +353,7 @@ const employeesLoading = ref(false);
 const items = ref<LogRow[]>([]);
 const total = ref(0);
 const page = ref(1);
-const limit = TABLE_PAGE_SIZE;
+const limit = 5;
 const loading = ref(false);
 const downloadingId = ref<string | null>(null);
 const showDetail = ref(false);
