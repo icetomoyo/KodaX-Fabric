@@ -106,6 +106,13 @@ export const useAuthStore = defineStore("auth", () => {
     return data.data.user as User;
   }
 
+  async function loginLdap(username: string, password: string) {
+    const { data } = await http.post("/api/auth/login-ldap", { username, password });
+    if (!data.success) throw new Error(data.message || "登录失败");
+    setSession(data.data.token, data.data.user);
+    return data.data.user as User;
+  }
+
   async function register(payload: {
     name: string;
     phone: string;
@@ -150,6 +157,7 @@ export const useAuthStore = defineStore("auth", () => {
     setActAs,
     logout,
     login,
+    loginLdap,
     register,
     changePassword,
     fetchMe,

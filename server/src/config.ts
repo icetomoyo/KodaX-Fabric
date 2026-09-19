@@ -99,6 +99,20 @@ const envSchema = z.object({
   SUPPORT_BOT_RATE_LIMIT_PER_HOUR: z.coerce.number().int().min(1).default(30),
   DINGTALK_APP_KEY: optionalSecret(),
   DINGTALK_APP_SECRET: optionalSecret(),
+  LDAP_URL: z
+    .string()
+    .optional()
+    .transform((value) => {
+      const trimmed = value?.trim();
+      return trimmed ? trimmed : undefined;
+    }),
+  LDAP_BASE: z
+    .string()
+    .optional()
+    .transform((value) => {
+      const trimmed = value?.trim();
+      return trimmed ? trimmed : undefined;
+    }),
   SUPPORT_BOT_AGENT_MAX_TURNS: z.coerce.number().int().min(1).max(8).default(4),
   SUPPORT_BOT_AGENT_TIMEOUT_MS: z.coerce.number().int().min(5_000).default(45_000),
 });

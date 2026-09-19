@@ -2,10 +2,22 @@
   <AuthShell>
     <p class="kicker">欢迎回来</p>
     <h2>登录 KodaX Fabric</h2>
-    <p class="lead">Token Hub · 使用注册手机号进入工作台或管理后台。</p>
+    <p class="lead">{{
+      mode === "ldap"
+        ? "Token Hub · 使用公司账号登录（与 Wiki 相同）"
+        : "Token Hub · 使用注册手机号进入工作台或管理后台。"
+    }}</p>
+
+    <el-radio-group v-model="mode" class="login-mode">
+      <el-radio-button value="ldap">LDAP登录</el-radio-button>
+      <el-radio-button value="account">账户登录</el-radio-button>
+    </el-radio-group>
 
     <el-form class="auth-form" label-position="top" @submit.prevent="onSubmit">
-      <el-form-item label="手机号">
+      <el-form-item v-if="mode === 'ldap'" label="公司账号">
+        <el-input v-model="username" autocomplete="username" placeholder="如 zhangchuang" />
+      </el-form-item>
+      <el-form-item v-else label="手机号">
         <el-input v-model="phone" autocomplete="username" placeholder="11 位手机号" />
       </el-form-item>
       <el-form-item label="密码">
@@ -24,7 +36,7 @@
       </el-form-item>
     </el-form>
 
-    <p class="switch">
+    <p v-if="mode === 'account'" class="switch">
       还没有账号？
       <router-link to="/register">申请注册</router-link>
     </p>
@@ -39,6 +51,8 @@ import { homePathForUser } from "@/lib/home";
 import { useAuthStore } from "@/stores/auth";
 import AuthShell from "@/views/AuthShell.vue";
 
+const mode = ref<"ldap" | "account">("ldap");
+const username = ref("");
 const phone = ref("");
 const password = ref("");
 const loading = ref(false);
@@ -66,9 +80,11 @@ function resolveRedirect(role: "employee" | "admin" | "org_admin" | "dept_admin"
 async function onSubmit() {
   loading.value = true;
   try {
-    const user = await auth.login(phone.value.trim(), password.value);
+    const user = mode.value === "ldap"
+      ? await auth.loginLdap(username.value.trim(), password.value)
+      : await auth.login(phone.value.trim(), password.value);
     ElMessage.success("登录成功");
-    if (user.mustChangePassword) {
+    if (mode.value !== "ldap" && user.mustChangePassword) {
       await router.replace("/change-password");
       return;
     }
@@ -103,10 +119,14 @@ h2 {
 }
 
 .lead {
-  margin: 0 0 28px;
+  margin: 0 0 20px;
   color: #64748b;
   font-size: 14px;
   line-height: 1.6;
+}
+
+.login-mode {
+  margin-bottom: 20px;
 }
 
 .switch {

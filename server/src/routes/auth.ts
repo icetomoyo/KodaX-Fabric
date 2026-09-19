@@ -1,4 +1,4 @@
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../db/client.js";
@@ -10,6 +10,8 @@ import {
   verifyPassword,
 } from "../lib/password.js";
 import { writeOpsAudit } from "../lib/ops-audit.js";
+import { authenticateLdapUser, matchEmployeeForLdapPerson } from "../lib/ldap-auth.js";
+import { env } from "../config.js";
 import { requireSession } from "../middleware/auth.js";
 
 function publicEmployee(
@@ -20,6 +22,7 @@ function publicEmployee(
     enterpriseId?: number | null;
     trueRole?: typeof row.role;
     actAs?: unknown;
+    mustChangePassword?: boolean;
   },
 ) {
   const role = extras?.role ?? row.role;
@@ -40,7 +43,7 @@ function publicEmployee(
           status: enterprise.status,
         }
       : null,
-    mustChangePassword: row.mustChangePassword,
+    mustChangePassword: extras?.mustChangePassword ?? row.mustChangePassword,
     lastLoginAt: row.lastLoginAt,
     trueRole: extras?.trueRole ?? row.role,
     actAs: extras?.actAs ?? null,
@@ -60,6 +63,57 @@ async function loadEnterprise(enterpriseId: number | null) {
     .where(eq(enterprises.id, enterpriseId))
     .limit(1);
   return enterprise ?? null;
+}
+
+async function issueLoginSession(
+  req: FastifyRequest,
+  reply: FastifyReply,
+  user: typeof employees.$inferSelect,
+  options: { action: string; mustChangePassword: boolean },
+) {
+  if (user.role === "org_admin" || user.role === "dept_admin" || user.role === "team_admin") {
+    const enterprise = await loadEnterprise(user.enterpriseId);
+    if (!enterprise || enterprise.status !== "active") {
+      return reply.code(401).send({ success: false, message: "用户不可用" });
+    }
+  } else if (user.role === "employee" && user.enterpriseId != null) {
+    const enterprise = await loadEnterprise(user.enterpriseId);
+    if (!enterprise || enterprise.status === "disabled") {
+      return reply.code(401).send({ success: false, message: "用户不可用" });
+    }
+  }
+
+  await db
+    .update(employees)
+    .set({ lastLoginAt: new Date(), updatedAt: new Date() })
+    .where(eq(employees.id, user.id));
+
+  const token = await signSession({
+    sub: String(user.id),
+    role: user.role,
+    phone: user.phone,
+    name: user.name,
+    mustChangePassword: options.mustChangePassword,
+    enterpriseId: user.enterpriseId,
+  });
+
+  await writeOpsAudit({
+    actorEmployeeId: user.id,
+    action: options.action,
+    targetType: "employee",
+    targetId: String(user.id),
+    ip: req.ip,
+  });
+
+  return {
+    success: true,
+    data: {
+      token,
+      user: publicEmployee(user, await loadEnterprise(user.enterpriseId), {
+        mustChangePassword: options.mustChangePassword,
+      }),
+    },
+  };
 }
 
 export async function authRoutes(app: FastifyInstance) {
@@ -162,47 +216,64 @@ export async function authRoutes(app: FastifyInstance) {
       return reply.code(401).send({ success: false, message: "手机号或密码错误" });
     }
 
-    if (user.role === "org_admin" || user.role === "dept_admin" || user.role === "team_admin") {
-      const enterprise = await loadEnterprise(user.enterpriseId);
-      if (!enterprise || enterprise.status !== "active") {
-        return reply.code(401).send({ success: false, message: "用户不可用" });
-      }
-    } else if (user.role === "employee" && user.enterpriseId != null) {
-      const enterprise = await loadEnterprise(user.enterpriseId);
-      if (!enterprise || enterprise.status === "disabled") {
-        return reply.code(401).send({ success: false, message: "用户不可用" });
-      }
+    return issueLoginSession(req, reply, user, {
+      action: "auth.login",
+      mustChangePassword: user.mustChangePassword,
+    });
+  });
+
+  app.post("/api/auth/login-ldap", async (req, reply) => {
+    if (!env.LDAP_URL || !env.LDAP_BASE) {
+      return reply.code(503).send({ success: false, message: "未配置 LDAP" });
+    }
+    const body = z
+      .object({
+        username: z.string().trim().min(1).max(64),
+        password: z.string().min(1).max(128),
+      })
+      .safeParse(req.body);
+    if (!body.success) {
+      return reply.code(400).send({ success: false, message: "参数无效" });
     }
 
-    await db
-      .update(employees)
-      .set({ lastLoginAt: new Date(), updatedAt: new Date() })
-      .where(eq(employees.id, user.id));
-
-    const token = await signSession({
-      sub: String(user.id),
-      role: user.role,
-      phone: user.phone,
-      name: user.name,
-      mustChangePassword: user.mustChangePassword,
-      enterpriseId: user.enterpriseId,
+    const person = await authenticateLdapUser({
+      username: body.data.username,
+      password: body.data.password,
+      url: env.LDAP_URL,
+      baseDn: env.LDAP_BASE,
     });
+    if (!person) {
+      return reply.code(401).send({ success: false, message: "公司账号或密码错误" });
+    }
 
-    await writeOpsAudit({
-      actorEmployeeId: user.id,
-      action: "auth.login",
-      targetType: "employee",
-      targetId: String(user.id),
-      ip: req.ip,
+    const directory = await db.select().from(employees);
+    const matched = matchEmployeeForLdapPerson(person, directory);
+    if (!matched) {
+      return reply.code(403).send({
+        success: false,
+        code: "LDAP_USER_NOT_LINKED",
+        message: "公司账号已验证，但系统中没有对应员工，请联系管理员",
+      });
+    }
+    const user = directory.find((row) => row.id === matched.id);
+    if (!user || !isSessionRole(user.role)) {
+      return reply.code(401).send({ success: false, message: "公司账号或密码错误" });
+    }
+    if (user.status === "pending") {
+      return reply.code(403).send({
+        success: false,
+        code: "REGISTRATION_PENDING",
+        message: "注册申请待审核，请等待管理员审核",
+      });
+    }
+    if (user.status !== "active") {
+      return reply.code(401).send({ success: false, message: "公司账号或密码错误" });
+    }
+
+    return issueLoginSession(req, reply, user, {
+      action: "auth.login_ldap",
+      mustChangePassword: false,
     });
-
-    return {
-      success: true,
-      data: {
-        token,
-        user: publicEmployee(user, await loadEnterprise(user.enterpriseId)),
-      },
-    };
   });
 
   app.get("/api/auth/me", { preHandler: [requireSession] }, async (req, reply) => {

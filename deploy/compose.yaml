@@ -82,6 +82,8 @@ services:
       SUPPORT_BOT_UPSTREAM_API_KEY: ${SUPPORT_BOT_UPSTREAM_API_KEY:-}
       DINGTALK_APP_KEY: ${DINGTALK_APP_KEY:-}
       DINGTALK_APP_SECRET: ${DINGTALK_APP_SECRET:-}
+      LDAP_URL: ${LDAP_URL:-}
+      LDAP_BASE: ${LDAP_BASE:-}
     volumes:
       - request_context:/var/lib/tokenhub/request-context
     depends_on:
