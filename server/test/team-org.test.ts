@@ -381,6 +381,37 @@ test("super-admin usage analysis is a dated range board", () => {
   assert.doesNotMatch(view, /value="today"/);
 });
 
+test("KEYS看板 is a six-lane status board under 临时渠道", () => {
+  const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+  const layout = readFileSync(resolve(root, "web/src/layouts/AdminLayout.vue"), "utf8");
+  const router = readFileSync(resolve(root, "web/src/router/index.ts"), "utf8");
+  const view = readFileSync(resolve(root, "web/src/views/admin/CredentialsView.vue"), "utf8");
+  assert.match(
+    layout,
+    /index="\/admin\/temp-channels">临时渠道[\s\S]*index="\/admin\/keys-board">KEYS看板/,
+  );
+  assert.match(router, /path: "keys-board"/);
+  assert.match(router, /name: "admin-keys-board"/);
+  assert.match(view, /route.name === "admin-keys-board"/);
+  assert.match(view, /keys-board-stack/);
+  assert.match(view, /allBoardColumns/);
+  assert.match(view, /class="key-ring"/);
+  assert.match(view, /channelDotColor\(row.productLineId\)/);
+  assert.doesNotMatch(view, /keys-channel-board/);
+  assert.match(view, /lane: "waiting", title: "等候"/);
+  assert.match(view, /lane: "in_use", title: "使用"/);
+  assert.match(view, /lane: "cooling_5h", title: "5 小时冷却"/);
+  assert.match(view, /lane: "cooling_weekly", title: "7 天冷却"/);
+  assert.match(view, /lane: "rate_limit", title: "限流"/);
+  assert.match(view, /lane: "stopped", title: "停用"/);
+  assert.match(view, /keys-lane-grid/);
+  assert.match(view, /placeholder="搜索姓名"/);
+  assert.match(view, /测试全部/);
+  assert.match(view, /connectedNames/);
+  assert.match(layout, /\/admin\/keys-board/);
+  assert.doesNotMatch(view, /class="page-title"/);
+});
+
 test("key binding page is a full canvas with a filter drawer and unbound-key entry", () => {
   const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
   const view = readFileSync(resolve(root, "web/src/views/admin/KeyBindingsView.vue"), "utf8");
@@ -440,6 +471,8 @@ test("admin shell uses org board for all console roles", () => {
   assert.match(layout, />上游</);
   assert.match(layout, /index="\/admin\/channels">渠道/);
   assert.match(layout, /index="\/admin\/seats">席位/);
+  assert.match(layout, /index="\/admin\/temp-channels">临时渠道/);
+  assert.match(layout, /index="\/admin\/keys-board">KEYS看板/);
   assert.match(layout, /index="\/admin\/channel-keys">渠道 KEY/);
   assert.doesNotMatch(layout, /index="\/admin\/credentials">上游渠道/);
   assert.doesNotMatch(layout, /index="\/admin\/departments"/);
@@ -454,6 +487,7 @@ test("admin shell uses org board for all console roles", () => {
   assert.match(home, /return \"\/admin\"/);
   assert.doesNotMatch(router, /admin-projects/);
   assert.match(router, /admin-keys/);
+  assert.match(router, /name: "admin-keys-board"/);
   assert.match(router, /admin-guide/);
   assert.match(router, /team_admin/);
   assert.match(router, /name: "admin-enterprise-dingtalk"[\s\S]*roles: \["admin"\]/);

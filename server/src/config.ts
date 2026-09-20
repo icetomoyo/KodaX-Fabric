@@ -47,7 +47,7 @@ const envSchema = z.object({
   CREDENTIAL_ENCRYPT_KEY: z.string().min(16),
   RELAY_UPSTREAM_TIMEOUT_MS: z.coerce.number().int().min(1_000).default(300_000),
   RELAY_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(10).default(5),
-  RELAY_COOLDOWN_SECONDS: z.coerce.number().int().min(1).max(3_600).default(60),
+  RELAY_COOLDOWN_SECONDS: z.coerce.number().int().min(1).max(3_600).default(300),
   RELAY_QUOTA_COOLDOWN_SECONDS: z.coerce.number().int().min(1).max(86_400).default(1_800),
   RELAY_SAFEGUARD_RPM: z.coerce.number().int().min(1).default(60),
   RELAY_SAFEGUARD_MAX_CONCURRENCY: z.coerce.number().int().min(1).default(5),

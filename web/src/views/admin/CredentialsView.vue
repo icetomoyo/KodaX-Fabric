@@ -1,6 +1,100 @@
 <template>
-  <div class="credentials-page">
-    <section class="page-card credentials-shell">
+  <div :class="pageKind === 'board' ? 'keys-board-page' : 'credentials-page'">
+    <template v-if="pageKind === 'board'">
+      <div class="keys-board-toolbar">
+        <span class="keys-board-toolbar-count">
+          {{ boardVisibleRows.length }}{{ boardSearch.trim() ? ` / ${rows.length}` : "" }} 个 Key
+        </span>
+        <el-input
+          v-model="boardSearch"
+          class="keys-board-search"
+          clearable
+          placeholder="搜索姓名"
+        />
+        <el-button
+          v-if="canWrite"
+          :loading="batchTesting"
+          :disabled="!boardVisibleRows.length"
+          @click="batchTestCredentials"
+        >
+          {{ batchTesting ? `测试中 ${batchTestProgress.done}/${batchTestProgress.total}` : "测试全部" }}
+        </el-button>
+        <el-button :loading="loading" @click="refreshAll">刷新</el-button>
+      </div>
+      <div v-loading="loading" class="keys-board-stack">
+        <el-empty
+          v-if="!loading && !rows.length"
+          description="暂无 Key"
+          :image-size="96"
+        />
+        <el-empty
+          v-else-if="!loading && !boardVisibleRows.length"
+          description="没有匹配的人"
+          :image-size="96"
+        />
+        <div v-else class="keys-lane-grid">
+          <div
+            v-for="column in allBoardColumns"
+            :key="column.lane"
+            class="kanban-column"
+            :class="{
+              droppable: canWrite && column.droppable && draggingId != null,
+              'drag-over': isDragOver(0, column.lane),
+            }"
+            @dragover="onColumnDragOver(0, column, $event)"
+            @dragleave="onColumnDragLeave(0, column)"
+            @drop.prevent="onColumnDrop(column)"
+          >
+            <header class="kanban-column-head" :class="`is-${column.lane}`">
+              <span class="kanban-column-title">{{ column.title }}</span>
+              <span class="kanban-count">{{ column.keys.length }}</span>
+            </header>
+            <div class="kanban-cards is-rings">
+              <button
+                v-for="row in column.keys"
+                :key="row.id"
+                type="button"
+                class="key-ring"
+                :class="{ dragging: draggingId === row.id, 'is-testing': isTesting(row.id) }"
+                :draggable="canWrite"
+                :title="keyRingTitle(row)"
+                @dragstart="onCardDragStart(row, $event)"
+                @dragend="onCardDragEnd"
+                @click="openKeyDetails(row)"
+              >
+                <svg class="key-ring-svg" viewBox="0 0 72 72" aria-hidden="true">
+                  <circle class="key-ring-track" cx="36" cy="36" r="30" />
+                  <circle class="key-ring-track inner" cx="36" cy="36" r="21" />
+                  <circle
+                    class="key-ring-progress outer"
+                    cx="36"
+                    cy="36"
+                    r="30"
+                    :stroke="quotaRingColor(quotaRingPercent(row.weeklyCredits, row.weeklyCreditLimit), 'weekly')"
+                    :stroke-dasharray="quotaRingDash(row.weeklyCredits, row.weeklyCreditLimit, 30)"
+                  />
+                  <circle
+                    class="key-ring-progress inner"
+                    cx="36"
+                    cy="36"
+                    r="21"
+                    :stroke="quotaRingColor(quotaRingPercent(row.fiveHourCredits, row.fiveHourCreditLimit), 'five')"
+                    :stroke-dasharray="quotaRingDash(row.fiveHourCredits, row.fiveHourCreditLimit, 21)"
+                  />
+                  <circle cx="36" cy="36" r="12" :fill="channelDotColor(row.productLineId)" />
+                </svg>
+                <span class="key-ring-pct">
+                  <span v-if="isTesting(row.id)" class="latency-spinner" aria-hidden="true" />
+                  <template v-else>{{ keyRingCaption(row) }}</template>
+                </span>
+              </button>
+              <div v-if="!column.keys.length" class="kanban-empty">暂无 Key</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </template>
+    <section v-else class="page-card credentials-shell">
       <div class="page-head">
         <div class="head-actions">
           <el-button :loading="loading" @click="refreshAll">刷新</el-button>
@@ -20,7 +114,7 @@
 
           <el-empty
             v-if="!loading && !channels.length"
-            :description="pageKind === 'keys' ? '暂无渠道' : '暂无上游渠道'"
+            :description="pageKind === 'channels' ? '暂无上游渠道' : '暂无渠道'"
             :image-size="72"
           >
             <el-button v-if="canWrite && pageKind === 'channels'" type="primary" @click="openCreateChannel">
@@ -109,7 +203,7 @@
                     <span class="board-stat">已停用 <strong>{{ boardStats.disabled }}</strong></span>
                   </div>
                 </div>
-                <div v-if="canWrite" class="batch-actions">
+                <div v-if="canWrite && pageKind === 'keys'" class="batch-actions">
                   <el-button
                     type="primary"
                     plain
@@ -135,10 +229,10 @@
                   class="kanban-column"
                   :class="{
                     droppable: canWrite && column.droppable && draggingId != null,
-                    'drag-over': dragOverLane === column.lane,
+                    'drag-over': selectedChannel ? isDragOver(selectedChannel.id, column.lane) : false,
                   }"
-                  @dragover="onColumnDragOver(column, $event)"
-                  @dragleave="onColumnDragLeave(column)"
+                  @dragover="onColumnDragOver(selectedChannel.id, column, $event)"
+                  @dragleave="onColumnDragLeave(selectedChannel.id, column)"
                   @drop.prevent="onColumnDrop(column)"
                 >
                   <header class="kanban-column-head" :class="`is-${column.lane}`">
@@ -953,6 +1047,7 @@ type CredentialRow = {
   fiveHourCredits: number;
   weeklyCredits: number;
   binding: CredentialBinding | null;
+  connectedNames?: string[];
   createdAt?: string;
   updatedAt?: string;
   meta: {
@@ -1081,7 +1176,7 @@ type ParsedKey = {
   hasCustomLabel: boolean;
 };
 
-type BoardLane = "in_use" | "stopped";
+type BoardLane = "waiting" | "in_use" | "cooling_5h" | "cooling_weekly" | "rate_limit" | "stopped";
 
 type BoardColumn = {
   lane: BoardLane;
@@ -1094,9 +1189,11 @@ const route = useRoute();
 const router = useRouter();
 const auth = useAuthStore();
 const canWrite = computed(() => auth.isSuperAdmin);
-const pageKind = computed<"channels" | "keys">(() =>
-  route.name === "admin-channels" ? "channels" : "keys",
-);
+const pageKind = computed<"channels" | "keys" | "board">(() => {
+  if (route.name === "admin-channels") return "channels";
+  if (route.name === "admin-keys-board") return "board";
+  return "keys";
+});
 
 const rows = ref<CredentialRow[]>([]);
 const listedProductLines = ref<ListedProductLine[]>([]);
@@ -1104,8 +1201,9 @@ const templates = ref<ProviderTemplate[]>([]);
 const loading = ref(false);
 const selectedProductLineId = ref<number | null>(null);
 const syncingQuery = ref(false);
+const boardSearch = ref("");
 const draggingId = ref<number | null>(null);
-const dragOverLane = ref<BoardLane | null>(null);
+const dragOverLane = ref<{ channelId: number; lane: BoardLane } | null>(null);
 
 const showBulkForm = ref(false);
 const bulkSaving = ref(false);
@@ -1287,17 +1385,138 @@ const BOARD_COLUMN_DEFS: ReadonlyArray<Pick<BoardColumn, "lane" | "title" | "dro
   { lane: "stopped", title: "停用", droppable: true },
 ];
 
-function boardLaneOf(status: CredentialStatus): BoardLane {
-  return status === "active" || status === "cooling" ? "in_use" : "stopped";
+const STATUS_BOARD_COLUMN_DEFS: ReadonlyArray<Pick<BoardColumn, "lane" | "title" | "droppable">> = [
+  { lane: "waiting", title: "等候", droppable: true },
+  { lane: "in_use", title: "使用", droppable: false },
+  { lane: "cooling_5h", title: "5 小时冷却", droppable: false },
+  { lane: "cooling_weekly", title: "7 天冷却", droppable: false },
+  { lane: "rate_limit", title: "限流", droppable: false },
+  { lane: "stopped", title: "停用", droppable: true },
+];
+
+const WEEKLY_COOL_REMAINING_MS = 6 * 3_600_000;
+
+function isShortRateLimitCooling(row: CredentialRow): boolean {
+  const message = row.lastError ?? "";
+  if (/使用上限|5\s*小时|7\s*天|周积分|每周|余额不足/.test(message)) return false;
+  return message.includes("上游限流");
 }
 
-const boardColumns = computed<BoardColumn[]>(() => {
-  const keys = selectedChannel.value?.keys ?? [];
-  return BOARD_COLUMN_DEFS.map((column) => ({
+function coolingLaneOf(row: CredentialRow): "cooling_5h" | "cooling_weekly" {
+  const message = row.lastError ?? "";
+  if (/7\s*天|周积分|每周/.test(message)) return "cooling_weekly";
+  if (/5\s*小时/.test(message)) return "cooling_5h";
+  if (row.weeklyCreditLimit != null && row.weeklyCredits >= row.weeklyCreditLimit * 0.95) {
+    return "cooling_weekly";
+  }
+  if (row.coolUntil) {
+    const remaining = new Date(row.coolUntil).getTime() - Date.now();
+    if (Number.isFinite(remaining) && remaining > WEEKLY_COOL_REMAINING_MS) {
+      return "cooling_weekly";
+    }
+  }
+  return "cooling_5h";
+}
+
+function boardLaneOf(row: CredentialRow): BoardLane {
+  const status = visibleStatus(row);
+  if (pageKind.value !== "board") {
+    return status === "active" || status === "cooling" ? "in_use" : "stopped";
+  }
+  if (status === "disabled" || status === "auto_disabled") return "stopped";
+  if (status === "cooling") {
+    if (isShortRateLimitCooling(row)) return "rate_limit";
+    return coolingLaneOf(row);
+  }
+  if (row.binding) return "in_use";
+  return "waiting";
+}
+
+function columnsForKeys(keys: CredentialRow[]): BoardColumn[] {
+  const defs = pageKind.value === "board" ? STATUS_BOARD_COLUMN_DEFS : BOARD_COLUMN_DEFS;
+  return defs.map((column) => ({
     ...column,
-    keys: keys.filter((row) => boardLaneOf(visibleStatus(row)) === column.lane),
+    keys: keys.filter((row) => boardLaneOf(row) === column.lane),
   }));
-});
+}
+
+const boardColumns = computed<BoardColumn[]>(() =>
+  columnsForKeys(selectedChannel.value?.keys ?? []),
+);
+
+const allBoardColumns = computed<BoardColumn[]>(() => columnsForKeys(boardVisibleRows.value));
+
+function credentialMatchesName(row: CredentialRow, query: string): boolean {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return true;
+  const haystacks = [
+    row.label,
+    row.tag,
+    row.binding?.scopeName,
+    ...(row.connectedNames ?? []),
+  ];
+  return haystacks.some((value) => String(value ?? "").toLowerCase().includes(needle));
+}
+
+const boardVisibleRows = computed(() =>
+  rows.value.filter((row) => credentialMatchesName(row, boardSearch.value)),
+);
+
+const CHANNEL_DOT_PALETTE = [
+  "#6366f1",
+  "#06b6d4",
+  "#8b5cf6",
+  "#10b981",
+  "#f59e0b",
+  "#ec4899",
+  "#3b82f6",
+  "#14b8a6",
+  "#f97316",
+  "#84cc16",
+] as const;
+
+function channelDotColor(productLineId: number): string {
+  const index = Math.abs(productLineId) % CHANNEL_DOT_PALETTE.length;
+  return CHANNEL_DOT_PALETTE[index] ?? CHANNEL_DOT_PALETTE[0];
+}
+
+function quotaRingPercent(used: number, limit: number | null): number {
+  if (limit == null || limit <= 0) return 0;
+  return usagePercent(used, limit);
+}
+
+function quotaRingColor(percent: number, kind: "five" | "weekly"): string {
+  if (percent >= 95) return "#f43f5e";
+  if (percent >= 85) return "#f59e0b";
+  return kind === "five" ? "#38bdf8" : "#34d399";
+}
+
+function quotaRingDash(used: number, limit: number | null, radius: number): string {
+  const circumference = 2 * Math.PI * radius;
+  const filled = (quotaRingPercent(used, limit) / 100) * circumference;
+  return `${filled} ${circumference}`;
+}
+
+function keyRingCaption(row: CredentialRow): string {
+  if (row.weeklyCreditLimit != null) {
+    return `${Math.round(quotaRingPercent(row.weeklyCredits, row.weeklyCreditLimit))}%`;
+  }
+  if (row.fiveHourCreditLimit != null) {
+    return `${Math.round(quotaRingPercent(row.fiveHourCredits, row.fiveHourCreditLimit))}%`;
+  }
+  return "—";
+}
+
+function keyRingTitle(row: CredentialRow): string {
+  const five = row.fiveHourCreditLimit == null
+    ? "5 小时 不限"
+    : `5 小时 ${formatQuotaPair(row.fiveHourCredits, row.fiveHourCreditLimit)}`;
+  const week = row.weeklyCreditLimit == null
+    ? "7 天 不限"
+    : `7 天 ${formatQuotaPair(row.weeklyCredits, row.weeklyCreditLimit)}`;
+  const people = (row.connectedNames ?? []).join("、") || row.binding?.scopeName || "未连接";
+  return `${channelDisplayName(row)} · •••• ${row.secretSuffix}\n${people}\n${five}\n${week}`;
+}
 
 const boardStats = computed(() => {
   const keys = selectedChannel.value?.keys ?? [];
@@ -1406,6 +1625,15 @@ function parseQueryId(value: unknown): number | null {
 }
 
 function reconcileSelection() {
+  if (pageKind.value === "board") {
+    const requestedChannelId = parseQueryId(route.query.channelId);
+    selectedProductLineId.value =
+      requestedChannelId != null && channels.value.some((channel) => channel.id === requestedChannelId)
+        ? requestedChannelId
+        : null;
+    return;
+  }
+
   if (!channels.value.length) {
     selectedProductLineId.value = null;
     syncSelectedToQuery(null);
@@ -1444,8 +1672,8 @@ function syncSelectedToQuery(id: number | null) {
 watch(rows, reconcileSelection, { deep: false });
 
 watch(selectedProductLineId, (id) => {
-  syncSelectedToQuery(id);
-  if (detailRow.value && detailRow.value.productLineId !== id) {
+  if (pageKind.value !== "board") syncSelectedToQuery(id);
+  if (detailRow.value && id != null && detailRow.value.productLineId !== id) {
     showKeyDetails.value = false;
   }
   showChannelDetails.value = false;
@@ -1485,15 +1713,21 @@ function onCardDragEnd() {
   dragOverLane.value = null;
 }
 
-function onColumnDragOver(column: BoardColumn, event: DragEvent) {
+function isDragOver(channelId: number, lane: BoardLane): boolean {
+  return dragOverLane.value?.channelId === channelId && dragOverLane.value.lane === lane;
+}
+
+function onColumnDragOver(channelId: number, column: BoardColumn, event: DragEvent) {
   if (!canWrite.value || draggingId.value == null || !column.droppable) return;
   event.preventDefault();
   if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
-  dragOverLane.value = column.lane;
+  dragOverLane.value = { channelId, lane: column.lane };
 }
 
-function onColumnDragLeave(column: BoardColumn) {
-  if (dragOverLane.value === column.lane) dragOverLane.value = null;
+function onColumnDragLeave(channelId: number, column: BoardColumn) {
+  if (dragOverLane.value?.channelId === channelId && dragOverLane.value.lane === column.lane) {
+    dragOverLane.value = null;
+  }
 }
 
 async function onColumnDrop(column: BoardColumn) {
@@ -1503,8 +1737,12 @@ async function onColumnDrop(column: BoardColumn) {
   if (id == null || !canWrite.value || !column.droppable) return;
   const row = rows.value.find((item) => item.id === id);
   if (!row) return;
-  if (boardLaneOf(visibleStatus(row)) === column.lane) return;
-  await setStatus(row, column.lane === "in_use" ? "active" : "disabled");
+  if (boardLaneOf(row) === column.lane) return;
+  if (column.lane === "stopped") {
+    await setStatus(row, "disabled");
+    return;
+  }
+  if (column.lane === "waiting") await setStatus(row, "active");
 }
 
 function getErrorMessage(error: unknown, fallback: string): string {
@@ -2527,6 +2765,7 @@ async function saveBulkKeys() {
 
 function preferredProtocol(row: CredentialRow): RelayProtocol {
   const supported = credentialProtocols(row);
+  if (supported.includes("openai_chat")) return "openai_chat";
   const previous = lastTest(row)?.protocol;
   if (previous && supported.includes(previous)) return previous;
   return supported[0] ?? "openai_chat";
@@ -2571,7 +2810,9 @@ async function runWithConcurrency<T>(
 }
 
 async function batchTestCredentials() {
-  const targets = [...(selectedChannel.value?.keys ?? [])];
+  const targets = pageKind.value === "board"
+    ? [...boardVisibleRows.value]
+    : [...(selectedChannel.value?.keys ?? [])];
   if (!canWrite.value || !targets.length || batchTesting.value) return;
   batchTesting.value = true;
   batchTestProgress.done = 0;
@@ -2694,6 +2935,164 @@ onMounted(refreshAll);
 </script>
 
 <style scoped>
+.keys-board-page {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+  background: #f1f5f9;
+}
+
+.keys-board-toolbar {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  padding: 10px 16px;
+  background: #fff;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.keys-board-toolbar-count {
+  margin-right: auto;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.keys-board-search {
+  width: 200px;
+}
+
+.keys-board-stack {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  background: #fff;
+}
+
+.keys-lane-grid {
+  display: grid;
+  flex: 1;
+  align-items: stretch;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  padding: 8px;
+  background: #fff;
+}
+
+.keys-lane-grid > .kanban-column {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  height: auto;
+  overflow: hidden;
+}
+
+.keys-lane-grid .kanban-column-head {
+  flex-shrink: 0;
+}
+
+.keys-lane-grid .kanban-cards.is-rings {
+  display: grid;
+  flex: 1;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-content: start;
+  gap: 8px;
+  min-width: 0;
+  min-height: 0;
+  padding: 10px 8px 16px;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.keys-lane-grid .kanban-empty {
+  grid-column: 1 / -1;
+}
+
+.keys-lane-grid .key-ring {
+  width: auto;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.keys-lane-grid .key-ring-svg {
+  width: 100%;
+  max-width: 56px;
+  height: auto;
+  aspect-ratio: 1;
+}
+
+.key-ring {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  width: 72px;
+  margin: 0;
+  padding: 8px 4px 6px;
+  border: 0;
+  border-radius: 18px;
+  background: #111827;
+  color: #e2e8f0;
+  cursor: pointer;
+  appearance: none;
+}
+
+.key-ring.dragging,
+.key-ring.is-testing {
+  opacity: 0.55;
+}
+
+.key-ring-svg {
+  display: block;
+  width: 56px;
+  height: 56px;
+}
+
+.key-ring-track {
+  fill: none;
+  stroke: #1e293b;
+  stroke-width: 7;
+}
+
+.key-ring-track.inner {
+  stroke-width: 5.5;
+}
+
+.key-ring-progress {
+  fill: none;
+  stroke-width: 7;
+  stroke-linecap: round;
+  transform: rotate(-90deg);
+  transform-origin: 36px 36px;
+}
+
+.key-ring-progress.inner {
+  stroke-width: 5.5;
+}
+
+.key-ring-pct {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 12px;
+  color: #cbd5e1;
+  font-size: 11px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
 .credentials-page {
   display: flex;
   flex: 1;
@@ -3150,8 +3549,12 @@ onMounted(refreshAll);
   font-weight: 650;
 }
 
+.kanban-column-head.is-waiting { color: #64748b; }
 .kanban-column-head.is-in_use { color: #15803d; }
-.kanban-column-head.is-stopped { color: #64748b; }
+.kanban-column-head.is-cooling_5h { color: #d97706; }
+.kanban-column-head.is-cooling_weekly { color: #b45309; }
+.kanban-column-head.is-rate_limit { color: #2563eb; }
+.kanban-column-head.is-stopped { color: #94a3b8; }
 
 .kanban-count {
   display: inline-flex;
@@ -3897,6 +4300,10 @@ onMounted(refreshAll);
   .info-grid,
   .kanban-board {
     grid-template-columns: 1fr;
+  }
+
+  .keys-lane-grid {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
   }
 
 }

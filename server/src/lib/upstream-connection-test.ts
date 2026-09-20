@@ -1,3 +1,5 @@
+import { GLM_TEXT_CATALOG_MODEL } from "./discovered-models.js";
+import { extractUpstreamUsageCap } from "./glm-error-codes.js";
 import { getProviderTemplate, isTestableUpstreamUrl } from "./provider-templates.js";
 import {
   DEFAULT_RELAY_PROTOCOL,
@@ -6,9 +8,12 @@ import {
 import {
   buildRelayUpstreamHeaders,
   buildRelayUpstreamUrl,
+  type RelayUpstreamOperation,
 } from "./relay/upstream.js";
 
-export const UPSTREAM_CONNECTION_TEST_TIMEOUT_MS = 12_000;
+export const UPSTREAM_CONNECTION_TEST_TIMEOUT_MS = 20_000;
+const TEST_PROMPT = "ping";
+const TEST_MAX_TOKENS = 8;
 
 export type UpstreamBusinessFailure = {
   code: string | null;
@@ -24,6 +29,7 @@ export type UpstreamConnectionTestResult = {
   models: string[];
   message: string;
   protocol: RelayProtocol;
+  rawBody: string | null;
 };
 
 function nonEmptyText(value: unknown): string | null {
@@ -111,6 +117,8 @@ export function resolveUpstreamTestProtocol(
     throw new Error("该渠道未声明任何支持协议");
   }
 
+  if (supported.includes("openai_chat")) return "openai_chat";
+
   if (preferred) {
     if (!supported.includes(preferred)) {
       throw new Error("该渠道未声明支持所选协议");
@@ -118,10 +126,61 @@ export function resolveUpstreamTestProtocol(
     return preferred;
   }
 
-  if (supported.includes("anthropic_messages")) return "anthropic_messages";
   return supported.includes(DEFAULT_RELAY_PROTOCOL)
     ? DEFAULT_RELAY_PROTOCOL
     : supported[0];
+}
+
+export function resolveUpstreamTestModel(
+  providerCode: string,
+  discoveredModels?: readonly string[] | null,
+): string {
+  const discovered = discoveredModels
+    ?.map((name) => name.trim())
+    .find((name) => name.length > 0);
+  if (discovered) return discovered;
+  if (providerCode === "glm") return GLM_TEXT_CATALOG_MODEL;
+  if (providerCode === "deepseek") return "deepseek-chat";
+  throw new Error("无法确定测试模型");
+}
+
+function inferenceOperation(protocol: RelayProtocol): RelayUpstreamOperation {
+  if (protocol === "anthropic_messages") return "messages";
+  if (protocol === "openai_responses") return "responses";
+  return "chat_completions";
+}
+
+export function buildUpstreamTestBody(
+  protocol: RelayProtocol,
+  model: string,
+): Record<string, unknown> {
+  if (protocol === "anthropic_messages") {
+    return {
+      model,
+      max_tokens: TEST_MAX_TOKENS,
+      messages: [{ role: "user", content: TEST_PROMPT }],
+    };
+  }
+  if (protocol === "openai_responses") {
+    return {
+      model,
+      input: TEST_PROMPT,
+      max_output_tokens: TEST_MAX_TOKENS,
+    };
+  }
+  return {
+    model,
+    messages: [{ role: "user", content: TEST_PROMPT }],
+    max_tokens: TEST_MAX_TOKENS,
+    stream: false,
+  };
+}
+
+function uniqueModels(model: string, discovered?: readonly string[] | null): string[] {
+  const names = [model, ...(discovered ?? [])]
+    .map((name) => name.trim())
+    .filter((name) => name.length > 0);
+  return [...new Set(names)].slice(0, 200);
 }
 
 export async function probeUpstreamModels(input: {
@@ -130,6 +189,8 @@ export async function probeUpstreamModels(input: {
   baseUrl: string;
   authStyle: string;
   secret: string;
+  model?: string;
+  discoveredModels?: readonly string[] | null;
   timeoutMs?: number;
   now?: Date;
   fetchImpl?: typeof fetch;
@@ -142,21 +203,27 @@ export async function probeUpstreamModels(input: {
     );
   }
 
+  const model = input.model?.trim() || resolveUpstreamTestModel(
+    input.providerCode,
+    input.discoveredModels,
+  );
   const timeoutMs = input.timeoutMs ?? UPSTREAM_CONNECTION_TEST_TIMEOUT_MS;
   const testedAt = (input.now ?? new Date()).toISOString();
   const startedAt = Date.now();
   const fetchImpl = input.fetchImpl ?? fetch;
+  const operation = inferenceOperation(input.protocol);
 
   try {
     const response = await fetchImpl(
-      buildRelayUpstreamUrl(input.baseUrl, input.protocol, "models"),
+      buildRelayUpstreamUrl(input.baseUrl, input.protocol, operation),
       {
-        method: "GET",
+        method: "POST",
         headers: buildRelayUpstreamHeaders({
           protocol: input.protocol,
           authStyle: input.authStyle,
           secret: input.secret,
         }),
+        body: JSON.stringify(buildUpstreamTestBody(input.protocol, model)),
         redirect: "manual",
         signal: AbortSignal.timeout(timeoutMs),
       },
@@ -168,9 +235,10 @@ export async function probeUpstreamModels(input: {
     } catch {
       payload = null;
     }
+    const usageCap = extractUpstreamUsageCap(payload);
     const businessFailure = parseUpstreamBusinessFailure(payload);
-    const connectionOk = response.ok && businessFailure === null;
-    const models = connectionOk ? parseUpstreamModels(payload) : [];
+    const connectionOk = response.ok && businessFailure === null && usageCap === null;
+    const models = connectionOk ? uniqueModels(model, input.discoveredModels) : [];
     return {
       ok: connectionOk,
       testedAt,
@@ -179,13 +247,14 @@ export async function probeUpstreamModels(input: {
       modelCount: models.length,
       models,
       protocol: input.protocol,
+      rawBody: raw,
       message: connectionOk
-        ? models.length
-          ? `连接成功（${input.protocol}），发现 ${models.length} 个模型`
-          : `连接成功（${input.protocol}），上游未返回可识别的模型列表`
-        : response.ok && businessFailure
-          ? formatUpstreamBusinessFailure(businessFailure)
-          : summarizeUpstreamHttpError(response.status, raw),
+        ? `推理成功（${input.protocol} / ${model}）`
+        : usageCap
+          ? summarizeUpstreamHttpError(response.status || 429, raw)
+          : response.ok && businessFailure
+            ? formatUpstreamBusinessFailure(businessFailure)
+            : summarizeUpstreamHttpError(response.status, raw),
     };
   } catch (error) {
     const timeoutSeconds = Math.round(timeoutMs / 1000);
@@ -202,6 +271,7 @@ export async function probeUpstreamModels(input: {
       modelCount: 0,
       models: [],
       protocol: input.protocol,
+      rawBody: null,
       message,
     };
   }

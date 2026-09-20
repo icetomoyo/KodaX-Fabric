@@ -3,6 +3,7 @@ import { and, asc, desc, eq, gte, inArray, ne, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../../db/client.js";
 import {
+  credentialBindingMembers,
   credentialBindings,
   departments,
   employees,
@@ -14,7 +15,12 @@ import {
   teams,
   upstreamCredentials,
 } from "../../db/schema/index.js";
-import { getCredentialQuotaUsage } from "../../lib/relay/credential-quota.js";
+import { env } from "../../config.js";
+import {
+  getCredentialQuotaUsage,
+  learnedCapResetFromMeta,
+} from "../../lib/relay/credential-quota.js";
+import { resolveRelayRateLimitCooldown } from "../../lib/relay/upstream.js";
 import {
   describeBulkCreateLocator,
   inspectCredentialSecretDuplicates,
@@ -157,6 +163,51 @@ async function loadCredentialBindingViews(
     });
   }
   return views;
+}
+
+function pushUniqueName(names: string[], value: string | null | undefined) {
+  const name = value?.trim();
+  if (name && !names.includes(name)) names.push(name);
+}
+
+async function loadConnectedNamesByCredential(
+  rows: ReadonlyArray<{ id: number; meta: unknown }>,
+): Promise<Map<number, string[]>> {
+  const connected = new Map<number, string[]>();
+  if (rows.length === 0) return connected;
+  const credentialIds = rows.map((row) => row.id);
+  for (const id of credentialIds) connected.set(id, []);
+
+  const memberRows = await db
+    .select({
+      credentialId: credentialBindings.credentialId,
+      name: employees.name,
+    })
+    .from(credentialBindingMembers)
+    .innerJoin(credentialBindings, eq(credentialBindings.id, credentialBindingMembers.bindingId))
+    .innerJoin(employees, eq(employees.id, credentialBindingMembers.employeeId))
+    .where(inArray(credentialBindings.credentialId, credentialIds));
+  for (const row of memberRows) {
+    pushUniqueName(connected.get(row.credentialId) ?? [], row.name);
+  }
+
+  const submitterIdByCredential = new Map<number, number>();
+  for (const row of rows) {
+    const employeeId = submittedByEmployeeIdFromMeta(row.meta);
+    if (employeeId != null) submitterIdByCredential.set(row.id, employeeId);
+  }
+  const submitterIds = [...new Set(submitterIdByCredential.values())];
+  if (submitterIds.length) {
+    const people = await db
+      .select({ id: employees.id, name: employees.name })
+      .from(employees)
+      .where(inArray(employees.id, submitterIds));
+    const nameById = new Map(people.map((person) => [person.id, person.name]));
+    for (const [credentialId, employeeId] of submitterIdByCredential) {
+      pushUniqueName(connected.get(credentialId) ?? [], nameById.get(employeeId));
+    }
+  }
+  return connected;
 }
 
 const upstreamSecretSchema = z
@@ -471,6 +522,14 @@ async function testCredentialConnection(
     throw new Error("该渠道缺少所选协议的端点配置");
   }
 
+  const previousMeta = credential.meta && typeof credential.meta === "object"
+    ? credential.meta as Record<string, unknown>
+    : {};
+  const discoveredModels = Array.isArray(previousMeta.discoveredModels)
+    ? previousMeta.discoveredModels.filter((name): name is string =>
+      typeof name === "string" && name.trim().length > 0)
+    : [];
+
   let result: CredentialTestResult;
   try {
     const secret = decryptSecret(credential.secretEncrypted);
@@ -480,12 +539,14 @@ async function testCredentialConnection(
       baseUrl: upstreamConfig.baseUrl,
       authStyle: upstreamConfig.authStyle,
       secret,
+      discoveredModels,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (
       message === "当前仅支持对已确认供应商的官方 HTTPS 地址进行连通性测试"
       || message === "自定义渠道缺少可测试的上游地址"
+      || message === "无法确定测试模型"
     ) {
       throw error;
     }
@@ -497,13 +558,27 @@ async function testCredentialConnection(
       modelCount: 0,
       models: [],
       protocol,
+      rawBody: null,
       message,
     };
   }
 
-  const previousMeta = credential.meta && typeof credential.meta === "object"
-    ? credential.meta as Record<string, unknown>
-    : {};
+  const now = new Date();
+  const cooldown = resolveRelayRateLimitCooldown(
+    result.rawBody,
+    env.RELAY_COOLDOWN_SECONDS,
+    env.RELAY_QUOTA_COOLDOWN_SECONDS,
+    now,
+    learnedCapResetFromMeta(previousMeta),
+  );
+  const shouldCool = !result.ok
+    && (result.httpStatus === 429 || cooldown.quotaExhausted || cooldown.cap != null);
+  const coolUntil = result.ok
+    ? null
+    : shouldCool
+      ? cooldown.coolUntil ?? new Date(now.getTime() + cooldown.cooldownSeconds * 1_000)
+      : undefined;
+
   await db.transaction(async (tx) => {
     const [currentChannel] = await tx
       .select({
@@ -538,12 +613,35 @@ async function testCredentialConnection(
       .set({
         meta: {
           ...previousMeta,
-          lastTest: result,
+          lastTest: {
+            ok: result.ok,
+            testedAt: result.testedAt,
+            latencyMs: result.latencyMs,
+            httpStatus: result.httpStatus,
+            modelCount: result.modelCount,
+            models: result.models,
+            message: result.message,
+            protocol: result.protocol,
+          },
           discoveredModels: result.models,
         },
         lastError: result.ok ? null : result.message,
-        lastErrorAt: result.ok ? null : new Date(),
-        updatedAt: new Date(),
+        lastErrorAt: result.ok ? null : now,
+        ...(coolUntil !== undefined ? { coolUntil } : {}),
+        status: result.ok
+          ? sql`case
+              when ${upstreamCredentials.status} = 'cooling'
+              then 'active'::credential_status
+              else ${upstreamCredentials.status}
+            end`
+          : shouldCool
+            ? sql`case
+                when ${upstreamCredentials.status} in ('active', 'cooling')
+                then 'cooling'::credential_status
+                else ${upstreamCredentials.status}
+              end`
+            : sql`${upstreamCredentials.status}`,
+        updatedAt: now,
       })
       .where(
         and(
@@ -1740,7 +1838,7 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
 
     const credentialIds = rows.map((row) => row.id);
     const recentSince = new Date(Date.now() - RECENT_WINDOW_MS);
-    const [recentRows, usageById, bindingById] = await Promise.all([
+    const [recentRows, usageById, bindingById, connectedNamesById] = await Promise.all([
       credentialIds.length
         ? db
           .select({
@@ -1759,6 +1857,7 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
         : Promise.resolve([]),
       getCredentialQuotaUsage(credentialIds),
       loadCredentialBindingViews(credentialIds),
+      loadConnectedNamesByCredential(rows),
     ]);
 
     const recentById = new Map(
@@ -1798,6 +1897,10 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
       success: true,
       data: rows.map((row) => {
         const usage = usageById.get(row.id) ?? { fiveHourCredits: 0, weeklyCredits: 0 };
+        const binding = bindingById.get(row.id) ?? null;
+        const connectedNames: string[] = [];
+        pushUniqueName(connectedNames, binding?.scopeName);
+        for (const name of connectedNamesById.get(row.id) ?? []) pushUniqueName(connectedNames, name);
         return {
           ...row,
           recentWindowHours: 24,
@@ -1807,7 +1910,8 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
           weeklyCreditLimit: parseStoredCreditLimit(row.weeklyCreditLimit),
           fiveHourCredits: usage.fiveHourCredits,
           weeklyCredits: usage.weeklyCredits,
-          binding: bindingById.get(row.id) ?? null,
+          binding,
+          connectedNames,
         };
       }),
       productLines: productLineRows.map((line) => ({

@@ -431,6 +431,10 @@ test("admin shell source includes 企业管理 and org_admin lands on workbench"
   assert.match(layout, /部门管理/);
   assert.match(layout, /isOrgAdmin/);
   assert.match(layout, /index="\/admin\/temp-channels">临时渠道/);
+  assert.match(
+    layout,
+    /index="\/admin\/temp-channels">临时渠道[\s\S]*index="\/admin\/keys-board">KEYS看板[\s\S]*>上游</,
+  );
   assert.match(layout, />上游</);
   assert.match(layout, /index="\/admin\/channels">渠道/);
   assert.match(layout, /index="\/admin\/seats">席位/);
@@ -443,6 +447,7 @@ test("admin shell source includes 企业管理 and org_admin lands on workbench"
   assert.doesNotMatch(home, /org_admin.*\/me/);
   assert.match(router, /admin-enterprises/);
   assert.match(router, /name: "admin-enterprise-dingtalk"[\s\S]*roles: \["admin"\]/);
+  assert.match(router, /name: "admin-keys-board"[\s\S]*roles: \["admin"\]/);
   assert.match(router, /org_admin/);
   const login = readFileSync(resolve(root, "web/src/views/LoginView.vue"), "utf8");
   const register = readFileSync(resolve(root, "web/src/views/RegisterView.vue"), "utf8");

@@ -25,6 +25,7 @@
         <el-menu-item v-if="auth.isOrgAdmin || auth.isDeptAdmin || auth.isTeamAdmin" index="/admin/guide">接入教程</el-menu-item>
         <el-menu-item v-if="auth.isOrgAdmin || auth.isDeptAdmin || auth.isTeamAdmin" index="/admin/my-logs">我的调用</el-menu-item>
         <el-menu-item v-if="auth.isSuperAdmin" index="/admin/temp-channels">临时渠道</el-menu-item>
+        <el-menu-item v-if="auth.isSuperAdmin" index="/admin/keys-board">KEYS看板</el-menu-item>
         <el-sub-menu v-if="auth.isSuperAdmin" index="upstream">
           <template #title>上游</template>
           <el-menu-item index="/admin/channels">渠道</el-menu-item>
@@ -75,7 +76,7 @@
           <el-button link type="primary" @click="onLogout">退出</el-button>
         </div>
       </el-header>
-      <el-main :class="{ 'is-canvas': route.path === '/admin/key-bindings' }">
+      <el-main :class="{ 'is-canvas': route.path === '/admin/key-bindings' || route.path === '/admin/keys-board' }">
         <router-view />
       </el-main>
     </el-container>

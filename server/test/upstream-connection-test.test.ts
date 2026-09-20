@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  buildUpstreamTestBody,
   formatUpstreamBusinessFailure,
   parseUpstreamBusinessFailure,
   parseUpstreamModels,
   probeUpstreamModels,
+  resolveUpstreamTestModel,
   resolveUpstreamTestProtocol,
   summarizeUpstreamHttpError,
 } from "../src/lib/upstream-connection-test.js";
@@ -49,22 +51,23 @@ test("HTTP error summaries prefer the upstream error message", () => {
   );
 });
 
-test("test protocol prefers Anthropic when the channel supports it", () => {
+test("test protocol prefers OpenAI Chat when the channel supports it", () => {
   assert.equal(
     resolveUpstreamTestProtocol(["openai_chat", "anthropic_messages"]),
-    "anthropic_messages",
+    "openai_chat",
   );
+  assert.equal(resolveUpstreamTestProtocol(["openai_chat"], "anthropic_messages"), "openai_chat");
   assert.equal(resolveUpstreamTestProtocol(["openai_chat"], "openai_chat"), "openai_chat");
   assert.throws(
-    () => resolveUpstreamTestProtocol(["openai_chat"], "anthropic_messages"),
+    () => resolveUpstreamTestProtocol(["anthropic_messages"], "openai_chat"),
     /未声明支持所选协议/,
   );
   assert.throws(() => resolveUpstreamTestProtocol([]), /未声明任何支持协议/);
 });
 
-test("unsaved credential probe reports success without persisting", async () => {
+test("unsaved credential probe sends a real chat completion", async () => {
   const secret = "sk-employee-test-key";
-  let requested: { url: string; authorization: string | null } | null = null;
+  let requested: { url: string; authorization: string | null; body: unknown } | null = null;
   const result = await probeUpstreamModels({
     providerCode: "glm",
     protocol: "openai_chat",
@@ -76,12 +79,16 @@ test("unsaved credential probe reports success without persisting", async () => 
       requested = {
         url: String(url),
         authorization: new Headers(init?.headers).get("Authorization"),
+        body: JSON.parse(String(init?.body ?? "{}")),
       };
-      return new Response(JSON.stringify({ data: [{ id: "glm-5.3" }] }), { status: 200 });
+      return new Response(JSON.stringify({ choices: [{ message: { content: "ok" } }] }), {
+        status: 200,
+      });
     },
   });
   assert.equal(requested?.authorization, `Bearer ${secret}`);
-  assert.match(requested?.url ?? "", /\/models$/);
+  assert.match(requested?.url ?? "", /\/chat\/completions$/);
+  assert.deepEqual(requested?.body, buildUpstreamTestBody("openai_chat", "glm-5.3"));
   assert.deepEqual(result, {
     ok: true,
     testedAt: "2026-09-10T04:00:00.000Z",
@@ -89,10 +96,41 @@ test("unsaved credential probe reports success without persisting", async () => 
     httpStatus: 200,
     modelCount: 1,
     models: ["glm-5.3"],
-    message: "连接成功（openai_chat），发现 1 个模型",
+    message: "推理成功（openai_chat / glm-5.3）",
     protocol: "openai_chat",
+    rawBody: JSON.stringify({ choices: [{ message: { content: "ok" } }] }),
   });
   assert.equal(result.latencyMs >= 0, true);
+});
+
+test("credential probe treats weekly usage-cap 429 as a failed inference", async () => {
+  const result = await probeUpstreamModels({
+    providerCode: "glm",
+    protocol: "openai_chat",
+    baseUrl: "https://open.bigmodel.cn/api/coding/paas/v4",
+    authStyle: "bearer",
+    secret: "sk-weekly-cap",
+    fetchImpl: async () =>
+      new Response(
+        JSON.stringify({
+          error: {
+            code: "1310",
+            message: "已达到 7 天使用上限，2026-09-21 17:49:49 后可继续使用。",
+          },
+        }),
+        { status: 429 },
+      ),
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.httpStatus, 429);
+  assert.match(result.message, /7 天使用上限/);
+});
+
+test("resolveUpstreamTestModel prefers discovered models then provider defaults", () => {
+  assert.equal(resolveUpstreamTestModel("glm", [" glm-4.6 ", "glm-5.3"]), "glm-4.6");
+  assert.equal(resolveUpstreamTestModel("glm"), "glm-5.3");
+  assert.equal(resolveUpstreamTestModel("deepseek"), "deepseek-chat");
+  assert.throws(() => resolveUpstreamTestModel("haizhi"), /无法确定测试模型/);
 });
 
 test("unsaved credential probe treats HTTP-success business envelopes as failures", async () => {
