@@ -201,6 +201,20 @@ export function extractUpstreamBusinessError(payload: unknown): { code: string |
   return { code, message };
 }
 
+/** Hub 冷却文案之外，健康检查展示渠道原文。 */
+export function formatUpstreamVendorError(
+  status: number | null,
+  raw: string | null,
+): string {
+  const text = raw?.trim() ?? "";
+  if (!text) return status != null ? `HTTP ${status}` : "上游错误";
+  const extracted = extractUpstreamBusinessError(text);
+  if (extracted?.message) {
+    return extracted.code ? `[${extracted.code}] ${extracted.message}` : extracted.message;
+  }
+  return text.slice(0, 1_000);
+}
+
 export function resolveLoggedError(input: {
   httpStatus?: number | null;
   upstreamStatus?: number | null;

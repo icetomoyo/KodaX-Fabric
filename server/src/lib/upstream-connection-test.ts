@@ -1,5 +1,5 @@
 import { GLM_TEXT_CATALOG_MODEL } from "./discovered-models.js";
-import { extractUpstreamUsageCap } from "./glm-error-codes.js";
+import { extractUpstreamUsageCap, formatUpstreamVendorError } from "./glm-error-codes.js";
 import { getProviderTemplate, isTestableUpstreamUrl } from "./provider-templates.js";
 import {
   DEFAULT_RELAY_PROTOCOL,
@@ -250,11 +250,7 @@ export async function probeUpstreamModels(input: {
       rawBody: raw,
       message: connectionOk
         ? `推理成功（${input.protocol} / ${model}）`
-        : usageCap
-          ? summarizeUpstreamHttpError(response.status || 429, raw)
-          : response.ok && businessFailure
-            ? formatUpstreamBusinessFailure(businessFailure)
-            : summarizeUpstreamHttpError(response.status, raw),
+        : formatUpstreamVendorError(response.status, raw),
     };
   } catch (error) {
     const timeoutSeconds = Math.round(timeoutMs / 1000);

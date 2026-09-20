@@ -149,7 +149,7 @@ test("unsaved credential probe treats HTTP-success business envelopes as failure
   });
   assert.equal(result.ok, false);
   assert.equal(result.httpStatus, 200);
-  assert.equal(result.message, "上游返回业务错误（401）：令牌已过期或验证不正确");
+  assert.match(result.message, /令牌已过期或验证不正确/);
   assert.deepEqual(result.models, []);
 });
 

@@ -10,6 +10,7 @@ process.env.CREDENTIAL_ENCRYPT_KEY ??= "unit-test-credential-secret";
 const {
   extractUpstreamBusinessError,
   extractUpstreamUsageCap,
+  formatUpstreamVendorError,
   lookupGlmErrorCatalog,
   resolveLoggedError,
   GLM_ERROR_CATALOG,
@@ -57,6 +58,24 @@ test("智谱 1308 / 1310 目录与 coding-plan 线上原文对齐", () => {
   );
   // 文档 1317 仍是「7 天 + 无法超额按量」变体，不是线上周额度码。
   assert.match(lookupGlmErrorCatalog("1317")?.message ?? "", /主账号余额不足/);
+});
+
+test("formatUpstreamVendorError keeps the channel error code and message", () => {
+  assert.equal(
+    formatUpstreamVendorError(429, JSON.stringify({
+      error: { code: "1113", message: "余额不足或无可用资源包,请充值。" },
+    })),
+    "[1113] 余额不足或无可用资源包,请充值。",
+  );
+  assert.equal(
+    formatUpstreamVendorError(429, JSON.stringify({
+      error: {
+        code: "1310",
+        message: "已达到 7 天使用上限，2026-09-21 17:49:49 后可继续使用。",
+      },
+    })),
+    "[1310] 已达到 7 天使用上限，2026-09-21 17:49:49 后可继续使用。",
+  );
 });
 
 test("extractUpstreamUsageCap treats 1308 / 1310 codes as usage caps without 使用上限", () => {

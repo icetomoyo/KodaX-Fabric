@@ -5,6 +5,7 @@ import { upstreamCredentials } from "../../db/schema/index.js";
 import { decryptSecret } from "../crypto-secret.js";
 import {
   extractUpstreamUsageCap,
+  formatUpstreamVendorError,
   type UpstreamUsageCap,
 } from "../glm-error-codes.js";
 import {
@@ -788,7 +789,7 @@ export async function sendRelayUpstream(
       await coolCredential(
         input.candidate,
         decision.cooldownSeconds,
-        decision.lastError,
+        formatUpstreamVendorError(response.status, bodyText),
         decision.coolUntil,
         metaPatch,
       );

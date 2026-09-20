@@ -844,7 +844,7 @@
                 <strong>当前异常</strong>
                 <span>{{ formatDateTime(detailRow.lastErrorAt) }}</span>
               </div>
-              <p>{{ detailRow.lastError }}</p>
+              <p class="vendor-error">{{ detailRow.lastError }}</p>
             </div>
             <template v-if="lastTest(detailRow)">
               <dl class="info-grid">
@@ -1398,8 +1398,10 @@ const WEEKLY_COOL_REMAINING_MS = 6 * 3_600_000;
 
 function isShortRateLimitCooling(row: CredentialRow): boolean {
   const message = row.lastError ?? "";
-  if (/使用上限|5\s*小时|7\s*天|周积分|每周|余额不足/.test(message)) return false;
-  return message.includes("上游限流");
+  if (/使用上限|5\s*小时|7\s*天|周积分|每周|余额不足|套餐已到期|套餐已失效/.test(message)) {
+    return false;
+  }
+  return /上游限流|速率限制|rate.?limit/i.test(message);
 }
 
 function coolingLaneOf(row: CredentialRow): "cooling_5h" | "cooling_weekly" {
