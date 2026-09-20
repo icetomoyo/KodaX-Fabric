@@ -30,13 +30,6 @@ http.interceptors.response.use(
         location.assign(`/login?redirect=${encodeURIComponent(location.pathname)}`);
       }
     }
-    if (status === 403 && code === "MUST_CHANGE_PASSWORD") {
-      const auth = useAuthStore();
-      auth.markMustChangePassword();
-      if (location.pathname !== "/change-password") {
-        location.assign("/change-password");
-      }
-    }
     if (status === 400 && code === "INVALID_ACT_AS") {
       const auth = useAuthStore();
       if (auth.actAs) {

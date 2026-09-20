@@ -39,7 +39,6 @@ import {
 } from "../../lib/org.js";
 import type { SessionRole } from "../../lib/jwt.js";
 import {
-  requirePasswordChanged,
   requireRoles,
   requireSession,
 } from "../../middleware/auth.js";
@@ -169,7 +168,6 @@ export async function detachAndDeleteTeam(teamId: number): Promise<void> {
 
 export async function adminTeamRoutes(app: FastifyInstance) {
   app.addHook("preHandler", requireSession);
-  app.addHook("preHandler", requirePasswordChanged);
   app.addHook("preHandler", requireRoles("admin", "org_admin", "dept_admin", "team_admin"));
 
   app.get("/api/admin/teams", async (req, reply) => {

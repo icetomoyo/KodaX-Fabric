@@ -1,5 +1,5 @@
 import { createRouter, createWebHistory } from "vue-router";
-import { homePathForUser } from "@/lib/home";
+import { canUseAdminConsole, homePathForUser } from "@/lib/home";
 import { useAuthStore } from "@/stores/auth";
 
 export const router = createRouter({
@@ -19,8 +19,10 @@ export const router = createRouter({
     },
     {
       path: "/change-password",
-      name: "change-password",
-      component: () => import("@/views/ChangePasswordView.vue"),
+      redirect: () => {
+        const auth = useAuthStore();
+        return canUseAdminConsole(auth.user) ? "/admin/profile" : "/me/profile";
+      },
     },
     {
       path: "/",
@@ -231,21 +233,13 @@ router.beforeEach((to) => {
 
   if (to.meta.public) {
     if (auth.isLoggedIn && (to.name === "login" || to.name === "register")) {
-      return auth.user?.mustChangePassword ? "/change-password" : home;
+      return home;
     }
     return true;
   }
 
   if (!auth.isLoggedIn) {
     return { path: "/login", query: { redirect: to.fullPath } };
-  }
-
-  if (auth.user?.mustChangePassword && to.name !== "change-password") {
-    return "/change-password";
-  }
-
-  if (!auth.user?.mustChangePassword && to.name === "change-password") {
-    return home;
   }
 
   const need = to.matched

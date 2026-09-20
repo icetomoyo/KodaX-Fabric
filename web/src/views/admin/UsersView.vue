@@ -525,7 +525,7 @@ function openDetail(row: UserRow) {
 async function approveRegistration(row: UserRow) {
   try {
     await ElMessageBox.confirm(
-      `确认审核通过 ${row.name} 的注册申请？账号将使用初始密码 Hz123456，首次登录后需要修改密码。`,
+      `确认审核通过 ${row.name} 的注册申请？账号将使用初始密码 Hz123456，登录后可在个人中心自行修改。`,
       "审核通过",
       { confirmButtonText: "确认通过", cancelButtonText: "取消", type: "warning" },
     );

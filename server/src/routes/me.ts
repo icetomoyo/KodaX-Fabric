@@ -61,7 +61,6 @@ import { actingEmployeeId } from "../lib/act-as.js";
 import { departmentPathLabel } from "../lib/department-tree.js";
 import { resolveEmployeeApiKeyTeam } from "../lib/org.js";
 import {
-  requirePasswordChanged,
   requireRoles,
   requireSession,
 } from "../middleware/auth.js";
@@ -120,7 +119,6 @@ async function loadOwnedSeat(employeeId: number, seatId: number) {
 
 export async function meRoutes(app: FastifyInstance) {
   app.addHook("preHandler", requireSession);
-  app.addHook("preHandler", requirePasswordChanged);
   app.addHook("preHandler", requireRoles("employee", "team_admin", "dept_admin", "org_admin"));
 
   app.post("/api/me/enterprise-applications", async (_req, reply) => {
@@ -792,7 +790,6 @@ export async function meRoutes(app: FastifyInstance) {
         .select({
           role: employees.role,
           status: employees.status,
-          mustChangePassword: employees.mustChangePassword,
           enterpriseId: employees.enterpriseId,
         })
         .from(employees)
@@ -806,8 +803,7 @@ export async function meRoutes(app: FastifyInstance) {
           owner.role !== "team_admin" &&
           owner.role !== "dept_admin" &&
           owner.role !== "org_admin") ||
-        owner.status !== "active" ||
-        owner.mustChangePassword
+        owner.status !== "active"
       ) {
         return { outcome: "forbidden" } as const;
       }

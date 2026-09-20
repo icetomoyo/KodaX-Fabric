@@ -108,16 +108,6 @@ export async function requireSession(req: FastifyRequest, reply: FastifyReply) {
   req.session.actAs = resolved.actAs;
 }
 
-export async function requirePasswordChanged(req: FastifyRequest, reply: FastifyReply) {
-  if (req.session?.mustChangePassword) {
-    return reply.code(403).send({
-      success: false,
-      code: "MUST_CHANGE_PASSWORD",
-      message: "请先修改初始密码",
-    });
-  }
-}
-
 export function requireRoles(...roles: SessionClaims["role"][]) {
   return async (req: FastifyRequest, reply: FastifyReply) => {
     if (!req.session || !roles.includes(req.session.role)) {

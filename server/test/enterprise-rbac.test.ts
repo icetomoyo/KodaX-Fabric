@@ -449,6 +449,8 @@ test("admin shell source includes 企业管理 and org_admin lands on workbench"
   assert.match(login, /LDAP登录/);
   assert.match(login, /账户登录/);
   assert.match(login, /申请注册/);
+  assert.doesNotMatch(login, /mustChangePassword/);
+  assert.doesNotMatch(router, /mustChangePassword/);
   assert.doesNotMatch(login, /企业注册/);
   assert.doesNotMatch(login, /Hz@123456/);
   assert.doesNotMatch(login, /Hz123456/);

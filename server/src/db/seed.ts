@@ -28,12 +28,12 @@ async function seedAdmin() {
       passwordHash,
       role: "admin",
       enterpriseId,
-      mustChangePassword: true,
+      mustChangePassword: false,
       status: "active",
     })
     .returning({ id: employees.id, phone: employees.phone });
 
-  console.log("Seeded admin:", admin.phone, "(must change password on first login)");
+  console.log("Seeded admin:", admin.phone);
 }
 
 /** 系统运行所需的最小配置（非业务演示数据） */

@@ -17,7 +17,6 @@ import {
 } from "../lib/support-bot/invoke.js";
 import { consumeSupportBotRateLimit } from "../lib/support-bot/rate-limit.js";
 import {
-  requirePasswordChanged,
   requireRoles,
   requireSession,
 } from "../middleware/auth.js";
@@ -44,7 +43,6 @@ function sendSupportError(reply: FastifyReply, error: SupportBotError) {
 
 export async function supportRoutes(app: FastifyInstance) {
   app.addHook("preHandler", requireSession);
-  app.addHook("preHandler", requirePasswordChanged);
   app.addHook("preHandler", requireRoles("employee", "team_admin", "dept_admin", "org_admin", "admin"));
 
   app.get("/api/support/status", async () => {

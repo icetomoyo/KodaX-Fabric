@@ -127,7 +127,6 @@ async function authenticateRelayApiKey(
       employeeDept: employees.dept,
       employeeStatus: employees.status,
       employeeRole: employees.role,
-      mustChangePassword: employees.mustChangePassword,
     })
     .from(employeeApiKeys)
     .innerJoin(employees, eq(employeeApiKeys.employeeId, employees.id))
@@ -150,7 +149,6 @@ async function authenticateRelayApiKey(
     !principal ||
     principal.employeeStatus !== "active" ||
     !relayRoles ||
-    principal.mustChangePassword ||
     !isRelayProtocol(principal.protocol) ||
     !isValidRelayProductLineId(principal.productLineId)
   ) {

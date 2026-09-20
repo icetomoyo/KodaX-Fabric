@@ -69,12 +69,6 @@ export const useAuthStore = defineStore("auth", () => {
     setActAs(null);
   }
 
-  function markMustChangePassword() {
-    if (!user.value || user.value.mustChangePassword) return;
-    user.value = { ...user.value, mustChangePassword: true };
-    writeStoredUser(user.value);
-  }
-
   function setActAs(next: ActAsPayload | null) {
     actAs.value = next;
     if (next) localStorage.setItem(ACT_AS_KEY, JSON.stringify(next));
@@ -144,7 +138,6 @@ export const useAuthStore = defineStore("auth", () => {
     canSwitchActAs,
     setSession,
     setActAs,
-    markMustChangePassword,
     logout,
     login,
     loginLdap,

@@ -66,7 +66,6 @@ import {
   UPSTREAM_AUTH_STYLES,
 } from "../../lib/upstream-protocol-config.js";
 import {
-  requirePasswordChanged,
   requireRoles,
   requireSession,
 } from "../../middleware/auth.js";
@@ -559,7 +558,6 @@ async function testCredentialConnection(
 
 export async function adminCredentialRoutes(app: FastifyInstance) {
   app.addHook("preHandler", requireSession);
-  app.addHook("preHandler", requirePasswordChanged);
   app.addHook("preHandler", requireRoles("admin"));
 
   app.get("/api/admin/credential-templates", async () => {

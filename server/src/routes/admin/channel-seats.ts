@@ -32,7 +32,7 @@ import {
   seatCreateError,
   seatUpdateError,
 } from "../../lib/channel-seats.js";
-import { requirePasswordChanged, requireRoles, requireSession } from "../../middleware/auth.js";
+import { requireRoles, requireSession } from "../../middleware/auth.js";
 
 type SeatTx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
@@ -111,7 +111,6 @@ async function insertSeat(
 
 export async function adminChannelSeatRoutes(app: FastifyInstance) {
   app.addHook("preHandler", requireSession);
-  app.addHook("preHandler", requirePasswordChanged);
   app.addHook("preHandler", requireRoles("admin"));
 
   app.get(

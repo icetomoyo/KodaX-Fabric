@@ -15,14 +15,12 @@ import {
 import { addCalendarDays, quotaDayAt, zonedDayStart } from "../../lib/quota-time.js";
 import { defaultCreditRateFor, type ModelCreditRate } from "../../lib/relay/credit-cost.js";
 import {
-  requirePasswordChanged,
   requireRoles,
   requireSession,
 } from "../../middleware/auth.js";
 
 export async function adminModelPriceRoutes(app: FastifyInstance) {
   app.addHook("preHandler", requireSession);
-  app.addHook("preHandler", requirePasswordChanged);
   app.addHook("preHandler", requireRoles("admin"));
 
   app.get("/api/admin/model-prices", async () => {

@@ -39,14 +39,12 @@ import {
   protocolConfigsEqual,
 } from "../../lib/upstream-protocol-config.js";
 import {
-  requirePasswordChanged,
   requireRoles,
   requireSession,
 } from "../../middleware/auth.js";
 
 export async function adminProviderRoutes(app: FastifyInstance) {
   app.addHook("preHandler", requireSession);
-  app.addHook("preHandler", requirePasswordChanged);
   app.addHook("preHandler", requireRoles("admin"));
 
   app.get("/api/admin/providers", async () => {

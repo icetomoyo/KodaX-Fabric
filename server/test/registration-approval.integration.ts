@@ -135,7 +135,7 @@ async function main() {
     const personalSession = json<{
       data: { token: string; user: { mustChangePassword: boolean; enterpriseId: number | null } };
     }>(personalLogin).data;
-    assert.equal(personalSession.user.mustChangePassword, true);
+    assert.equal(personalSession.user.mustChangePassword, false);
     assert.equal(personalSession.user.enterpriseId, null);
 
     const admin = await createActiveUser("admin", adminPhone);

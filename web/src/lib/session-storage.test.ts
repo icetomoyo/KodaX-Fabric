@@ -128,14 +128,18 @@ test("readStoredSession logs out an expired token instead of looping 401", () =>
   assert.equal(localStorage.getItem(TOKEN_KEY), null);
 });
 
-test("http interceptor records must-change-password before jumping pages", () => {
+test("http interceptor does not force a change-password jump", () => {
   const root = new URL(".", import.meta.url);
   const http = readFileSync(new URL("../api/http.ts", root), "utf8");
   const auth = readFileSync(new URL("../stores/auth.ts", root), "utf8");
+  const login = readFileSync(new URL("../views/LoginView.vue", root), "utf8");
+  const router = readFileSync(new URL("../router/index.ts", root), "utf8");
   assert.match(auth, /function setSession[\s\S]*setActAs\(null\)/);
-  assert.match(auth, /function markMustChangePassword/);
-  assert.match(http, /auth\.markMustChangePassword\(\)/);
-  assert.match(http, /location\.pathname !== "\/change-password"/);
+  assert.doesNotMatch(auth, /function markMustChangePassword/);
+  assert.doesNotMatch(http, /MUST_CHANGE_PASSWORD/);
+  assert.doesNotMatch(http, /change-password/);
+  assert.doesNotMatch(login, /mustChangePassword/);
+  assert.doesNotMatch(router, /mustChangePassword/);
 });
 
 test("parseStoredActAs rejects junk headers that would 400-reload", () => {

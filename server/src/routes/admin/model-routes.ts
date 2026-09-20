@@ -5,14 +5,12 @@ import { db } from "../../db/client.js";
 import { modelRoutes, productLines, providers } from "../../db/schema/index.js";
 import { writeOpsAudit } from "../../lib/ops-audit.js";
 import {
-  requirePasswordChanged,
   requireRoles,
   requireSession,
 } from "../../middleware/auth.js";
 
 export async function adminModelRouteRoutes(app: FastifyInstance) {
   app.addHook("preHandler", requireSession);
-  app.addHook("preHandler", requirePasswordChanged);
   app.addHook("preHandler", requireRoles("admin"));
 
   app.get("/api/admin/model-routes", async (req) => {

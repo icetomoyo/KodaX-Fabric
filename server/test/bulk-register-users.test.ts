@@ -98,5 +98,7 @@ test("enterprise console exposes bulk-register for super-admin only", () => {
   assert.match(enterprises, /auth\.isSuperAdmin/);
   assert.match(enterprises, /\/api\/admin\/users\/import/);
   assert.match(enterprises, /初始密码 Hz123456/);
+  assert.match(enterprises, /登录后可在个人中心自行修改/);
+  assert.doesNotMatch(enterprises, /首次登录必须修改/);
   assert.doesNotMatch(enterprises, /password: .*(ChangeMe|Hz@)/);
 });

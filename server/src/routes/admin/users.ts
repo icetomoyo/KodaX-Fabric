@@ -53,7 +53,6 @@ import {
   type UsageBreakdown,
 } from "../../lib/user-usage.js";
 import {
-  requirePasswordChanged,
   requireRoles,
   requireSession,
 } from "../../middleware/auth.js";
@@ -282,7 +281,6 @@ async function canManageScopedUser(
 
 export async function adminUserRoutes(app: FastifyInstance) {
   app.addHook("preHandler", requireSession);
-  app.addHook("preHandler", requirePasswordChanged);
   app.addHook("preHandler", requireRoles("admin", "org_admin", "dept_admin", "team_admin"));
 
   app.get("/api/admin/users", async (req, reply) => {
@@ -620,7 +618,7 @@ export async function adminUserRoutes(app: FastifyInstance) {
           status: "active",
           role: "employee",
           passwordHash,
-          mustChangePassword: true,
+          mustChangePassword: false,
           passwordChangedAt: null,
           updatedAt: new Date(),
         })
@@ -736,7 +734,7 @@ export async function adminUserRoutes(app: FastifyInstance) {
                 role: "employee" as const,
                 status: "active" as const,
                 enterpriseId: null,
-                mustChangePassword: true,
+                mustChangePassword: false,
                 passwordChangedAt: null,
                 createdBy: req.employeeId ?? null,
               })),
@@ -1031,7 +1029,7 @@ export async function adminUserRoutes(app: FastifyInstance) {
       .update(employees)
       .set({
         passwordHash,
-        mustChangePassword: true,
+        mustChangePassword: false,
         passwordChangedAt: null,
         updatedAt: new Date(),
       })

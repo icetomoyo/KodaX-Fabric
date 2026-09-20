@@ -68,9 +68,12 @@ onMounted(() => {
 function resolveRedirect(role: "employee" | "admin" | "org_admin" | "dept_admin" | "team_admin") {
   const home = homePathForUser({ role });
   const raw = route.query.redirect as string | undefined;
+  if (raw === "/change-password") {
+    return role === "employee" ? "/me/profile" : "/admin/profile";
+  }
   if (role === "admin" || role === "org_admin" || role === "dept_admin" || role === "team_admin") {
     if (!raw || raw.startsWith("/me")) return home;
-    if (raw.startsWith("/admin") || raw === "/change-password") return raw;
+    if (raw.startsWith("/admin")) return raw;
     return home;
   }
   if (raw && raw.startsWith("/admin")) return home;
@@ -84,10 +87,6 @@ async function onSubmit() {
       ? await auth.loginLdap(username.value.trim(), password.value)
       : await auth.login(phone.value.trim(), password.value);
     ElMessage.success("登录成功");
-    if (mode.value !== "ldap" && user.mustChangePassword) {
-      await router.replace("/change-password");
-      return;
-    }
     await router.replace(resolveRedirect(user.role));
   } catch (e: unknown) {
     const msg =

@@ -59,7 +59,7 @@ async function main() {
           role: "employee",
           status: "active",
           enterpriseId: create.enterpriseId,
-          mustChangePassword: true,
+          mustChangePassword: false,
         })
         .returning({ id: employees.id });
       const teamId = await ensureDefaultTeam(create.departmentId, create.enterpriseId);

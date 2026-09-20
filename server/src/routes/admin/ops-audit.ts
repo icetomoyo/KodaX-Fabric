@@ -18,14 +18,12 @@ import {
 } from "../../db/schema/index.js";
 import { formatOpsAuditTargetLabel } from "../../lib/ops-audit.js";
 import {
-  requirePasswordChanged,
   requireRoles,
   requireSession,
 } from "../../middleware/auth.js";
 
 export async function adminOpsAuditRoutes(app: FastifyInstance) {
   app.addHook("preHandler", requireSession);
-  app.addHook("preHandler", requirePasswordChanged);
   app.addHook("preHandler", requireRoles("admin"));
 
   app.get("/api/admin/ops-audit", async (req) => {

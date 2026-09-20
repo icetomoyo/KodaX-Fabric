@@ -17,7 +17,6 @@ import {
 } from "../../lib/org.js";
 import { REQUEST_CONTEXT_ID_PATTERN } from "../../lib/relay/request-context.js";
 import {
-  requirePasswordChanged,
   requireRoles,
   requireSession,
 } from "../../middleware/auth.js";
@@ -140,7 +139,6 @@ async function resolveListScope(
 
 export async function adminErrorLogRoutes(app: FastifyInstance) {
   app.addHook("preHandler", requireSession);
-  app.addHook("preHandler", requirePasswordChanged);
   app.addHook("preHandler", requireRoles("admin"));
 
   app.get("/api/admin/error-logs", async (req, reply) => {

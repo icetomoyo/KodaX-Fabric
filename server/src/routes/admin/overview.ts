@@ -36,7 +36,6 @@ import {
   tokenComposition,
 } from "../../lib/workbench-today.js";
 import {
-  requirePasswordChanged,
   requireRoles,
   requireSession,
 } from "../../middleware/auth.js";
@@ -898,7 +897,6 @@ async function teamScopeOverview(teamIds: number[]) {
 
 export async function adminOverviewRoutes(app: FastifyInstance) {
   app.addHook("preHandler", requireSession);
-  app.addHook("preHandler", requirePasswordChanged);
   app.addHook("preHandler", requireRoles("admin", "org_admin", "dept_admin", "team_admin"));
 
   app.get("/api/admin/overview", async (req, reply) => {

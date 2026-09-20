@@ -26,7 +26,6 @@ import {
   summarizeRequestContextForDetail,
 } from "../../lib/relay/request-context.js";
 import {
-  requirePasswordChanged,
   requireRoles,
   requireSession,
 } from "../../middleware/auth.js";
@@ -70,7 +69,6 @@ function consumptionFor(row: {
 
 export async function adminLogRoutes(app: FastifyInstance) {
   app.addHook("preHandler", requireSession);
-  app.addHook("preHandler", requirePasswordChanged);
   app.addHook("preHandler", requireRoles("admin"));
 
   app.get("/api/admin/logs", async (req) => {

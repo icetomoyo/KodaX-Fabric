@@ -13,7 +13,7 @@ async function main() {
     .update(employees)
     .set({
       passwordHash,
-      mustChangePassword: true,
+      mustChangePassword: false,
       passwordChangedAt: null,
       updatedAt: new Date(),
     })
@@ -32,7 +32,7 @@ async function main() {
   const [user] = await db.select().from(employees).where(eq(employees.phone, phone)).limit(1);
   const ok = user ? await verifyPassword(password, user.passwordHash) : false;
   console.log("Admin password reset OK:", rows[0].phone, "verify=", ok);
-  console.log("Use password from SEED_ADMIN_PASSWORD in .env (must change on next login)");
+  console.log("Use password from SEED_ADMIN_PASSWORD in .env");
   await sql.end({ timeout: 5 });
 }
 

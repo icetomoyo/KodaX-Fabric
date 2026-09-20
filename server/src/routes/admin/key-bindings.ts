@@ -34,7 +34,6 @@ import {
   resolveGraphCoolingKind,
 } from "../../lib/relay/credential-quota.js";
 import {
-  requirePasswordChanged,
   requireRoles,
   requireSession,
 } from "../../middleware/auth.js";
@@ -47,7 +46,6 @@ const querySchema = z.object({
 
 export async function adminKeyBindingRoutes(app: FastifyInstance) {
   app.addHook("preHandler", requireSession);
-  app.addHook("preHandler", requirePasswordChanged);
   app.addHook("preHandler", requireRoles("admin"));
 
   app.get("/api/admin/key-bindings", async (req, reply) => {

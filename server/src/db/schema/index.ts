@@ -83,7 +83,7 @@ export const employees = pgTable(
       onDelete: "restrict",
       onUpdate: "no action",
     }),
-    mustChangePassword: boolean("must_change_password").notNull().default(true),
+    mustChangePassword: boolean("must_change_password").notNull().default(false),
     passwordChangedAt: timestamp("password_changed_at", { withTimezone: true }),
     lastLoginAt: timestamp("last_login_at", { withTimezone: true }),
     usageTier: usageTierEnum("usage_tier").notNull().default("heavy"),

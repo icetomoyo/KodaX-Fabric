@@ -69,7 +69,7 @@ async function issueLoginSession(
   req: FastifyRequest,
   reply: FastifyReply,
   user: typeof employees.$inferSelect,
-  options: { action: string; mustChangePassword: boolean },
+  options: { action: string },
 ) {
   if (user.role === "org_admin" || user.role === "dept_admin" || user.role === "team_admin") {
     const enterprise = await loadEnterprise(user.enterpriseId);
@@ -93,7 +93,7 @@ async function issueLoginSession(
     role: user.role,
     phone: user.phone,
     name: user.name,
-    mustChangePassword: options.mustChangePassword,
+    mustChangePassword: false,
     enterpriseId: user.enterpriseId,
   });
 
@@ -110,7 +110,7 @@ async function issueLoginSession(
     data: {
       token,
       user: publicEmployee(user, await loadEnterprise(user.enterpriseId), {
-        mustChangePassword: options.mustChangePassword,
+        mustChangePassword: false,
       }),
     },
   };
@@ -218,7 +218,6 @@ export async function authRoutes(app: FastifyInstance) {
 
     return issueLoginSession(req, reply, user, {
       action: "auth.login",
-      mustChangePassword: user.mustChangePassword,
     });
   });
 
@@ -272,7 +271,6 @@ export async function authRoutes(app: FastifyInstance) {
 
     return issueLoginSession(req, reply, user, {
       action: "auth.login_ldap",
-      mustChangePassword: false,
     });
   });
 

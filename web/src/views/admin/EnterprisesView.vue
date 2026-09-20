@@ -307,7 +307,7 @@
             placeholder="每行一人：姓名,手机号&#10;也支持用空格或 Tab 分隔"
           />
           <el-text class="form-help" type="info" size="small">
-            只开通注册账号，不加入企业或团队。初始密码 Hz123456，首次登录必须修改。单次最多 200 人。
+            只开通注册账号，不加入企业或团队。初始密码 Hz123456，登录后可在个人中心自行修改。单次最多 200 人。
             <b v-if="bulkRegisterParse.users.length">已识别 {{ bulkRegisterParse.users.length }} 人</b>
           </el-text>
           <el-alert
@@ -1376,7 +1376,7 @@ async function submitBulkRegister() {
     const initialPassword = String(data.data?.initialPassword ?? "");
     const parts = [`已注册 ${createdCount} 人`];
     if (skipped) parts.push(`跳过 ${skipped} 个已注册手机号`);
-    if (initialPassword && createdCount) parts.push(`初始密码 ${initialPassword}，首次登录须改密`);
+    if (initialPassword && createdCount) parts.push(`初始密码 ${initialPassword}，可在个人中心自行修改`);
     ElMessage.success(parts.join("，"));
     bulkRegisterRaw.value = "";
     showBulkRegister.value = false;
@@ -1517,7 +1517,7 @@ async function updateUser() {
 async function approveUser(person: EmployeeRow) {
   try {
     await ElMessageBox.confirm(
-      `确认审核通过 ${person.name} 的注册申请？账号将使用初始密码 Hz123456，首次登录后需要修改密码。`,
+      `确认审核通过 ${person.name} 的注册申请？账号将使用初始密码 Hz123456，登录后可在个人中心自行修改。`,
       "审核通过",
       { confirmButtonText: "确认通过", cancelButtonText: "取消", type: "warning" },
     );
