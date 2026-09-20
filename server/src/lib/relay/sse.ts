@@ -1,5 +1,5 @@
 import { Buffer } from "node:buffer";
-import { extractCacheReadTokens } from "../usage-cache.js";
+import { parseRelayUsage } from "./audit.js";
 import type { RelayUsage } from "./types.js";
 
 export const DEFAULT_SSE_AUDIT_MAX_BYTES = 20 * 1024 * 1024;
@@ -117,24 +117,20 @@ function emptyUsage(): RelayUsage {
 }
 
 function parseUsage(value: unknown): RelayUsage | null {
-  const raw = asObject(value);
-  if (!raw) return null;
+  const parsed = parseRelayUsage(value);
+  if (
+    parsed.promptTokens == null
+    && parsed.completionTokens == null
+    && parsed.totalTokens == null
+  ) {
+    return null;
+  }
+  return parsed;
+}
 
-  const promptTokens = asNonNegativeInteger(raw.prompt_tokens);
-  const completionTokens = asNonNegativeInteger(raw.completion_tokens);
-  const suppliedTotal = asNonNegativeInteger(raw.total_tokens);
-  const totalTokens = suppliedTotal ??
-    (promptTokens !== null && completionTokens !== null
-      ? promptTokens + completionTokens
-      : null);
-
-  return {
-    promptTokens,
-    completionTokens,
-    totalTokens,
-    cacheReadTokens: extractCacheReadTokens(raw),
-    raw,
-  };
+function extractSseUsage(chunk: JsonObject): RelayUsage | null {
+  const nested = asObject(chunk.response);
+  return parseUsage(chunk.usage) ?? parseUsage(nested?.usage);
 }
 
 function normalizedLimit(value: number | undefined, fallback: number, allowZero = false): number {
@@ -422,7 +418,7 @@ export class SseAuditInspector {
     }
     this.parsedJsonEventCount += 1;
 
-    const usage = parseUsage(chunk.usage);
+    const usage = extractSseUsage(chunk);
     if (usage) this.lastUsage = usage;
     if (Object.hasOwn(chunk, "error") && chunk.error !== null) {
       this.lastUpstreamError = chunk.error;

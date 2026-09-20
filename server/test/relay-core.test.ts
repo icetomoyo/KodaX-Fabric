@@ -466,6 +466,24 @@ test("protocol API-key extraction accepts Anthropic aliases and rejects conflict
   });
 });
 
+test("SSE inspection reads Responses API stream usage from response.completed", () => {
+  const source = [
+    'event: response.created\ndata: {"type":"response.created","response":{"id":"resp_1","object":"response","model":"GLM-5.3"}}\n\n',
+    'event: response.output_text.delta\ndata: {"type":"response.output_text.delta","delta":"hi"}\n\n',
+    'event: response.completed\ndata: {"type":"response.completed","response":{"id":"resp_1","usage":{"input_tokens":410149,"input_tokens_details":{"cached_tokens":410048},"output_tokens":378,"total_tokens":410527}}}\n\n',
+    "data: [DONE]\n\n",
+  ].join("");
+  const inspector = new SseAuditInspector();
+  inspector.feed(new TextEncoder().encode(source));
+  const snapshot = inspector.finish();
+
+  assert.equal(snapshot.doneSeen, true);
+  assert.equal(snapshot.usage.promptTokens, 410149);
+  assert.equal(snapshot.usage.completionTokens, 378);
+  assert.equal(snapshot.usage.totalTokens, 410527);
+  assert.equal(snapshot.usage.cacheReadTokens, 410048);
+});
+
 test("SSE inspection survives arbitrary UTF-8 and event chunk boundaries", () => {
   const source = [
     'data: {"id":"one","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","content":"你"}}]}\r\n\r\n',
