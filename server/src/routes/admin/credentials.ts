@@ -1183,6 +1183,7 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
             modelCount: 0,
             models: [],
             protocol: resolveUpstreamTestProtocol(created.credential.supportedProtocols),
+            rawBody: null,
             message: error instanceof Error ? error.message : "连接测试失败",
           };
         }
