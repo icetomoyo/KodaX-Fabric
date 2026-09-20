@@ -24,14 +24,17 @@ http.interceptors.response.use(
     const code = err.response?.data?.code;
     if (status === 401) {
       const auth = useAuthStore();
+      const alreadyOnLogin = location.pathname === "/login";
       auth.logout();
-      if (location.pathname !== "/login") {
-        location.href = `/login?redirect=${encodeURIComponent(location.pathname)}`;
+      if (!alreadyOnLogin) {
+        location.assign(`/login?redirect=${encodeURIComponent(location.pathname)}`);
       }
     }
     if (status === 403 && code === "MUST_CHANGE_PASSWORD") {
+      const auth = useAuthStore();
+      auth.markMustChangePassword();
       if (location.pathname !== "/change-password") {
-        location.href = "/change-password";
+        location.assign("/change-password");
       }
     }
     if (status === 400 && code === "INVALID_ACT_AS") {

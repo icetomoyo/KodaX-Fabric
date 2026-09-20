@@ -1,6 +1,13 @@
 import { defineStore } from "pinia";
 import { computed, ref } from "vue";
 import { http } from "@/api/http";
+import {
+  ACT_AS_KEY,
+  TOKEN_KEY,
+  clearStoredSession,
+  readStoredSession,
+  writeStoredUser,
+} from "@/lib/session-storage";
 
 export type UserEnterprise = {
   id: number;
@@ -36,35 +43,12 @@ export type User = {
   actAs?: UserActAs | null;
 };
 
-const TOKEN_KEY = "th_token";
-const USER_KEY = "th_user";
-const ACT_AS_KEY = "th_act_as";
-
-function readStoredActAs(): ActAsPayload | null {
-  const raw = localStorage.getItem(ACT_AS_KEY);
-  if (!raw) return null;
-  try {
-    const parsed = JSON.parse(raw) as ActAsPayload;
-    if (
-      parsed?.role === "org_admin"
-      || parsed?.role === "dept_admin"
-      || parsed?.role === "team_admin"
-      || parsed?.role === "employee"
-    ) {
-      return parsed;
-    }
-  } catch {
-    return null;
-  }
-  return null;
-}
+const stored = readStoredSession();
 
 export const useAuthStore = defineStore("auth", () => {
-  const token = ref<string | null>(localStorage.getItem(TOKEN_KEY));
-  const user = ref<User | null>(
-    localStorage.getItem(USER_KEY) ? JSON.parse(localStorage.getItem(USER_KEY)!) : null,
-  );
-  const actAs = ref<ActAsPayload | null>(readStoredActAs());
+  const token = ref<string | null>(stored.token);
+  const user = ref<User | null>((stored.user as User | null) ?? null);
+  const actAs = ref<ActAsPayload | null>(stored.actAs);
 
   const isLoggedIn = computed(() => Boolean(token.value));
   const trueRole = computed(() => user.value?.trueRole ?? user.value?.role);
@@ -81,7 +65,14 @@ export const useAuthStore = defineStore("auth", () => {
     token.value = nextToken;
     user.value = nextUser;
     localStorage.setItem(TOKEN_KEY, nextToken);
-    localStorage.setItem(USER_KEY, JSON.stringify(nextUser));
+    writeStoredUser(nextUser);
+    setActAs(null);
+  }
+
+  function markMustChangePassword() {
+    if (!user.value || user.value.mustChangePassword) return;
+    user.value = { ...user.value, mustChangePassword: true };
+    writeStoredUser(user.value);
   }
 
   function setActAs(next: ActAsPayload | null) {
@@ -94,9 +85,7 @@ export const useAuthStore = defineStore("auth", () => {
     token.value = null;
     user.value = null;
     actAs.value = null;
-    localStorage.removeItem(TOKEN_KEY);
-    localStorage.removeItem(USER_KEY);
-    localStorage.removeItem(ACT_AS_KEY);
+    clearStoredSession();
   }
 
   async function login(phone: string, password: string) {
@@ -137,7 +126,7 @@ export const useAuthStore = defineStore("auth", () => {
     const { data } = await http.get("/api/auth/me");
     if (!data.success) throw new Error(data.message || "获取用户失败");
     user.value = data.data;
-    localStorage.setItem(USER_KEY, JSON.stringify(data.data));
+    writeStoredUser(data.data);
     return data.data as User;
   }
 
@@ -155,6 +144,7 @@ export const useAuthStore = defineStore("auth", () => {
     canSwitchActAs,
     setSession,
     setActAs,
+    markMustChangePassword,
     logout,
     login,
     loginLdap,

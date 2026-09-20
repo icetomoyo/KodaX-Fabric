@@ -252,10 +252,12 @@ function widgetSize() {
 
 function clampToViewport() {
   if (!position.value || !rootRef.value) return;
-  position.value = clampTokenBotPosition({
+  const next = clampTokenBotPosition({
     ...position.value,
     ...widgetSize(),
   });
+  if (next.right === position.value.right && next.bottom === position.value.bottom) return;
+  position.value = next;
 }
 
 function onViewportChange() {
