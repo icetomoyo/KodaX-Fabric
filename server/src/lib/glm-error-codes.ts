@@ -1,6 +1,8 @@
 /**
- * 智谱开放平台错误码原文，对照 https://docs.bigmodel.cn/cn/faq/api-code
- * 三列与官方表一致：业务错误码、HTTP 状态码、错误信息。不改写官方文案。
+ * 智谱错误码。以 https://docs.bigmodel.cn/cn/faq/api-code 为底；
+ * coding-plan 线上与文档不一致的条目（1308 / 1310）按实测原文对齐。
+ * 1316 / 1317 仍是文档里「主账号余额不足、无法超额按量」的变体：
+ * 推理打满 5 小时 / 7 天走的是 1308 / 1310，不是这两码。
  */
 export type GlmErrorCatalogEntry = {
   code: string | null;
@@ -8,7 +10,7 @@ export type GlmErrorCatalogEntry = {
   message: string;
 };
 
-/** 官方表原文。占位符（${field} 等）保持文档写法。 */
+/** 占位符（${field} 等）保持文档写法；1308 / 1310 为线上原文。 */
 export const GLM_ERROR_CATALOG: readonly GlmErrorCatalogEntry[] = [
   { code: null, httpStatus: 500, message: "内部错误" },
   { code: "1000", httpStatus: 401, message: "身份验证失败" },
@@ -32,9 +34,9 @@ export const GLM_ERROR_CATALOG: readonly GlmErrorCatalogEntry[] = [
   { code: "1301", httpStatus: 400, message: "系统检测到输入或生成内容可能包含不安全或敏感内容，请您避免输入易产生敏感内容的提示语，感谢您的配合" },
   { code: "1302", httpStatus: 429, message: "您的账户已达到速率限制，请您控制请求频率" },
   { code: "1305", httpStatus: 429, message: "该模型当前访问量过大，请您稍后再试" },
-  { code: "1308", httpStatus: 429, message: "已达到 ${number} ${unit} 的使用上限。您的限额将在 ${next_flush_time} 重置" },
+  { code: "1308", httpStatus: 429, message: "已达到 5 小时使用上限，${next_flush_time} 后可继续使用。如需超限额按量付费使用，可联系管理员开启超额按量付费。" },
   { code: "1309", httpStatus: 429, message: "您的 GLM Coding Plan 套餐已到期，暂无法使用，前往官方续订后即可恢复 https://bigmodel.cn/claude-code" },
-  { code: "1310", httpStatus: 429, message: "您已达到每周/每月使用上限，您的限额将在 ${next_flush_time} 重置" },
+  { code: "1310", httpStatus: 429, message: "已达到 7 天使用上限，${next_flush_time} 后可继续使用。如需超限额按量付费使用，可联系管理员开启超额按量付费。" },
   { code: "1311", httpStatus: 429, message: "当前订阅套餐暂未开放 ${model_name} 权限" },
   { code: "1313", httpStatus: 429, message: "您的账户当前使用模式不符合公平使用策略，请求频率已受到限制。详情请参阅《条款与协议-订阅及自动续费协议》，如需恢复请前往个人中心-编程套餐总览-顶部申请解除限制" },
   { code: "1314", httpStatus: 429, message: "您的企业套餐已失效，请联系企业管理员。" },
@@ -75,17 +77,103 @@ function asMessage(value: unknown): string | null {
   return trimmed ? trimmed.slice(0, 4000) : null;
 }
 
-const QUOTA_EXHAUSTED_CODE = "1113";
-const QUOTA_EXHAUSTED_MESSAGE_MARKERS = ["余额不足", "资源包"] as const;
+/**
+ * Business codes that mean the Key is out of quota / subscription, not RPM.
+ * 1308 / 1310 are the live coding-plan 5-hour / 7-day caps (not 1316 / 1317).
+ * 1113 is balance. 1309 / 1314 / 1315 are dead until renewed.
+ * 1316–1321 stay in the set so a future official-table reply still cools long.
+ */
+const QUOTA_EXHAUSTED_CODES = new Set([
+  "1113",
+  "1308",
+  "1309",
+  "1310",
+  "1314",
+  "1315",
+  "1316",
+  "1317",
+  "1318",
+  "1319",
+  "1320",
+  "1321",
+]);
+
+/**
+ * Responses 协议没有 1310/1308，只能靠中文。Chat / Anthropic 有码时
+ * 走 QUOTA_EXHAUSTED_CODES。套餐到期/失效类同样并入长冷却。
+ */
+const QUOTA_EXHAUSTED_MESSAGE_MARKERS = [
+  "使用上限",
+  "余额不足",
+  "资源包",
+  "欠费",
+  "套餐已到期",
+  "套餐已失效",
+  "仅限企业编程套餐",
+] as const;
+
+export type UpstreamUsageCapKind = "five_hour" | "weekly" | "monthly" | "other";
+
+export type UpstreamUsageCap = {
+  kind: UpstreamUsageCapKind;
+  /** Reset instant parsed from the upstream message (Asia/Shanghai wall time), if present. */
+  resetAt: Date | null;
+};
+
+const USAGE_CAP_RESET_TIME = /(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})/;
+
+/** Zhipu reports limit reset times in Asia/Shanghai wall time. */
+export function parseUsageCapResetAt(message: string): Date | null {
+  const match = USAGE_CAP_RESET_TIME.exec(message);
+  if (!match) return null;
+  const parsed = new Date(`${match[1]}T${match[2]}+08:00`);
+  return Number.isFinite(parsed.getTime()) ? parsed : null;
+}
+
+function classifyUsageCapKind(
+  code: string | null,
+  message: string | null,
+): UpstreamUsageCapKind {
+  if (message) {
+    if (/5\s*小时/.test(message)) return "five_hour";
+    if (/7\s*天|每周/.test(message)) return "weekly";
+    if (/每月/.test(message)) return "monthly";
+  }
+  if (code === "1308" || code === "1316" || code === "1318" || code === "1320") {
+    return "five_hour";
+  }
+  if (code === "1310" || code === "1317" || code === "1319" || code === "1321") {
+    return "weekly";
+  }
+  return "other";
+}
+
+/**
+ * Detect a usage-cap / balance exhaustion reply and, when the upstream
+ * message carries a reset timestamp ("…，2026-09-20 15:32:01 后可继续使用"),
+ * surface it so cooling can end exactly at window reset instead of a fixed
+ * cooldown. Employee-submitted keys may be drained outside this relay, so
+ * the upstream reply is the authoritative quota signal.
+ */
+export function extractUpstreamUsageCap(payload: unknown): UpstreamUsageCap | null {
+  const extracted = extractUpstreamBusinessError(payload);
+  if (!extracted) return null;
+  const code = extracted.code;
+  const message = extracted.message;
+  const byCode = code != null && QUOTA_EXHAUSTED_CODES.has(code);
+  const byMessage = Boolean(
+    message && QUOTA_EXHAUSTED_MESSAGE_MARKERS.some((marker) => message.includes(marker)),
+  );
+  if (!byCode && !byMessage) return null;
+  return {
+    kind: classifyUsageCapKind(code, message),
+    resetAt: message ? parseUsageCapResetAt(message) : null,
+  };
+}
 
 /** True when an upstream JSON envelope reports quota/balance exhaustion. */
 export function isQuotaExhaustedError(payload: unknown): boolean {
-  const extracted = extractUpstreamBusinessError(payload);
-  if (!extracted) return false;
-  if (extracted.code === QUOTA_EXHAUSTED_CODE) return true;
-  const message = extracted.message;
-  if (!message) return false;
-  return QUOTA_EXHAUSTED_MESSAGE_MARKERS.some((marker) => message.includes(marker));
+  return extractUpstreamUsageCap(payload) !== null;
 }
 
 /** 从上游响应信封取出原文业务码和错误信息，不改写。 */

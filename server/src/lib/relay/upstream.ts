@@ -3,7 +3,20 @@ import { env } from "../../config.js";
 import { db } from "../../db/client.js";
 import { upstreamCredentials } from "../../db/schema/index.js";
 import { decryptSecret } from "../crypto-secret.js";
-import { isQuotaExhaustedError } from "../glm-error-codes.js";
+import {
+  extractUpstreamUsageCap,
+  type UpstreamUsageCap,
+} from "../glm-error-codes.js";
+import {
+  externalDrainObservation,
+  fiveHourResetAt,
+  getCredentialQuotaUsage,
+  learnedCapResetFromMeta,
+  learnedNextReset,
+  mergeLearnedCapReset,
+  weeklyResetAt,
+  type LearnedCapResets,
+} from "./credential-quota.js";
 import { beginCredentialUse } from "./credential-load.js";
 import {
   DEFAULT_RELAY_PROTOCOL,
@@ -260,11 +273,19 @@ async function autoDisableCredential(
 
 const RATE_LIMIT_LAST_ERROR = "HTTP 429：上游限流，凭证已进入冷却";
 const QUOTA_EXHAUSTED_LAST_ERROR = "HTTP 429：上游余额不足，凭证已长时间冷却";
+const USAGE_CAP_LAST_ERROR = "HTTP 429：上游使用已达上限，凭证冷却至窗口重置";
+
+/** Never trust an upstream-provided reset time further out than this. */
+const MAX_USAGE_CAP_COOLDOWN_MS = 31 * 24 * 3_600_000;
 
 export type RelayRateLimitCooldownDecision = {
   cooldownSeconds: number;
+  /** Absolute cooling end when the upstream told us the reset instant. */
+  coolUntil: Date | null;
   lastError: string;
   quotaExhausted: boolean;
+  /** 识别出的配额上限信号；普通限流/非 JSON 报文为 null。 */
+  cap: UpstreamUsageCap | null;
 };
 
 function parseJsonValue(text: string): unknown | undefined {
@@ -276,26 +297,91 @@ function parseJsonValue(text: string): unknown | undefined {
   }
 }
 
+/**
+ * End of cooling for a usage cap that still has a future window.
+ * A timestamp already in the past is handled by the caller (short cooldown);
+ * this helper must not roll learned / local windows forward in that case.
+ * Balance errors (欠费/余额不足) have no time window and return null.
+ */
+function usageCapResetAt(
+  cap: UpstreamUsageCap,
+  now: Date,
+  learned?: LearnedCapResets | null,
+): Date | null {
+  if (cap.resetAt) {
+    if (cap.resetAt.getTime() > now.getTime()) {
+      return new Date(
+        Math.min(cap.resetAt.getTime(), now.getTime() + MAX_USAGE_CAP_COOLDOWN_MS),
+      );
+    }
+    return null;
+  }
+  // 报文没带时刻时，先回退到该 Key 此前学到的同窗口相位。
+  const learnedReset = learnedNextReset(learned ?? null, cap.kind, now);
+  if (learnedReset) {
+    return new Date(
+      Math.min(learnedReset.getTime(), now.getTime() + MAX_USAGE_CAP_COOLDOWN_MS),
+    );
+  }
+  if (cap.kind === "five_hour") return fiveHourResetAt(now);
+  // monthly has no dedicated Hub window; reuse the 7-day boundary as a
+  // conservative bound. Live monthly replies so far always include resetAt.
+  if (cap.kind === "weekly" || cap.kind === "monthly") return weeklyResetAt(now);
+  return null;
+}
+
 /** Decide 429 cooldown from a peeked body; unread/non-JSON bodies stay on the short cooldown. */
 export function resolveRelayRateLimitCooldown(
   bodyText: string | null,
   defaultCooldownSeconds: number,
   quotaCooldownSeconds: number,
+  now: Date = new Date(),
+  learned?: LearnedCapResets | null,
 ): RelayRateLimitCooldownDecision {
   if (bodyText) {
     const parsed = parseJsonValue(bodyText);
-    if (parsed !== undefined && isQuotaExhaustedError(parsed)) {
+    const cap = parsed === undefined ? null : extractUpstreamUsageCap(parsed);
+    if (cap) {
+      // 报文带了恢复时刻但已过期：窗口已开，或 429 跨过了重置点。
+      // 15:32:01 的 429 在 15:32:03 才落到 Hub 时，前滚 learned/本地窗口
+      // 会再冷 5 小时（周额度则可能几天），所以只走普通短冷却。
+      if (cap.resetAt && cap.resetAt.getTime() <= now.getTime()) {
+        return {
+          cooldownSeconds: defaultCooldownSeconds,
+          coolUntil: null,
+          lastError: RATE_LIMIT_LAST_ERROR,
+          quotaExhausted: false,
+          cap,
+        };
+      }
+      const resetAt = usageCapResetAt(cap, now, learned);
+      if (resetAt) {
+        return {
+          cooldownSeconds: Math.max(
+            1,
+            Math.ceil((resetAt.getTime() - now.getTime()) / 1_000),
+          ),
+          coolUntil: resetAt,
+          lastError: USAGE_CAP_LAST_ERROR,
+          quotaExhausted: true,
+          cap,
+        };
+      }
       return {
         cooldownSeconds: quotaCooldownSeconds,
+        coolUntil: null,
         lastError: QUOTA_EXHAUSTED_LAST_ERROR,
         quotaExhausted: true,
+        cap,
       };
     }
   }
   return {
     cooldownSeconds: defaultCooldownSeconds,
+    coolUntil: null,
     lastError: RATE_LIMIT_LAST_ERROR,
     quotaExhausted: false,
+    cap: null,
   };
 }
 
@@ -307,13 +393,58 @@ async function peekResponseText(response: Response): Promise<string | null> {
   }
 }
 
+/**
+ * 429 配额信号带来的 meta 增量：学到的该 Key 窗口重置相位
+ * （learnedCapReset）与站外消耗证据（externalDrain）。没有可写内容时返回
+ * null，调用方据此完全不碰 meta 列。
+ */
+async function usageCapMetaPatch(
+  candidate: RelayCandidate,
+  cap: UpstreamUsageCap | null,
+  now: Date,
+): Promise<Record<string, unknown> | null> {
+  if (!cap) return null;
+  // Stale 429: the quoted reset already passed. Do not persist it as a
+  // learned phase (that would roll the next window forward) or as drain evidence.
+  if (cap.resetAt && cap.resetAt.getTime() <= now.getTime()) return null;
+  const patch: Record<string, unknown> = {};
+  if (cap.resetAt) {
+    const merged = mergeLearnedCapReset(candidate.meta, cap.kind, cap.resetAt);
+    if (merged.learnedCapReset) patch.learnedCapReset = merged.learnedCapReset;
+  }
+  // 本地账本远低于限额时 429 说明 Key 在站外被直接消耗，留下证据。
+  const limit = cap.kind === "five_hour"
+    ? (candidate.fiveHourCreditLimit ?? null)
+    : cap.kind === "weekly"
+      ? (candidate.weeklyCreditLimit ?? null)
+      : null;
+  if (limit != null) {
+    const usage = await getCredentialQuotaUsage([candidate.credentialId], now);
+    const local = usage.get(candidate.credentialId);
+    const localCredits = cap.kind === "five_hour"
+      ? (local?.fiveHourCredits ?? 0)
+      : (local?.weeklyCredits ?? 0);
+    const observation = externalDrainObservation({
+      kind: cap.kind,
+      localCredits,
+      limit,
+      now,
+    });
+    if (observation) patch.externalDrain = observation;
+  }
+  return Object.keys(patch).length > 0 ? patch : null;
+}
+
 async function coolCredential(
   candidate: RelayCandidate,
   cooldownSeconds: number,
   lastError: string,
+  explicitCoolUntil?: Date | null,
+  metaPatch?: Record<string, unknown> | null,
 ): Promise<void> {
   const now = new Date();
-  const coolUntil = new Date(now.getTime() + cooldownSeconds * 1_000);
+  const coolUntil =
+    explicitCoolUntil ?? new Date(now.getTime() + cooldownSeconds * 1_000);
   const coolUntilIso = coolUntil.toISOString();
   await db
     .update(upstreamCredentials)
@@ -336,6 +467,12 @@ async function coolCredential(
       lastErrorAt: now,
       lastUsedAt: now,
       updatedAt: now,
+      // 有配额观测时才合并 meta；普通 429 完全不写这一列。
+      ...(metaPatch
+        ? {
+            meta: sql`coalesce(${upstreamCredentials.meta}, '{}'::jsonb) || ${JSON.stringify(metaPatch)}::jsonb`,
+          }
+        : {}),
     })
     .where(selectedCredential(candidate));
 }
@@ -638,12 +775,23 @@ export async function sendRelayUpstream(
     } else if (classification.kind === "auth_error") {
       await autoDisableCredential(input.candidate, response.status);
     } else if (classification.kind === "rate_limited") {
+      const bodyText = await peekResponseText(response);
+      const now = new Date();
       const decision = resolveRelayRateLimitCooldown(
-        await peekResponseText(response),
+        bodyText,
         cooldownSeconds,
         env.RELAY_QUOTA_COOLDOWN_SECONDS,
+        now,
+        learnedCapResetFromMeta(input.candidate.meta),
       );
-      await coolCredential(input.candidate, decision.cooldownSeconds, decision.lastError);
+      const metaPatch = await usageCapMetaPatch(input.candidate, decision.cap, now);
+      await coolCredential(
+        input.candidate,
+        decision.cooldownSeconds,
+        decision.lastError,
+        decision.coolUntil,
+        metaPatch,
+      );
     } else if (response.status >= 500 && response.status <= 599) {
       await markCredentialFailure(
         input.candidate,

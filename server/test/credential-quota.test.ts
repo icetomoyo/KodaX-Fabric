@@ -11,13 +11,19 @@ const {
   CREDENTIAL_WEEKLY_EPOCH,
   creditCoolingKind,
   evaluateCredentialQuota,
+  externalDrainObservation,
   fiveHourResetAt,
   fiveHourWindowStart,
   hourStartOf,
+  learnedCapResetFromMeta,
+  learnedNextReset,
+  mergeLearnedCapReset,
   quotaExhaustedLastError,
+  remainingQuotaFraction,
   resolveGraphCoolingKind,
   weekStartOf,
   weeklyResetAt,
+  withInFlightEstimate,
 } = await import("../src/lib/relay/credential-quota.js");
 
 test("hourStartOf truncates to the UTC hour", () => {
@@ -43,7 +49,7 @@ test("five-hour window and reset cross a UTC day boundary", () => {
   assert.equal(fiveHourResetAt(now).toISOString(), "2026-09-01T02:00:00.000Z");
 });
 
-test("weekStartOf aligns to 19:00 UTC+8 after the upstream 18:49 reset", () => {
+test("weekStartOf aligns to the local 19:00 UTC+8 fallback epoch", () => {
   assert.equal(CREDENTIAL_WEEKLY_EPOCH.toISOString(), "2026-09-03T11:00:00.000Z");
 
   const atEpoch = new Date("2026-09-03T11:00:00.000Z");
@@ -178,6 +184,140 @@ test("resolveGraphCoolingKind keeps short rate-limit cooling as other", () => {
   );
   assert.equal(
     resolveGraphCoolingKind("active", { fiveHourExhausted: false, weeklyExhausted: false }),
+    null,
+  );
+});
+
+test("withInFlightEstimate counts in-flight requests at the observed per-request average", () => {
+  const usage = withInFlightEstimate(
+    {
+      fiveHourCredits: 100,
+      weeklyCredits: 200,
+      fiveHourRequests: 10,
+      weeklyRequests: 10,
+    },
+    5,
+  );
+  assert.equal(usage.fiveHourCredits, 150);
+  assert.equal(usage.weeklyCredits, 250);
+
+  assert.equal(
+    withInFlightEstimate(
+      { fiveHourCredits: 100, weeklyCredits: 200, fiveHourRequests: 10 },
+      0,
+    ).fiveHourCredits,
+    100,
+  );
+  // 没有历史请求数就没有单请求均价，无法估算在途消耗。
+  assert.equal(
+    withInFlightEstimate({ fiveHourCredits: 100, weeklyCredits: 200 }, 5).fiveHourCredits,
+    100,
+  );
+});
+
+test("remainingQuotaFraction takes the tighter window and clamps to [0, 1]", () => {
+  // 没配限额 → 没有配额压力。
+  assert.equal(
+    remainingQuotaFraction(
+      { fiveHourCredits: 100, weeklyCredits: 0 },
+      { fiveHourLimit: null, weeklyLimit: null },
+    ),
+    1,
+  );
+  // 双窗口取更紧的：5 小时剩 50%，周剩 20%。
+  assert.ok(
+    Math.abs(
+      remainingQuotaFraction(
+        { fiveHourCredits: 500, weeklyCredits: 8_000 },
+        { fiveHourLimit: 1_000, weeklyLimit: 10_000 },
+      ) - 0.2,
+    ) < 1e-9,
+  );
+  // 超限 → 0。
+  assert.equal(
+    remainingQuotaFraction(
+      { fiveHourCredits: 1_200, weeklyCredits: 0 },
+      { fiveHourLimit: 1_000, weeklyLimit: null },
+    ),
+    0,
+  );
+});
+
+test("learnedNextReset returns the learned instant or rolls it forward by the window", () => {
+  const now = new Date("2026-09-20T07:33:36.000Z");
+  // 学到的相位仍在未来 → 直接用。
+  assert.equal(
+    learnedNextReset({ weekly: "2026-09-24T07:33:36.000Z" }, "weekly", now)?.toISOString(),
+    "2026-09-24T07:33:36.000Z",
+  );
+  // 已过去 → 按 7 天周期前滚到下一个未来时刻。
+  assert.equal(
+    learnedNextReset({ weekly: "2026-09-10T07:33:36.000Z" }, "weekly", now)?.toISOString(),
+    "2026-09-24T07:33:36.000Z",
+  );
+  // 非法 ISO / 没学到该窗口 → null。
+  assert.equal(learnedNextReset({ weekly: "not-a-date" }, "weekly", now), null);
+  assert.equal(
+    learnedNextReset({ fiveHour: "2026-09-24T07:33:36.000Z" }, "weekly", now),
+    null,
+  );
+  assert.equal(learnedNextReset(null, "weekly", now), null);
+});
+
+test("mergeLearnedCapReset preserves other meta keys and merges per-kind phases", () => {
+  const merged = mergeLearnedCapReset(
+    {
+      discoveredModels: ["glm-5.3"],
+      learnedCapReset: { weekly: "2026-09-17T09:49:49.000Z" },
+    },
+    "five_hour",
+    new Date("2026-09-20T12:00:00.000Z"),
+  );
+  assert.deepEqual(merged, {
+    discoveredModels: ["glm-5.3"],
+    learnedCapReset: {
+      weekly: "2026-09-17T09:49:49.000Z",
+      fiveHour: "2026-09-20T12:00:00.000Z",
+      monthly: undefined,
+    },
+  });
+
+  const learned = learnedCapResetFromMeta(merged);
+  assert.equal(learned?.fiveHour, "2026-09-20T12:00:00.000Z");
+  assert.equal(learned?.weekly, "2026-09-17T09:49:49.000Z");
+  assert.equal(learned?.monthly, undefined);
+
+  // other 类上限没有对应窗口键，原样返回。
+  assert.deepEqual(mergeLearnedCapReset({ a: 1 }, "other", new Date()), { a: 1 });
+});
+
+test("learnedCapResetFromMeta rejects garbage input", () => {
+  assert.equal(learnedCapResetFromMeta(null), null);
+  assert.equal(learnedCapResetFromMeta("garbage"), null);
+  assert.equal(learnedCapResetFromMeta({ learnedCapReset: "x" }), null);
+  assert.equal(learnedCapResetFromMeta({ learnedCapReset: { weekly: 42 } }), null);
+});
+
+test("externalDrainObservation records a gap only well below the limit", () => {
+  const now = new Date("2026-09-20T07:33:36.000Z");
+  // 本地账本 200 / 限额 1000（<85%）→ 站外消耗下限 800。
+  assert.deepEqual(
+    externalDrainObservation({ kind: "weekly", localCredits: 200, limit: 1_000, now }),
+    {
+      kind: "weekly",
+      localCredits: 200,
+      limit: 1_000,
+      externalEstimate: 800,
+      observedAt: "2026-09-20T07:33:36.000Z",
+    },
+  );
+  // ≥85% 属于正常漂移，不算站外消耗证据。
+  assert.equal(
+    externalDrainObservation({ kind: "weekly", localCredits: 850, limit: 1_000, now }),
+    null,
+  );
+  assert.equal(
+    externalDrainObservation({ kind: "five_hour", localCredits: 10, limit: null, now }),
     null,
   );
 });

@@ -9,6 +9,7 @@ process.env.CREDENTIAL_ENCRYPT_KEY ??= "unit-test-credential-secret";
 
 const {
   extractUpstreamBusinessError,
+  extractUpstreamUsageCap,
   lookupGlmErrorCatalog,
   resolveLoggedError,
   GLM_ERROR_CATALOG,
@@ -18,7 +19,7 @@ const { buildErrorLogListQuery, adminErrorLogRoutes } = await import(
   "../src/routes/admin/error-logs.js"
 );
 
-test("智谱目录三列是官方 FAQ 原文", () => {
+test("智谱目录未实测改写的条目仍是官方 FAQ 原文", () => {
   const entry = lookupGlmErrorCatalog("1001");
   assert.deepEqual(entry, {
     code: "1001",
@@ -43,6 +44,34 @@ test("智谱 1302 / 1113 / 1261 分别对应官方 HTTP 与错误信息原文", 
   assert.equal(lookupGlmErrorCatalog("1302")?.httpStatus, 429);
   assert.equal(lookupGlmErrorCatalog("1113")?.message, "您的账户已欠费，请充值后重试");
   assert.equal(lookupGlmErrorCatalog("1261")?.message, "Prompt 超长");
+});
+
+test("智谱 1308 / 1310 目录与 coding-plan 线上原文对齐", () => {
+  assert.equal(
+    lookupGlmErrorCatalog("1308")?.message,
+    "已达到 5 小时使用上限，${next_flush_time} 后可继续使用。如需超限额按量付费使用，可联系管理员开启超额按量付费。",
+  );
+  assert.equal(
+    lookupGlmErrorCatalog("1310")?.message,
+    "已达到 7 天使用上限，${next_flush_time} 后可继续使用。如需超限额按量付费使用，可联系管理员开启超额按量付费。",
+  );
+  // 文档 1317 仍是「7 天 + 无法超额按量」变体，不是线上周额度码。
+  assert.match(lookupGlmErrorCatalog("1317")?.message ?? "", /主账号余额不足/);
+});
+
+test("extractUpstreamUsageCap treats 1308 / 1310 codes as usage caps without 使用上限", () => {
+  assert.deepEqual(extractUpstreamUsageCap({ error: { code: "1310", message: "weekly limit" } }), {
+    kind: "weekly",
+    resetAt: null,
+  });
+  assert.equal(
+    extractUpstreamUsageCap({ error: { code: "1308", message: "cap" } })?.kind,
+    "five_hour",
+  );
+  assert.equal(
+    extractUpstreamUsageCap({ error: { code: "1317", message: "doc 7-day variant" } })?.kind,
+    "weekly",
+  );
 });
 
 test("unknown error codes have no catalog entry", () => {

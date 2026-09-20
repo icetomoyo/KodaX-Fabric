@@ -398,7 +398,11 @@ type CandidateCredentialSource = Pick<
   | "baseUrl"
   | "credentialPriority"
   | "credentialWeight"
->;
+  | "meta"
+> & {
+  fiveHourCreditLimit?: number | null;
+  weeklyCreditLimit?: number | null;
+};
 
 function toRelayCandidate(
   credential: CandidateCredentialSource,
@@ -425,6 +429,9 @@ function toRelayCandidate(
     baseUrl: credential.baseUrl,
     credentialPriority: credential.credentialPriority,
     credentialWeight: credential.credentialWeight,
+    meta: credential.meta,
+    fiveHourCreditLimit: credential.fiveHourCreditLimit ?? null,
+    weeklyCreditLimit: credential.weeklyCreditLimit ?? null,
   };
 }
 

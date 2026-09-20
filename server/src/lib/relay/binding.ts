@@ -45,8 +45,11 @@ import {
   evaluateCredentialQuota,
   getCredentialQuotaUsage,
   quotaExhaustedLastError,
+  remainingQuotaFraction,
+  withInFlightEstimate,
   type CredentialQuotaStatus,
 } from "./credential-quota.js";
+import { getCredentialLoad } from "./credential-load.js";
 import { isRelayProtocol, type RelayProtocol } from "./protocol.js";
 import { isOpenPoolProvider, OPEN_POOL_PROVIDER_CODE } from "./open-pool.js";
 import {
@@ -88,6 +91,7 @@ export type BoundCredential = {
   baseUrl: string;
   fiveHourCreditLimit: number | null;
   weeklyCreditLimit: number | null;
+  meta: unknown;
 };
 
 export type AcquireBindingParams = {
@@ -157,6 +161,7 @@ type CredentialSnapshotRow = {
   protocolConfigs: unknown;
   fiveHourCreditLimit: string | null;
   weeklyCreditLimit: string | null;
+  meta: unknown;
 };
 
 type LoadedBinding = {
@@ -194,6 +199,7 @@ const credentialSnapshotSelect = {
   protocolConfigs: productLines.protocolConfigs,
   fiveHourCreditLimit: upstreamCredentials.fiveHourCreditLimit,
   weeklyCreditLimit: upstreamCredentials.weeklyCreditLimit,
+  meta: upstreamCredentials.meta,
 };
 
 /**
@@ -535,17 +541,22 @@ async function acquireOpenPoolCredential(
     pool.map((row) => row.credentialId),
     now,
   );
+  const usable: Array<{
+    snapshot: CredentialSnapshotRow;
+    credential: BoundCredential;
+    headroom: number;
+  }> = [];
   const retryTimes: number[] = [];
   for (const snapshot of pool) {
-    const usage = usageMap.get(snapshot.credentialId) ?? { fiveHourCredits: 0, weeklyCredits: 0 };
-    const quota = evaluateCredentialQuota(
-      usage,
-      {
-        fiveHourLimit: creditLimitNumber(snapshot.fiveHourCreditLimit),
-        weeklyLimit: creditLimitNumber(snapshot.weeklyCreditLimit),
-      },
-      now,
+    const limits = {
+      fiveHourLimit: creditLimitNumber(snapshot.fiveHourCreditLimit),
+      weeklyLimit: creditLimitNumber(snapshot.weeklyCreditLimit),
+    };
+    const usage = withInFlightEstimate(
+      usageMap.get(snapshot.credentialId) ?? { fiveHourCredits: 0, weeklyCredits: 0 },
+      getCredentialLoad(snapshot.credentialId).inFlight,
     );
+    const quota = evaluateCredentialQuota(usage, limits, now);
     const status = effectiveCredentialStatus(snapshot.credentialStatus, snapshot.coolUntil, now);
     if (quota.exhausted && quota.exhaustedUntil) {
       retryTimes.push(quota.exhaustedUntil.getTime());
@@ -556,9 +567,20 @@ async function acquireOpenPoolCredential(
     if (status !== "active" || quota.exhausted) continue;
     const credential = toBoundCredential(snapshot, params.protocol, now);
     if (!credential) continue;
+    usable.push({ snapshot, credential, headroom: remainingQuotaFraction(usage, limits) });
+  }
+  usable.sort(
+    (a, b) =>
+      b.snapshot.credentialPriority - a.snapshot.credentialPriority ||
+      b.headroom - a.headroom ||
+      b.snapshot.credentialWeight - a.snapshot.credentialWeight ||
+      a.snapshot.credentialId - b.snapshot.credentialId,
+  );
+  const picked = usable[0];
+  if (picked) {
     return {
       ok: true,
-      credential,
+      credential: picked.credential,
       bindingScope: { scopeType: "employee", scopeId: params.employeeId },
       replaced: false,
     };
@@ -945,7 +967,10 @@ async function inspectSnapshot(
   excludeCredentialIds: ReadonlySet<number> | undefined,
 ): Promise<SnapshotVerdict> {
   const usageMap = await getCredentialQuotaUsage([snapshot.credentialId], now);
-  const usage = usageMap.get(snapshot.credentialId) ?? { fiveHourCredits: 0, weeklyCredits: 0 };
+  const usage = withInFlightEstimate(
+    usageMap.get(snapshot.credentialId) ?? { fiveHourCredits: 0, weeklyCredits: 0 },
+    getCredentialLoad(snapshot.credentialId).inFlight,
+  );
   const quota = evaluateCredentialQuota(
     usage,
     {
@@ -1004,18 +1029,22 @@ async function tryBindFromPool(
     now,
   );
 
-  const usable: Array<{ snapshot: CredentialSnapshotRow; credential: BoundCredential }> = [];
+  const usable: Array<{
+    snapshot: CredentialSnapshotRow;
+    credential: BoundCredential;
+    headroom: number;
+  }> = [];
   const retryTimes: number[] = [];
   for (const snapshot of pool) {
-    const usage = usageMap.get(snapshot.credentialId) ?? { fiveHourCredits: 0, weeklyCredits: 0 };
-    const quota = evaluateCredentialQuota(
-      usage,
-      {
-        fiveHourLimit: creditLimitNumber(snapshot.fiveHourCreditLimit),
-        weeklyLimit: creditLimitNumber(snapshot.weeklyCreditLimit),
-      },
-      now,
+    const limits = {
+      fiveHourLimit: creditLimitNumber(snapshot.fiveHourCreditLimit),
+      weeklyLimit: creditLimitNumber(snapshot.weeklyCreditLimit),
+    };
+    const usage = withInFlightEstimate(
+      usageMap.get(snapshot.credentialId) ?? { fiveHourCredits: 0, weeklyCredits: 0 },
+      getCredentialLoad(snapshot.credentialId).inFlight,
     );
+    const quota = evaluateCredentialQuota(usage, limits, now);
     const status = effectiveCredentialStatus(snapshot.credentialStatus, snapshot.coolUntil, now);
     if (quota.exhausted) {
       if (quota.exhaustedUntil) retryTimes.push(quota.exhaustedUntil.getTime());
@@ -1026,8 +1055,18 @@ async function tryBindFromPool(
     if (status !== "active" || quota.exhausted) continue;
     const credential = toBoundCredential(snapshot, params.protocol, now);
     if (!credential) continue;
-    usable.push({ snapshot, credential });
+    usable.push({ snapshot, credential, headroom: remainingQuotaFraction(usage, limits) });
   }
+
+  // Same-priority Keys prefer the one with the most remaining quota headroom,
+  // spreading bursts across the pool instead of draining one Key to its cap.
+  usable.sort(
+    (a, b) =>
+      b.snapshot.credentialPriority - a.snapshot.credentialPriority ||
+      b.headroom - a.headroom ||
+      b.snapshot.credentialWeight - a.snapshot.credentialWeight ||
+      a.snapshot.credentialId - b.snapshot.credentialId,
+  );
 
   if (usable.length === 0) {
     return {
@@ -1394,6 +1433,7 @@ function toBoundCredential(
     baseUrl: upstreamConfig.baseUrl,
     fiveHourCreditLimit: creditLimitNumber(snapshot.fiveHourCreditLimit),
     weeklyCreditLimit: creditLimitNumber(snapshot.weeklyCreditLimit),
+    meta: snapshot.meta,
   };
 }
 

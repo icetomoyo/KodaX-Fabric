@@ -31,6 +31,9 @@ const {
 const { extractAnyRelayApiKey, extractRelayApiKey } = await import(
   "../src/middleware/api-key.js"
 );
+const { fiveHourResetAt, weeklyResetAt } = await import(
+  "../src/lib/relay/credential-quota.js"
+);
 const { getProviderTemplate, PROVIDER_TEMPLATES } = await import(
   "../src/lib/provider-templates.js"
 );
@@ -372,6 +375,244 @@ test("429 with GLM 1113 body uses a long quota cooldown", () => {
   );
   assert.equal(numericCode.quotaExhausted, true);
   assert.equal(numericCode.cooldownSeconds, 1800);
+});
+
+test("429 with GLM 5-hour usage cap cools until the upstream reset instant", () => {
+  // Real upstream reply: employee-submitted keys may be drained outside the
+  // relay, so the 429 body is the authoritative quota signal.
+  const now = new Date("2026-09-20T07:00:00.000Z"); // 15:00 Asia/Shanghai
+  const decision = resolveRelayRateLimitCooldown(
+    JSON.stringify({
+      error: {
+        code: "1308",
+        message:
+          "rate limit exceeded: 已达到 5 小时使用上限，2026-09-20 15:32:01 后可继续使用。如需超限额按量付费使用，可联系管理员开启超额按量付费。[2026092014505804ffa6483d0144be]",
+      },
+    }),
+    60,
+    1800,
+    now,
+  );
+  assert.equal(decision.quotaExhausted, true);
+  assert.equal(decision.lastError, "HTTP 429：上游使用已达上限，凭证冷却至窗口重置");
+  assert.deepEqual(decision.coolUntil, new Date("2026-09-20T07:32:01.000Z"));
+  assert.equal(decision.cooldownSeconds, 32 * 60 + 1);
+});
+
+test("429 with GLM 7-day usage cap cools until the upstream reset instant", () => {
+  const now = new Date("2026-09-20T07:33:36.000Z");
+  const decision = resolveRelayRateLimitCooldown(
+    JSON.stringify({
+      error: {
+        code: "1310",
+        message:
+          "rate limit exceeded: 已达到 7 天使用上限，2026-09-24 15:33:36 后可继续使用。如需超限额按量付费使用，可联系管理员开启超额按量付费。[2026092014335976be0b8f77014c9e]",
+      },
+    }),
+    60,
+    1800,
+    now,
+  );
+  assert.equal(decision.quotaExhausted, true);
+  assert.deepEqual(decision.coolUntil, new Date("2026-09-24T07:33:36.000Z"));
+  assert.equal(decision.cooldownSeconds, 4 * 24 * 60 * 60);
+});
+
+test("429 usage cap is detected inside the Anthropic and Responses envelopes", () => {
+  const now = new Date("2026-09-20T07:30:00.000Z");
+  const anthropic = resolveRelayRateLimitCooldown(
+    JSON.stringify({
+      type: "error",
+      error: {
+        type: "rate_limit_error",
+        code: "1310",
+        message:
+          "[1310][已达到 7 天使用上限，2026-09-21 17:49:49 后可继续使用。如需超限额按量付费使用，可联系管理员开启超额按量付费。][202609201526573e70c7b477b04f1b]",
+      },
+      request_id: "202609201526573e70c7b477b04f1b",
+    }),
+    60,
+    1800,
+    now,
+  );
+  assert.equal(anthropic.quotaExhausted, true);
+  assert.deepEqual(anthropic.coolUntil, new Date("2026-09-21T09:49:49.000Z"));
+
+  const responses = resolveRelayRateLimitCooldown(
+    JSON.stringify({
+      error: {
+        code: "rate_limit_exceeded",
+        message:
+          "已达到 7 天使用上限，2026-09-21 17:49:49 后可继续使用。如需超限额按量付费使用，可联系管理员开启超额按量付费。",
+        param: null,
+        type: "rate_limit_exceeded",
+      },
+    }),
+    60,
+    1800,
+    now,
+  );
+  assert.equal(responses.quotaExhausted, true);
+  assert.deepEqual(responses.coolUntil, new Date("2026-09-21T09:49:49.000Z"));
+});
+
+test("429 usage cap is detected inside the real 1308 5-hour envelopes", () => {
+  // Verbatim upstream replies from keys whose 5-hour window is exhausted:
+  // Chat/Responses observed 2026-09-20, Anthropic 2026-09-17 (threq_53895b1e…).
+  const chat = resolveRelayRateLimitCooldown(
+    JSON.stringify({
+      error: {
+        code: "1308",
+        message:
+          "已达到 5 小时使用上限，2026-09-20 15:32:01 后可继续使用。如需超限额按量付费使用，可联系管理员开启超额按量付费。",
+      },
+    }),
+    60,
+    1800,
+    new Date("2026-09-20T07:00:00.000Z"),
+  );
+  assert.equal(chat.quotaExhausted, true);
+  assert.deepEqual(chat.cap, {
+    kind: "five_hour",
+    resetAt: new Date("2026-09-20T07:32:01.000Z"),
+  });
+  assert.deepEqual(chat.coolUntil, new Date("2026-09-20T07:32:01.000Z"));
+
+  const responses = resolveRelayRateLimitCooldown(
+    JSON.stringify({
+      error: {
+        code: "rate_limit_exceeded",
+        message:
+          "已达到 5 小时使用上限，2026-09-20 15:32:01 后可继续使用。如需超限额按量付费使用，可联系管理员开启超额按量付费。",
+        param: null,
+        type: "rate_limit_exceeded",
+      },
+    }),
+    60,
+    1800,
+    new Date("2026-09-20T07:00:00.000Z"),
+  );
+  assert.equal(responses.quotaExhausted, true);
+  assert.deepEqual(responses.coolUntil, new Date("2026-09-20T07:32:01.000Z"));
+
+  const anthropic = resolveRelayRateLimitCooldown(
+    JSON.stringify({
+      type: "error",
+      error: {
+        type: "rate_limit_error",
+        code: "1308",
+        message:
+          "[1308][已达到 5 小时使用上限，2026-09-17 21:12:26 后可继续使用。如需超限额按量付费使用，可联系管理员开启超额按量付费。][2026091718043085f193c2e844414e]",
+      },
+      request_id: "2026091718043085f193c2e844414e",
+    }),
+    60,
+    1800,
+    new Date("2026-09-17T12:00:00.000Z"),
+  );
+  assert.equal(anthropic.quotaExhausted, true);
+  assert.deepEqual(anthropic.coolUntil, new Date("2026-09-17T13:12:26.000Z"));
+});
+
+test("429 usage cap without a reset time falls back to the window boundary", () => {
+  const now = new Date("2026-09-20T07:00:00.000Z");
+  const fiveHour = resolveRelayRateLimitCooldown(
+    JSON.stringify({ error: { code: "1316", message: "已达到 5 小时使用上限" } }),
+    60,
+    1800,
+    now,
+  );
+  assert.equal(fiveHour.quotaExhausted, true);
+  assert.deepEqual(fiveHour.coolUntil, fiveHourResetAt(now));
+
+  const weekly = resolveRelayRateLimitCooldown(
+    JSON.stringify({ error: { code: "1310", message: "已达到 7 天使用上限" } }),
+    60,
+    1800,
+    now,
+  );
+  assert.equal(weekly.quotaExhausted, true);
+  assert.deepEqual(weekly.coolUntil, weeklyResetAt(now));
+
+  const balance = resolveRelayRateLimitCooldown(
+    JSON.stringify({ error: { code: "1113", message: "您的账户已欠费，请充值后重试" } }),
+    60,
+    1800,
+    now,
+  );
+  assert.equal(balance.quotaExhausted, true);
+  assert.equal(balance.coolUntil, null);
+  assert.equal(balance.cooldownSeconds, 1800);
+});
+
+test("429 usage cap without a reset time falls back to the learned per-key phase", () => {
+  const now = new Date("2026-09-20T07:33:36.000Z");
+  // 报文没有时间戳时，用此前写进 meta 的该 Key 周窗口相位。
+  const decision = resolveRelayRateLimitCooldown(
+    JSON.stringify({ error: { code: "1310", message: "已达到 7 天使用上限" } }),
+    60,
+    1800,
+    now,
+    { weekly: "2026-09-24T07:33:36.000Z" },
+  );
+  assert.equal(decision.quotaExhausted, true);
+  assert.deepEqual(decision.coolUntil, new Date("2026-09-24T07:33:36.000Z"));
+  assert.deepEqual(decision.cap, { kind: "weekly", resetAt: null });
+
+  // 没学到相位时仍回退共享的周窗口边界。
+  const unlearned = resolveRelayRateLimitCooldown(
+    JSON.stringify({ error: { code: "1310", message: "已达到 7 天使用上限" } }),
+    60,
+    1800,
+    now,
+    null,
+  );
+  assert.deepEqual(unlearned.coolUntil, weeklyResetAt(now));
+});
+
+test("429 usage cap with an already-elapsed reset time keeps the short cooldown", () => {
+  // 14:50 打满、报文写 15:32:01 恢复；15:32:03 才落到 Hub 时，learned
+  // 相位已过期。前滚 5 小时会把 Key 冷到 20:32，所以只走 60 秒短冷却。
+  const now = new Date("2026-09-20T07:32:03.000Z");
+  const decision = resolveRelayRateLimitCooldown(
+    JSON.stringify({
+      error: {
+        code: "1308",
+        message:
+          "已达到 5 小时使用上限，2026-09-20 15:32:01 后可继续使用。如需超限额按量付费使用，可联系管理员开启超额按量付费。",
+      },
+    }),
+    60,
+    1800,
+    now,
+    { fiveHour: "2026-09-20T07:32:01.000Z" },
+  );
+  assert.equal(decision.quotaExhausted, false);
+  assert.equal(decision.cooldownSeconds, 60);
+  assert.equal(decision.coolUntil, null);
+  assert.equal(decision.lastError, "HTTP 429：上游限流，凭证已进入冷却");
+  assert.deepEqual(decision.cap, {
+    kind: "five_hour",
+    resetAt: new Date("2026-09-20T07:32:01.000Z"),
+  });
+});
+
+test("429 with an expired GLM Coding Plan subscription takes the long quota cooldown", () => {
+  const decision = resolveRelayRateLimitCooldown(
+    JSON.stringify({
+      error: {
+        code: "1309",
+        message: "您的 GLM Coding Plan 套餐已到期，暂无法使用，前往官方续订后即可恢复",
+      },
+    }),
+    60,
+    1800,
+  );
+  assert.equal(decision.quotaExhausted, true);
+  assert.equal(decision.coolUntil, null);
+  assert.equal(decision.cooldownSeconds, 1800);
+  assert.equal(decision.lastError, "HTTP 429：上游余额不足，凭证已长时间冷却");
+  assert.deepEqual(decision.cap, { kind: "other", resetAt: null });
 });
 
 test("429 with ordinary rate-limit body keeps the short cooldown", () => {
