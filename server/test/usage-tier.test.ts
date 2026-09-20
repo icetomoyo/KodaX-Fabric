@@ -6,6 +6,7 @@ import {
   classifyUsageTierFromDays,
   effectiveUsageTier,
   HEAVY_AVG_DAILY_TOKEN_LIMIT,
+  isPinnedHeavyEmployee,
   isUsageTierProtected,
   usageTierForRequest,
   USAGE_TIER_PROTECTION_MS,
@@ -69,6 +70,14 @@ test("after protection, the 7-day average classifies directly", () => {
   assert.equal(effectiveUsageTier(29_999_999, REGISTERED, graduated), "standard");
   assert.equal(effectiveUsageTier(30_000_000, REGISTERED, graduated), "heavy");
   assert.equal(effectiveUsageTier(80_000_000, REGISTERED, graduated), "heavy");
+});
+
+test("ops-pinned 邓华亮 stays heavy below the 30 million average", () => {
+  const graduated = at("2026-08-08T00:00:00.000Z");
+  assert.equal(isPinnedHeavyEmployee(100), true);
+  assert.equal(isPinnedHeavyEmployee(24), false);
+  assert.equal(effectiveUsageTier(18_688_983, REGISTERED, graduated, 1359, 100), "heavy");
+  assert.equal(effectiveUsageTier(18_688_983, REGISTERED, graduated, 1359, 24), "standard");
 });
 
 test("7-day average below 30 million is standard", () => {

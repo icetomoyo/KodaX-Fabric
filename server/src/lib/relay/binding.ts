@@ -489,6 +489,7 @@ async function resolveEmployeeBinding(
     employee.createdAt,
     now,
     usage.requestCount,
+    employeeId,
   );
   const leafDepartmentId = membership?.departmentId ?? null;
   return {

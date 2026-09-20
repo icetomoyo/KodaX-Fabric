@@ -81,6 +81,7 @@ export async function runTierRebindOnce(
       row.createdAt,
       now,
       requestsByEmployee.get(row.id) ?? 0,
+      row.id,
     );
     if (next !== row.usageTier) {
       idsByNextTier[next].push(row.id);

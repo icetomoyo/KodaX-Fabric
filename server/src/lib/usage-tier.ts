@@ -13,6 +13,15 @@ export const HEAVY_AVG_DAILY_TOKEN_LIMIT = 30_000_000;
 /** New accounts stay 重度 for this long after `employees.createdAt`. */
 export const USAGE_TIER_PROTECTION_MS = 7 * 24 * 60 * 60 * 1000;
 
+/** Ops-pinned exclusive-Key employees; skips auto reclassify. */
+export const PINNED_HEAVY_EMPLOYEE_IDS: ReadonlySet<number> = new Set([
+  100, // 邓华亮
+]);
+
+export function isPinnedHeavyEmployee(employeeId: number | null | undefined): boolean {
+  return employeeId != null && PINNED_HEAVY_EMPLOYEE_IDS.has(employeeId);
+}
+
 function asNonNegative(value: number | null | undefined): number {
   return value == null || !Number.isFinite(value) || value < 0 ? 0 : value;
 }
@@ -52,7 +61,9 @@ export function effectiveUsageTier(
   createdAt: Date,
   now: Date = new Date(),
   requestCount?: number | null,
+  employeeId?: number | null,
 ): UsageTier {
+  if (isPinnedHeavyEmployee(employeeId)) return "heavy";
   if (isUsageTierProtected(createdAt, now)) return "heavy";
   return classifyUsageTier(averageDailyTokens, requestCount);
 }
