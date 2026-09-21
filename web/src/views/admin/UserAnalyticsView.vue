@@ -46,7 +46,7 @@
         </div>
       </aside>
 
-      <main class="detail-pane">
+      <main ref="detailPane" class="detail-pane">
         <el-empty v-if="!loading && !selected" description="选择左侧的人查看用量" :image-size="80" />
         <template v-else-if="selected">
           <section class="page-card person-card">
@@ -155,7 +155,11 @@
             <div class="kpi-card">
               <span class="kpi-label">积分</span>
               <strong class="kpi-value">{{ formatCredits(selected.day.credits) }}</strong>
-              <span class="kpi-foot">高峰 {{ formatCredits(selected.day.peakCredits) }} · 非高峰 {{ formatCredits(selected.day.offPeakCredits) }}</span>
+              <span class="kpi-foot">
+                高峰 {{ formatCredits(selected.day.peakCredits) }}
+                <br>
+                非高峰 {{ formatCredits(selected.day.offPeakCredits) }}
+              </span>
             </div>
             <div class="kpi-card">
               <span class="kpi-label">缓存命中</span>
@@ -166,8 +170,9 @@
               <span class="kpi-label">最忙小时</span>
               <strong class="kpi-value">{{ selected.day.peakHour?.hour || "—" }}</strong>
               <span class="kpi-foot">
-                工作日 14–18 {{ formatTokenCompact(selected.day.peakTokens) }}
-                · 其余 {{ formatTokenCompact(selected.day.offPeakTokens) }}
+                14–18 {{ formatTokenCompact(selected.day.peakTokens) }}
+                <br>
+                其余 {{ formatTokenCompact(selected.day.offPeakTokens) }}
               </span>
             </div>
           </div>
@@ -251,7 +256,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, nextTick, onMounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { ElMessage } from "element-plus";
 import type { EChartsCoreOption } from "echarts/core";
@@ -354,6 +359,7 @@ const selectedId = ref<number | null>(
 const ranks = ref<RankRow[]>([]);
 const nameQuery = ref("");
 const selected = ref<SelectedUser | null>(null);
+const detailPane = ref<HTMLElement | null>(null);
 
 const visibleRanks = computed(() => {
   const q = nameQuery.value.trim().toLowerCase();
@@ -442,7 +448,8 @@ function formatNumber(value: unknown): string {
 function formatCredits(value: number | null | undefined): string {
   const n = Number(value ?? 0);
   if (!Number.isFinite(n) || n <= 0) return "—";
-  return new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 4 }).format(n);
+  if (n >= 10_000) return formatTokenCompact(n);
+  return new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 2 }).format(n);
 }
 
 function cellTitle(cell: HeatCell | null): string {
@@ -454,6 +461,12 @@ function selectEmployee(id: number) {
   if (selectedId.value === id) return;
   selectedId.value = id;
   void load();
+}
+
+function scrollDetailToTop() {
+  void nextTick(() => {
+    detailPane.value?.scrollTo({ top: 0 });
+  });
 }
 
 function onDayChange() {
@@ -480,6 +493,7 @@ async function load() {
     selected.value = data.data.selected ?? null;
     if (data.data.day) day.value = data.data.day;
     selectedId.value = selected.value?.employee.id ?? ranks.value[0]?.employeeId ?? null;
+    scrollDetailToTop();
     await router.replace({
       query: {
         day: day.value,
@@ -502,20 +516,26 @@ onMounted(load);
 <style scoped>
 .user-analytics {
   display: flex;
+  flex: 1;
   flex-direction: column;
   gap: 16px;
+  min-height: 0;
   min-width: 0;
+  overflow: hidden;
 }
 .toolbar {
   display: flex;
+  flex-shrink: 0;
   justify-content: flex-end;
   gap: 8px;
 }
 .split {
   display: grid;
-  grid-template-columns: minmax(280px, 340px) minmax(0, 1fr);
+  flex: 1;
+  grid-template-columns: minmax(280px, 320px) minmax(0, 1fr);
   gap: 16px;
-  align-items: start;
+  min-height: 0;
+  overflow: hidden;
 }
 .page-card {
   border: 1px solid #e5e7eb;
@@ -525,7 +545,7 @@ onMounted(load);
 .rank-pane {
   display: flex;
   flex-direction: column;
-  max-height: calc(100vh - 140px);
+  min-height: 0;
   overflow: hidden;
 }
 .rank-list {
@@ -599,9 +619,14 @@ onMounted(load);
   flex-direction: column;
   gap: 16px;
   min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  padding-right: 4px;
+  padding-bottom: 88px;
 }
 .person-card {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
   gap: 16px;
   padding: 16px 20px;
@@ -612,7 +637,7 @@ onMounted(load);
 }
 .year-stats {
   display: grid;
-  grid-template-columns: repeat(4, auto);
+  grid-template-columns: repeat(4, minmax(72px, auto));
   gap: 12px 20px;
   margin: 0;
 }
@@ -704,13 +729,14 @@ onMounted(load);
 }
 .kpi-grid {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
 }
 .kpi-card {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  min-width: 0;
   min-height: 112px;
   padding: 14px 16px;
   border: 1px solid #e5e7eb;
@@ -728,15 +754,17 @@ onMounted(load);
 }
 .kpi-value {
   color: #0f172a;
-  font-size: 24px;
+  font-size: 22px;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
-  line-height: 1.1;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
 }
 .kpi-foot {
   margin-top: auto;
   color: #94a3b8;
   font-size: 12px;
+  line-height: 1.45;
 }
 .mix-card,
 .chart-card {
@@ -802,7 +830,13 @@ onMounted(load);
   font-variant-numeric: tabular-nums;
 }
 @media (max-width: 1100px) {
-  .split,
+  .split {
+    grid-template-columns: 1fr;
+    overflow: auto;
+  }
+  .rank-pane {
+    max-height: 360px;
+  }
   .chart-grid,
   .mix-row,
   .kpi-grid {

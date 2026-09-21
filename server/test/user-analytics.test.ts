@@ -114,4 +114,7 @@ test("admin user analytics page sits under 用量分析 and keeps a contribution
   assert.match(view, /单日使用量/);
   assert.match(view, /placeholder="输入姓名"/);
   assert.match(view, /visibleRanks/);
+  assert.match(view, /class="detail-pane"/);
+  assert.match(view, /\.detail-pane \{[\s\S]*overflow: auto/);
+  assert.match(layout, /'is-fill': route.path === '\/admin\/user-analytics'/);
 });
