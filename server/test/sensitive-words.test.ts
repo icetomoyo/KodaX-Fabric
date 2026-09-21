@@ -18,6 +18,8 @@ const {
   findSensitiveWord,
   findSensitiveWordInRequest,
   parseSensitiveWordsConfig,
+  patchSensitiveWordFlags,
+  resolveSensitiveWordFlags,
   sortSensitiveWordRows,
   uniqueWords,
   zhipuSensitiveContentError,
@@ -145,7 +147,38 @@ test("parseSensitiveWordsConfig defaults to detect-on intercept-off", () => {
     parseSensitiveWordsConfig({ detectEnabled: true, interceptEnabled: true, words: ["lol"] }),
     { detectEnabled: true, interceptEnabled: true, words: ["lol"] },
   );
+  assert.deepEqual(
+    parseSensitiveWordsConfig({ detectEnabled: false, interceptEnabled: true, words: ["lol"] }),
+    { detectEnabled: true, interceptEnabled: true, words: ["lol"] },
+  );
   assert.deepEqual(uniqueWords(["lol", "LOL", "  ", "x".repeat(80)]), ["lol"]);
+});
+
+test("intercept requires detect; turning detect off clears intercept", () => {
+  assert.deepEqual(resolveSensitiveWordFlags({ detectEnabled: false, interceptEnabled: true }), {
+    detectEnabled: true,
+    interceptEnabled: true,
+  });
+  assert.deepEqual(resolveSensitiveWordFlags({ detectEnabled: true, interceptEnabled: false }), {
+    detectEnabled: true,
+    interceptEnabled: false,
+  });
+  const current = { detectEnabled: true, interceptEnabled: true };
+  assert.deepEqual(patchSensitiveWordFlags(current, { detectEnabled: false }), {
+    detectEnabled: false,
+    interceptEnabled: false,
+  });
+  assert.deepEqual(
+    patchSensitiveWordFlags(
+      { detectEnabled: false, interceptEnabled: false },
+      { interceptEnabled: true },
+    ),
+    { detectEnabled: true, interceptEnabled: true },
+  );
+  assert.deepEqual(patchSensitiveWordFlags(current, { interceptEnabled: false }), {
+    detectEnabled: true,
+    interceptEnabled: false,
+  });
 });
 
 test("employee-facing block is disguised as Zhipu 1301 and does not name the word", () => {
@@ -173,8 +206,12 @@ test("excerptForSensitiveHit keeps the matched region", () => {
 
 test("employee relay scans for sensitive words before acquiring quota", () => {
   const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+  const lib = readFileSync(resolve(root, "src/lib/relay/sensitive-words.ts"), "utf8");
   const chat = readFileSync(resolve(root, "src/routes/relay/chat-completions.ts"), "utf8");
   const anthropic = readFileSync(resolve(root, "src/routes/relay/anthropic-messages.ts"), "utf8");
+  assert.match(lib, /if \(!config\.detectEnabled \|\| config\.words\.length === 0\)/);
+  assert.match(lib, /record: true/);
+  assert.match(lib, /intercept: config\.interceptEnabled/);
   assert.match(chat, /evaluateSensitiveRequest/);
   assert.match(chat, /sensitiveHit\.intercept/);
   assert.match(chat, /zhipuSensitiveContentError/);
@@ -214,6 +251,8 @@ test("super-admin 敏感词检测 submenu is wired into the console", () => {
   assert.match(settings, /启用检测/);
   assert.match(settings, /敏感词拦截/);
   assert.match(settings, /启用拦截/);
+  assert.match(settings, /需先启用检测/);
+  assert.match(settings, /loading \|\| !sensitiveWordDetectEnabled/);
   assert.match(settings, /\/api\/admin\/settings/);
   assert.doesNotMatch(settings, /class="page-title"/);
   assert.match(words, /导入文档/);

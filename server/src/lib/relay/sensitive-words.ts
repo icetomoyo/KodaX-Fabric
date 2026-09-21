@@ -148,6 +148,32 @@ export function normalizeSensitiveNeedle(word: string): string {
   return word.normalize("NFC").replace(ZERO_WIDTH, "").replace(/\s+/g, "").toLowerCase();
 }
 
+export function resolveSensitiveWordFlags(input: {
+  detectEnabled: boolean;
+  interceptEnabled: boolean;
+}): Pick<SensitiveWordsConfig, "detectEnabled" | "interceptEnabled"> {
+  if (input.interceptEnabled) {
+    return { detectEnabled: true, interceptEnabled: true };
+  }
+  return { detectEnabled: input.detectEnabled, interceptEnabled: false };
+}
+
+export function patchSensitiveWordFlags(
+  current: Pick<SensitiveWordsConfig, "detectEnabled" | "interceptEnabled">,
+  patch: { detectEnabled?: boolean; interceptEnabled?: boolean },
+): Pick<SensitiveWordsConfig, "detectEnabled" | "interceptEnabled"> {
+  if (patch.interceptEnabled === true) {
+    return { detectEnabled: true, interceptEnabled: true };
+  }
+  if (patch.detectEnabled === false) {
+    return { detectEnabled: false, interceptEnabled: false };
+  }
+  return resolveSensitiveWordFlags({
+    detectEnabled: patch.detectEnabled ?? current.detectEnabled,
+    interceptEnabled: patch.interceptEnabled ?? current.interceptEnabled,
+  });
+}
+
 export function parseSensitiveWordsConfig(value: unknown): SensitiveWordsConfig {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return { detectEnabled: true, interceptEnabled: false, words: [] };
@@ -166,8 +192,7 @@ export function parseSensitiveWordsConfig(value: unknown): SensitiveWordsConfig 
         : record.enabled !== false;
   const interceptEnabled = record.interceptEnabled === true;
   return {
-    detectEnabled,
-    interceptEnabled,
+    ...resolveSensitiveWordFlags({ detectEnabled, interceptEnabled }),
     words: uniqueWords(Array.isArray(record.words) ? record.words : []),
   };
 }
@@ -243,14 +268,14 @@ export async function evaluateSensitiveRequest(
   body: unknown,
 ): Promise<SensitiveRequestEvaluation | null> {
   const config = await loadSensitiveWordsConfig();
-  if ((!config.detectEnabled && !config.interceptEnabled) || config.words.length === 0) {
+  if (!config.detectEnabled || config.words.length === 0) {
     return null;
   }
   const word = findSensitiveWordInRequest(body, config.words);
   if (!word) return null;
   return {
     word,
-    record: config.detectEnabled,
+    record: true,
     intercept: config.interceptEnabled,
   };
 }
@@ -354,8 +379,7 @@ export async function updateSensitiveWordFlags(patch: {
   const current = await readConfigFromDb();
   return writeConfig({
     ...current,
-    detectEnabled: patch.detectEnabled ?? current.detectEnabled,
-    interceptEnabled: patch.interceptEnabled ?? current.interceptEnabled,
+    ...patchSensitiveWordFlags(current, patch),
   });
 }
 
@@ -374,8 +398,7 @@ async function readConfigFromDb(): Promise<SensitiveWordsConfig> {
 
 async function writeConfig(config: SensitiveWordsConfig): Promise<SensitiveWordsConfig> {
   const next: SensitiveWordsConfig = {
-    detectEnabled: config.detectEnabled,
-    interceptEnabled: config.interceptEnabled,
+    ...resolveSensitiveWordFlags(config),
     words: uniqueWords(config.words),
   };
   const now = new Date();

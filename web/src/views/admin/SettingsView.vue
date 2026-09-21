@@ -8,14 +8,16 @@
           :disabled="loading"
           @change="onDetectChange"
         />
+        <p class="hint">命中后写入检测记录，请求继续转发上游。</p>
       </el-form-item>
       <el-form-item label="敏感词拦截">
         <el-switch
           v-model="sensitiveWordInterceptEnabled"
           active-text="启用拦截"
-          :disabled="loading"
+          :disabled="loading || !sensitiveWordDetectEnabled"
           @change="onInterceptChange"
         />
+        <p class="hint">需先启用检测。开启后命中同时写入拦截记录并拦截请求。</p>
       </el-form-item>
     </el-form>
   </el-card>
@@ -71,10 +73,15 @@ async function patchSettings(
 
 async function onDetectChange(value: string | number | boolean) {
   const next = Boolean(value);
+  const previousIntercept = sensitiveWordInterceptEnabled.value;
+  if (!next) sensitiveWordInterceptEnabled.value = false;
   await patchSettings(
-    { sensitiveWordDetectEnabled: next },
+    next
+      ? { sensitiveWordDetectEnabled: true }
+      : { sensitiveWordDetectEnabled: false, sensitiveWordInterceptEnabled: false },
     () => {
       sensitiveWordDetectEnabled.value = !next;
+      if (!next) sensitiveWordInterceptEnabled.value = previousIntercept;
     },
     next ? "已启用检测" : "已关闭检测",
   );
@@ -82,10 +89,15 @@ async function onDetectChange(value: string | number | boolean) {
 
 async function onInterceptChange(value: string | number | boolean) {
   const next = Boolean(value);
+  const previousDetect = sensitiveWordDetectEnabled.value;
+  if (next) sensitiveWordDetectEnabled.value = true;
   await patchSettings(
-    { sensitiveWordInterceptEnabled: next },
+    next
+      ? { sensitiveWordDetectEnabled: true, sensitiveWordInterceptEnabled: true }
+      : { sensitiveWordInterceptEnabled: false },
     () => {
       sensitiveWordInterceptEnabled.value = !next;
+      if (next) sensitiveWordDetectEnabled.value = previousDetect;
     },
     next ? "已启用拦截" : "已关闭拦截",
   );
@@ -99,5 +111,12 @@ onMounted(() => {
 <style scoped>
 .settings-page {
   max-width: 640px;
+}
+
+.hint {
+  margin: 6px 0 0;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  line-height: 1.5;
 }
 </style>

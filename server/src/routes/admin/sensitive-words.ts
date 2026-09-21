@@ -145,7 +145,10 @@ export async function adminSensitiveWordRoutes(app: FastifyInstance) {
         action: "sensitive_words.update",
         targetType: "sensitive_word",
         targetId: "config",
-        detail: { enabled: data.enabled },
+        detail: {
+          detectEnabled: data.detectEnabled,
+          interceptEnabled: data.interceptEnabled,
+        },
         ip: req.ip,
       });
       return { success: true, data };
