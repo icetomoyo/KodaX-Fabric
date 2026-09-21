@@ -276,6 +276,8 @@ async function goToRoleHome(role: ActAsPayload["role"] | "admin") {
     || path.startsWith("/admin/error-logs")
     || path.startsWith("/admin/ops-audit")
     || path.startsWith("/admin/key-bindings")
+    || path.startsWith("/admin/usage")
+    || path.startsWith("/admin/user-analytics")
   ) {
     await router.replace("/admin");
   }

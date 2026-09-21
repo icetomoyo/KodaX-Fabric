@@ -11,6 +11,7 @@ import { adminTeamRoutes } from "./routes/admin/teams.js";
 import { adminDepartmentRoutes } from "./routes/admin/departments.js";
 import { adminActAsRoutes } from "./routes/admin/act-as.js";
 import { adminOverviewRoutes } from "./routes/admin/overview.js";
+import { adminUserAnalyticsRoutes } from "./routes/admin/user-analytics.js";
 import { adminProviderRoutes } from "./routes/admin/providers.js";
 import { adminChannelSeatRoutes } from "./routes/admin/channel-seats.js";
 import { adminCredentialRoutes } from "./routes/admin/credentials.js";
@@ -46,6 +47,7 @@ export async function buildApp() {
   await app.register(adminDepartmentRoutes);
   await app.register(adminActAsRoutes);
   await app.register(adminOverviewRoutes);
+  await app.register(adminUserAnalyticsRoutes);
   await app.register(adminProviderRoutes);
   await app.register(adminCredentialRoutes);
   await app.register(adminChannelSeatRoutes);

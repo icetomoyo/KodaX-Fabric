@@ -86,6 +86,12 @@ export const router = createRouter({
           meta: { roles: ["admin"] },
         },
         {
+          path: "user-analytics",
+          name: "admin-user-analytics",
+          component: () => import("@/views/admin/UserAnalyticsView.vue"),
+          meta: { roles: ["admin"] },
+        },
+        {
           path: "enterprise-dingtalk",
           name: "admin-enterprise-dingtalk",
           component: () => import("@/views/admin/EnterpriseDingtalkView.vue"),

@@ -266,6 +266,7 @@ test("live console pages do not repeat sidebar titles or tutorial subtitles", ()
   const meKeys = readFileSync(resolve(root, "web/src/views/me/KeysView.vue"), "utf8");
   const meModels = readFileSync(resolve(root, "web/src/views/me/ModelsView.vue"), "utf8");
   const meLogs = readFileSync(resolve(root, "web/src/views/me/LogsView.vue"), "utf8");
+  const userAnalytics = readFileSync(resolve(root, "web/src/views/admin/UserAnalyticsView.vue"), "utf8");
 
   for (const view of [
     credentials,
@@ -281,6 +282,7 @@ test("live console pages do not repeat sidebar titles or tutorial subtitles", ()
     meKeys,
     meModels,
     meLogs,
+    userAnalytics,
   ]) {
     assert.doesNotMatch(view, /class="page-title"/);
     assert.doesNotMatch(view, /class="page-subtitle"/);
@@ -364,6 +366,7 @@ test("super-admin usage analysis is a dated range board", () => {
   const layout = readFileSync(resolve(root, "web/src/layouts/AdminLayout.vue"), "utf8");
   const router = readFileSync(resolve(root, "web/src/router/index.ts"), "utf8");
   assert.match(layout, /isSuperAdmin" index="\/admin\/usage">用量分析/);
+  assert.match(layout, /isSuperAdmin" index="\/admin\/user-analytics">用户分析/);
   assert.match(router, /path: "usage"/);
   assert.match(router, /name: "admin-usage"/);
   assert.match(view, /\/api\/admin\/overview\/analytics/);
