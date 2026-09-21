@@ -406,6 +406,7 @@ test("KEYS看板 is a six-lane status board under 上游渠道", () => {
   assert.match(view, /lane: "stopped", title: "停用"/);
   assert.match(view, /keys-lane-grid/);
   assert.match(view, /placeholder="搜索姓名"/);
+  assert.match(view, /from ["']@\/lib\/keys-board-cooling["']/);
   assert.match(view, /测试全部/);
   assert.match(view, /connectedNames/);
   assert.match(layout, /\/admin\/keys-board/);

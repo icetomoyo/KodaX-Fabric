@@ -977,6 +977,7 @@ import { ElMessage, ElMessageBox } from "element-plus";
 import { http } from "@/api/http";
 import { channelDisplayName, formatChannelName } from "@/lib/channel-display";
 import { formatDateTime } from "@/lib/date-time";
+import { coolingLaneFromLastError, isShortRateLimitCooling } from "@/lib/keys-board-cooling";
 import { roleLabel as formatRoleLabel } from "@/lib/roles";
 import { usagePercent, usageProgressStatus } from "@/lib/tokens";
 import { useAuthStore } from "@/stores/auth";
@@ -1394,30 +1395,13 @@ const STATUS_BOARD_COLUMN_DEFS: ReadonlyArray<Pick<BoardColumn, "lane" | "title"
   { lane: "stopped", title: "停用", droppable: true },
 ];
 
-const WEEKLY_COOL_REMAINING_MS = 6 * 3_600_000;
-
-function isShortRateLimitCooling(row: CredentialRow): boolean {
-  const message = row.lastError ?? "";
-  if (/使用上限|5\s*小时|7\s*天|周积分|每周|余额不足|套餐已到期|套餐已失效/.test(message)) {
-    return false;
-  }
-  return /上游限流|速率限制|rate.?limit/i.test(message);
-}
-
 function coolingLaneOf(row: CredentialRow): "cooling_5h" | "cooling_weekly" {
-  const message = row.lastError ?? "";
-  if (/7\s*天|周积分|每周/.test(message)) return "cooling_weekly";
-  if (/5\s*小时/.test(message)) return "cooling_5h";
-  if (row.weeklyCreditLimit != null && row.weeklyCredits >= row.weeklyCreditLimit * 0.95) {
-    return "cooling_weekly";
-  }
-  if (row.coolUntil) {
-    const remaining = new Date(row.coolUntil).getTime() - Date.now();
-    if (Number.isFinite(remaining) && remaining > WEEKLY_COOL_REMAINING_MS) {
-      return "cooling_weekly";
-    }
-  }
-  return "cooling_5h";
+  return coolingLaneFromLastError({
+    lastError: row.lastError,
+    weeklyCreditLimit: row.weeklyCreditLimit,
+    weeklyCredits: row.weeklyCredits,
+    coolUntil: row.coolUntil,
+  });
 }
 
 function boardLaneOf(row: CredentialRow): BoardLane {
@@ -1427,7 +1411,7 @@ function boardLaneOf(row: CredentialRow): BoardLane {
   }
   if (status === "disabled" || status === "auto_disabled") return "stopped";
   if (status === "cooling") {
-    if (isShortRateLimitCooling(row)) return "rate_limit";
+    if (isShortRateLimitCooling(row.lastError)) return "rate_limit";
     return coolingLaneOf(row);
   }
   if (row.binding) return "in_use";

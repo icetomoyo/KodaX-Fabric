@@ -135,9 +135,9 @@ function classifyUsageCapKind(
   message: string | null,
 ): UpstreamUsageCapKind {
   if (message) {
-    if (/5\s*小时/.test(message)) return "five_hour";
-    if (/7\s*天|每周/.test(message)) return "weekly";
-    if (/每月/.test(message)) return "monthly";
+    if (/5\s*小时|5\s*[- ]?hours?/i.test(message)) return "five_hour";
+    if (/7\s*天|7\s*[- ]?days?|每周|weekly/i.test(message)) return "weekly";
+    if (/每月|monthly/i.test(message)) return "monthly";
   }
   if (code === "1308" || code === "1316" || code === "1318" || code === "1320") {
     return "five_hour";

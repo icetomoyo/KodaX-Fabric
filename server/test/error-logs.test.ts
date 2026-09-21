@@ -87,6 +87,15 @@ test("extractUpstreamUsageCap treats 1308 / 1310 codes as usage caps without 使
     resetAt: null,
   });
   assert.equal(
+    extractUpstreamUsageCap({
+      error: {
+        code: "1310",
+        message: "You have reached the 7-day usage limit. You can continue using it after 2026-09-21 15:29:59.",
+      },
+    })?.kind,
+    "weekly",
+  );
+  assert.equal(
     extractUpstreamUsageCap({ error: { code: "1308", message: "cap" } })?.kind,
     "five_hour",
   );
