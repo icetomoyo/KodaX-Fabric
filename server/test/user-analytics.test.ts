@@ -104,6 +104,7 @@ test("admin user analytics page sits under 用量分析 and keeps a contribution
   const layout = readFileSync(resolve(root, "web/src/layouts/AdminLayout.vue"), "utf8");
   const router = readFileSync(resolve(root, "web/src/router/index.ts"), "utf8");
   const view = readFileSync(resolve(root, "web/src/views/admin/UserAnalyticsView.vue"), "utf8");
+  assert.match(layout, />数据分析</);
   assert.match(
     layout,
     /index="\/admin\/usage">用量分析[\s\S]*index="\/admin\/user-analytics">用户分析/,

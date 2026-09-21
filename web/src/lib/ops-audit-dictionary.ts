@@ -65,6 +65,11 @@ export const OPS_AUDIT_ACTION_LABELS: Record<string, string> = {
   "model_price.update": "更新模型单价",
   "model_price.delete": "删除模型单价",
   "log.read_context": "查看结构化调用上下文",
+  "sensitive_words.add": "添加敏感词",
+  "sensitive_words.delete": "删除敏感词",
+  "sensitive_words.update": "更新敏感词拦截",
+  "sensitive_words.import": "导入敏感词",
+  "settings.update": "更新系统设置",
 };
 
 export const OPS_AUDIT_TARGET_LABELS: Record<string, string> = {
@@ -81,6 +86,8 @@ export const OPS_AUDIT_TARGET_LABELS: Record<string, string> = {
   team: "团队",
   channel_seat: "席位",
   request_audit: "调用记录",
+  sensitive_word: "敏感词",
+  system_setting: "系统设置",
 };
 
 export const OPS_AUDIT_DETAIL_KEY_LABELS: Record<string, string> = {
@@ -147,6 +154,7 @@ export const OPS_AUDIT_DETAIL_KEY_LABELS: Record<string, string> = {
   fields: "变更字段",
   ownerEmployeeId: "内容所属员工 ID",
   ownerPhone: "内容所属手机号",
+  word: "敏感词",
 };
 
 const OPS_AUDIT_VALUE_LABELS: Record<string, string> = {

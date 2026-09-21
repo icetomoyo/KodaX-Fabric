@@ -92,12 +92,6 @@ export const router = createRouter({
           meta: { roles: ["admin"] },
         },
         {
-          path: "enterprise-dingtalk",
-          name: "admin-enterprise-dingtalk",
-          component: () => import("@/views/admin/EnterpriseDingtalkView.vue"),
-          meta: { roles: ["admin"] },
-        },
-        {
           path: "enterprises",
           name: "admin-enterprises",
           component: () => import("@/views/admin/EnterprisesView.vue"),
@@ -220,9 +214,38 @@ export const router = createRouter({
           meta: { roles: ["admin"] },
         },
         {
+          path: "sensitive-words",
+          name: "admin-sensitive-words",
+          component: () => import("@/views/admin/SensitiveWordsView.vue"),
+          meta: { roles: ["admin"] },
+        },
+        {
+          path: "sensitive-hits",
+          redirect: "/admin/sensitive-detect-records",
+          meta: { roles: ["admin"] },
+        },
+        {
+          path: "sensitive-detect-records",
+          name: "admin-sensitive-detect-records",
+          component: () => import("@/views/admin/SensitiveHitsView.vue"),
+          meta: { roles: ["admin"], sensitiveHitAction: "detect" },
+        },
+        {
+          path: "sensitive-intercept-records",
+          name: "admin-sensitive-intercept-records",
+          component: () => import("@/views/admin/SensitiveHitsView.vue"),
+          meta: { roles: ["admin"], sensitiveHitAction: "intercept" },
+        },
+        {
           path: "ops-audit",
           name: "admin-ops-audit",
           component: () => import("@/views/admin/OpsAuditView.vue"),
+          meta: { roles: ["admin"] },
+        },
+        {
+          path: "settings",
+          name: "admin-settings",
+          component: () => import("@/views/admin/SettingsView.vue"),
           meta: { roles: ["admin"] },
         },
         {

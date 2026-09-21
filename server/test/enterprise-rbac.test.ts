@@ -422,20 +422,26 @@ test("admin shell source includes 企业管理 and org_admin lands on workbench"
 
   assert.match(layout, /企业管理/);
   assert.match(layout, /isSuperAdmin/);
-  assert.match(layout, /index="\/admin\/enterprise-dingtalk">企业钉钉/);
-  assert.match(
-    layout,
-    /index="\/admin\/enterprise-dingtalk">企业钉钉[\s\S]*index="\/admin\/enterprises">企业管理/,
-  );
+  assert.doesNotMatch(layout, /企业钉钉/);
+  assert.doesNotMatch(layout, /enterprise-dingtalk/);
   assert.match(layout, /\/admin\/enterprises/);
   assert.match(layout, /部门管理/);
   assert.match(layout, /isOrgAdmin/);
+  assert.match(layout, />敏感词检测</);
+  assert.match(layout, /index="\/admin\/sensitive-words">敏感词管理/);
+  assert.match(layout, /index="\/admin\/sensitive-detect-records">敏感词检测记录/);
+  assert.match(layout, /index="\/admin\/sensitive-intercept-records">敏感词拦截记录/);
+  assert.match(layout, />上游</);
   assert.match(layout, /index="\/admin\/temp-channels">上游渠道/);
   assert.match(
     layout,
-    /index="\/admin\/temp-channels">上游渠道[\s\S]*index="\/admin\/keys-board">KEYS看板/,
+    /index="\/admin\/temp-channels">上游渠道[\s\S]*index="\/admin\/keys-board">KEYS看板[\s\S]*index="\/admin\/key-bindings">调度画布[\s\S]*index="\/admin\/model-prices">模型列表/,
   );
-  assert.doesNotMatch(layout, />上游</);
+  assert.match(layout, />日志</);
+  assert.match(
+    layout,
+    /index="\/admin\/logs">调用日志[\s\S]*index="\/admin\/error-logs">报错日志/,
+  );
   assert.doesNotMatch(layout, /index="\/admin\/channels">渠道/);
   assert.doesNotMatch(layout, /index="\/admin\/seats">席位/);
   assert.doesNotMatch(layout, /index="\/admin\/channel-keys">渠道 KEY/);
@@ -446,7 +452,7 @@ test("admin shell source includes 企业管理 and org_admin lands on workbench"
   assert.match(home, /return \"\/admin\"/);
   assert.doesNotMatch(home, /org_admin.*\/me/);
   assert.match(router, /admin-enterprises/);
-  assert.match(router, /name: "admin-enterprise-dingtalk"[\s\S]*roles: \["admin"\]/);
+  assert.doesNotMatch(router, /admin-enterprise-dingtalk/);
   assert.match(router, /name: "admin-keys-board"[\s\S]*roles: \["admin"\]/);
   assert.match(router, /org_admin/);
   const login = readFileSync(resolve(root, "web/src/views/LoginView.vue"), "utf8");

@@ -3,7 +3,6 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
-import Fastify from "fastify";
 
 process.env.DATABASE_URL ??= "postgresql://test:test@127.0.0.1:5432/test";
 process.env.REDIS_URL ??= "redis://127.0.0.1:6379/15";
@@ -19,18 +18,6 @@ const {
 } = await import("../src/lib/dingtalk-department-tree.js");
 const { planDingtalkDeptIdWrites } = await import("../src/lib/dingtalk-dept-id-map.js");
 const { planDingtalkUserImport } = await import("../src/lib/dingtalk-user-import.js");
-const { adminEnterpriseDingtalkRoutes } = await import(
-  "../src/routes/admin/enterprise-dingtalk.js"
-);
-
-const orgAdminSession = {
-  sub: "9",
-  role: "org_admin" as const,
-  phone: "13800000009",
-  name: "OrgAdmin",
-  mustChangePassword: false,
-  enterpriseId: 3,
-};
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -168,38 +155,6 @@ test("listsub errcode becomes a DingTalk API error", async () => {
     (error: unknown) =>
       error instanceof DingtalkApiError && error.message === "不合法的部门id",
   );
-});
-
-test("unauthenticated and org_admin cannot read DingTalk departments", async () => {
-  const app = Fastify();
-  await app.register(adminEnterpriseDingtalkRoutes);
-  await app.ready();
-  try {
-    const anonymous = await app.inject({
-      method: "GET",
-      url: "/api/admin/enterprise-dingtalk/departments",
-    });
-    assert.equal(anonymous.statusCode, 401);
-  } finally {
-    await app.close();
-  }
-
-  const scoped = Fastify();
-  scoped.addHook("onRequest", async (req) => {
-    req.session = orgAdminSession;
-    req.employeeId = Number(orgAdminSession.sub);
-  });
-  await scoped.register(adminEnterpriseDingtalkRoutes);
-  await scoped.ready();
-  try {
-    const forbidden = await scoped.inject({
-      method: "GET",
-      url: "/api/admin/enterprise-dingtalk/departments",
-    });
-    assert.equal(forbidden.statusCode, 403);
-  } finally {
-    await scoped.close();
-  }
 });
 
 test("department user list paginates and keeps name, userid, mobile", async () => {
@@ -349,18 +304,14 @@ test("aligned DingTalk department ids are written by path and skipped depts stay
   assert.deepEqual(plan.unmatchedDingtalk, []);
 });
 
-test("env example and admin shell expose DingTalk credentials and blank page route", () => {
+test("env example keeps DingTalk credentials for department sync", () => {
   const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
   const envExample = readFileSync(resolve(root, ".env.example"), "utf8");
   const config = readFileSync(resolve(root, "server/src/config.ts"), "utf8");
-  const route = readFileSync(resolve(root, "server/src/routes/admin/enterprise-dingtalk.ts"), "utf8");
-  const view = readFileSync(resolve(root, "web/src/views/admin/EnterpriseDingtalkView.vue"), "utf8");
   assert.match(envExample, /DINGTALK_APP_KEY=/);
   assert.match(envExample, /DINGTALK_APP_SECRET=/);
   assert.match(config, /DINGTALK_APP_KEY: optionalSecret/);
   assert.match(config, /DINGTALK_APP_SECRET: optionalSecret/);
-  assert.match(route, /\/api\/admin\/enterprise-dingtalk\/departments/);
-  assert.match(route, /DINGTALK_NOT_CONFIGURED/);
   const schema = readFileSync(resolve(root, "server/src/db/schema/index.ts"), "utf8");
   const migration = readFileSync(
     resolve(root, "server/drizzle/0045_department_dingtalk_dept_id.sql"),
@@ -368,7 +319,8 @@ test("env example and admin shell expose DingTalk credentials and blank page rou
   );
   assert.match(schema, /dingtalkDeptId: bigint\("dingtalk_dept_id"/);
   assert.match(migration, /dingtalk_dept_id/);
-  assert.match(view, /\/api\/admin\/enterprise-dingtalk\/departments/);
-  assert.doesNotMatch(view, /class="page-title"/);
-  assert.doesNotMatch(view, /class="page-subtitle"/);
+  const layout = readFileSync(resolve(root, "web/src/layouts/AdminLayout.vue"), "utf8");
+  const router = readFileSync(resolve(root, "web/src/router/index.ts"), "utf8");
+  assert.doesNotMatch(layout, /企业钉钉/);
+  assert.doesNotMatch(router, /enterprise-dingtalk/);
 });

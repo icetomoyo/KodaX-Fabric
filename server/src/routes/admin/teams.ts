@@ -12,6 +12,7 @@ import {
   enterprises,
   requestAudits,
   requestErrorLogs,
+  sensitiveWordHits,
   teamMembers,
   teams,
   usageCountersTeamDaily,
@@ -162,6 +163,7 @@ export async function detachAndDeleteTeam(teamId: number): Promise<void> {
   await db.delete(usageCountersTeamDaily).where(eq(usageCountersTeamDaily.teamId, teamId));
   await db.update(requestAudits).set({ teamId: null }).where(eq(requestAudits.teamId, teamId));
   await db.update(requestErrorLogs).set({ teamId: null }).where(eq(requestErrorLogs.teamId, teamId));
+  await db.update(sensitiveWordHits).set({ teamId: null }).where(eq(sensitiveWordHits.teamId, teamId));
   await db.update(employeeApiKeys).set({ teamId: null }).where(eq(employeeApiKeys.teamId, teamId));
   await db.delete(teams).where(eq(teams.id, teamId));
 }

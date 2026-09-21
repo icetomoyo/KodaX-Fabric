@@ -314,6 +314,11 @@ export async function adminOpsAuditRoutes(app: FastifyInstance) {
         ),
       );
     }
+    for (const item of items) {
+      if (item.targetType === "sensitive_word" && item.targetId) {
+        setTargetName("sensitive_word", item.targetId, item.targetId);
+      }
+    }
 
     const enrichedItems = items.map((item) => ({
       ...item,

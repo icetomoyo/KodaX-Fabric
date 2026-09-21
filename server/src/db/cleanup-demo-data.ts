@@ -12,6 +12,7 @@ async function main() {
 
   const [remaining] = await sql.begin(async (tx) => {
     await tx`delete from request_audit_bodies`;
+    await tx`delete from sensitive_word_hits`;
     await tx`delete from request_audits`;
     await tx`delete from usage_counters_team_daily`;
     await tx`delete from usage_counters_daily`;

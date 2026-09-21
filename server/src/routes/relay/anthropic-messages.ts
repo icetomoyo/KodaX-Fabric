@@ -24,6 +24,11 @@ import {
   RelayLimitError,
   type RelayQuotaLease,
 } from "../../lib/relay/quota.js";
+import {
+  evaluateSensitiveRequest,
+  recordSensitiveWordHit,
+  zhipuSensitiveContentError,
+} from "../../lib/relay/sensitive-words.js";
 import { resolveRelayBoundCandidate } from "../../lib/relay/routing.js";
 import type {
   RelayCandidate,
@@ -404,6 +409,48 @@ async function handleNativeRequest(
       stream: config.supportsStream ? isStream : undefined,
     } as NativeRequestBody;
     if (!config.supportsStream) delete body.stream;
+
+    const sensitiveHit = await evaluateSensitiveRequest(body);
+    if (sensitiveHit) {
+      try {
+        await recordSensitiveWordHit({
+          requestId,
+          employeeId: principal.employeeId,
+          employeeApiKeyId: principal.employeeApiKeyId,
+          teamId: principal.teamId,
+          clientModel,
+          protocol: config.protocol,
+          path: req.url,
+          matchedWord: sensitiveHit.word,
+          action: sensitiveHit.intercept ? "intercept" : "detect",
+          requestBody: body,
+          userAgent: requestUserAgent(req),
+          ip: req.ip,
+        });
+      } catch (error) {
+        app.log.error({ err: error, requestId }, "failed to record sensitive-word hit");
+      }
+      if (sensitiveHit.intercept) {
+        const blocked = zhipuSensitiveContentError();
+        const payload = sendError(
+          blocked.httpStatus,
+          blocked.message,
+          "invalid_request_error",
+          blocked.code,
+        );
+        await finalizeAudit({
+          candidate: null,
+          status: "client_error",
+          httpStatus: blocked.httpStatus,
+          upstreamStatus: null,
+          errorCode: blocked.code,
+          errorMessage: blocked.message,
+          usage: emptyRelayUsage(),
+          responseBody: payload,
+        });
+        return reply.code(blocked.httpStatus).send(payload);
+      }
+    }
 
     try {
       lease = await acquireRelayQuota(principal.employeeId, principal.teamId);

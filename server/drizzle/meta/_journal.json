@@ -330,6 +330,20 @@
       "when": 1789900000000,
       "tag": "0046_optional_password_change",
       "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1790100000000,
+      "tag": "0047_sensitive_word_hits",
+      "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "7",
+      "when": 1790200000000,
+      "tag": "0048_sensitive_word_hit_action",
+      "breakpoints": true
     }
   ]
 }

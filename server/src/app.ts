@@ -21,7 +21,8 @@ import { adminModelRouteRoutes } from "./routes/admin/model-routes.js";
 import { adminLogRoutes } from "./routes/admin/logs.js";
 import { adminErrorLogRoutes } from "./routes/admin/error-logs.js";
 import { adminOpsAuditRoutes } from "./routes/admin/ops-audit.js";
-import { adminEnterpriseDingtalkRoutes } from "./routes/admin/enterprise-dingtalk.js";
+import { adminSensitiveWordRoutes } from "./routes/admin/sensitive-words.js";
+import { adminSettingsRoutes } from "./routes/admin/settings.js";
 import { chatCompletionRoutes } from "./routes/relay/chat-completions.js";
 import { anthropicMessageRoutes } from "./routes/relay/anthropic-messages.js";
 
@@ -57,7 +58,8 @@ export async function buildApp() {
   await app.register(adminLogRoutes);
   await app.register(adminErrorLogRoutes);
   await app.register(adminOpsAuditRoutes);
-  await app.register(adminEnterpriseDingtalkRoutes);
+  await app.register(adminSensitiveWordRoutes);
+  await app.register(adminSettingsRoutes);
   await app.register(chatCompletionRoutes);
   await app.register(anthropicMessageRoutes);
 

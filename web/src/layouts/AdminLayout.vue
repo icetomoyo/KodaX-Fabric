@@ -14,9 +14,11 @@
         active-text-color="#ffffff"
       >
         <el-menu-item index="/admin">工作台</el-menu-item>
-        <el-menu-item v-if="auth.isSuperAdmin" index="/admin/usage">用量分析</el-menu-item>
-        <el-menu-item v-if="auth.isSuperAdmin" index="/admin/user-analytics">用户分析</el-menu-item>
-        <el-menu-item v-if="auth.isSuperAdmin" index="/admin/enterprise-dingtalk">企业钉钉</el-menu-item>
+        <el-sub-menu v-if="auth.isSuperAdmin" index="analytics">
+          <template #title>数据分析</template>
+          <el-menu-item index="/admin/usage">用量分析</el-menu-item>
+          <el-menu-item index="/admin/user-analytics">用户分析</el-menu-item>
+        </el-sub-menu>
         <el-menu-item v-if="auth.isSuperAdmin" index="/admin/enterprises">企业管理</el-menu-item>
         <el-menu-item v-if="auth.isOrgAdmin || auth.isDeptAdmin" index="/admin/enterprises">部门管理</el-menu-item>
         <el-menu-item v-if="auth.isTeamAdmin" index="/admin/enterprises">员工</el-menu-item>
@@ -24,13 +26,26 @@
         <el-menu-item v-if="auth.isOrgAdmin || auth.isDeptAdmin || auth.isTeamAdmin" index="/admin/models">模型列表</el-menu-item>
         <el-menu-item v-if="auth.isOrgAdmin || auth.isDeptAdmin || auth.isTeamAdmin" index="/admin/guide">接入教程</el-menu-item>
         <el-menu-item v-if="auth.isOrgAdmin || auth.isDeptAdmin || auth.isTeamAdmin" index="/admin/my-logs">我的调用</el-menu-item>
-        <el-menu-item v-if="auth.isSuperAdmin" index="/admin/temp-channels">上游渠道</el-menu-item>
-        <el-menu-item v-if="auth.isSuperAdmin" index="/admin/keys-board">KEYS看板</el-menu-item>
-        <el-menu-item v-if="auth.isSuperAdmin" index="/admin/key-bindings">调度画布</el-menu-item>
-        <el-menu-item v-if="auth.isSuperAdmin" index="/admin/model-prices">模型列表</el-menu-item>
-        <el-menu-item v-if="auth.isSuperAdmin" index="/admin/logs">调用日志</el-menu-item>
-        <el-menu-item v-if="auth.isSuperAdmin" index="/admin/error-logs">报错日志</el-menu-item>
+        <el-sub-menu v-if="auth.isSuperAdmin" index="upstream">
+          <template #title>上游</template>
+          <el-menu-item index="/admin/temp-channels">上游渠道</el-menu-item>
+          <el-menu-item index="/admin/keys-board">KEYS看板</el-menu-item>
+          <el-menu-item index="/admin/key-bindings">调度画布</el-menu-item>
+          <el-menu-item index="/admin/model-prices">模型列表</el-menu-item>
+        </el-sub-menu>
+        <el-sub-menu v-if="auth.isSuperAdmin" index="logs">
+          <template #title>日志</template>
+          <el-menu-item index="/admin/logs">调用日志</el-menu-item>
+          <el-menu-item index="/admin/error-logs">报错日志</el-menu-item>
+        </el-sub-menu>
+        <el-sub-menu v-if="auth.isSuperAdmin" index="sensitive-detection">
+          <template #title>敏感词检测</template>
+          <el-menu-item index="/admin/sensitive-words">敏感词管理</el-menu-item>
+          <el-menu-item index="/admin/sensitive-detect-records">敏感词检测记录</el-menu-item>
+          <el-menu-item index="/admin/sensitive-intercept-records">敏感词拦截记录</el-menu-item>
+        </el-sub-menu>
         <el-menu-item v-if="auth.isSuperAdmin" index="/admin/ops-audit">操作审计</el-menu-item>
+        <el-menu-item v-if="auth.isSuperAdmin" index="/admin/settings">系统设置</el-menu-item>
         <el-menu-item index="/admin/profile">个人中心</el-menu-item>
       </el-menu>
     </el-aside>
@@ -131,6 +146,15 @@ function onLogout() {
 }
 .aside-menu {
   border-right: none;
+}
+.aside-menu :deep(.el-sub-menu .el-menu) {
+  background-color: #0b1220;
+}
+.aside-menu :deep(.el-sub-menu__title) {
+  color: #d1d5db;
+}
+.aside-menu :deep(.el-sub-menu__title:hover) {
+  background: #1f2937;
 }
 .shell > .el-container {
   height: 100%;

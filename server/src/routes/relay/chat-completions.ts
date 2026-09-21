@@ -29,6 +29,11 @@ import type {
   RelayRetryTraceItem,
 } from "../../lib/relay/types.js";
 import {
+  evaluateSensitiveRequest,
+  recordSensitiveWordHit,
+  zhipuSensitiveContentError,
+} from "../../lib/relay/sensitive-words.js";
+import {
   sendRelayUpstream,
   type RelayUpstreamAttemptKind,
   type RelayUpstreamAttemptResult,
@@ -450,6 +455,46 @@ export async function chatCompletionRoutes(app: FastifyInstance) {
         }
 
         const body = parsed.data;
+        const sensitiveHit = await evaluateSensitiveRequest(body);
+        if (sensitiveHit) {
+          try {
+            await recordSensitiveWordHit({
+              requestId,
+              employeeId: principal.employeeId,
+              employeeApiKeyId: principal.employeeApiKeyId,
+              teamId: principal.teamId,
+              clientModel,
+              protocol: principal.protocol,
+              path: req.url,
+              matchedWord: sensitiveHit.word,
+              action: sensitiveHit.intercept ? "intercept" : "detect",
+              requestBody: body,
+              userAgent: requestUserAgent(req),
+              ip: req.ip,
+            });
+          } catch (error) {
+            app.log.error({ err: error, requestId }, "failed to record sensitive-word hit");
+          }
+          if (sensitiveHit.intercept) {
+            const blocked = zhipuSensitiveContentError();
+            const payload = openAiError(
+              blocked.message,
+              "invalid_request_error",
+              blocked.code,
+            );
+            await finalizeAudit({
+              candidate: null,
+              status: "client_error",
+              httpStatus: blocked.httpStatus,
+              upstreamStatus: null,
+              errorCode: blocked.code,
+              errorMessage: blocked.message,
+              usage: emptyRelayUsage(),
+              responseBody: payload,
+            });
+            return reply.code(blocked.httpStatus).send(payload);
+          }
+        }
 
         try {
           lease = await acquireRelayQuota(principal.employeeId, principal.teamId);

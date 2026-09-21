@@ -33,6 +33,10 @@ export const relayProtocolEnum = pgEnum("relay_protocol", [
   "openai_responses",
 ]);
 export const productTypeEnum = pgEnum("product_type", ["api", "coding_plan"]);
+export const sensitiveWordHitActionEnum = pgEnum("sensitive_word_hit_action", [
+  "detect",
+  "intercept",
+]);
 export const credentialStatusEnum = pgEnum("credential_status", [
   "active",
   "disabled",
@@ -497,6 +501,38 @@ export const requestErrorLogs = pgTable(
     index("request_error_logs_created_idx").on(t.createdAt),
     index("request_error_logs_team_created_idx").on(t.teamId, t.createdAt),
     index("request_error_logs_code_created_idx").on(t.errorCode, t.createdAt),
+  ],
+);
+
+export const sensitiveWordHits = pgTable(
+  "sensitive_word_hits",
+  {
+    id: bigint("id", { mode: "number" }).generatedAlwaysAsIdentity().primaryKey(),
+    requestId: varchar("request_id", { length: 64 }).notNull(),
+    employeeId: bigint("employee_id", { mode: "number" })
+      .notNull()
+      .references(() => employees.id),
+    employeeApiKeyId: bigint("employee_api_key_id", { mode: "number" }),
+    teamId: bigint("team_id", { mode: "number" }).references(() => teams.id, {
+      onDelete: "restrict",
+      onUpdate: "no action",
+    }),
+    clientModel: varchar("client_model", { length: 128 }).notNull(),
+    protocol: relayProtocolEnum("protocol").notNull(),
+    path: varchar("path", { length: 256 }).notNull(),
+    matchedWord: varchar("matched_word", { length: 64 }).notNull(),
+    action: sensitiveWordHitActionEnum("action").notNull().default("detect"),
+    excerpt: text("excerpt"),
+    requestPreview: jsonb("request_preview"),
+    userAgent: varchar("user_agent", { length: 512 }),
+    ip: varchar("ip", { length: 64 }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("sensitive_word_hits_request_id_uidx").on(t.requestId),
+    index("sensitive_word_hits_created_idx").on(t.createdAt),
+    index("sensitive_word_hits_employee_created_idx").on(t.employeeId, t.createdAt),
+    index("sensitive_word_hits_action_created_idx").on(t.action, t.createdAt),
   ],
 );
 
