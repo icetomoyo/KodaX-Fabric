@@ -17,6 +17,7 @@ import { resolveLogTeamIds } from "../../lib/org.js";
 import {
   computeRequestCreditBreakdown,
   defaultCreditRateFor,
+  requestCreditDiscount,
   tokenBreakdownFromUsage,
 } from "../../lib/relay/credit-cost.js";
 import {
@@ -51,17 +52,19 @@ function consumptionFor(row: {
   clientModel: string;
   createdAt: Date;
 }) {
+  const rate = defaultCreditRateFor(row.clientModel);
   const creditBreakdown = computeRequestCreditBreakdown(
     {
       promptTokens: row.promptTokens ?? 0,
       completionTokens: row.completionTokens ?? 0,
       cacheReadTokens: row.cacheReadTokens ?? 0,
     },
-    defaultCreditRateFor(row.clientModel),
+    rate,
     row.createdAt,
   );
   return {
     tokenBreakdown: tokenBreakdownFromUsage(row),
+    creditDiscount: rate ? requestCreditDiscount(row.createdAt) : null,
     creditBreakdown,
     credits: creditBreakdown.total,
   };

@@ -205,6 +205,7 @@ async function main() {
       cacheHit: 2,
       total: 10,
     });
+    assert.equal(logs.items[0].creditDiscount, null);
     assert.deepEqual(logs.items[0].creditBreakdown, {
       input: 0,
       output: 0,
@@ -238,6 +239,7 @@ async function main() {
       cacheHit: 2,
       total: 10,
     });
+    assert.equal(detail.creditDiscount, null);
     assert.deepEqual(detail.creditBreakdown, {
       input: 0,
       output: 0,

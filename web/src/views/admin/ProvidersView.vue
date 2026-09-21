@@ -125,7 +125,7 @@ function editProvider(row: any) {
 }
 
 function manageChannel(productLineId: number) {
-  void router.push({ path: "/admin/channels", query: { channelId: String(productLineId) } });
+  void router.push({ path: "/admin/temp-channels", query: { channelId: String(productLineId) } });
 }
 
 async function saveProvider() {

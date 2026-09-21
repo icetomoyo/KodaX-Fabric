@@ -13,59 +13,21 @@
 
     <el-form :inline="true" class="filters" @keyup.enter="search">
       <el-form-item>
-        <el-input
-          v-model="filters.requestId"
-          clearable
-          placeholder="Request ID"
-          style="width: 220px"
-        />
-      </el-form-item>
-      <el-form-item v-if="auth.isSuperAdmin">
-        <el-select
-          v-model="filters.enterpriseId"
-          clearable
-          filterable
-          :loading="enterprisesLoading"
-          placeholder="全部企业"
-          style="width: 180px"
-          @change="onEnterpriseChange"
-        >
-          <el-option
-            v-for="item in enterprises"
-            :key="item.id"
-            :label="item.name"
-            :value="item.id"
-          />
-        </el-select>
-      </el-form-item>
-      <el-form-item v-if="auth.isSuperAdmin || auth.isOrgAdmin">
-        <el-cascader
-          v-model="departmentPath"
-          :options="departmentOptions"
-          :props="departmentCascaderProps"
-          clearable
-          filterable
-          :disabled="auth.isSuperAdmin && !filters.enterpriseId"
-          :loading="departmentsLoading"
-          placeholder="全部部门"
-          style="width: 240px"
-          @change="onDepartmentChange"
-        />
-      </el-form-item>
-      <el-form-item>
         <el-select
           v-model="filters.employeeId"
           clearable
           filterable
-          :disabled="auth.isSuperAdmin && !filters.enterpriseId"
+          remote
+          :remote-method="searchEmployees"
           :loading="employeesLoading"
-          placeholder="全部员工"
-          style="width: 160px"
+          placeholder="按人搜索"
+          style="width: 220px"
+          @change="onEmployeeChange"
         >
           <el-option
-            v-for="item in visibleEmployees"
+            v-for="item in employees"
             :key="item.id"
-            :label="item.name"
+            :label="employeeOptionLabel(item)"
             :value="item.id"
           />
         </el-select>
@@ -177,20 +139,7 @@ import { ElMessage } from "element-plus";
 import { http } from "@/api/http";
 import { copyText } from "@/lib/clipboard";
 import { formatDateTime } from "@/lib/date-time";
-import {
-  buildDepartmentCascaderOptions,
-  departmentCascaderProps,
-  selectedDepartmentIdFromPath,
-  type DepartmentCascaderOption,
-} from "@/lib/key-binding-org-filter";
-import {
-  collectOrgEmployeeOptions,
-  visibleOrgEmployees,
-  type OrgDepartmentNode,
-  type OrgTeamNode,
-} from "@/lib/org-employees";
 import { TABLE_PAGE_SIZE } from "@/lib/table-page";
-import { useAuthStore } from "@/stores/auth";
 
 type LogStatus = "upstream_error" | "client_error" | "cancelled";
 type ProductType = "api" | "coding_plan";
@@ -220,34 +169,17 @@ interface ErrorLogDetail extends ErrorLogRow {
   credentialId: number | null;
 }
 
-interface NamedOption {
-  id: number;
-  name: string;
-}
-
-const auth = useAuthStore();
-
 type EmployeeOption = {
   id: number;
   name: string;
-  teamId: number | null;
-  teamIds: number[];
+  phone: string;
 };
 
 const filters = reactive({
-  requestId: "",
-  enterpriseId: null as number | null,
-  departmentId: null as number | null,
   employeeId: null as number | null,
 });
-const enterprises = ref<NamedOption[]>([]);
-const enterprisesLoading = ref(false);
-const departmentPath = ref<number[]>([]);
-const departments = ref<OrgDepartmentNode[]>([]);
-const departmentOptions = ref<DepartmentCascaderOption[]>([]);
-const departmentsLoading = ref(false);
-const teams = ref<OrgTeamNode[]>([]);
-const enterpriseEmployees = ref<EmployeeOption[]>([]);
+const employees = ref<EmployeeOption[]>([]);
+const selectedEmployee = ref<EmployeeOption | null>(null);
 const employeesLoading = ref(false);
 const items = ref<ErrorLogRow[]>([]);
 const total = ref(0);
@@ -258,20 +190,7 @@ const showDetail = ref(false);
 const detailLoading = ref(false);
 const detail = ref<ErrorLogDetail | null>(null);
 
-const hasFilters = computed(() => Boolean(
-  filters.requestId.trim() || filters.enterpriseId || filters.departmentId || filters.employeeId,
-));
-
-const visibleEmployees = computed(() =>
-  visibleOrgEmployees({
-    isTeamAdmin: auth.isTeamAdmin,
-    selectedKind: filters.departmentId ? "department" : "enterprise",
-    selectedDepartmentId: filters.departmentId,
-    employees: enterpriseEmployees.value,
-    teams: teams.value,
-    departments: departments.value,
-  }),
-);
+const hasFilters = computed(() => Boolean(filters.employeeId));
 
 function departmentLabel(row: { departmentName?: string | null; teamName: string | null }): string {
   if (row.departmentName && row.departmentName !== "默认部门") return row.departmentName;
@@ -316,109 +235,52 @@ function providerText(code: string | null | undefined): string {
   return names[code.toLowerCase()] ?? code;
 }
 
+function employeeOptionLabel(item: EmployeeOption): string {
+  return item.phone ? `${item.name} · ${item.phone}` : item.name;
+}
+
+function rememberSelectedEmployee(id: number | null) {
+  if (id == null) {
+    selectedEmployee.value = null;
+    return;
+  }
+  selectedEmployee.value = employees.value.find((row) => row.id === id) ?? selectedEmployee.value;
+}
+
+async function searchEmployees(query: string) {
+  employeesLoading.value = true;
+  try {
+    const { data } = await http.get("/api/admin/users", {
+      params: { q: query.trim() || undefined, limit: 30, status: "active" },
+    });
+    if (!data.success) throw new Error(data.message || "搜索员工失败");
+    const rows = Array.isArray(data.data)
+      ? data.data.map((row: EmployeeOption) => ({
+          id: row.id,
+          name: row.name,
+          phone: row.phone,
+        }))
+      : [];
+    const current = selectedEmployee.value;
+    employees.value =
+      current && !rows.some((row) => row.id === current.id) ? [current, ...rows] : rows;
+  } catch (e: any) {
+    employees.value = selectedEmployee.value ? [selectedEmployee.value] : [];
+    ElMessage.error(e.response?.data?.message || "搜索员工失败");
+  } finally {
+    employeesLoading.value = false;
+  }
+}
+
+function onEmployeeChange(id: number | null) {
+  rememberSelectedEmployee(id);
+  search();
+}
+
 async function copyRequestId(requestId: string) {
   const copied = await copyText(requestId);
   if (copied) ElMessage.success("Request ID 已复制");
   else ElMessage.error("复制失败");
-}
-
-async function onEnterpriseChange() {
-  filters.departmentId = null;
-  filters.employeeId = null;
-  departmentPath.value = [];
-  departments.value = [];
-  departmentOptions.value = [];
-  teams.value = [];
-  enterpriseEmployees.value = [];
-  if (!filters.enterpriseId) return;
-  await loadOrgOptions(filters.enterpriseId);
-}
-
-function onDepartmentChange() {
-  filters.departmentId = selectedDepartmentIdFromPath(departmentPath.value);
-  if (filters.employeeId && !visibleEmployees.value.some((row) => row.id === filters.employeeId)) {
-    filters.employeeId = null;
-  }
-}
-
-async function loadOrgOptions(enterpriseId?: number) {
-  departmentsLoading.value = true;
-  employeesLoading.value = true;
-  try {
-    const params = enterpriseId ? { enterpriseId } : undefined;
-    const [deptRes, teamRes, userRes] = await Promise.all([
-      http.get("/api/admin/departments", params ? { params } : undefined),
-      http.get("/api/admin/teams", params ? { params } : undefined),
-      http.get("/api/admin/users", {
-        params: { ...(enterpriseId ? { enterpriseId } : {}), limit: 200 },
-      }),
-    ]);
-    if (deptRes.data.success) {
-      departments.value = deptRes.data.data as OrgDepartmentNode[];
-      departmentOptions.value = buildDepartmentCascaderOptions(
-        (deptRes.data.data as Array<{
-          id: number;
-          name: string;
-          parentId?: number | null;
-          enterpriseId: number;
-          isDefault?: boolean;
-        }>),
-      );
-    }
-    if (teamRes.data.success) teams.value = teamRes.data.data as OrgTeamNode[];
-    if (userRes.data.success) {
-      enterpriseEmployees.value = collectOrgEmployeeOptions(userRes.data.data);
-    }
-  } catch (e: any) {
-    ElMessage.error(e.response?.data?.message || "筛选项加载失败");
-  } finally {
-    departmentsLoading.value = false;
-    employeesLoading.value = false;
-  }
-}
-
-async function loadTeamAdminEmployees() {
-  employeesLoading.value = true;
-  try {
-    const { data } = await http.get("/api/admin/teams");
-    if (!data.success) return;
-    const teamRows = data.data as NamedOption[];
-    const members = await Promise.all(
-      teamRows.map(async (team) => {
-        const res = await http.get(`/api/admin/teams/${team.id}/members`);
-        if (!res.data.success) return [];
-        return (res.data.data as Array<{ employeeId: number; name: string }>).map((row) => ({
-          id: row.employeeId,
-          name: row.name,
-        }));
-      }),
-    );
-    enterpriseEmployees.value = collectOrgEmployeeOptions(
-      members.flat().map((row) => ({ id: row.id, name: row.name, teamId: null })),
-    );
-  } catch (e: any) {
-    ElMessage.error(e.response?.data?.message || "员工列表加载失败");
-  } finally {
-    employeesLoading.value = false;
-  }
-}
-
-async function loadEnterprises() {
-  if (!auth.isSuperAdmin) return;
-  enterprisesLoading.value = true;
-  try {
-    const { data } = await http.get("/api/admin/enterprises");
-    if (data.success) {
-      enterprises.value = data.data.map((row: { id: number; name: string }) => ({
-        id: row.id,
-        name: row.name,
-      }));
-    }
-  } catch (e: any) {
-    ElMessage.error(e.response?.data?.message || "企业列表加载失败");
-  } finally {
-    enterprisesLoading.value = false;
-  }
 }
 
 function listQueryParams() {
@@ -426,12 +288,6 @@ function listQueryParams() {
     limit,
     offset: (page.value - 1) * limit,
   };
-  const requestId = filters.requestId.trim();
-  if (requestId) params.requestId = requestId;
-  if (auth.isSuperAdmin && filters.enterpriseId) params.enterpriseId = filters.enterpriseId;
-  if ((auth.isSuperAdmin || auth.isOrgAdmin) && filters.departmentId) {
-    params.departmentId = filters.departmentId;
-  }
   if (filters.employeeId) params.employeeId = filters.employeeId;
   return params;
 }
@@ -476,26 +332,15 @@ function search() {
 }
 
 function resetFilters() {
-  filters.requestId = "";
-  filters.enterpriseId = null;
-  filters.departmentId = null;
   filters.employeeId = null;
-  departmentPath.value = [];
-  if (auth.isSuperAdmin) {
-    departments.value = [];
-    departmentOptions.value = [];
-    teams.value = [];
-    enterpriseEmployees.value = [];
-  }
+  selectedEmployee.value = null;
   page.value = 1;
   load();
 }
 
 onMounted(() => {
   void load();
-  void loadEnterprises();
-  if (auth.isOrgAdmin) void loadOrgOptions();
-  if (auth.isTeamAdmin) void loadTeamAdminEmployees();
+  void searchEmployees("");
 });
 </script>
 

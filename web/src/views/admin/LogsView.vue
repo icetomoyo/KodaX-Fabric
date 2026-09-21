@@ -3,50 +3,20 @@
     <el-form :inline="true" class="filters" @keyup.enter="search">
       <el-form-item>
         <el-select
-          v-model="filters.enterpriseId"
-          clearable
-          filterable
-          :loading="enterprisesLoading"
-          placeholder="全部企业"
-          style="width: 180px"
-          @change="onEnterpriseChange"
-        >
-          <el-option
-            v-for="item in enterprises"
-            :key="item.id"
-            :label="item.name"
-            :value="item.id"
-          />
-        </el-select>
-      </el-form-item>
-      <el-form-item>
-        <el-cascader
-          v-model="departmentPath"
-          :options="departmentOptions"
-          :props="departmentCascaderProps"
-          clearable
-          filterable
-          :disabled="!filters.enterpriseId"
-          :loading="departmentsLoading"
-          placeholder="全部部门"
-          style="width: 240px"
-          @change="onDepartmentChange"
-        />
-      </el-form-item>
-      <el-form-item>
-        <el-select
           v-model="filters.employeeId"
           clearable
           filterable
-          :disabled="!filters.enterpriseId"
+          remote
+          :remote-method="searchEmployees"
           :loading="employeesLoading"
-          placeholder="全部员工"
-          style="width: 160px"
+          placeholder="按人搜索"
+          style="width: 220px"
+          @change="onEmployeeChange"
         >
           <el-option
-            v-for="item in visibleEmployees"
+            v-for="item in employees"
             :key="item.id"
-            :label="item.name"
+            :label="employeeOptionLabel(item)"
             :value="item.id"
           />
         </el-select>
@@ -79,6 +49,19 @@
             <div><dt>缓存命中</dt><dd>{{ formatNumber(row.tokenBreakdown?.cacheHit ?? row.cacheReadTokens) }}</dd></div>
             <div><dt>合计</dt><dd>{{ formatNumber(row.tokenBreakdown?.total ?? row.totalTokens) }}</dd></div>
           </dl>
+        </template>
+      </el-table-column>
+      <el-table-column width="120">
+        <template #header>
+          <el-tooltip :content="CREDIT_DISCOUNT_HINT" placement="top">
+            <span>折扣</span>
+          </el-tooltip>
+        </template>
+        <template #default="{ row }">
+          <div class="discount-cell">
+            <strong>{{ discountPercentText(row.creditDiscount) }}</strong>
+            <small>{{ discountKindText(row.creditDiscount) }}</small>
+          </div>
         </template>
       </el-table-column>
       <el-table-column label="积分" width="200">
@@ -162,6 +145,11 @@
             </el-descriptions-item>
             <el-descriptions-item label="状态">{{ statusText(detail.status) }}</el-descriptions-item>
             <el-descriptions-item label="时间">{{ formatDateTime(detail.createdAt) }}</el-descriptions-item>
+            <el-descriptions-item label="积分折扣">
+              <el-tooltip :content="CREDIT_DISCOUNT_HINT" placement="top">
+                <span>{{ discountSummary(detail.creditDiscount) }}</span>
+              </el-tooltip>
+            </el-descriptions-item>
             <el-descriptions-item v-if="contextRecord" label="耗时">
               {{ contextRecord.latencyMs ?? "—" }} ms
             </el-descriptions-item>
@@ -260,18 +248,6 @@ import { http } from "@/api/http";
 import StructuredJson from "@/components/StructuredJson.vue";
 import { copyText } from "@/lib/clipboard";
 import { formatDateTime } from "@/lib/date-time";
-import {
-  buildDepartmentCascaderOptions,
-  departmentCascaderProps,
-  selectedDepartmentIdFromPath,
-  type DepartmentCascaderOption,
-} from "@/lib/key-binding-org-filter";
-import {
-  collectOrgEmployeeOptions,
-  visibleOrgEmployees,
-  type OrgDepartmentNode,
-  type OrgTeamNode,
-} from "@/lib/org-employees";
 
 type LogStatus = "success" | "upstream_error" | "client_error" | "cancelled";
 type ProductType = "api" | "coding_plan";
@@ -282,6 +258,16 @@ interface UsageBreakdown {
   cacheHit: number | null;
   total: number | null;
 }
+
+type CreditDiscountKind = "peak" | "off_peak" | "mixed";
+
+interface CreditDiscount {
+  kind: CreditDiscountKind;
+  inputMultiplier: number;
+  outputMultiplier: number;
+}
+
+const CREDIT_DISCOUNT_HINT = "工作日 14:00–18:00（UTC+8）为高峰，按基础积分抵扣；其余时段按 50% 抵扣";
 
 interface LogRow {
   id: number;
@@ -300,6 +286,7 @@ interface LogRow {
   totalTokens: number | null;
   cacheReadTokens: number | null;
   tokenBreakdown?: UsageBreakdown;
+  creditDiscount?: CreditDiscount | null;
   creditBreakdown?: UsageBreakdown;
   credits: number;
   createdAt: string;
@@ -318,11 +305,6 @@ interface LogDetail extends LogRow {
   context: Record<string, unknown> | null;
 }
 
-interface NamedOption {
-  id: number;
-  name: string;
-}
-
 const numberFormatter = new Intl.NumberFormat("zh-CN");
 const creditFormatter = new Intl.NumberFormat("zh-CN", {
   maximumFractionDigits: 4,
@@ -332,23 +314,14 @@ const creditFormatter = new Intl.NumberFormat("zh-CN", {
 type EmployeeOption = {
   id: number;
   name: string;
-  teamId: number | null;
-  teamIds: number[];
+  phone: string;
 };
 
 const filters = reactive({
-  enterpriseId: null as number | null,
-  departmentId: null as number | null,
   employeeId: null as number | null,
 });
-const enterprises = ref<NamedOption[]>([]);
-const enterprisesLoading = ref(false);
-const departmentPath = ref<number[]>([]);
-const departments = ref<OrgDepartmentNode[]>([]);
-const departmentOptions = ref<DepartmentCascaderOption[]>([]);
-const departmentsLoading = ref(false);
-const teams = ref<OrgTeamNode[]>([]);
-const enterpriseEmployees = ref<EmployeeOption[]>([]);
+const employees = ref<EmployeeOption[]>([]);
+const selectedEmployee = ref<EmployeeOption | null>(null);
 const employeesLoading = ref(false);
 const items = ref<LogRow[]>([]);
 const total = ref(0);
@@ -360,20 +333,7 @@ const showDetail = ref(false);
 const detailLoading = ref(false);
 const detail = ref<LogDetail | null>(null);
 
-const hasFilters = computed(() => Boolean(
-  filters.enterpriseId || filters.departmentId || filters.employeeId,
-));
-
-const visibleEmployees = computed(() =>
-  visibleOrgEmployees({
-    isTeamAdmin: false,
-    selectedKind: filters.departmentId ? "department" : "enterprise",
-    selectedDepartmentId: filters.departmentId,
-    employees: enterpriseEmployees.value,
-    teams: teams.value,
-    departments: departments.value,
-  }),
-);
+const hasFilters = computed(() => Boolean(filters.employeeId));
 
 function orgScopeLabel(row: {
   enterpriseName: string | null;
@@ -399,6 +359,13 @@ const consumptionRows = computed(() => {
       output: formatNumber(row.tokenBreakdown?.output ?? row.completionTokens),
       cacheHit: formatNumber(row.tokenBreakdown?.cacheHit ?? row.cacheReadTokens),
       total: formatNumber(row.tokenBreakdown?.total ?? row.totalTokens),
+    },
+    {
+      kind: "折扣",
+      input: discountPartText(row.creditDiscount, "input"),
+      output: discountPartText(row.creditDiscount, "output"),
+      cacheHit: discountPartText(row.creditDiscount, "input"),
+      total: discountKindText(row.creditDiscount),
     },
     {
       kind: "积分",
@@ -463,6 +430,41 @@ function formatCredits(value: number | null | undefined): string {
   return creditFormatter.format(value);
 }
 
+function formatDiscountPercent(multiplier: number): string {
+  return `${Math.round(multiplier * 100)}%`;
+}
+
+function discountKindText(discount: CreditDiscount | null | undefined): string {
+  if (!discount) return "—";
+  if (discount.kind === "peak") return "高峰";
+  if (discount.kind === "off_peak") return "非高峰";
+  return "跨高峰";
+}
+
+function discountPercentText(discount: CreditDiscount | null | undefined): string {
+  if (!discount) return "—";
+  if (discount.kind === "mixed") {
+    return `输入 ${formatDiscountPercent(discount.inputMultiplier)} / 输出 ${formatDiscountPercent(discount.outputMultiplier)}`;
+  }
+  return formatDiscountPercent(discount.inputMultiplier);
+}
+
+function discountSummary(discount: CreditDiscount | null | undefined): string {
+  if (!discount) return "—";
+  if (discount.kind === "mixed") {
+    return `跨高峰 · 输入 ${formatDiscountPercent(discount.inputMultiplier)} · 输出 ${formatDiscountPercent(discount.outputMultiplier)}`;
+  }
+  return `${discountKindText(discount)} ${formatDiscountPercent(discount.inputMultiplier)}`;
+}
+
+function discountPartText(
+  discount: CreditDiscount | null | undefined,
+  part: "input" | "output",
+): string {
+  if (!discount) return "—";
+  return formatDiscountPercent(part === "output" ? discount.outputMultiplier : discount.inputMultiplier);
+}
+
 function uncachedPrompt(row: Pick<LogRow, "promptTokens" | "cacheReadTokens">): number | null {
   if (row.promptTokens == null) return null;
   if (row.cacheReadTokens == null) return row.promptTokens;
@@ -477,57 +479,46 @@ function formatCreditPart(row: LogRow, key: "input" | "output" | "cacheHit"): st
   return creditFormatter.format(value);
 }
 
-async function loadOrgOptions(enterpriseId: number) {
-  departmentsLoading.value = true;
+function employeeOptionLabel(item: EmployeeOption): string {
+  return item.phone ? `${item.name} · ${item.phone}` : item.name;
+}
+
+function rememberSelectedEmployee(id: number | null) {
+  if (id == null) {
+    selectedEmployee.value = null;
+    return;
+  }
+  selectedEmployee.value = employees.value.find((row) => row.id === id) ?? selectedEmployee.value;
+}
+
+async function searchEmployees(query: string) {
   employeesLoading.value = true;
   try {
-    const params = { enterpriseId };
-    const [deptRes, teamRes, userRes] = await Promise.all([
-      http.get("/api/admin/departments", { params }),
-      http.get("/api/admin/teams", { params }),
-      http.get("/api/admin/users", { params: { enterpriseId, limit: 200 } }),
-    ]);
-    if (deptRes.data.success) {
-      departments.value = deptRes.data.data as OrgDepartmentNode[];
-      departmentOptions.value = buildDepartmentCascaderOptions(
-        (deptRes.data.data as Array<{
-          id: number;
-          name: string;
-          parentId?: number | null;
-          enterpriseId: number;
-          isDefault?: boolean;
-        }>),
-      );
-    }
-    if (teamRes.data.success) teams.value = teamRes.data.data as OrgTeamNode[];
-    if (userRes.data.success) {
-      enterpriseEmployees.value = collectOrgEmployeeOptions(userRes.data.data);
-    }
+    const { data } = await http.get("/api/admin/users", {
+      params: { q: query.trim() || undefined, limit: 30, status: "active" },
+    });
+    if (!data.success) throw new Error(data.message || "搜索员工失败");
+    const rows = Array.isArray(data.data)
+      ? data.data.map((row: EmployeeOption) => ({
+          id: row.id,
+          name: row.name,
+          phone: row.phone,
+        }))
+      : [];
+    const current = selectedEmployee.value;
+    employees.value =
+      current && !rows.some((row) => row.id === current.id) ? [current, ...rows] : rows;
   } catch (e: any) {
-    ElMessage.error(e.response?.data?.message || "筛选项加载失败");
+    employees.value = selectedEmployee.value ? [selectedEmployee.value] : [];
+    ElMessage.error(e.response?.data?.message || "搜索员工失败");
   } finally {
-    departmentsLoading.value = false;
     employeesLoading.value = false;
   }
 }
 
-async function onEnterpriseChange() {
-  filters.departmentId = null;
-  filters.employeeId = null;
-  departmentPath.value = [];
-  departments.value = [];
-  departmentOptions.value = [];
-  teams.value = [];
-  enterpriseEmployees.value = [];
-  if (!filters.enterpriseId) return;
-  await loadOrgOptions(filters.enterpriseId);
-}
-
-function onDepartmentChange() {
-  filters.departmentId = selectedDepartmentIdFromPath(departmentPath.value);
-  if (filters.employeeId && !visibleEmployees.value.some((row) => row.id === filters.employeeId)) {
-    filters.employeeId = null;
-  }
+function onEmployeeChange(id: number | null) {
+  rememberSelectedEmployee(id);
+  search();
 }
 
 async function copyRequestId(requestId: string) {
@@ -585,8 +576,6 @@ function listQueryParams() {
     limit,
     offset: (page.value - 1) * limit,
   };
-  if (filters.enterpriseId) params.enterpriseId = filters.enterpriseId;
-  if (filters.departmentId) params.departmentId = filters.departmentId;
   if (filters.employeeId) params.employeeId = filters.employeeId;
   return params;
 }
@@ -608,44 +597,21 @@ async function load() {
   }
 }
 
-async function loadEnterprises() {
-  enterprisesLoading.value = true;
-  try {
-    const { data } = await http.get("/api/admin/enterprises");
-    if (data.success) {
-      enterprises.value = data.data.map((row: { id: number; name: string }) => ({
-        id: row.id,
-        name: row.name,
-      }));
-    }
-  } catch (e: any) {
-    ElMessage.error(e.response?.data?.message || "企业列表加载失败");
-  } finally {
-    enterprisesLoading.value = false;
-  }
-}
-
 function search() {
   page.value = 1;
   load();
 }
 
 function resetFilters() {
-  filters.enterpriseId = null;
-  filters.departmentId = null;
   filters.employeeId = null;
-  departmentPath.value = [];
-  departments.value = [];
-  departmentOptions.value = [];
-  teams.value = [];
-  enterpriseEmployees.value = [];
+  selectedEmployee.value = null;
   page.value = 1;
   load();
 }
 
 onMounted(() => {
   void load();
-  void loadEnterprises();
+  void searchEmployees("");
 });
 </script>
 
@@ -697,6 +663,20 @@ onMounted(() => {
   margin: 0;
   color: #0f172a;
   white-space: nowrap;
+}
+.discount-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+  line-height: 1.35;
+}
+.discount-cell strong {
+  color: #0f172a;
+  font-weight: 600;
+}
+.discount-cell small {
+  color: #94a3b8;
 }
 .consumption-table {
   width: 100%;

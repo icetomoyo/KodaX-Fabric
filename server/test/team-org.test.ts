@@ -250,7 +250,7 @@ test("editing an employee team only lists teams in the same department", () => {
 test("live console pages do not repeat sidebar titles or tutorial subtitles", () => {
   const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
   const credentials = readFileSync(resolve(root, "web/src/views/admin/CredentialsView.vue"), "utf8");
-  const seats = readFileSync(resolve(root, "web/src/views/admin/SeatsView.vue"), "utf8");
+  const tempChannels = readFileSync(resolve(root, "web/src/views/admin/TempChannelsView.vue"), "utf8");
   const dashboard = readFileSync(resolve(root, "web/src/views/admin/DashboardView.vue"), "utf8");
   const enterprises = readFileSync(resolve(root, "web/src/views/admin/EnterprisesView.vue"), "utf8");
   const prices = readFileSync(resolve(root, "web/src/views/admin/ModelPricesView.vue"), "utf8");
@@ -269,7 +269,7 @@ test("live console pages do not repeat sidebar titles or tutorial subtitles", ()
 
   for (const view of [
     credentials,
-    seats,
+    tempChannels,
     dashboard,
     prices,
     logs,
@@ -381,14 +381,14 @@ test("super-admin usage analysis is a dated range board", () => {
   assert.doesNotMatch(view, /value="today"/);
 });
 
-test("KEYS看板 is a six-lane status board under 临时渠道", () => {
+test("KEYS看板 is a six-lane status board under 上游渠道", () => {
   const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
   const layout = readFileSync(resolve(root, "web/src/layouts/AdminLayout.vue"), "utf8");
   const router = readFileSync(resolve(root, "web/src/router/index.ts"), "utf8");
   const view = readFileSync(resolve(root, "web/src/views/admin/CredentialsView.vue"), "utf8");
   assert.match(
     layout,
-    /index="\/admin\/temp-channels">临时渠道[\s\S]*index="\/admin\/keys-board">KEYS看板/,
+    /index="\/admin\/temp-channels">上游渠道[\s\S]*index="\/admin\/keys-board">KEYS看板/,
   );
   assert.match(router, /path: "keys-board"/);
   assert.match(router, /name: "admin-keys-board"/);
@@ -468,12 +468,12 @@ test("admin shell uses org board for all console roles", () => {
   assert.match(layout, /index="\/admin\/guide">接入教程/);
   assert.match(layout, /isSuperAdmin" index="\/admin\/key-bindings">调度画布/);
   assert.match(layout, /isSuperAdmin" index="\/admin\/error-logs">报错日志/);
-  assert.match(layout, />上游</);
-  assert.match(layout, /index="\/admin\/channels">渠道/);
-  assert.match(layout, /index="\/admin\/seats">席位/);
-  assert.match(layout, /index="\/admin\/temp-channels">临时渠道/);
+  assert.match(layout, /index="\/admin\/temp-channels">上游渠道/);
   assert.match(layout, /index="\/admin\/keys-board">KEYS看板/);
-  assert.match(layout, /index="\/admin\/channel-keys">渠道 KEY/);
+  assert.doesNotMatch(layout, />上游</);
+  assert.doesNotMatch(layout, /index="\/admin\/channels">渠道/);
+  assert.doesNotMatch(layout, /index="\/admin\/seats">席位/);
+  assert.doesNotMatch(layout, /index="\/admin\/channel-keys">渠道 KEY/);
   assert.doesNotMatch(layout, /index="\/admin\/credentials">上游渠道/);
   assert.doesNotMatch(layout, /index="\/admin\/departments"/);
   assert.doesNotMatch(layout, /index="\/admin\/teams"/);

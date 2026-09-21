@@ -582,7 +582,7 @@ function openErrorLogs() {
 }
 
 function openChannels() {
-  void router.push("/admin/channels");
+  void router.push("/admin/temp-channels");
 }
 
 async function load() {

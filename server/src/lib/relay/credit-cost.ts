@@ -172,6 +172,33 @@ export function intervalPeakMultiplier(start: Date, end: Date): number {
   return OFF_PEAK_MULTIPLIER + (PEAK_MULTIPLIER - OFF_PEAK_MULTIPLIER) * fraction;
 }
 
+export type CreditDiscountKind = "peak" | "off_peak" | "mixed";
+
+export type RequestCreditDiscount = {
+  kind: CreditDiscountKind;
+  inputMultiplier: number;
+  outputMultiplier: number;
+};
+
+/**
+ * Built-in coding-plan peak window: Mon–Fri 14:00–18:00 UTC+8.
+ * Off-peak bills 50% of the base credit rate. Not a config item.
+ */
+export function requestCreditDiscount(
+  startedAt: Date,
+  endedAt: Date = startedAt,
+): RequestCreditDiscount {
+  const inputMultiplier = peakMultiplierAt(startedAt);
+  const outputMultiplier = intervalPeakMultiplier(startedAt, endedAt);
+  const kind =
+    inputMultiplier === PEAK_MULTIPLIER && outputMultiplier === PEAK_MULTIPLIER
+      ? "peak"
+      : inputMultiplier === OFF_PEAK_MULTIPLIER && outputMultiplier === OFF_PEAK_MULTIPLIER
+        ? "off_peak"
+        : "mixed";
+  return { kind, inputMultiplier, outputMultiplier };
+}
+
 export type TokenBreakdown = {
   input: number | null;
   output: number | null;

@@ -33,16 +33,26 @@ test("admin logs page shows token and credit input/output/cache/total columns", 
   const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
   const view = readFileSync(resolve(root, "web/src/views/admin/LogsView.vue"), "utf8");
   assert.match(view, /label="Tokens"/);
+  assert.match(view, />折扣</);
+  assert.match(view, /label="积分折扣"/);
   assert.match(view, /label="积分"/);
   assert.match(view, /label="输入"/);
   assert.match(view, /label="输出"/);
   assert.match(view, /label="缓存命中"/);
   assert.match(view, /label="合计"/);
   assert.match(view, /tokenBreakdown/);
+  assert.match(view, /creditDiscount/);
+  assert.match(view, /kind: "折扣"/);
   assert.match(view, /creditBreakdown/);
+  assert.match(view, /工作日 14:00–18:00（UTC\+8）为高峰/);
+  assert.match(view, /其余时段按 50% 抵扣/);
   assert.doesNotMatch(view, /el-table-column label="Request ID"/);
   assert.match(view, /el-descriptions-item label="Request ID"/);
   assert.match(view, /下载全文/);
+  assert.match(view, /placeholder="按人搜索"/);
+  assert.doesNotMatch(view, /placeholder="全部企业"/);
+  assert.doesNotMatch(view, /placeholder="全部部门"/);
+  assert.doesNotMatch(view, /placeholder="全部员工"/);
 });
 
 test("ops audit employee labels use name and phone, not id-only placeholders", () => {

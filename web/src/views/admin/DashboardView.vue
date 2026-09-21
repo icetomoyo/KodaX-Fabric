@@ -90,7 +90,7 @@
       <section class="page-card panel-card">
         <div class="panel-head">
           <h3 class="panel-title">今日按接入平台</h3>
-          <el-button v-if="auth.isSuperAdmin" link type="primary" @click="router.push('/admin/channels')">
+          <el-button v-if="auth.isSuperAdmin" link type="primary" @click="router.push('/admin/temp-channels')">
             渠道
           </el-button>
         </div>
@@ -245,7 +245,7 @@ const primaryAction = computed(() => {
     return { to: "/admin/enterprises", label: "部门管理" };
   }
   if (role.value === "team_admin") return { to: "/admin/enterprises", label: "员工" };
-  return { to: "/admin/channels", label: "管理渠道" };
+  return { to: "/admin/temp-channels", label: "管理渠道" };
 });
 
 type KpiCard = {
@@ -384,7 +384,7 @@ const quickLinks = computed(() => {
     ];
   }
   return [
-    { to: "/admin/channels", title: "上游", desc: "渠道 · 席位 · 渠道 KEY", dot: "blue" },
+    { to: "/admin/temp-channels", title: "上游渠道", desc: "渠道 · 席位 · KEY", dot: "blue" },
     { to: "/admin/enterprises", title: "企业管理", desc: "企业 · 部门 · 团队 · 员工", dot: "violet" },
     { to: "/admin/logs", title: "调用日志", desc: "按企业 / 部门 / 团队 / 员工排障", dot: "teal" },
     { to: "/admin/model-prices", title: "模型列表", desc: "渠道可用模型", dot: "amber" },

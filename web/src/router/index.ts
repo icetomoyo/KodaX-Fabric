@@ -149,18 +149,17 @@ export const router = createRouter({
         },
         {
           path: "providers",
-          redirect: "/admin/channels",
+          redirect: "/admin/temp-channels",
           meta: { roles: ["admin"] },
         },
         {
           path: "credentials",
-          redirect: "/admin/channel-keys",
+          redirect: "/admin/temp-channels",
           meta: { roles: ["admin"] },
         },
         {
           path: "channels",
-          name: "admin-channels",
-          component: () => import("@/views/admin/CredentialsView.vue"),
+          redirect: "/admin/temp-channels",
           meta: { roles: ["admin"] },
         },
         {
@@ -177,14 +176,12 @@ export const router = createRouter({
         },
         {
           path: "channel-keys",
-          name: "admin-channel-keys",
-          component: () => import("@/views/admin/CredentialsView.vue"),
+          redirect: "/admin/temp-channels",
           meta: { roles: ["admin"] },
         },
         {
           path: "seats",
-          name: "admin-seats",
-          component: () => import("@/views/admin/SeatsView.vue"),
+          redirect: "/admin/temp-channels",
           meta: { roles: ["admin"] },
         },
         {
@@ -201,7 +198,7 @@ export const router = createRouter({
         },
         {
           path: "model-routes",
-          redirect: "/admin/channels",
+          redirect: "/admin/temp-channels",
           meta: { roles: ["admin"] },
         },
         {

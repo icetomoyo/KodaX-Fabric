@@ -13,6 +13,7 @@ const {
   intervalPeakMultiplier,
   isPeakHour,
   peakOverlapMs,
+  requestCreditDiscount,
   resolveEffectiveCreditRate,
   tokenBreakdownFromUsage,
 } = await import("../src/lib/relay/credit-cost.js");
@@ -111,6 +112,34 @@ test("intervalPeakMultiplier ignores weekend hours even during 14:00-18:00 UTC+8
   const end = new Date("2026-08-29T10:00:00.000Z");
   assert.equal(peakOverlapMs(start, end), 0);
   assert.equal(intervalPeakMultiplier(start, end), 0.5);
+});
+
+test("requestCreditDiscount is off-peak 50% outside weekday 14:00-18:00 UTC+8", () => {
+  const offPeak = new Date("2026-08-28T10:00:00.000Z");
+  assert.deepEqual(requestCreditDiscount(offPeak), {
+    kind: "off_peak",
+    inputMultiplier: 0.5,
+    outputMultiplier: 0.5,
+  });
+});
+
+test("requestCreditDiscount is peak 100% inside weekday 14:00-18:00 UTC+8", () => {
+  const peak = new Date("2026-08-28T06:00:00.000Z");
+  assert.deepEqual(requestCreditDiscount(peak), {
+    kind: "peak",
+    inputMultiplier: 1,
+    outputMultiplier: 1,
+  });
+});
+
+test("requestCreditDiscount is mixed when a request crosses the peak window", () => {
+  const start = new Date("2026-08-28T05:50:00.000Z");
+  const end = new Date("2026-08-28T06:10:00.000Z");
+  assert.deepEqual(requestCreditDiscount(start, end), {
+    kind: "mixed",
+    inputMultiplier: 0.5,
+    outputMultiplier: 0.75,
+  });
 });
 
 test("computeRequestCredits bills input at start and output across the peak window", () => {

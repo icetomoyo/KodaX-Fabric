@@ -430,15 +430,15 @@ test("admin shell source includes 企业管理 and org_admin lands on workbench"
   assert.match(layout, /\/admin\/enterprises/);
   assert.match(layout, /部门管理/);
   assert.match(layout, /isOrgAdmin/);
-  assert.match(layout, /index="\/admin\/temp-channels">临时渠道/);
+  assert.match(layout, /index="\/admin\/temp-channels">上游渠道/);
   assert.match(
     layout,
-    /index="\/admin\/temp-channels">临时渠道[\s\S]*index="\/admin\/keys-board">KEYS看板[\s\S]*>上游</,
+    /index="\/admin\/temp-channels">上游渠道[\s\S]*index="\/admin\/keys-board">KEYS看板/,
   );
-  assert.match(layout, />上游</);
-  assert.match(layout, /index="\/admin\/channels">渠道/);
-  assert.match(layout, /index="\/admin\/seats">席位/);
-  assert.match(layout, /index="\/admin\/channel-keys">渠道 KEY/);
+  assert.doesNotMatch(layout, />上游</);
+  assert.doesNotMatch(layout, /index="\/admin\/channels">渠道/);
+  assert.doesNotMatch(layout, /index="\/admin\/seats">席位/);
+  assert.doesNotMatch(layout, /index="\/admin\/channel-keys">渠道 KEY/);
   assert.doesNotMatch(layout, /index="\/admin\/credentials">上游渠道/);
   assert.doesNotMatch(layout, /员工管理/);
   assert.doesNotMatch(layout, /index="\/admin\/teams"/);

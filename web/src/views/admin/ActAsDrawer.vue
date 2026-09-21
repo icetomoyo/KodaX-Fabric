@@ -268,6 +268,7 @@ async function goToRoleHome(role: ActAsPayload["role"] | "admin") {
     path.startsWith("/admin/credentials")
     || path.startsWith("/admin/channels")
     || path.startsWith("/admin/channel-keys")
+    || path.startsWith("/admin/temp-channels")
     || path.startsWith("/admin/keys-board")
     || path.startsWith("/admin/seats")
     || path.startsWith("/admin/model-prices")

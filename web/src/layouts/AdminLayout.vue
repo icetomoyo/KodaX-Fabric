@@ -7,7 +7,6 @@
       </div>
       <el-menu
         :default-active="route.path"
-        :default-openeds="['upstream']"
         router
         class="aside-menu"
         background-color="#111827"
@@ -24,14 +23,8 @@
         <el-menu-item v-if="auth.isOrgAdmin || auth.isDeptAdmin || auth.isTeamAdmin" index="/admin/models">模型列表</el-menu-item>
         <el-menu-item v-if="auth.isOrgAdmin || auth.isDeptAdmin || auth.isTeamAdmin" index="/admin/guide">接入教程</el-menu-item>
         <el-menu-item v-if="auth.isOrgAdmin || auth.isDeptAdmin || auth.isTeamAdmin" index="/admin/my-logs">我的调用</el-menu-item>
-        <el-menu-item v-if="auth.isSuperAdmin" index="/admin/temp-channels">临时渠道</el-menu-item>
+        <el-menu-item v-if="auth.isSuperAdmin" index="/admin/temp-channels">上游渠道</el-menu-item>
         <el-menu-item v-if="auth.isSuperAdmin" index="/admin/keys-board">KEYS看板</el-menu-item>
-        <el-sub-menu v-if="auth.isSuperAdmin" index="upstream">
-          <template #title>上游</template>
-          <el-menu-item index="/admin/channels">渠道</el-menu-item>
-          <el-menu-item index="/admin/seats">席位</el-menu-item>
-          <el-menu-item index="/admin/channel-keys">渠道 KEY</el-menu-item>
-        </el-sub-menu>
         <el-menu-item v-if="auth.isSuperAdmin" index="/admin/key-bindings">调度画布</el-menu-item>
         <el-menu-item v-if="auth.isSuperAdmin" index="/admin/model-prices">模型列表</el-menu-item>
         <el-menu-item v-if="auth.isSuperAdmin" index="/admin/logs">调用日志</el-menu-item>
@@ -132,15 +125,6 @@ function onLogout() {
 }
 .aside-menu {
   border-right: none;
-}
-
-.aside-menu :deep(.el-sub-menu__title) {
-  color: #d1d5db !important;
-  background: #111827 !important;
-}
-
-.aside-menu :deep(.el-sub-menu .el-menu) {
-  background: #0f172a !important;
 }
 .shell > .el-container {
   height: 100%;
