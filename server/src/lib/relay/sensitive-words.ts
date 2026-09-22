@@ -2,6 +2,7 @@ import { eq, sql } from "drizzle-orm";
 import { db } from "../../db/client.js";
 import { sensitiveWordHits, systemSettings } from "../../db/schema/index.js";
 import { lookupGlmErrorCatalog } from "../glm-error-codes.js";
+import { redis } from "../../redis.js";
 import type { RelayProtocol } from "./protocol.js";
 
 export const SENSITIVE_WORDS_SETTING_KEY = "sensitive_words";
@@ -71,6 +72,42 @@ type CacheEntry = {
 };
 
 let cache: CacheEntry | null = null;
+
+/** DB 读失败时的短退避：期间继续用旧缓存，避免每个请求都去打已经故障的库。 */
+const STALE_CACHE_RETRY_MS = 2_000;
+
+/**
+ * 多实例缓存失效（参考上游 claude-code-hub 的双通道模式）：
+ * 管理端改词表/开关后通过 Redis pub/sub 广播，其他实例立即清缓存，
+ * 不必等 5 秒 TTL。单实例部署时广播发给自己无害；订阅/发布全部 fail-open，
+ * Redis 不可用时退化为纯 TTL，不影响转发。
+ */
+const CACHE_INVALIDATION_CHANNEL = "kodax:sensitive-words-updated";
+let cacheInvalidationSubscriberStarted = false;
+
+function startCacheInvalidationSubscriber(): void {
+  if (cacheInvalidationSubscriberStarted) return;
+  cacheInvalidationSubscriberStarted = true;
+  try {
+    const subscriber = redis.duplicate();
+    subscriber.on("message", (channel: string) => {
+      if (channel !== CACHE_INVALIDATION_CHANNEL) return;
+      cache = null;
+      hitCountsCache = null;
+    });
+    void subscriber.subscribe(CACHE_INVALIDATION_CHANNEL).catch((error: unknown) => {
+      console.error("[sensitive-words] cache invalidation subscribe failed", error);
+    });
+  } catch (error) {
+    console.error("[sensitive-words] cache invalidation subscriber init failed", error);
+  }
+}
+
+function broadcastCacheInvalidation(): void {
+  void redis.publish(CACHE_INVALIDATION_CHANNEL, "updated").catch(() => {
+    // Redis 不可用时依赖各实例的 5 秒 TTL 兜底
+  });
+}
 
 const ZERO_WIDTH = /[\u200B-\u200D\uFEFF\u00AD]/g;
 
@@ -376,11 +413,23 @@ export async function loadSensitiveWordsConfig(): Promise<SensitiveWordsConfig> 
 }
 
 async function loadSensitiveWordsCacheEntry(): Promise<CacheEntry> {
+  startCacheInvalidationSubscriber();
   const now = Date.now();
   if (cache && cache.expiresAt > now) return cache;
-  const config = await readConfigFromDb();
-  cache = buildCacheEntry(config, now);
-  return cache;
+  try {
+    const config = await readConfigFromDb();
+    cache = buildCacheEntry(config, now);
+    return cache;
+  } catch (error) {
+    // fail-open：配置表暂时读不到时降级用旧缓存（词表/开关保持最后一次已知状态），
+    // 只有从未成功加载过才把错误抛回请求方。
+    if (cache) {
+      console.error("[sensitive-words] config load failed, serving stale cache", error);
+      cache = { ...cache, expiresAt: now + STALE_CACHE_RETRY_MS };
+      return cache;
+    }
+    throw error;
+  }
 }
 
 /** 缓存条目整体构建、整体替换：config 与 matcher 必须同源，读侧不能看到半套规则。 */
@@ -555,6 +604,7 @@ async function writeConfig(config: SensitiveWordsConfig): Promise<SensitiveWords
       },
     });
   cache = buildCacheEntry(next, Date.now());
+  broadcastCacheInvalidation();
   return next;
 }
 

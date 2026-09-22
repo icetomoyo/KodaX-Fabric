@@ -100,9 +100,11 @@ export type AdminUserListRow = {
 };
 
 function adminUserListWhere(query: AdminUserListQuery) {
+  // ilike 通配符转义：把用户输入里的 % _ \ 当普通字符，避免构造出意料之外的模式
+  const q = query.q?.replace(/[\\%_]/g, "\\$&");
   return and(
-    query.q
-      ? sql`(${employees.name} ilike ${"%" + query.q + "%"} or ${employees.phone} ilike ${"%" + query.q + "%"})`
+    q
+      ? sql`(${employees.name} ilike ${"%" + q + "%"} or ${employees.phone} ilike ${"%" + q + "%"})`
       : sql`true`,
     query.status ? eq(employees.status, query.status) : sql`true`,
     query.enterpriseId != null ? eq(employees.enterpriseId, query.enterpriseId) : sql`true`,

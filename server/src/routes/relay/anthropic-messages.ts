@@ -412,8 +412,8 @@ async function handleNativeRequest(
 
     const sensitiveHit = await evaluateSensitiveRequest(body);
     if (sensitiveHit) {
-      try {
-        await recordSensitiveWordHit({
+      // 命中记录 fire-and-forget：不阻塞响应，失败只记日志（含摘要/预览的第二次遍历也移出关键路径）
+      void recordSensitiveWordHit({
           requestId,
           employeeId: principal.employeeId,
           employeeApiKeyId: principal.employeeApiKeyId,
@@ -426,10 +426,9 @@ async function handleNativeRequest(
           requestBody: body,
           userAgent: requestUserAgent(req),
           ip: req.ip,
-        });
-      } catch (error) {
+        }).catch((error) => {
         app.log.error({ err: error, requestId }, "failed to record sensitive-word hit");
-      }
+      });
       if (sensitiveHit.intercept) {
         const blocked = zhipuSensitiveContentError();
         const payload = sendError(

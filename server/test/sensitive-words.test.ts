@@ -33,7 +33,7 @@ const {
 const { adminSensitiveWordRoutes } = await import("../src/routes/admin/sensitive-words.js");
 const { adminSettingsRoutes } = await import("../src/routes/admin/settings.js");
 const require = createRequire(import.meta.url);
-const XLSX = require("xlsx");
+const ExcelJS = require("exceljs");
 
 test("findSensitiveWord matches 英雄联盟 after space and zero-width evasion", () => {
   const words = ["英雄联盟"];
@@ -172,17 +172,23 @@ test("extractWordsFromText reads one word per line and strips markdown markers",
   );
 });
 
-test("parseSensitiveWordFile reads txt and xlsx", async () => {
+test("parseSensitiveWordFile reads txt and xlsx, rejects legacy xls", async () => {
   const txt = await parseSensitiveWordFile("words.md", Buffer.from("- 英雄联盟\nlol\n", "utf8"));
   assert.deepEqual(txt, ["英雄联盟", "lol"]);
-  const workbook = XLSX.utils.book_new();
-  const sheet = XLSX.utils.aoa_to_sheet([["敏感词"], ["英雄联盟"], ["lol"]]);
-  XLSX.utils.book_append_sheet(workbook, sheet, "words");
+  const workbook = new ExcelJS.Workbook();
+  const sheet = workbook.addWorksheet("words");
+  sheet.addRow(["敏感词"]);
+  sheet.addRow(["英雄联盟"]);
+  sheet.addRow(["lol"]);
   const xlsx = await parseSensitiveWordFile(
     "words.xlsx",
-    XLSX.write(workbook, { type: "buffer", bookType: "xlsx" }) as Buffer,
+    Buffer.from(await workbook.xlsx.writeBuffer()),
   );
   assert.deepEqual(xlsx, ["英雄联盟", "lol"]);
+  await assert.rejects(
+    () => parseSensitiveWordFile("words.xls", Buffer.from("legacy")),
+    /请使用 \.xlsx 格式的表格/,
+  );
 });
 
 test("sortSensitiveWordRows orders by hit count then word", () => {

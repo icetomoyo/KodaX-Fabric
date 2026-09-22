@@ -102,22 +102,22 @@
 
 - **P2-12 CHANGELOG Unreleased 旧条与现状矛盾**【已修复完成】：第 58-59 行仍写「三级联动筛选」「报错日志按 Request ID/企业/部门筛选」，实际已改为按人搜索。更新条目。**修复（2026-09-22）**：修正 4 条矛盾条目——调用日志/报错日志两条改为「按员工搜索（远程搜人）」现状；另发现并修正 P1-2 遗留的两条已下线批量席位描述（「批量挂 KEY」「批量添加按姓名+手机号」），Unreleased 现与代码一致。
 - **P2-13 死代码清理**【已修复完成】：`findSensitiveHit`、`invalidateSensitiveWordsCache`（均无调用方）；`ModelRoutesView.vue`/`ProvidersView.vue`（路由已 redirect）；`setSensitiveWordsEnabled` + `PATCH /api/admin/sensitive-words {enabled}`（`enabled` 实为 interceptEnabled，误用即全站拦截，前端已走 settings 接口，直接删）。**修复（2026-09-22）**：四块全部删除，全仓 grep 零残留，web 完整构建（vue-tsc + vite）通过证明视图无引用。备注：`/api/admin/model-routes` 后端接口仍在（不在本条范围），若确认下线可另行清理。
-- **P2-14 `sensitive_word_hits.employee_id` 外键 ON DELETE no action**：删除有命中记录的员工会被阻塞。需产品决策：cascade、删人前归档、或限制删人。
+- **P2-14 `sensitive_word_hits.employee_id` 外键 ON DELETE no action**【已修复完成·设计确认（2026-09-22）】：删除有命中记录的员工会被阻塞。需产品决策：cascade、删人前归档、或限制删人。**排查结论**：应用内**不存在员工硬删入口**——`users.ts` 只有创建/审批/编辑/停用（`PATCH /status`，含防自停 guard），员工生命周期即「停用」；FK 阻塞场景在应用内不会发生。外键清单核实：六张审计/计数表（sensitive_word_hits、employee_api_keys、request_audits、usage_counters_daily、usage_counters_team_daily、request_error_logs）为 NO ACTION——正是防止未来误加硬删或手工 SQL 丢历史的护栏；四张成员关系表（team_members、support_conversations、channel_seats、credential_binding_members）CASCADE 合理。`cleanup-demo-data.ts`（唯一删员工处）删除顺序已 FK 安全。**决策：保持 restrict；「改善报错」无对象（无删除端点），改为在 CONTEXT.md 员工词条固化口径**——员工不硬删、离职即停用、审计历史永久保留、勿添加物理删除入口。
 - **P2-15 姓名筛选只滤 Top-50**【已修复完成】：榜外员工搜不到。服务端加关键字参数，或复用 `/api/admin/users?q=` 远程选人。**修复（2026-09-22）**：采用远程搜人方案——本地过滤输入框替换为 LogsView 同款 `el-select` 远程搜索（`/api/admin/users?q=`，姓名+手机号选项），选中任意员工即加载其当日详情（后端 `employeeId` 本就支持全量员工），榜外员工可查；`nameQuery`/`visibleRanks` 本地过滤逻辑移除，榜单保持 Top-50 排名语义。前端零后端改动。
 - **P2-16 web `npm run build`（vue-tsc）在 dev 上已损坏**【已修复完成】：ErrorLogsView.vue:266 / LogsView.vue:510 / SensitiveHitsView.vue:238 三处 `rows.some((row) => …)` 的 `row` implicit any（2026-09-21 视图重写引入，2026-09-22 验证 P1-2 时发现）。镜像构建走 `build:image`（纯 vite）不受影响，但本地 `npm run build` 失败且类型检查失效。**修复（2026-09-22）**：三处 `const rows` 显式标注 `EmployeeOption[]`（与映射形状一致，源头类型化）。验证：`npm run build`（vue-tsc -b && vite build）完整通过，全量服务端套件无回归。
 
 ---
 
-## P3 — 观察项 / 加固（不阻塞）
+## P3 — 观察项 / 加固【本批 2026-09-22 处理完毕，除两条明确缓期】
 
-- `loadSensitiveWordsConfig` 抛错会 500 在配额之前（DB 挂了 relay 本来也不可用）；可用 stale-cache 兜底。
-- 命中记录目前同步 await INSERT（`recordSensitiveWordHit`），可改 fire-and-forget（上游 `sensitive-word-guard.ts` 用 `void logBlockedRequest()` 模式，可直接照搬）。
-- 抗规避增强：上游的 regex 匹配类型（如 `b[a@4]d`）是对付「英-雄」式标点混淆的正规出路，比继续加归一化规则干净，将来需要时优先加这类词。
-- 清理 `team_admin` 僵尸角色（2026-09-22 排查 P2-7 时发现）：`employee_role` 枚举仍含 `team_admin` 且 `auth.ts` / `act-as.ts` / JWT 会话角色保留完整分支，但产品口径已取消（CONTEXT.md「已取消，原团队管理员转为所在子部门的部门管理员」），生产 1027 名员工中该角色为 0；`team_members.role` 枚举（"member" | "team_admin"）的 1053 行也全是默认值 `member`。涉及枚举变更迁移，单独一轮做。另注：`teams`/`team_members` 是团队层取消后被挪用的部门成员连接表（现役），勿当作废弃表清理。
-- 多实例部署下词表/开关变更最多 5 秒延迟生效（缓存 TTL），可接受；若上多实例，参考上游本地事件 + Redis pub/sub 双通道失效（我们已有 ioredis 依赖）。
-- `xlsx@0.18.5` 有已知 CVE（仅解析 admin 上传文件，风险低），漏洞扫描会持续报警；`@types/pdf-parse` 是 v1 类型实际用 v2。
-- `users?q=` 的 `%`/`_` 未转义（ilike 通配符，非注入）。
-- 检测只扫请求体不扫响应流，拦截文案却写「输入或生成内容」——文档里明确当前范围。
+- `loadSensitiveWordsConfig` 抛错会 500 在配额之前【已修复完成】：`loadSensitiveWordsCacheEntry` 增加 fail-open——DB 读失败且存在旧缓存时降级用旧配置并打日志，配 2 秒短退避避免每请求都打故障库；从未成功加载过才抛回。仅扫请求体不扫响应流的现状不变。
+- 命中记录同步 await INSERT【已修复完成】：两个 relay 接入点改为 `void recordSensitiveWordHit(…).catch(log)`（上游 `void logBlockedRequest()` 同款），含摘要/预览的第二次遍历一并移出关键路径；进程退出瞬间可能丢最后一条记录，属 best-effort 可接受。
+- 抗规避增强（regex 词型）【缓期，有明确方案】：上游的 regex 匹配类型（如 `b[a@4]d`）是对付「英-雄」式标点混淆的正规出路。现无需求（内置词库已删、管理员词表无抗规避诉求），现在实现属投机通用性；实现时按「词表条目支持 matchType + 导入/管理界面选择类型 + 无效正则跳过并记日志」设计。
+- 清理 `team_admin` 僵尸角色【缓期，独立一轮】：2026-09-22 摸底补充——`team_members.role` 有现役读取方（`org.ts:40` 权限范围、`invite-contacts.ts:357` 通知团队管理员），web 端有完整登录/角色/会话代码（auth store、roles.ts、session-storage、home.ts、LoginView 共 5 文件），服务端 5 个测试文件覆盖。它是横跨登录与权限语义的功能面而非死代码，清理=特性级重构（PG 枚举值删除需重建类型迁移），生产 1027 人零使用但代码面广，须单独排期。另注：`teams`/`team_members` 是团队层取消后被挪用的部门成员连接表（现役），勿当作废弃表清理。
+- 多实例缓存 5 秒 TTL 延迟【已修复完成】：实现 Redis pub/sub 失效广播（参考上游双通道模式）——`writeConfig` 后 publish，各实例订阅后立即清词表缓存与命中计数缓存；订阅/发布全部 fail-open，Redis 不可用时退化为纯 TTL；单实例部署广播发给自己无害。
+- `xlsx@0.18.5` CVE【已修复完成】：换 `exceljs@4.4.0`（维护中、无已知 CVE），`.xls` 旧格式不再支持（报「请使用 .xlsx 格式的表格」，与 `.doc`→`.docx` 同款引导）；`@types/pdf-parse`（v1 类型配 v2 实现，实际未引用）一并移除。
+- `users?q=` 的 `%`/`_` 未转义【已修复完成】：`adminUserListWhere` 对 q 做 `replace(/[\\%_]/g, "\\$&")`，ilike 通配符按普通字符匹配。
+- 拦截文案「输入或生成内容」【已说明】：该文案是智谱官方 1301 报文原文，保持逐字一致是伪装需要（改文案会削弱「看起来就是上游拒绝」的效果）；实际扫描范围（仅用户输入）已在 CHANGELOG 的扫描口径条目中明确，不再另行改文案。
 
 ---
 

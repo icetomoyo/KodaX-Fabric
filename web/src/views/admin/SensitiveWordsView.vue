@@ -15,7 +15,7 @@
       <el-upload
         :show-file-list="false"
         :disabled="saving"
-        accept=".txt,.md,.markdown,.xlsx,.xls,.docx,.pdf"
+        accept=".txt,.md,.markdown,.xlsx,.docx,.pdf"
         :http-request="onUpload"
       >
         <el-button :disabled="saving">导入文档</el-button>
