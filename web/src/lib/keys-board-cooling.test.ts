@@ -98,3 +98,16 @@ test("quota and plan-expiry wording never enters the rate-limit lane", () => {
   assert.equal(isShortRateLimitCooling("429 套餐已失效"), false);
   assert.equal(isShortRateLimitCooling("429 上游限流"), true);
 });
+
+test("real 144 upstream 429 texts classify into the rate-limit lane", () => {
+  // 以下均为 2026-09-22 在 144 生产库采样到的真实原文
+  assert.equal(isShortRateLimitCooling("请求过于频繁，请稍后重试"), true);
+  assert.equal(isShortRateLimitCooling("并发请求数已达上限"), true);
+  assert.equal(isShortRateLimitCooling("该模型当前访问量过大，请您稍后再试"), true);
+  assert.equal(isShortRateLimitCooling("HTTP 429：上游限流，凭证已进入冷却"), true);
+  // 非限流类真实样本：套餐权限 / 余额 / 7 天上限 / HTTP 500
+  assert.equal(isShortRateLimitCooling("[1311] 当前订阅套餐暂未开放GLM-5.3-FlashX权限"), false);
+  assert.equal(isShortRateLimitCooling("[1310] 已达到 7 天使用上限，2026-09-24 15:33:36 后可继续使用。"), false);
+  assert.equal(isShortRateLimitCooling("余额不足或无可用资源包,请充值。"), false);
+  assert.equal(isShortRateLimitCooling("上游服务异常（HTTP 500）"), false);
+});

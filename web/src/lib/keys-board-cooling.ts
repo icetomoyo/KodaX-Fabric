@@ -27,8 +27,9 @@ export function isShortRateLimitCooling(lastError: string | null | undefined): b
   if (isWeeklyPhrase(message) || isFiveHourPhrase(message)) return false;
   const code = vendorCodeFromLastError(message);
   if (code && (WEEKLY_CODES.has(code) || FIVE_HOUR_CODES.has(code))) return false;
-  if (/使用上限|周积分|每周|余额不足|套餐已到期|套餐已失效/.test(message)) return false;
-  return /上游限流|速率限制|rate.?limit/i.test(message);
+  if (/使用上限|周积分|每周|余额不足|套餐已到期|套餐已失效|套餐暂未开放/.test(message)) return false;
+  // 后四个短语来自 144 生产实测的智谱 429 原文（管理端「测试」路径存上游原文，无括号码）
+  return /上游限流|速率限制|请求过于频繁|并发请求数已达上限|访问量过大|rate.?limit/i.test(message);
 }
 
 export function coolingLaneFromLastError(input: {
