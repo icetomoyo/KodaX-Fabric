@@ -51,8 +51,12 @@ function consumptionFor(row: {
   cacheReadTokens: number | null;
   clientModel: string;
   createdAt: Date;
+  startedAt: Date | null;
+  requestCredits: string | null;
 }) {
   const rate = defaultCreditRateFor(row.clientModel);
+  // 与结算同口径：按 [startedAt, createdAt] 区间加权；旧行没有 started_at 时回退为按结束时刻估算
+  const startedAt = row.startedAt ?? row.createdAt;
   const creditBreakdown = computeRequestCreditBreakdown(
     {
       promptTokens: row.promptTokens ?? 0,
@@ -60,13 +64,18 @@ function consumptionFor(row: {
       cacheReadTokens: row.cacheReadTokens ?? 0,
     },
     rate,
+    startedAt,
     row.createdAt,
   );
+  const settledCredits = row.requestCredits != null ? Number(row.requestCredits) : null;
   return {
     tokenBreakdown: tokenBreakdownFromUsage(row),
-    creditDiscount: rate ? requestCreditDiscount(row.createdAt) : null,
-    creditBreakdown,
-    credits: creditBreakdown.total,
+    creditDiscount: rate ? requestCreditDiscount(startedAt, row.createdAt) : null,
+    creditBreakdown:
+      settledCredits != null && Number.isFinite(settledCredits)
+        ? { ...creditBreakdown, total: settledCredits }
+        : creditBreakdown,
+    credits: settledCredits ?? creditBreakdown.total,
   };
 }
 
@@ -150,6 +159,8 @@ export async function adminLogRoutes(app: FastifyInstance) {
         completionTokens: requestAudits.completionTokens,
         totalTokens: requestAudits.totalTokens,
         cacheReadTokens: requestAudits.cacheReadTokens,
+        startedAt: requestAudits.startedAt,
+        requestCredits: requestAudits.requestCredits,
         createdAt: requestAudits.createdAt,
       })
       .from(requestAudits)
@@ -202,6 +213,8 @@ export async function adminLogRoutes(app: FastifyInstance) {
         completionTokens: requestAudits.completionTokens,
         totalTokens: requestAudits.totalTokens,
         cacheReadTokens: requestAudits.cacheReadTokens,
+        startedAt: requestAudits.startedAt,
+        requestCredits: requestAudits.requestCredits,
         createdAt: requestAudits.createdAt,
       })
       .from(requestAudits)

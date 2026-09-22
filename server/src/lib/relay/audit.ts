@@ -152,6 +152,8 @@ export async function writeRelayAudit(input: RelayAuditInput): Promise<void> {
         completionTokens: safeInteger(usage.completionTokens),
         totalTokens: safeInteger(usage.totalTokens),
         cacheReadTokens,
+        startedAt,
+        requestCredits: requestCreditsText,
       })
       .onConflictDoNothing()
       .returning({ requestId: requestAudits.requestId });

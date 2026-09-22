@@ -255,6 +255,8 @@ async function loadSelectedUser(employeeId: number, day: string) {
         completionTokens: requestAudits.completionTokens,
         cacheReadTokens: requestAudits.cacheReadTokens,
         clientModel: requestAudits.clientModel,
+        startedAt: requestAudits.startedAt,
+        requestCredits: requestAudits.requestCredits,
         createdAt: requestAudits.createdAt,
       })
       .from(requestAudits)
@@ -315,20 +317,24 @@ async function loadSelectedUser(employeeId: number, day: string) {
   let peakTokens = 0;
   let offPeakTokens = 0;
   for (const row of detailRows) {
-    const startedAt = row.createdAt;
+    const startedAt = row.startedAt ?? row.createdAt;
     const tokens = (Number(row.promptTokens) || 0) + (Number(row.completionTokens) || 0);
     const peak = isPeakHour(startedAt);
     if (peak) peakTokens += tokens;
     else offPeakTokens += tokens;
-    const amount = computeRequestCredits(
-      {
-        promptTokens: row.promptTokens ?? 0,
-        completionTokens: row.completionTokens ?? 0,
-        cacheReadTokens: row.cacheReadTokens ?? 0,
-      },
-      defaultCreditRateFor(row.clientModel),
-      startedAt,
-    );
+    const settled = row.requestCredits != null ? Number(row.requestCredits) : null;
+    const amount = settled != null && Number.isFinite(settled)
+      ? settled
+      : computeRequestCredits(
+        {
+          promptTokens: row.promptTokens ?? 0,
+          completionTokens: row.completionTokens ?? 0,
+          cacheReadTokens: row.cacheReadTokens ?? 0,
+        },
+        defaultCreditRateFor(row.clientModel),
+        startedAt,
+        row.createdAt,
+      );
     credits += amount;
     if (peak) peakCredits += amount;
     else offPeakCredits += amount;

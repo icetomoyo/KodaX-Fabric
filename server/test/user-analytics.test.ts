@@ -144,3 +144,14 @@ test("admin user analytics page sits under 用量分析 and keeps a contribution
   assert.match(view, /\.detail-pane \{[\s\S]*overflow: auto/);
   assert.match(layout, /'is-fill': route.path === '\/admin\/user-analytics'/);
 });
+
+test("user analytics credits use settled values with the settlement interval", () => {
+  const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+  const source = readFileSync(resolve(root, "src/routes/admin/user-analytics.ts"), "utf8");
+  assert.match(source, /const startedAt = row\.startedAt \?\? row\.createdAt;/);
+  assert.match(source, /const settled = row\.requestCredits != null \? Number\(row\.requestCredits\) : null;/);
+  assert.match(
+    source,
+    /defaultCreditRateFor\(row\.clientModel\),\n        startedAt,\n        row\.createdAt,\n      \);/,
+  );
+});

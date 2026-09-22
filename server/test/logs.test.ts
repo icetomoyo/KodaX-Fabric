@@ -68,3 +68,16 @@ test("ops audit employee labels use name and phone, not id-only placeholders", (
   assert.match(route, /employees\.phone/);
   assert.doesNotMatch(route, /员工 #\$\{row\.id\}/);
 });
+
+test("log credits prefer the settled value and use the settlement interval", () => {
+  const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+  const route = readFileSync(resolve(root, "src/routes/admin/logs.ts"), "utf8");
+  const audit = readFileSync(resolve(root, "src/lib/relay/audit.ts"), "utf8");
+  // 展示与结算同口径：按 [startedAt, createdAt] 区间加权，折扣可出现「跨高峰」
+  assert.match(route, /const startedAt = row\.startedAt \?\? row\.createdAt;/);
+  assert.match(route, /requestCreditDiscount\(startedAt, row\.createdAt\)/);
+  // 优先读落库的结算值，旧行（无 started_at）回退为估算
+  assert.match(route, /credits: settledCredits \?\? creditBreakdown\.total/);
+  // 结算侧把 started_at / request_credits 写入审计行
+  assert.match(audit, /startedAt,\n        requestCredits: requestCreditsText,/);
+});

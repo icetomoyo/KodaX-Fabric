@@ -462,6 +462,8 @@ export const requestAudits = pgTable(
     completionTokens: integer("completion_tokens"),
     totalTokens: integer("total_tokens"),
     cacheReadTokens: integer("cache_read_tokens"),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    requestCredits: numeric("request_credits", { precision: 14, scale: 4 }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [

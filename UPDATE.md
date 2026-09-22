@@ -73,7 +73,11 @@
 
 ### 可靠性 / 正确性
 
-- **P2-1 积分展示口径 ≠ 结算口径**：`server/src/routes/admin/logs.ts:55-64`、`user-analytics.ts:307-330` 用 `createdAt` 当起止时刻重算折扣，而结算（`audit.ts:124-133`）按 `[startedAt, now]` 跨峰加权且只计成功行。修复：`request_audits` 落 `request_credits`（及 `started_at`），展示端直读；短期先在 UI 注明「按结束时刻估算」。
+- **P2-1 积分展示口径 ≠ 结算口径**【已修复完成】：`server/src/routes/admin/logs.ts:55-64`、`user-analytics.ts:307-330` 用 `createdAt` 当起止时刻重算折扣，而结算（`audit.ts:124-133`）按 `[startedAt, now]` 跨峰加权且只计成功行。修复：`request_audits` 落 `request_credits`（及 `started_at`），展示端直读；短期先在 UI 注明「按结束时刻估算」。**修复（2026-09-22）**：
+  1. **落库**：迁移 `0049`（drizzle-kit 快照漂移不可用，按仓库惯例手写 SQL + journal）给 `request_audits` 加 `started_at`（timestamptz 可空）与 `request_credits`（numeric(14,4) 可空）；`writeRelayAudit` 插入审计行时同时写入（结算值；失败/无凭证行写 0，与结算「不计费」一致）。本地库已应用并验证列存在。
+  2. **展示对齐**：logs.ts 与 user-analytics.ts 均改为——积分优先读落库结算值（`settledCredits ?? computed`）；`started_at` 存在时按 `[startedAt, createdAt]` 区间重算折扣（结算同款函数），**LogsView 的「跨高峰」分支从死代码变为可用且准确**；失败行显示 0 不再虚增。旧行（无 `started_at`）回退按结束时刻估算，与现状持平。
+  3. **无前端改动**：API 字段形状不变（`creditBreakdown.total` 覆盖为结算值），LogsView / UserAnalyticsView 零修改。
+  **验证**：`logs.test.ts` / `user-analytics.test.ts` 新增口径断言；全量 520/520；tsc 通过。生产部署时 0049 随 migrate 应用（部署流程对 MIGRATION_CHANGED 有确认与备份惯例）。
 - **P2-2 当日明细 5000 条静默截断**【已修复完成】：`user-analytics.ts:252-262` 无 ORDER BY 无截断标记，大概率取最早 5000 条、恰好截掉 14–18 点高峰，且与全量 KPI 并排对不上账。加排序 + 截断标记（前端提示估算值）。**修复（2026-09-22）**：明细查询加 `ORDER BY created_at DESC, id DESC`（取最近 5000 条），`limit(5_001)` 精确判断截断；`day` 载荷新增 `creditsEstimated` 标记，前端积分卡片在截断时标题加「（估算）」并显示琥珀色提示「当日超 5000 条，按最近 5000 条估算」。附源码断言测试。
 - **P2-3 coolUntil 测试路径覆盖 relay 语义**【已修复完成】：`credentials.ts:576-580` 管理员「测试」成功时 `coolUntil: null` 会清掉 relay 刚写的冷却，失败时直接缩短；relay 侧 `upstream.ts:460` 用 `greatest()` 只延长。对齐：测试路径不清不缩 relay 写入的冷却。**修复（2026-09-22）**：成功路径复刻 `markCredentialSuccess` 条件——仅当 `status='cooling'` 且 `coolUntil` 已到期/为空才解除（status 与 coolUntil 同条件）；失败路径用 `greatest(coalesce(existing, new), new)` 只延长不缩短。附对齐语义源码断言测试（`upstream-connection-test.test.ts` 11/11）。
 - **P2-4 前端请求竞态**【已修复完成】：`UserAnalyticsView.vue` 的 `load()` 无请求序号保护（旧响应回滚新状态，该接口一次跑 7 个聚合 SQL）；`SettingsView.vue` PATCH 期间开关未禁用，乱序响应致 UI 与后端相反。统一加「只认最后一次请求」守卫 / patching 状态。**修复（2026-09-22）**：`load()` 加自增序号守卫（旧响应丢弃、loading 只由最新请求收口）；SettingsView 加 `patching` 状态（PATCH 期间禁用两个开关）与 `settingsLoaded`（GET 失败后开关保持禁用，防在未知基线上修改——顺带解决评审前端的「失败基线可交互」发现）。
