@@ -9,7 +9,10 @@ export const ZHIPU_SENSITIVE_CONTENT_CODE = "1301";
 export const MAX_SENSITIVE_WORD_LENGTH = 64;
 export const MAX_SENSITIVE_WORD_COUNT = 10_000;
 const CACHE_TTL_MS = 5_000;
+/** 单个字符串贡献给扫描文本的上限：超长字符串保留首尾各半，中段不扫描（有界 CPU 的既知取舍）。 */
 const MAX_SCAN_STRING_LENGTH = 100_000;
+/** 整个请求扫描文本的上限：超出时保留首尾窗口，中间部分不扫描。 */
+const MAX_SCAN_TOTAL_LENGTH = 256_000;
 const MAX_EXCERPT_LENGTH = 4_000;
 const MAX_PREVIEW_STRING = 2_000;
 const MAX_PREVIEW_JSON = 32_768;
@@ -20,6 +23,12 @@ export type SensitiveWordsConfig = {
   detectEnabled: boolean;
   interceptEnabled: boolean;
   words: string[];
+};
+
+/** 预归一化词表条目：needle 用于匹配，word 是命中间报与记录用的原始词。 */
+export type CompiledSensitiveNeedle = {
+  word: string;
+  needle: string;
 };
 
 export type SensitiveRequestEvaluation = {
@@ -58,6 +67,7 @@ export class SensitiveWordsError extends Error {
 type CacheEntry = {
   expiresAt: number;
   config: SensitiveWordsConfig;
+  matcher: SensitiveWordMatcher;
 };
 
 let cache: CacheEntry | null = null;
@@ -212,34 +222,56 @@ export function sortSensitiveWordRows(
 }
 
 export function uniqueWords(words: unknown[]): string[] {
+  return compileSensitiveWords(words).map((item) => item.word);
+}
+
+/**
+ * 预归一化词表：NFC / 零宽字符 / 空白 / 大小写转换一次付清，
+ * 请求热路径只做 includes，不再逐请求重算词表。
+ */
+export function compileSensitiveWords(words: unknown[]): CompiledSensitiveNeedle[] {
   const seen = new Set<string>();
-  const out: string[] = [];
+  const out: CompiledSensitiveNeedle[] = [];
   for (const raw of words) {
     if (typeof raw !== "string") continue;
     const trimmed = raw.trim();
     if (!trimmed || trimmed.length > MAX_SENSITIVE_WORD_LENGTH) continue;
-    const key = normalizeSensitiveNeedle(trimmed);
-    if (!key || seen.has(key)) continue;
-    seen.add(key);
-    out.push(trimmed);
+    const needle = normalizeSensitiveNeedle(trimmed);
+    if (!needle || seen.has(needle)) continue;
+    seen.add(needle);
+    out.push({ word: trimmed, needle });
   }
   return out;
+}
+
+/**
+ * 预编译匹配器：词表归一化 + AC 自动机在缓存构建时一次完成，
+ * 热路径按文本长度线性匹配，成本与词数无关（1 万词 × 256K 文本仍在毫秒级）。
+ */
+export type SensitiveWordMatcher = {
+  needles: readonly CompiledSensitiveNeedle[];
+  match(haystack: string): string | null;
+};
+
+export function buildSensitiveWordMatcher(words: unknown[]): SensitiveWordMatcher {
+  const needles = compileSensitiveWords(words);
+  const nodes = buildAhoCorasick(needles);
+  return {
+    needles,
+    match(haystack: string): string | null {
+      return acMatch(normalizeSensitiveNeedle(haystack), nodes);
+    },
+  };
 }
 
 export function collectRequestText(body: unknown): string {
   const parts: string[] = [];
   collectStrings(body, parts);
-  return parts.join("\n");
+  return joinScanParts(parts);
 }
 
 export function findSensitiveWord(haystack: string, words: string[]): string | null {
-  const normalizedHaystack = normalizeSensitiveNeedle(haystack);
-  if (!normalizedHaystack) return null;
-  for (const word of uniqueWords(words)) {
-    const needle = normalizeSensitiveNeedle(word);
-    if (needle && normalizedHaystack.includes(needle)) return word;
-  }
-  return null;
+  return buildSensitiveWordMatcher(words).match(haystack);
 }
 
 export function findSensitiveWordInRequest(body: unknown, words: string[]): string | null {
@@ -252,11 +284,24 @@ export function invalidateSensitiveWordsCache(): void {
 }
 
 export async function loadSensitiveWordsConfig(): Promise<SensitiveWordsConfig> {
+  return (await loadSensitiveWordsCacheEntry()).config;
+}
+
+async function loadSensitiveWordsCacheEntry(): Promise<CacheEntry> {
   const now = Date.now();
-  if (cache && cache.expiresAt > now) return cache.config;
+  if (cache && cache.expiresAt > now) return cache;
   const config = await readConfigFromDb();
-  cache = { config, expiresAt: now + CACHE_TTL_MS };
-  return config;
+  cache = buildCacheEntry(config, now);
+  return cache;
+}
+
+/** 缓存条目整体构建、整体替换：config 与 matcher 必须同源，读侧不能看到半套规则。 */
+function buildCacheEntry(config: SensitiveWordsConfig, now: number): CacheEntry {
+  return {
+    config,
+    matcher: buildSensitiveWordMatcher(config.words),
+    expiresAt: now + CACHE_TTL_MS,
+  };
 }
 
 export async function findSensitiveHit(body: unknown): Promise<string | null> {
@@ -267,11 +312,11 @@ export async function findSensitiveHit(body: unknown): Promise<string | null> {
 export async function evaluateSensitiveRequest(
   body: unknown,
 ): Promise<SensitiveRequestEvaluation | null> {
-  const config = await loadSensitiveWordsConfig();
-  if (!config.detectEnabled || config.words.length === 0) {
+  const { config, matcher } = await loadSensitiveWordsCacheEntry();
+  if (!config.detectEnabled || matcher.needles.length === 0) {
     return null;
   }
-  const word = findSensitiveWordInRequest(body, config.words);
+  const word = matcher.match(collectRequestText(body));
   if (!word) return null;
   return {
     word,
@@ -411,13 +456,13 @@ async function writeConfig(config: SensitiveWordsConfig): Promise<SensitiveWords
         updatedAt: now,
       },
     });
-  cache = { config: next, expiresAt: Date.now() + CACHE_TTL_MS };
+  cache = buildCacheEntry(next, Date.now());
   return next;
 }
 
 function collectStrings(value: unknown, parts: string[]): void {
   if (typeof value === "string") {
-    if (value.length > 0 && value.length <= MAX_SCAN_STRING_LENGTH) parts.push(value);
+    if (value.length > 0) parts.push(truncateForScan(value));
     return;
   }
   if (Array.isArray(value)) {
@@ -428,6 +473,102 @@ function collectStrings(value: unknown, parts: string[]): void {
   for (const item of Object.values(value as Record<string, unknown>)) {
     collectStrings(item, parts);
   }
+}
+
+function truncateForScan(text: string): string {
+  if (text.length <= MAX_SCAN_STRING_LENGTH) return text;
+  const half = Math.floor(MAX_SCAN_STRING_LENGTH / 2);
+  return `${text.slice(0, half)}\n…\n${text.slice(-half)}`;
+}
+
+/**
+ * 拼接并限制扫描文本总量：超限时保留首尾两个窗口，
+ * 窗口之间插入省略号分隔，避免窗口边界把两个词粘成误匹配。
+ */
+function joinScanParts(parts: string[]): string {
+  let total = 0;
+  for (const part of parts) total += part.length;
+  if (total <= MAX_SCAN_TOTAL_LENGTH) return parts.join("\n");
+  const half = Math.floor(MAX_SCAN_TOTAL_LENGTH / 2);
+  const headParts: string[] = [];
+  let headLength = 0;
+  for (const part of parts) {
+    if (headLength + part.length > half) {
+      const remaining = half - headLength;
+      if (remaining > 0) headParts.push(part.slice(0, remaining));
+      break;
+    }
+    headParts.push(part);
+    headLength += part.length;
+  }
+  const tailParts: string[] = [];
+  let tailLength = 0;
+  for (let i = parts.length - 1; i >= 0; i -= 1) {
+    const part = parts[i];
+    if (tailLength + part.length > half) {
+      const remaining = half - tailLength;
+      if (remaining > 0) tailParts.unshift(part.slice(-remaining));
+      break;
+    }
+    tailParts.unshift(part);
+    tailLength += part.length;
+  }
+  return `${headParts.join("\n")}\n…\n${tailParts.join("\n")}`;
+}
+
+type AcNode = { next: Map<string, number>; fail: number; words: string[] };
+
+/** Aho-Corasick：多模式串单趟匹配。词与文本都按 Unicode 码点切分，代理对不会拆开。 */
+function buildAhoCorasick(needles: readonly CompiledSensitiveNeedle[]): AcNode[] {
+  const nodes: AcNode[] = [{ next: new Map(), fail: 0, words: [] }];
+  for (const { word, needle } of needles) {
+    let current = 0;
+    for (const ch of needle) {
+      let child = nodes[current].next.get(ch);
+      if (child === undefined) {
+        child = nodes.length;
+        nodes[current].next.set(ch, child);
+        nodes.push({ next: new Map(), fail: 0, words: [] });
+      }
+      current = child;
+    }
+    nodes[current].words.push(word);
+  }
+  const queue: number[] = [];
+  for (const child of nodes[0].next.values()) {
+    queue.push(child);
+  }
+  for (let head = 0; head < queue.length; head += 1) {
+    const current = queue[head];
+    for (const [ch, child] of nodes[current].next) {
+      queue.push(child);
+      let fail = nodes[current].fail;
+      while (fail !== 0 && !nodes[fail].next.has(ch)) fail = nodes[fail].fail;
+      const target = nodes[fail].next.get(ch);
+      nodes[child].fail = target !== undefined && target !== child ? target : 0;
+      const suffixWords = nodes[nodes[child].fail].words;
+      if (suffixWords.length > 0) {
+        nodes[child].words = [...nodes[child].words, ...suffixWords];
+      }
+    }
+  }
+  return nodes;
+}
+
+/** 返回文本中最早出现的命中词（位置优先，同位置不区分先后）。 */
+function acMatch(normalizedText: string, nodes: readonly AcNode[]): string | null {
+  let current = 0;
+  for (const ch of normalizedText) {
+    let next = nodes[current].next.get(ch);
+    while (next === undefined && current !== 0) {
+      current = nodes[current].fail;
+      next = nodes[current].next.get(ch);
+    }
+    current = next ?? 0;
+    const words = nodes[current].words;
+    if (words.length > 0) return words[0];
+  }
+  return null;
 }
 
 function truncatePreviewValue(value: unknown): unknown {

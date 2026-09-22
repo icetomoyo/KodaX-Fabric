@@ -13,7 +13,9 @@ process.env.CREDENTIAL_ENCRYPT_KEY ??= "unit-test-credential-secret";
 import { createRequire } from "node:module";
 
 const {
+  buildSensitiveWordMatcher,
   collectRequestText,
+  compileSensitiveWords,
   excerptForSensitiveHit,
   findSensitiveWord,
   findSensitiveWordInRequest,
@@ -56,6 +58,55 @@ test("adjacent message parts do not glue into a false match", () => {
     ],
   };
   assert.equal(findSensitiveWordInRequest(body, ["英雄联盟"]), null);
+});
+
+test("compileSensitiveWords normalizes once, dedupes, and drops invalid entries", () => {
+  assert.deepEqual(
+    compileSensitiveWords([" 英雄联盟 ", "英雄联盟", "LOL", "", "x".repeat(80), 42]),
+    [
+      { word: "英雄联盟", needle: "英雄联盟" },
+      { word: "LOL", needle: "lol" },
+    ],
+  );
+});
+
+test("matcher returns the earliest hit and honors normalization", () => {
+  const matcher = buildSensitiveWordMatcher(["英雄联盟", "外挂"]);
+  assert.equal(matcher.match("卖外挂的打英雄联盟"), "外挂");
+  assert.equal(matcher.match("英 雄 联 盟"), "英雄联盟");
+  assert.equal(matcher.match("Watch LOL tonight"), null);
+  assert.equal(buildSensitiveWordMatcher(["LOL"]).match("Watch LOL tonight"), "LOL");
+  assert.equal(matcher.match("今天天气不错"), null);
+  assert.equal(matcher.match(""), null);
+});
+
+test("oversized strings keep head and tail in the scan window", () => {
+  const filler = "x".repeat(120_000);
+  const headBody = { messages: [{ role: "user", content: `英雄联盟${filler}` }] };
+  const tailBody = { messages: [{ role: "user", content: `${filler}英雄联盟` }] };
+  assert.equal(findSensitiveWordInRequest(headBody, ["英雄联盟"]), "英雄联盟");
+  assert.equal(findSensitiveWordInRequest(tailBody, ["英雄联盟"]), "英雄联盟");
+});
+
+test("middle of an oversized string is outside the scan window by design", () => {
+  const filler = "x".repeat(60_000);
+  const body = { messages: [{ role: "user", content: `${filler}英雄联盟${filler}` }] };
+  assert.equal(findSensitiveWordInRequest(body, ["英雄联盟"]), null);
+});
+
+test("requests beyond the total scan budget keep head and tail windows only", () => {
+  const unit = "y".repeat(10_000);
+  const blocksWithWordAt = (index: number) => {
+    const blocks = Array.from({ length: 40 }, () => unit);
+    blocks[index] = `英雄联盟${blocks[index]}`;
+    return { messages: [{ role: "user", content: blocks }] };
+  };
+  const plain = { messages: [{ role: "user", content: Array.from({ length: 40 }, () => unit) }] };
+  const bounded = collectRequestText(plain);
+  assert.ok(bounded.length > 0 && bounded.length <= 257_000);
+  assert.equal(findSensitiveWordInRequest(blocksWithWordAt(0), ["英雄联盟"]), "英雄联盟");
+  assert.equal(findSensitiveWordInRequest(blocksWithWordAt(39), ["英雄联盟"]), "英雄联盟");
+  assert.equal(findSensitiveWordInRequest(blocksWithWordAt(20), ["英雄联盟"]), null);
 });
 
 test("collectRequestText scans chat, responses, and anthropic content blocks", () => {
@@ -201,7 +252,7 @@ test("employee relay scans for sensitive words before acquiring quota", () => {
   const lib = readFileSync(resolve(root, "src/lib/relay/sensitive-words.ts"), "utf8");
   const chat = readFileSync(resolve(root, "src/routes/relay/chat-completions.ts"), "utf8");
   const anthropic = readFileSync(resolve(root, "src/routes/relay/anthropic-messages.ts"), "utf8");
-  assert.match(lib, /if \(!config\.detectEnabled \|\| config\.words\.length === 0\)/);
+  assert.match(lib, /if \(!config\.detectEnabled \|\| matcher\.needles\.length === 0\)/);
   assert.match(lib, /record: true/);
   assert.match(lib, /intercept: config\.interceptEnabled/);
   assert.match(chat, /evaluateSensitiveRequest/);
