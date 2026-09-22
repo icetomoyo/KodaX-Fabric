@@ -498,7 +498,7 @@ async function searchEmployees(query: string) {
       params: { q: query.trim() || undefined, limit: 30, status: "active" },
     });
     if (!data.success) throw new Error(data.message || "搜索员工失败");
-    const rows = Array.isArray(data.data)
+    const rows: EmployeeOption[] = Array.isArray(data.data)
       ? data.data.map((row: EmployeeOption) => ({
           id: row.id,
           name: row.name,

@@ -92,7 +92,7 @@
 - **P2-13 死代码清理**：`findSensitiveHit`、`invalidateSensitiveWordsCache`（均无调用方）；`ModelRoutesView.vue`/`ProvidersView.vue`（路由已 redirect）；`setSensitiveWordsEnabled` + `PATCH /api/admin/sensitive-words {enabled}`（`enabled` 实为 interceptEnabled，误用即全站拦截，前端已走 settings 接口，直接删）。
 - **P2-14 `sensitive_word_hits.employee_id` 外键 ON DELETE no action**：删除有命中记录的员工会被阻塞。需产品决策：cascade、删人前归档、或限制删人。
 - **P2-15 姓名筛选只滤 Top-50**：榜外员工搜不到。服务端加关键字参数，或复用 `/api/admin/users?q=` 远程选人。
-- **P2-16 web `npm run build`（vue-tsc）在 dev 上已损坏**：ErrorLogsView.vue:266 / LogsView.vue:510 / SensitiveHitsView.vue:238 三处 `rows.some((row) => …)` 的 `row` implicit any（2026-09-21 视图重写引入，2026-09-22 验证 P1-2 时发现）。镜像构建走 `build:image`（纯 vite）不受影响，但本地 `npm run build` 失败且类型检查失效。修复：给 `rows` 的来源（接口返回）补类型或标注 `row` 参数类型。
+- **P2-16 web `npm run build`（vue-tsc）在 dev 上已损坏**【已修复完成】：ErrorLogsView.vue:266 / LogsView.vue:510 / SensitiveHitsView.vue:238 三处 `rows.some((row) => …)` 的 `row` implicit any（2026-09-21 视图重写引入，2026-09-22 验证 P1-2 时发现）。镜像构建走 `build:image`（纯 vite）不受影响，但本地 `npm run build` 失败且类型检查失效。**修复（2026-09-22）**：三处 `const rows` 显式标注 `EmployeeOption[]`（与映射形状一致，源头类型化）。验证：`npm run build`（vue-tsc -b && vite build）完整通过，全量服务端套件无回归。
 
 ---
 
