@@ -288,6 +288,17 @@ test("super-admin approves cooperation applications instead of assigning admins"
   }
 });
 
+test("super-admin personal center can load /api/me/org", () => {
+  const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+  const meRoute = readFileSync(resolve(root, "server/src/routes/me.ts"), "utf8");
+  const profile = readFileSync(resolve(root, "web/src/views/admin/ProfileView.vue"), "utf8");
+  assert.match(
+    meRoute,
+    /requireRoles\("employee", "dept_admin", "org_admin", "admin"\)/,
+  );
+  assert.match(profile, /\/api\/me\/org/);
+});
+
 test("super-admin still cannot create employees", async () => {
   const app = Fastify();
   app.addHook("onRequest", async (req: { session?: Record<string, unknown>; employeeId?: number }) => {

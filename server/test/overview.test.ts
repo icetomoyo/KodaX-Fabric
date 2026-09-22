@@ -237,3 +237,20 @@ test("platform analytics endpoint is super-admin only", async () => {
   assert.match(source, /\/api\/admin\/overview\/analytics/);
   assert.match(source, /role !== "admin"/);
 });
+
+test("super-admin workbench overview falls through to platformOverview", async () => {
+  const { readFileSync } = await import("node:fs");
+  const { dirname, resolve } = await import("node:path");
+  const { fileURLToPath } = await import("node:url");
+  const source = readFileSync(
+    resolve(dirname(fileURLToPath(import.meta.url)), "../src/routes/admin/overview.ts"),
+    "utf8",
+  );
+  const handler = source.slice(
+    source.indexOf('app.get("/api/admin/overview"'),
+    source.indexOf('app.get("/api/admin/overview/analytics"'),
+  );
+  const afterDeptAdmin = handler.slice(handler.lastIndexOf('role === "dept_admin"'));
+  assert.match(afterDeptAdmin, /await platformOverview\(\)/);
+  assert.doesNotMatch(afterDeptAdmin, /权限不足/);
+});

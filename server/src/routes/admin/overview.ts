@@ -916,7 +916,6 @@ export async function adminOverviewRoutes(app: FastifyInstance) {
       );
       return { success: true, data: { ...(await teamScopeOverview(teamIds)), role: "dept_admin" } };
     }
-    return reply.code(403).send({ success: false, message: "权限不足" });
     return { success: true, data: await platformOverview() };
   });
 

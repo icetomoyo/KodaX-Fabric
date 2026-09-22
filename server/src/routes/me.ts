@@ -145,7 +145,7 @@ async function loadOwnedSeat(employeeId: number, seatId: number) {
 
 export async function meRoutes(app: FastifyInstance) {
   app.addHook("preHandler", requireSession);
-  app.addHook("preHandler", requireRoles("employee", "dept_admin", "org_admin"));
+  app.addHook("preHandler", requireRoles("employee", "dept_admin", "org_admin", "admin"));
 
   app.post("/api/me/enterprise-applications", async (_req, reply) => {
     return reply.code(403).send({
