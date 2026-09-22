@@ -1,139 +1,166 @@
-# 评审修复计划（针对 2026-09-21 的 6 个提交）
+# 请求上下文落盘改动计划 v2（2026-09-22）
 
-> 来源：三份评审（内部评审 + 外部评审 A/B）交叉核实后的统一结论。
-> 所有条目均已对照代码验证；已反驳与待验证的结论见文末附录，不要重复排查。
-> 范围：`0ee81ac`、`7360ac0`、`fa543d5`、`e8cd840`、`e9125eb`、`0e72d02`。
+> 背景：144 上 Docker 卷 `tokenhub_request_context` 工作日每天新增约 10–15G（2026-09-22 测：卷 113G；当天已 11G / 3.2 万文件）。不是系统 journal，是每次模型转发把完整请求 JSON gzip 落盘。
+> 产品约束：**不删除历史**。每一次请求都还要能对上、能还原当时模型看到的内容。
+> 范围：`server/src/lib/relay/request-context.ts`、调用日志读路径、新增静态文件登记与管理页。Postgres 计量行（`request_audits`）口径不改。
 >
-> **状态标记约定**：某条修复完成并通过验收后，在标题末尾追加「【已修复完成】」（例：`### P1-1 敏感词热路径三合一（性能 + 绕过）【已修复完成】`）。条目原文保留作验收记录，不删除；列表型条目（P2-xx）在条目开头追加同样的标记。
+> **状态标记约定**：某条落地并通过验收后，在标题末尾追加「【已修复完成】」。条目原文保留作验收记录，不删除。
 
 ---
 
-## P0 — 部署阻断，发版前必须修复
+## 问题用三句话说明
 
-### P0-1 Docker 镜像缺内置词库，容器起不来【已修复完成】
+每一次调用就是三样东西：
 
-> **修复说明（2026-09-22，提交 `7b2ca22`）**：实际采用比方案 2 更彻底的做法——整体移除内置词库（词表由管理员自行添加或导入），而非把词库拷进镜像。migrate/seed 的自动导入、路由的 `source:"bundled"` 分支、导入库的 `readFileSync`/`LEXICON_DIR` 全部删除。原两个关注点（Docker migrate 崩溃、管理员删词被迁移复活）随之消失，Dockerfile 无需改动。
-> **验证**：全局 grep 无任何残留引用；前端无内置词库入口；`sensitive-words.test.ts` 14/14 通过；tsc 构建通过且 dist 产物零词库引用。
+1. **本轮用户新问的**（本次提示词，可能带新读的文件、新跑的命令）
+2. **到这一轮之前的历史**（前面问过的、答过的、读过的源码 / PDF / 截图）
+3. **本轮模型新答的**
 
-- **现象**：`deploy/Dockerfile` 的 CMD 先跑 `node server/dist/db/migrate.js`；`server/src/db/migrate.ts:107-110` 无条件调用 `mergeBundledSensitiveWords()` 且无 try/catch；词库按 `import.meta.url` 定位到 `dist/data/sensitive-lexicon`，但 tsc 不拷 `.txt`（Dockerfile 只拷了 `server/data`，那是 haizhi-org.json 所在的另一个目录）。migrate 抛 ENOENT → `&&` 短路 → 容器 crashloop。
-- **修复**（二选一）：
-  1. Dockerfile 增加 `COPY --from=build /app/server/src/data ./server/dist/data`（与 knowledge.md 的拷法一致，改动最小）；
-  2. 把词库内嵌为 TS 常量（更稳，免维护资产拷贝，但改动大）。
-  - 推荐先上方案 1 止血，方案 2 另行排期。
-- **验收**：`docker build` 后本地起容器，`docker logs` 出现 `Migrations complete`，`/health` 通过。
-- **关联修复（同一次提交处理）**：`migrate.ts` 目前每次迁移都重新导入内置词库，管理员删掉的词会在下次发版被静默加回。改为仅当 `sensitive_words` 配置项不存在时导入一次。
+模型看书时 1 和 2 一起看，只写出 3。下一轮客户端把 3 贴进历史，再连同新的 1 整包 POST 上来。
 
----
+**现在 Hub 存的是这一枪的整包（1+2+3 全文）**。会话每长一截，就把整本再复印一遍。同一份 PDF 从某一轮读进来后，后面每一轮都会再印一份进新的 `threq_*.json.gz`；同理每轮重发的 `system` / `tools`（含 skills 定义，agent 类客户端普遍 30–100KB）也在每枪里重复。
 
-## P1 — 上线前必须
-
-### P1-1 敏感词热路径三合一（性能 + 绕过）【已修复完成】
-
-> **修复说明（2026-09-22）**：三个子项全部落地于 `server/src/lib/relay/sensitive-words.ts`——
-> 1. **预计算**：`buildCacheEntry` 在缓存构建时同步生成 `buildSensitiveWordMatcher()`（归一化词表 + Aho-Corasick 自动机），整体构建整体替换，热路径零转换；
-> 2. **超长截断**：`truncateForScan` 对超 10 万字符的字符串保留首尾各 5 万字符（中段盲区是有界 CPU 的既知取舍，测试锁定）；
-> 3. **总量上限**：`joinScanParts` 限制整个请求扫描文本 ≤ 25.6 万字符（首尾窗口），窗口间省略号分隔防粘接误报。
-> **超出原计划的增补**：基准实测逐词 `includes` 在 1 万词 × 256K 文本下需 0.7–1.3 秒，达不到本条验收的「毫秒级」，故将匹配算法换为 Aho-Corasick（单趟线性，成本与词数无关）。
-> **基准数据（Apple Silicon / Node 24）**：构建 1 万词匹配器 30ms（仅缓存刷新时）；匹配 256K 文本 **8–9ms**（1k 词与 10k 词、干净与对抗文本一致）；`collectRequestText` 走截断路径 0.1ms。
-> **行为变化**：多词同时命中时 `matchedWord` 取「文本中最早出现」的词（原为词表顺序第一个），记录语义更合理。
-> **验证**：`sensitive-words.test.ts` 19/19（新增 5 个：截断头/尾命中、中段盲区、总量窗口、编译归一、匹配器语义）；全量服务端套件 516/516；tsc 构建通过。
-
-三个问题在同一处代码，一起修：
-
-1. **每请求重算词表 normalize**：`server/src/lib/relay/sensitive-words.ts:238` 每次请求对全词表做 NFC 归一 + 正则 + 去重（默认内置词库约 1080 词，上限 1 万）。改为在 5 秒配置缓存里同时缓存 normalize 后的 needle 数组。
-2. **>100K 字符字符串整体跳过 = 确定性绕过**：`sensitive-words.ts:425` 超长字符串直接不进扫描文本，把敏感词放进超长 content 字段即可同时绕过检测和拦截。改为截断扫描（取前 N + 后 N 拼接）。
-3. **拼接后扫描文本无总量上限**：`collectStrings` 只限单字符串长度，bodyLimit 20–32MB，最坏情况词表 × 全文的 `includes` 扫描是秒级 CPU。给 haystack 设总量上限（如 256KB，截断保留首尾）。
-- **修复参考（上游已验证）**：claude-code-hub（github.com/ding113/claude-code-hub）的 `src/lib/sensitive-word-detector.ts` 把词表全部转换成本（小写化、分桶、正则预编译）放在缓存 reload 时一次付清，`detect()` 热路径只做一次 `toLowerCase`；且 reload 先构建完整快照再原子替换引用，不暴露半套规则。我们的 NFC/零宽/去空白 normalize 照此移到缓存构建时做，生产环境已验证该路径可行。
-- **验收**：新增测试覆盖「超长字符串中的敏感词仍被检出」「总量超限的请求只扫首尾」；基准：1 万词 + 1MB 文本的扫描耗时应为毫秒级。
-
-### P1-2 批量席位功能回归【已修复完成】
-
-> **修复说明（2026-09-22）**：决策为**正式下线**。删除 `POST /api/admin/channel-seats/bulk` 与 `POST /api/admin/channel-seats/bulk-keys` 两个接口及其专属辅助代码（`planBulkChannelSeats` / `planBulkSeatKeys` / `SEAT_BULK_MAX` / `SEAT_KEY_*` 消息与类型，lib 386→183 行）；删除 `web/src/lib/bulk-seat-keys.ts` 及其测试并从 `server/package.json` 测试清单移除；CONTEXT.md 三处批量描述同步更新；CHANGELOG 增补 Removed 条目。**保留**：`/api/admin/credentials/bulk-*`（上游渠道 KEY 批量导入是另一个在用功能）、`ops-audit-dictionary.ts` 中 `channel_seat.bulk_*` 标签（渲染历史审计记录）。
-> **验证**：`channel-seats.test.ts` 9/9（删除 2 个 bulk 单测、401 注入，路由存在性断言反转为 `doesNotMatch` 下线断言）；全量服务端套件 511/511；tsc 通过；`vite build`（镜像构建路径）通过。
-> **新发现的存量问题**：验证 web 构建时发现 `npm run build`（vue-tsc）在 HEAD 上即报 3 处 implicit any 错误（ErrorLogsView.vue:266 / LogsView.vue:510 / SensitiveHitsView.vue:238，均为昨日视图重写引入），已登记为 P2-16；Docker 用 `build:image`（纯 vite）不受影响。
-
-- **现象**：SeatsView 删除后，`POST /api/admin/channel-seats/bulk`（`server/src/routes/admin/channel-seats.ts:235`）和 `/bulk-keys`（`:381`）在 web 端零调用方；`web/src/lib/bulk-seat-keys.ts` 只剩测试引用。CHANGELOG/CONTEXT 仍宣传批量能力。
-- **决策**（二选一，需产品确认）：在 TempChannelsView 补回「批量登记席位 / 批量挂 KEY」入口；或明确下线，删除两个后端接口和 `bulk-seat-keys.ts`。
-- **验收**：入口可用（或接口与死代码删净），CHANGELOG 同步更新。
-
-### P1-3 用户分析排名改读预聚合表【已修复完成】
-
-> **修复说明（2026-09-22）**：`buildUserAnalyticsRankQuery(day)` 改读 `usage_counters_daily`（唯一索引 `day + employee_id`，一次索引扫描），旧查询对 `request_audits` 的当天全量 GROUP BY、`HAVING totalTokens > 0`、排序与 Top-50 语义全部保留（`WHERE total_tokens > 0`、`ORDER BY total_tokens DESC, request_count DESC, id`）。
-> **本地验证（127.0.0.1 开发库，注意是小规模开发数据）**：开发库存在「有审计、无计数」的历史日期（计数维护代码上线前写入的审计行），据此在 `migrate.ts` 增加了幂等回填（按 `QUOTA_TIMEZONE` 从 `request_audits` 全量重算并 `ON CONFLICT DO UPDATE`）；本地回填后新旧查询逐员工等价。
-> **生产预检与数据清理（10.10.0.144，2026-09-22，经用户确认）**：审计表 353,798 行，重叠区间 887 个「天×员工」聚合对六字段零差异；本地发现的「有审计无计数」缺口生产不存在（回填为等值重写的空操作）。生产存在反向残留——8-28～8-31 的计数行（建库时导入的历史聚合，含上亿 token）与 8-31 晚 23:02～23:38 的 45 行试跑审计。按用户口径「数据从 9 月 1 日开始记录」，已删除 9 月前数据（先备份至本地 `/tmp/kodax-144-pre-sep-backup/`）：usage_counters_daily 31 行、usage_counters_team_daily 30 行、request_audits 45 行、request_error_logs 44 行；四表现在均从 9-01 开始。删除后重跑等价性：**22 天、889 对、diff = 0**，新旧查询在生产完全等价、零行为变化。ops_audit_logs（4,209 行，最早 8-27）为管理员操作留痕，未纳入本次清理。
-> **验证**：`user-analytics.test.ts` 9/9（排名 SQL 形状断言更新 + 新增回填存在性断言）；全量套件 0 fail；tsc 通过。
-
-- **现象**：`server/src/routes/admin/user-analytics.ts:56-92` 每次加载/切日期对 `request_audits` 做全天全量 GROUP BY；而 `writeRelayAudit` 已维护口径一致的 `usage_counters_daily`（唯一索引 `day + employee_id`，见 `server/src/lib/relay/audit.ts:187-204`）。
-- **修复**：排名查询改读 `usage_counters_daily`，一次索引扫描替代全天重聚合。
-- **验收**：同一天数据下新旧查询结果一致（可灰度对比），页面加载不再触发大表聚合。
+144 抽样：普通偏大一次 gzip 约 350KB，解开后约 1MB JSON，几乎全是 `requestBody.messages`；带 PDF/图片的一次可到 1–8MB gzip，正文里是 `type: document|image` + `source.type: base64` 的整文件。
 
 ---
 
-## P2 — 近期排期
+## 方案（一句话）
 
-### 可靠性 / 正确性
+**信封按「用户/日期」记，大块内容按指纹全局存一份，数据库登记归属，管理页可视化。**
 
-- **P2-1 积分展示口径 ≠ 结算口径**【已修复完成】：`server/src/routes/admin/logs.ts:55-64`、`user-analytics.ts:307-330` 用 `createdAt` 当起止时刻重算折扣，而结算（`audit.ts:124-133`）按 `[startedAt, now]` 跨峰加权且只计成功行。修复：`request_audits` 落 `request_credits`（及 `started_at`），展示端直读；短期先在 UI 注明「按结束时刻估算」。**修复（2026-09-22）**：
-  1. **落库**：迁移 `0049`（drizzle-kit 快照漂移不可用，按仓库惯例手写 SQL + journal）给 `request_audits` 加 `started_at`（timestamptz 可空）与 `request_credits`（numeric(14,4) 可空）；`writeRelayAudit` 插入审计行时同时写入（结算值；失败/无凭证行写 0，与结算「不计费」一致）。本地库已应用并验证列存在。
-  2. **展示对齐**：logs.ts 与 user-analytics.ts 均改为——积分优先读落库结算值（`settledCredits ?? computed`）；`started_at` 存在时按 `[startedAt, createdAt]` 区间重算折扣（结算同款函数），**LogsView 的「跨高峰」分支从死代码变为可用且准确**；失败行显示 0 不再虚增。旧行（无 `started_at`）回退按结束时刻估算，与现状持平。
-  3. **无前端改动**：API 字段形状不变（`creditBreakdown.total` 覆盖为结算值），LogsView / UserAnalyticsView 零修改。
-  **验证**：`logs.test.ts` / `user-analytics.test.ts` 新增口径断言；全量 520/520；tsc 通过。生产部署时 0049 随 migrate 应用（部署流程对 MIGRATION_CHANGED 有确认与备份惯例）。
-- **P2-2 当日明细 5000 条静默截断**【已修复完成】：`user-analytics.ts:252-262` 无 ORDER BY 无截断标记，大概率取最早 5000 条、恰好截掉 14–18 点高峰，且与全量 KPI 并排对不上账。加排序 + 截断标记（前端提示估算值）。**修复（2026-09-22）**：明细查询加 `ORDER BY created_at DESC, id DESC`（取最近 5000 条），`limit(5_001)` 精确判断截断；`day` 载荷新增 `creditsEstimated` 标记，前端积分卡片在截断时标题加「（估算）」并显示琥珀色提示「当日超 5000 条，按最近 5000 条估算」。附源码断言测试。
-- **P2-3 coolUntil 测试路径覆盖 relay 语义**【已修复完成】：`credentials.ts:576-580` 管理员「测试」成功时 `coolUntil: null` 会清掉 relay 刚写的冷却，失败时直接缩短；relay 侧 `upstream.ts:460` 用 `greatest()` 只延长。对齐：测试路径不清不缩 relay 写入的冷却。**修复（2026-09-22）**：成功路径复刻 `markCredentialSuccess` 条件——仅当 `status='cooling'` 且 `coolUntil` 已到期/为空才解除（status 与 coolUntil 同条件）；失败路径用 `greatest(coalesce(existing, new), new)` 只延长不缩短。附对齐语义源码断言测试（`upstream-connection-test.test.ts` 11/11）。
-- **P2-4 前端请求竞态**【已修复完成】：`UserAnalyticsView.vue` 的 `load()` 无请求序号保护（旧响应回滚新状态，该接口一次跑 7 个聚合 SQL）；`SettingsView.vue` PATCH 期间开关未禁用，乱序响应致 UI 与后端相反。统一加「只认最后一次请求」守卫 / patching 状态。**修复（2026-09-22）**：`load()` 加自增序号守卫（旧响应丢弃、loading 只由最新请求收口）；SettingsView 加 `patching` 状态（PATCH 期间禁用两个开关）与 `settingsLoaded`（GET 失败后开关保持禁用，防在未知基线上修改——顺带解决评审前端的「失败基线可交互」发现）。
-- **P2-5 `day=9999-12-31` 返回 500**【已修复完成】：`user-analytics.ts:39-43` → `zonedDateRange` 抛错未捕获。校验 day 不得晚于今天。**修复（2026-09-22）**：GET 处理器增加 `day > today` 早退返回 400「日期不能晚于今天」（ISO 字符串比较），附源码断言测试。
-- **P2-6 hits 列表用 `.parse()` 而非 `.safeParse()`**【已修复完成】：`server/src/routes/admin/sensitive-words.ts:204`，缺 `action` 参数得 500 而非 400；`logs.ts` 既有同类一并改。**修复（2026-09-22）**：实际全仓排查发现 **7 处**同类（credentials / logs / model-routes / teams / ops-audit / sensitive-words hits / users），全部改为 safeParse + 400「参数无效」守卫，其中 5 个处理器补了缺失的 `reply` 参数。
+- 现在第 N 轮存 N 页、累计约平方增长 → 改完每轮只写新增，线性增长
+- 同一份 PDF / tools / skills 定义全系统只存一份，后面全是引用
+- 谁的文件、谁在吃磁盘：数据库一条 join 查出来，管理页直接看
 
-### 性能
+不改的部分：
 
-- **P2-7 `team_members` 缺 `employee_id` 前导索引**【已修复完成】：部门名相关子查询（`user-analytics.ts:45-54`）逐行扫描，`0042` 还删过单列索引，属系统性缺口。补 `(employee_id, team_id)` 索引。**修复（2026-09-22）**：迁移 `0050` + schema 条目 `team_members_employee_team_idx (employee_id, team_id)`，本地库已应用验证。**生产实证（144 只读 EXPLAIN ANALYZE）**：修复前部门子查询对 `team_members` 全表扫描（`Rows Removed by Filter: 1052`，单次 0.6ms，每次排名页加载执行约 50 次），表 1053 行随编制增长；唯一索引 `(team_id, employee_id)` 因前导列不匹配无法服务 `employee_id` 过滤。**附带发现（已记 P3）**：`teams`/`team_members` 是团队层取消后被挪用的部门成员连接表现役使用，`team_admin` 角色生产零用户属僵尸。验证：`user-analytics.test.ts` 新增索引存在性断言，全量 521/521，tsc 通过。
-- **P2-8 `listSensitiveWords` 每次分页全表 GROUP BY**【已修复完成】：`sensitive-words.ts:336-342` 对只增不减的流水表聚合，量大后变慢。加短 TTL 缓存或改物化计数。**修复（2026-09-22）**：命中计数抽为 `loadHitCounts()`——30 秒 TTL 缓存 + `recordSensitiveWordHit` 写入后失效，管理端最多滞后 30 秒看到新命中，分页/翻页不再重复聚合。
-
-### 语义 / 误报
-
-- **P2-9 跨字符串粘接误报**【已修复完成】：`normalizeSensitiveNeedle` 删全部空白 + `collectRequestText` 用 `\n` 拼接，相邻字段值可能粘成敏感词（现有「不粘接」测试只是被 role/type 字符串隔开的巧合）。开了拦截会挡正常请求。修复方向（参考上游 `src/lib/message-extractor.ts`）：按字符串分段提取、分段独立匹配，不拼接。「空格插空规避」发生在单段文本内部，分段不影响该测试的兼容性。**修复（2026-09-22，与 P2-10 合并实现）**：见 P2-10 的口径决策与实现——分段独立匹配后粘接从机制上不可能。
-- **P2-10 base64 图片数据进扫描文本**【已修复完成】：英文短词会在 base64 里随机出现造成误报。当前内置词库无 ≤3 字符 ASCII 词暂时安全，自定义导入英文短词后暴露。修复方向（参考上游）：提取时只取 block 的 `text`/`content` 字段，`image_url` 等其他字段天然不进扫描，顺带省掉扫 tools/metadata 的开销。**口径警告**：上游只扫 `role='user'` + system，直接照抄会打开「敏感词藏进 assistant 历史」的绕过口（多轮对话诱导模型复述后下轮携带）；建议扫描范围保留 user + system + 最后一轮 assistant，或明确记录所接受的口径。**修复（2026-09-22）**：
-  - **口径决策（用户拍板）**：只扫 `role=user` 消息——检测对象是员工输入行为，敏感词进入对话的源头必然经过 user 消息；system 是客户端模板、assistant 历史不是员工输入。附加收益：长对话不再反复重扫 assistant 历史里的历史命中（原实现一旦某轮命中，后续每个请求都重复记录）。**已知并接受的残留缺口**：诱导模型产出敏感内容后藏于 assistant 历史。
-  - **实现**：新 `extractUserScanTexts(body)` 覆盖三种协议（chat `messages` / responses `input` 含字符串形式），只取 user 消息 content 的 `text`/`content` 字段；每段独立截断（单段 10 万字符）+ 段级总量首尾窗口（25.6 万）；`evaluateSensitiveRequest` / `findSensitiveWordInRequest` / `excerptForSensitiveHit` 全部改为分段匹配，摘录取命中所在段。旧 `collectStrings` / `collectRequestText` / `joinScanParts` 删除。
-  - **验证**：`sensitive-words.test.ts` 21/21（新增三协议排除断言、跨块不粘接、分段后单消息空格插空仍命中）；全量 523/523；tsc 通过。
-- **P2-11 `weeklyCreditLimit = 0` 恒判 weekly**【已修复完成】：`web/src/lib/keys-board-cooling.ts:47-53` 补 `limit > 0` 条件，并补该分支与中文排除项的测试。**修复（2026-09-22）**：守卫已加；新增 3 组测试（limit=0 落 5h / limit=100 达 95% 判 weekly / 未达判 5h；bare 错误码路径；使用上限·余额不足·套餐到期/失效排除 + null/空串）。
-
-### 文档 / 清理
-
-- **P2-12 CHANGELOG Unreleased 旧条与现状矛盾**【已修复完成】：第 58-59 行仍写「三级联动筛选」「报错日志按 Request ID/企业/部门筛选」，实际已改为按人搜索。更新条目。**修复（2026-09-22）**：修正 4 条矛盾条目——调用日志/报错日志两条改为「按员工搜索（远程搜人）」现状；另发现并修正 P1-2 遗留的两条已下线批量席位描述（「批量挂 KEY」「批量添加按姓名+手机号」），Unreleased 现与代码一致。
-- **P2-13 死代码清理**【已修复完成】：`findSensitiveHit`、`invalidateSensitiveWordsCache`（均无调用方）；`ModelRoutesView.vue`/`ProvidersView.vue`（路由已 redirect）；`setSensitiveWordsEnabled` + `PATCH /api/admin/sensitive-words {enabled}`（`enabled` 实为 interceptEnabled，误用即全站拦截，前端已走 settings 接口，直接删）。**修复（2026-09-22）**：四块全部删除，全仓 grep 零残留，web 完整构建（vue-tsc + vite）通过证明视图无引用。备注：`/api/admin/model-routes` 后端接口仍在（不在本条范围），若确认下线可另行清理。
-- **P2-14 `sensitive_word_hits.employee_id` 外键 ON DELETE no action**【已修复完成·设计确认（2026-09-22）】：删除有命中记录的员工会被阻塞。需产品决策：cascade、删人前归档、或限制删人。**排查结论**：应用内**不存在员工硬删入口**——`users.ts` 只有创建/审批/编辑/停用（`PATCH /status`，含防自停 guard），员工生命周期即「停用」；FK 阻塞场景在应用内不会发生。外键清单核实：六张审计/计数表（sensitive_word_hits、employee_api_keys、request_audits、usage_counters_daily、usage_counters_team_daily、request_error_logs）为 NO ACTION——正是防止未来误加硬删或手工 SQL 丢历史的护栏；四张成员关系表（team_members、support_conversations、channel_seats、credential_binding_members）CASCADE 合理。`cleanup-demo-data.ts`（唯一删员工处）删除顺序已 FK 安全。**决策：保持 restrict；「改善报错」无对象（无删除端点），改为在 CONTEXT.md 员工词条固化口径**——员工不硬删、离职即停用、审计历史永久保留、勿添加物理删除入口。
-- **P2-15 姓名筛选只滤 Top-50**【已修复完成】：榜外员工搜不到。服务端加关键字参数，或复用 `/api/admin/users?q=` 远程选人。**修复（2026-09-22）**：采用远程搜人方案——本地过滤输入框替换为 LogsView 同款 `el-select` 远程搜索（`/api/admin/users?q=`，姓名+手机号选项），选中任意员工即加载其当日详情（后端 `employeeId` 本就支持全量员工），榜外员工可查；`nameQuery`/`visibleRanks` 本地过滤逻辑移除，榜单保持 Top-50 排名语义。前端零后端改动。
-- **P2-16 web `npm run build`（vue-tsc）在 dev 上已损坏**【已修复完成】：ErrorLogsView.vue:266 / LogsView.vue:510 / SensitiveHitsView.vue:238 三处 `rows.some((row) => …)` 的 `row` implicit any（2026-09-21 视图重写引入，2026-09-22 验证 P1-2 时发现）。镜像构建走 `build:image`（纯 vite）不受影响，但本地 `npm run build` 失败且类型检查失效。**修复（2026-09-22）**：三处 `const rows` 显式标注 `EmployeeOption[]`（与映射形状一致，源头类型化）。验证：`npm run build`（vue-tsc -b && vite build）完整通过，全量服务端套件无回归。
+- 每次请求仍有一条 `request_audits` 计量行（人、模型、时间、用量口径不变）
+- 不删已有文件、不做按天过期；旧 `<日目录>/threq_*.json.gz` 永久可读
+- 全文不进 Postgres（DB 只做文件登记簿，不存内容、不存每请求引用明细）
 
 ---
 
-## P3 — 观察项 / 加固【本批 2026-09-22 处理完毕，除两条明确缓期】
+## 落地形态
 
-- `loadSensitiveWordsConfig` 抛错会 500 在配额之前【已修复完成】：`loadSensitiveWordsCacheEntry` 增加 fail-open——DB 读失败且存在旧缓存时降级用旧配置并打日志，配 2 秒短退避避免每请求都打故障库；从未成功加载过才抛回。仅扫请求体不扫响应流的现状不变。
-- 命中记录同步 await INSERT【已修复完成】：两个 relay 接入点改为 `void recordSensitiveWordHit(…).catch(log)`（上游 `void logBlockedRequest()` 同款），含摘要/预览的第二次遍历一并移出关键路径；进程退出瞬间可能丢最后一条记录，属 best-effort 可接受。
-- 抗规避增强（regex 词型）【已修复完成（2026-09-22）】：配置新增 `regexWords`（单条 ≤128 字符、上限 200 条控制 ReDoS 暴露面）；`buildSensitiveWordMatcher` 在 AC 未命中后对原始段文本逐条 test（`i` 标志）；管理端添加词可选「包含/正则」，录入校验无效正则（400）、加载兜底跳过并记日志；命中优先级包含词 → 正则词。测试 24/24（新增规避命中、校验拒绝、加载跳过三组）。
-- 清理 `team_admin` 僵尸角色【已修复完成（2026-09-22）】：迁移 `0051` 重建 `employee_role` 枚举（去 team_admin）并整体删除 `team_members.role` 列与 `team_member_role` 类型（生产/本地全部行均为默认值，本地已应用验证）。服务端 15 个文件清理（鉴权/JWT/act-as/enterprise/org/teams/users/me/support/invite 等，含删除「改成员角色」端点与建队自动任命逻辑），前端 19 个文件清理（角色类型源、登录/侧栏/仪表盘/用户与企业管理/扮演抽屉/团队详情等），编译器驱动（先改类型源再用 tsc/vue-tsc 枚举清理点）保证零遗漏；全仓 grep 前后端源码零残留；4 个过时测试断言更新为反向断言（该角色现被控制台路由整体拒绝）。验证：534/534、双端构建通过。
-- 多实例缓存 5 秒 TTL 延迟【已修复完成】：实现 Redis pub/sub 失效广播（参考上游双通道模式）——`writeConfig` 后 publish，各实例订阅后立即清词表缓存与命中计数缓存；订阅/发布全部 fail-open，Redis 不可用时退化为纯 TTL；单实例部署广播发给自己无害。
-- `xlsx@0.18.5` CVE【已修复完成】：换 `exceljs@4.4.0`（维护中、无已知 CVE），`.xls` 旧格式不再支持（报「请使用 .xlsx 格式的表格」，与 `.doc`→`.docx` 同款引导）；`@types/pdf-parse`（v1 类型配 v2 实现，实际未引用）一并移除。
-- `users?q=` 的 `%`/`_` 未转义【已修复完成】：`adminUserListWhere` 对 q 做 `replace(/[\\%_]/g, "\\$&")`，ilike 通配符按普通字符匹配。
-- 拦截文案「输入或生成内容」【已说明】：该文案是智谱官方 1301 报文原文，保持逐字一致是伪装需要（改文案会削弱「看起来就是上游拒绝」的效果）；实际扫描范围（仅用户输入）已在 CHANGELOG 的扫描口径条目中明确，不再另行改文案。
+```
+<REQUEST_CONTEXT_DIR>/
+  files/<前两位>/<sha256>                           # PDF/图片：解码后的原始二进制，全局一份
+  blocks/<前两位>/<sha256>.gz                       # 非二进制大块：system/tools/skills、长 tool_result、长文本
+  users/<employeeId>/<quota-day>/threq_<id>.json.gz # 瘦信封，gzip JSON（每用户按日；API 输出仍是明文标准 JSON）
+  <quota-day>/threq_<id>.json.gz                    # 旧布局，只读，不再写
+```
+
+**内容库（files/ + blocks/）**
+
+- 拆块对象：requestBody / responseBody / streamAudit.assembled 下**任何超阈值子树**——`system`、`tools`（含 skills 定义）、`messages[i]`、`messages[i].content[j]`。只拆 messages 会漏掉每轮重发的 system/tools
+- `type: document|image` 且 `source.type: base64` 的块：**解码后存原始二进制进 files/**，指纹 = 解码后字节的 SHA-256（省 25% base64 膨胀、管理页可直接预览、指纹即文件指纹）
+- 其余超阈值 JSON 块：按现有 `sanitizeContextValue` / `redactHeaders` 打码后 gzip 进 blocks/，指纹 = 打码后 JSON 的 SHA-256
+- 阈值 `REQUEST_CONTEXT_BLOB_MIN_BYTES` 默认 **1024**（按 2026-09-22 上午样本实测定，见下节；短句仍留信封）
+- 消息骨架（role 等小字段）留在信封内联，信封保持自描述；gzip 后 `zcat | jq` 可读
+
+**信封（每枪一份，变瘦）**
+
+- 只写信封字段：人 / 模型 / 路径 / 渠道 Key 后缀 / 耗时 / 状态 / tokens / 打码 headers / retryTrace
+- 超阈值字段替换为指向：`{ "blob": "<sha256>", "kind": "file"|"block", "bytes": <大小>, "media_type": "..." }`
+  - `bytes`：file = 解码后字节数；block = 未压缩 JSON 字节数（供读侧零 IO 估算水合大小）
+- 加 `contextFormat: 2` 与旧整包 gzip 区分
+- **信封 gzip 存盘**：「直接调用」的体验由 API 保证（详情/下载输出仍是明文标准 JSON），磁盘信封 `zcat | jq` 即可；gzip 与否差 2.4 倍体积（38% → 15%），按实测取 gzip
+
+**实测体积（2026-09-22，144 上午 12 点前样本：11,364 个请求 / 3,600 MB gzip，试算脚本 `scripts/simulate-v2-sizing.mjs`）**
+
+| 阈值 | v2 合计（信封 gzip） | 占现在 | 信封若不 gzip | 唯一 blobs | 引用/请求 |
+|---|---|---|---|---|---|
+| 512B | 527 MB | 15% | 38% | 171 MB / 40,737 块 | 101 |
+| 1KB | 576 MB | 16% | 45% | 165 MB / 27,413 块 | 64 |
+| 8KB | 946 MB | 26% | 85% | 139 MB / 4,765 块 | 10 |
+
+结论：去重后唯一新内容极小（约 171 MB/半天，其中 PDF/图片仅 18.5 MB / 116 个）；大头是信封的引用列表（长会话每请求 ~100 个引用）。**信封 gzip 后阈值不敏感（512B 与 1KB 仅差 9%），取 1KB 平衡指纹对象数**。全天推算约 **2.5–3G/天**（现状 10–15G，降约 5 倍）；若坚持信封明文则约 6–7G/天。指纹对象量级：约 5.5 万/天 → 全年千万级，文件系统需预留足够 inode（或用 XFS），写进部署文档。
+
+**数据库登记（迁移新增两表）**
+
+```
+static_files        id, sha256 unique, kind(file|block), bytes, media_type, first_seen_at, first_request_id
+static_file_owners  file_id, employee_id, team_id, first_seen_at   -- file+employee 唯一，归属多对多
+```
+
+- **只在新指纹首次落盘时 upsert**，命中不写库；`static_file_owners` 在「该用户首次出现该文件」时插一行
+- **禁止**建每请求-文件引用明细表（400 轮会话 × 每轮几百块 = 把磁盘膨胀搬进 Postgres）
+- 读路径（下载/详情/拼回）不查库，按指纹直接读盘；DB 只是登记簿，允许与盘漂移，管理页做存在性检查兜底
+
+**管理页（第二步）**
+
+- `web/src/views/admin/StaticFilesView.vue` + `server/src/routes/admin/static-files.ts`
+- 列表：指纹缩写、类型、大小、media_type、首见时间、归属人（多对多）、按人/按大小筛选排序；PDF/图片在线预览、下载；block 展开 JSON
+- 直接回答 144 的问题：「一天 10–15G 是谁干的」
+- 先超管可见（调用日志详情本就能看全文，未扩大暴露面）；表带 employee/team 字段，将来可放开企业级
 
 ---
 
-## 附录：已反驳 / 待验证（不要重复排查）
+## 读路径
 
-| 结论 | 处置 |
-| --- | --- |
-| A：「脏配置 `{detect:false, intercept:true}` 读取时重开检测是 bug」 | **反驳**。`resolveSensitiveWordFlags` 的强制收敛是故意设计，`sensitive-words.test.ts:150-153` 明确锁定该行为；应用层写入路径全部归一化，仅手工改 DB 可达，且收敛方向是「更严」的 fail-safe。不改。 |
-| B：「`LogsView.vue` `limit=5` 疑似调试残留」 | **反驳**。来自更早提交 `dac4461`「管理端调用日志改为每页 5 条」，有意为之。不改。 |
-| B：「限流车道近乎失效（lastError 存上游原文后 `isShortRateLimitCooling` 匹配不上）」 | **已验证并修复（2026-09-22，144 生产实测）**。relay 常量路径（`HTTP 429：上游限流…`）匹配正常，1310/1311/1113/1308/HTTP 500 等真实样本分类全部正确；但管理端「测试」路径存的上游原文有 3 个真实文案漏判——`请求过于频繁，请稍后重试`、`并发请求数已达上限`、`该模型当前访问量过大`（1305）——均为真限流却进不了限流车道。已在 `keys-board-cooling.ts` 的限流正则补入这三个短语、排除项补 `套餐暂未开放`，并用 144 采样原文锁定回归测试；修复后 12 个生产样本全部分类正确（524/524）。 |
+- 定位：`request_audits` 行取 `employee_id` + `created_at` → `users/<id>/<quota-day>/threq_<requestId>.json.gz`，邻日回退沿用；未命中再回退旧 `<root>/<quota-day>/threq_<requestId>.json.gz`
+- format 2 递归把引用拼回完整 JSON（引用校验 `[a-f0-9]{64}`，路径限死在 files/blocks 两级目录内，防穿越）；旧格式整包直读，两边共存
+- 详情抽屉：信封内引用的 `bytes` 求和估算水合大小——≤256KB 才读库水合，超了直接显示信封 + 引用（带 bytes/media_type，信息量不低于现在的「omitted 请下载」）
+- 下载全文：拼回后输出与现在相同形状的 JSON（`requestBody` / `responseBody` / `streamAudit`），排障习惯不变；由纯流式改为内存拼装，单次峰值 ≈ 未压缩大小（≤ REQUEST_CONTEXT_MAX_BYTES），超管低频端点可接受
 
 ---
 
-## 执行记录（原「建议执行顺序」，2026-09-22 全部收口）
+## 硬性项（评审确认，不可省）
 
-1. P0-1 由 `7b2ca22` 以移除内置词库方案完成；P1-1 / P1-2 / P1-3（含 144 生产预检与 9 月前数据清理）当日完成
-2. P2 十六项全部完成（快赢组 → 可靠性组 → P2-1 积分口径 → P2-7 索引 → P2-8+15 → P2-9/10 提取器 → P2-14 设计确认），其中 P2-14 经排查确认「应用无员工硬删入口」改为文档固化设计
-3. P3 六项实做（stale-cache / 异步记录 / q 转义 / exceljs / pub/sub / 文案说明），两项明确缓期：**team_admin 角色清理**（摸底证据见 P3 区块，独立一轮）、**regex 抗规避词型**（无现役需求，方案存档）
-4. 附录「限流车道」已于 2026-09-22 用 144 生产样本验证并修复（见附录表）；累计含 0049/0050 两个数据库迁移待随发版应用
+1. `system` / `tools` / skills 定义必须在拆块范围（否则每天仍白写几个 G）
+2. 指纹文件写失败 → 该块**降级内联**进信封并记日志，保住「每次请求都能拼回」
+3. 并发写同一指纹：staging 临时名加随机后缀（现有 `${pid}.tmp` 同进程并发会撞）
+4. 详情抽屉按 `bytes` 估算水合；下载端点改为拼回输出
+
+---
+
+## 实现步骤
+
+> **进度（2026-09-22）**：第一步代码已完成并通过测试——`request-context.test.ts` 20/20、全量套件 552/552、真实样本冒烟 300/300 语义相等（`scripts/smoke-v2-roundtrip.mjs`，仅 document/image 块键序规范化为 type/source，值逐字节一致）；typecheck 通过。待部署 144 验收后再标【已修复完成】。第二步（管理页）未开工。
+
+### 第一步（止血：写读路径 + 登记）
+
+- `server/src/lib/relay/request-context.ts`：拆块、指纹、写信封、拼回；`serializeRequestContext` 的 MAX_BYTES 截断逻辑保留作兜底
+- `server/src/config.ts` 加 `REQUEST_CONTEXT_BLOB_MIN_BYTES`（默认 1024，依据上节实测）；`deploy/compose.yaml` 补环境变量；部署文档注明指纹对象全年千万级、文件系统 inode 预留
+- `server/src/routes/admin/logs.ts`：详情与下载两处 select 补 `employeeId`，新布局定位 + 旧布局回退
+- schema 迁移新增 `static_files` / `static_file_owners`，落盘时首次指纹 upsert
+
+### 第二步（管理页）
+
+- `server/src/routes/admin/static-files.ts` + `web/src/views/admin/StaticFilesView.vue`
+- 库盘对账：孤儿行 / 缺文件标记（只标记，不删）
+
+### 测试（扩 `server/test/request-context.test.ts`）
+
+- 同一 PDF / 同一 tools 定义写两次：内容库只有一份，两个信封各带引用；短文本不进库
+- `system` / `tools` 超阈值进 blocks；阈值边界 8191 / 8192 / 8193
+- 拼回后与拆前语义相等；密钥 header / `api_key` 字段仍 `[redacted]`，且不产生明文指纹
+- 指纹写失败降级内联；并发写同一指纹；引用缺失时下载返回明确错误而非损坏 JSON
+- base64 document 解码往返一致；旧整包 gzip 仍可读；`logs.test.ts` 下载/详情不断
+
+### 文档
+
+- `CHANGELOG.md` Unreleased：调用日志仍可下载当时全文，盘上改为「新内容存一份、重复共用」，新增静态文件登记
+- `request-context.ts` 文件头注释改为新布局；删掉易被理解成「要做清理」的表述——本计划明确 **不做删除**
+
+---
+
+## 验收
+
+- 同一份 PDF 出现在同一会话后续 N 轮：`files/` 只有一个对象，N 个信封只带引用
+- 长会话磁盘近似随「新内容」线性增长，而不是随「历史长度」平方增长
+- 信封落在 `users/<employeeId>/<quota-day>/`；详情抽屉能打开；「下载全文」能还原当时的 requestBody（含 PDF document 块）和本轮响应
+- 部署前已有的旧 `threq_*.json.gz` 仍能下载
+- `request_audits` 行数、tokens、积分口径不变
+- `static_files` join `static_file_owners` 能查出每用户占用；管理页可见归属与预览
+- 不引入按天删除、不把全文或每请求引用明细写进 Postgres
+
+---
+
+## 明确不做
+
+- 按天 / 按容量删除请求上下文（已否决）
+- 每请求-文件引用明细表（防 Postgres 膨胀）
+- 只换 zstd、只去掉 `responseBody` 与 `streamAudit.assembled` 的重复（对体积几乎不动）
+- 把 PDF 另存成独立 `.pdf` 文件名（内容库按指纹即可，下载时还原回 JSON 里的 document 块）
+- 详情抽屉改成「只显示最后 2 轮、拼不出完整会话」（下载必须能拼回）

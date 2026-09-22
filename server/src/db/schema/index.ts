@@ -593,3 +593,46 @@ export const supportMessages = pgTable(
   (t) => [index("support_messages_conversation_created_idx").on(t.conversationId, t.createdAt)],
 );
 
+// Registry index for the content-addressed request-context stores (files/blocks).
+// Disk stays the source of truth; these rows are written once per new sha256
+// (first sighting) so per-user disk usage stays queryable.
+export const staticFiles = pgTable(
+  "static_files",
+  {
+    id: bigint("id", { mode: "number" }).generatedAlwaysAsIdentity().primaryKey(),
+    sha256: varchar("sha256", { length: 64 }).notNull(),
+    kind: varchar("kind", { length: 8 }).notNull(),
+    bytes: bigint("bytes", { mode: "number" }).notNull(),
+    mediaType: varchar("media_type", { length: 128 }),
+    firstSeenAt: timestamp("first_seen_at", { withTimezone: true }).notNull().defaultNow(),
+    firstRequestId: varchar("first_request_id", { length: 96 }),
+  },
+  (t) => [
+    uniqueIndex("static_files_sha256_uidx").on(t.sha256),
+    index("static_files_first_seen_idx").on(t.firstSeenAt),
+    index("static_files_bytes_idx").on(t.bytes),
+  ],
+);
+
+export const staticFileOwners = pgTable(
+  "static_file_owners",
+  {
+    id: bigint("id", { mode: "number" }).generatedAlwaysAsIdentity().primaryKey(),
+    fileId: bigint("file_id", { mode: "number" })
+      .notNull()
+      .references(() => staticFiles.id, { onDelete: "cascade", onUpdate: "no action" }),
+    employeeId: bigint("employee_id", { mode: "number" })
+      .notNull()
+      .references(() => employees.id),
+    teamId: bigint("team_id", { mode: "number" }).references(() => teams.id, {
+      onDelete: "restrict",
+      onUpdate: "no action",
+    }),
+    firstSeenAt: timestamp("first_seen_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("static_file_owners_file_employee_uidx").on(t.fileId, t.employeeId),
+    index("static_file_owners_employee_idx").on(t.employeeId),
+  ],
+);
+

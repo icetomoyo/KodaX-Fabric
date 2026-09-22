@@ -372,6 +372,13 @@
       "when": 1790121600000,
       "tag": "0052_credential_window_state",
       "breakpoints": true
+    },
+    {
+      "idx": 53,
+      "version": "7",
+      "when": 1790121600001,
+      "tag": "0053_static_files",
+      "breakpoints": true
     }
   ]
 }

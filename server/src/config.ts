@@ -71,6 +71,11 @@ const envSchema = z.object({
     .int()
     .min(1_024)
     .default(50 * 1024 * 1024),
+  REQUEST_CONTEXT_BLOB_MIN_BYTES: z.coerce
+    .number()
+    .int()
+    .min(64)
+    .default(1024),
   ALERT_CHECK_INTERVAL_SECONDS: z.coerce.number().int().min(10).default(60),
   TIER_REBIND_INTERVAL_SECONDS: z.coerce.number().int().min(300).max(604_800).default(86_400),
   ALERT_COOLING_RATIO_THRESHOLD: z.coerce.number().min(0).max(1).default(0.3),

@@ -1,5 +1,3 @@
-import { createReadStream } from "node:fs";
-import { createGunzip } from "node:zlib";
 import type { FastifyInstance } from "fastify";
 import { and, desc, eq, gt, gte, inArray, lt, lte, sql, type SQL } from "drizzle-orm";
 import { z } from "zod";
@@ -22,9 +20,9 @@ import {
 } from "../../lib/relay/credit-cost.js";
 import {
   findRequestContextFile,
+  readRequestContextForDetail,
   readRequestContextRecord,
   REQUEST_CONTEXT_ID_PATTERN,
-  summarizeRequestContextForDetail,
 } from "../../lib/relay/request-context.js";
 import {
   requireRoles,
@@ -244,14 +242,13 @@ export async function adminLogRoutes(app: FastifyInstance) {
       env.QUOTA_TIMEZONE,
       row.requestId,
       row.createdAt,
+      row.employeeId,
     );
     let context: unknown = null;
     let omittedBodies = false;
     if (filePath) {
       try {
-        const summarized = summarizeRequestContextForDetail(
-          await readRequestContextRecord(filePath),
-        );
+        const summarized = await readRequestContextForDetail(filePath);
         context = summarized.context;
         omittedBodies = summarized.omittedBodies;
       } catch {
@@ -283,6 +280,7 @@ export async function adminLogRoutes(app: FastifyInstance) {
     const [row] = await db
       .select({
         requestId: requestAudits.requestId,
+        employeeId: requestAudits.employeeId,
         createdAt: requestAudits.createdAt,
       })
       .from(requestAudits)
@@ -297,16 +295,20 @@ export async function adminLogRoutes(app: FastifyInstance) {
       env.QUOTA_TIMEZONE,
       row.requestId,
       row.createdAt,
+      row.employeeId,
     );
     if (!filePath) {
       return reply.code(404).send({ success: false, message: "该请求没有全文记录" });
     }
 
+    // contextFormat 2 envelopes hydrate refs (content store) back into the
+    // exact JSON shape the model saw; legacy files pass through unchanged.
+    const hydrated = await readRequestContextRecord(filePath);
     reply.header("content-type", "application/json; charset=utf-8");
     reply.header(
       "content-disposition",
       `attachment; filename="${row.requestId}.json"`,
     );
-    return reply.send(createReadStream(filePath).pipe(createGunzip()));
+    return reply.send(JSON.stringify(hydrated));
   });
 }
