@@ -11,6 +11,7 @@ import {
 } from "../lib/password.js";
 import { writeOpsAudit } from "../lib/ops-audit.js";
 import { authenticateLdapUser, matchEmployeeForLdapPerson } from "../lib/ldap-auth.js";
+import { provisionEmployeeFromLdapDingtalk } from "../lib/ldap-dingtalk-provision.js";
 import { env } from "../config.js";
 import { requireSession } from "../middleware/auth.js";
 
@@ -246,7 +247,15 @@ export async function authRoutes(app: FastifyInstance) {
     }
 
     const directory = await db.select().from(employees);
-    const matched = matchEmployeeForLdapPerson(person, directory);
+    let matched = matchEmployeeForLdapPerson(person, directory);
+    if (!matched) {
+      try {
+        matched = await provisionEmployeeFromLdapDingtalk(person, { ip: req.ip });
+      } catch (error) {
+        req.log.warn({ err: error, uid: person.uid }, "ldap dingtalk provision failed");
+        matched = null;
+      }
+    }
     if (!matched) {
       return reply.code(403).send({
         success: false,
@@ -254,7 +263,7 @@ export async function authRoutes(app: FastifyInstance) {
         message: "公司账号已验证，但系统中没有对应员工，请联系管理员",
       });
     }
-    const user = directory.find((row) => row.id === matched.id);
+    const [user] = await db.select().from(employees).where(eq(employees.id, matched.id)).limit(1);
     if (!user || !isSessionRole(user.role)) {
       return reply.code(401).send({ success: false, message: "公司账号或密码错误" });
     }

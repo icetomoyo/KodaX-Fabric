@@ -80,5 +80,6 @@ test("login page exposes LDAP and account modes", () => {
   assert.match(login, /账户登录/);
   assert.match(login, /loginLdap/);
   assert.match(auth, /\/api\/auth\/login-ldap/);
+  assert.match(auth, /provisionEmployeeFromLdapDingtalk/);
   assert.doesNotMatch(login, /Hz123456/);
 });

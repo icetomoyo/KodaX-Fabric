@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- LDAP 登录对不上本地员工时，用 LDAP 中文名走钉钉通讯录精确搜索（`/v1.0/contact/users/search`，fullMatchField=1）拿到唯一 userid，再拉手机号和部门；姓名、手机号、已映射部门都有则开通员工（默认密码 Hz123456）并完成登录；同名多人、缺手机号或部门未映射仍返回「没有对应员工」
+
 ### Removed
 
 - 批量登记席位（`POST /api/admin/channel-seats/bulk`）与批量挂 KEY（`POST /api/admin/channel-seats/bulk-keys`）正式下线，前后端代码与词表解析库一并清理；席位仍可单个登记、编辑、回收，历史操作审计记录不受影响

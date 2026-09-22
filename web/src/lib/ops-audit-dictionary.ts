@@ -13,6 +13,7 @@ export const OPS_AUDIT_ACTION_LABELS: Record<string, string> = {
   "user.create": "新建员工",
   "user.registration_approve": "审核通过注册申请",
   "user.import": "批量注册用户",
+  "user.ldap_provision": "LDAP 登录自动开通员工",
   "user.update": "编辑员工信息",
   "user.status": "更新员工状态",
   "user.reset_password": "重置员工密码",

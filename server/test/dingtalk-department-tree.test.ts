@@ -12,8 +12,12 @@ process.env.CREDENTIAL_ENCRYPT_KEY ??= "unit-test-credential-secret";
 const {
   DingtalkApiError,
   DingtalkNotConfiguredError,
+  fetchDingtalkContactUseridsByName,
   fetchDingtalkDeptUsers,
   fetchDingtalkDepartmentTree,
+  fetchDingtalkUser,
+  fetchDingtalkUseridByMobile,
+  parseDingtalkUserDetail,
   readDingtalkCredentials,
 } = await import("../src/lib/dingtalk-department-tree.js");
 const { planDingtalkDeptIdWrites } = await import("../src/lib/dingtalk-dept-id-map.js");
@@ -191,6 +195,112 @@ test("department user list paginates and keeps name, userid, mobile", async () =
     { userid: "u1", name: "甲", mobile: "13800000001" },
     { userid: "u2", name: "乙", mobile: null },
   ]);
+});
+
+test("user/get returns profile and treats 60121 as missing", async () => {
+  const found = await fetchDingtalkUser({
+    token: "tok",
+    userid: "0411",
+    baseUrl: "https://oapi.dingtalk.com",
+    fetchImpl: async (input) => {
+      const url = new URL(String(input));
+      assert.equal(url.pathname, "/topapi/v2/user/get");
+      return jsonResponse({
+        errcode: 0,
+        result: {
+          userid: "0411",
+          name: "吴家旺",
+          mobile: "18397939872",
+          dept_id_list: [660464349],
+        },
+      });
+    },
+  });
+  assert.deepEqual(found, {
+    userid: "0411",
+    name: "吴家旺",
+    mobile: "18397939872",
+    deptIds: [660464349],
+  });
+
+  const missing = await fetchDingtalkUser({
+    token: "tok",
+    userid: "wujiawang",
+    baseUrl: "https://oapi.dingtalk.com",
+    fetchImpl: async () => jsonResponse({ errcode: 60121, errmsg: "找不到该用户" }),
+  });
+  assert.equal(missing, null);
+});
+
+test("getbymobile returns userid and treats unknown mobile as missing", async () => {
+  const userid = await fetchDingtalkUseridByMobile({
+    token: "tok",
+    mobile: "18397939872",
+    baseUrl: "https://oapi.dingtalk.com",
+    fetchImpl: async (input) => {
+      const url = new URL(String(input));
+      assert.equal(url.pathname, "/topapi/v2/user/getbymobile");
+      return jsonResponse({ errcode: 0, result: { userid: "0411" } });
+    },
+  });
+  assert.equal(userid, "0411");
+
+  const missing = await fetchDingtalkUseridByMobile({
+    token: "tok",
+    mobile: "13800000000",
+    baseUrl: "https://oapi.dingtalk.com",
+    fetchImpl: async () => jsonResponse({ errcode: 40104, errmsg: "企业中无效的手机号" }),
+  });
+  assert.equal(missing, null);
+});
+
+test("contact search returns exact-name userids and rejects API errors", async () => {
+  const userids = await fetchDingtalkContactUseridsByName({
+    token: "tok",
+    name: "吴家旺",
+    baseUrl: "https://api.dingtalk.com",
+    fetchImpl: async (input, init) => {
+      const url = new URL(String(input));
+      assert.equal(url.pathname, "/v1.0/contact/users/search");
+      assert.equal(init?.headers && (init.headers as Record<string, string>)["x-acs-dingtalk-access-token"], "tok");
+      const payload = JSON.parse(String(init?.body ?? "{}")) as {
+        queryWord: string;
+        fullMatchField: number;
+      };
+      assert.equal(payload.queryWord, "吴家旺");
+      assert.equal(payload.fullMatchField, 1);
+      return jsonResponse({ hasMore: false, totalCount: 1, list: ["04112616416121469240"] });
+    },
+  });
+  assert.deepEqual(userids, ["04112616416121469240"]);
+
+  await assert.rejects(
+    () =>
+      fetchDingtalkContactUseridsByName({
+        token: "tok",
+        name: "吴家旺",
+        baseUrl: "https://api.dingtalk.com",
+        fetchImpl: async () =>
+          jsonResponse(
+            {
+              code: "Forbidden.AccessDenied.AccessTokenPermissionDenied",
+              message: "应用尚未开通所需的权限",
+            },
+            403,
+          ),
+      }),
+    (error: unknown) => error instanceof DingtalkApiError && error.message === "应用尚未开通所需的权限",
+  );
+});
+
+test("parseDingtalkUserDetail requires userid and name", () => {
+  assert.equal(parseDingtalkUserDetail({ userid: "u1" }), null);
+  assert.deepEqual(parseDingtalkUserDetail({ userid: "u1", name: "甲", dept_id_list: ["12"] }), {
+    userid: "u1",
+    name: "甲",
+    mobile: null,
+    deptIds: [12],
+  });
 });
 
 test("user import skips existing phones and people without a mobile", () => {

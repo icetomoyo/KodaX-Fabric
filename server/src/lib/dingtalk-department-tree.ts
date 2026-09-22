@@ -1,6 +1,7 @@
 export const DINGTALK_ROOT_DEPT_ID = 1;
 export const DINGTALK_SCHOOL_DEPT_ID = -7;
 export const DINGTALK_API_BASE_URL = "https://oapi.dingtalk.com";
+export const DINGTALK_CONTACT_API_BASE_URL = "https://api.dingtalk.com";
 
 export class DingtalkNotConfiguredError extends Error {
   readonly code = "DINGTALK_NOT_CONFIGURED";
@@ -112,6 +113,15 @@ export type DingtalkDeptUser = {
   mobile: string | null;
 };
 
+export type DingtalkUserDetail = {
+  userid: string;
+  name: string;
+  mobile: string | null;
+  deptIds: number[];
+};
+
+const ABSENT_DINGTALK_USER_CODES = new Set([60121, 40104]);
+
 export async function fetchDingtalkDeptUsers(options: {
   token: string;
   deptId: number;
@@ -146,6 +156,130 @@ export async function fetchDingtalkDeptUsers(options: {
     cursor = next;
   }
   return users;
+}
+
+export async function fetchDingtalkUser(options: {
+  token: string;
+  userid: string;
+  fetchImpl?: FetchImpl;
+  baseUrl?: string;
+}): Promise<DingtalkUserDetail | null> {
+  const userid = options.userid.trim();
+  if (!userid) return null;
+  const fetchImpl = options.fetchImpl ?? fetch;
+  const baseUrl = (options.baseUrl ?? DINGTALK_API_BASE_URL).replace(/\/$/, "");
+  try {
+    const body = await dingtalkPost(fetchImpl, topapiUrl(baseUrl, options.token, "/topapi/v2/user/get"), {
+      userid,
+      language: "zh_CN",
+    });
+    return parseDingtalkUserDetail(body.result);
+  } catch (error) {
+    if (isAbsentDingtalkUser(error)) return null;
+    throw error;
+  }
+}
+
+export async function fetchDingtalkContactUseridsByName(options: {
+  token: string;
+  name: string;
+  fetchImpl?: FetchImpl;
+  baseUrl?: string;
+}): Promise<string[]> {
+  const name = options.name.trim();
+  if (!name) return [];
+  const fetchImpl = options.fetchImpl ?? fetch;
+  const baseUrl = (options.baseUrl ?? DINGTALK_CONTACT_API_BASE_URL).replace(/\/$/, "");
+  const userids: string[] = [];
+  let offset = 0;
+  const size = 10;
+  for (let page = 0; page < 20; page += 1) {
+    const response = await fetchImpl(new URL("/v1.0/contact/users/search", `${baseUrl}/`), {
+      method: "POST",
+      headers: {
+        "content-type": "application/json;charset=utf-8",
+        "x-acs-dingtalk-access-token": options.token,
+      },
+      body: JSON.stringify({
+        queryWord: name,
+        offset,
+        size,
+        fullMatchField: 1,
+      }),
+      signal: AbortSignal.timeout(20_000),
+    });
+    const text = await response.text();
+    let body: {
+      code?: string;
+      message?: string;
+      hasMore?: boolean;
+      totalCount?: number;
+      list?: unknown;
+    };
+    try {
+      body = JSON.parse(text) as typeof body;
+    } catch {
+      throw new DingtalkApiError(`钉钉通讯录搜索返回无法解析（HTTP ${response.status}）`);
+    }
+    if (!response.ok) {
+      throw new DingtalkApiError(body.message || body.code || `钉钉通讯录搜索失败（HTTP ${response.status}）`);
+    }
+    const list = Array.isArray(body.list) ? body.list : [];
+    for (const item of list) {
+      if (typeof item === "string" && item.trim()) userids.push(item.trim());
+    }
+    const unique = [...new Set(userids)];
+    if (typeof body.totalCount === "number" && body.totalCount > 1) return unique;
+    if (unique.length > 1) return unique;
+    if (body.hasMore !== true) return unique;
+    offset += size;
+    if (typeof body.totalCount === "number" && offset >= body.totalCount) return unique;
+  }
+  return [...new Set(userids)];
+}
+
+export async function fetchDingtalkUseridByMobile(options: {
+  token: string;
+  mobile: string;
+  fetchImpl?: FetchImpl;
+  baseUrl?: string;
+}): Promise<string | null> {
+  const mobile = options.mobile.trim();
+  if (!mobile) return null;
+  const fetchImpl = options.fetchImpl ?? fetch;
+  const baseUrl = (options.baseUrl ?? DINGTALK_API_BASE_URL).replace(/\/$/, "");
+  try {
+    const body = await dingtalkPost(
+      fetchImpl,
+      topapiUrl(baseUrl, options.token, "/topapi/v2/user/getbymobile"),
+      { mobile },
+    );
+    const result = asRecord(body.result);
+    const userid = typeof result?.userid === "string" ? result.userid.trim() : "";
+    return userid || null;
+  } catch (error) {
+    if (isAbsentDingtalkUser(error)) return null;
+    throw error;
+  }
+}
+
+export function parseDingtalkUserDetail(value: unknown): DingtalkUserDetail | null {
+  const row = asRecord(value);
+  if (!row) return null;
+  const userid = typeof row.userid === "string" ? row.userid.trim() : "";
+  const name = typeof row.name === "string" ? row.name.trim() : "";
+  if (!userid || !name) return null;
+  const mobile = typeof row.mobile === "string" && row.mobile.trim() ? row.mobile.trim() : null;
+  const deptIds = Array.isArray(row.dept_id_list)
+    ? row.dept_id_list
+        .map((item) => Number(item))
+        .filter((id) => Number.isSafeInteger(id) && id > 0)
+    : [];
+  return { userid, name, mobile, deptIds };
+}
+
+function isAbsentDingtalkUser(error: unknown): boolean {
+  return error instanceof DingtalkApiError && ABSENT_DINGTALK_USER_CODES.has(error.errcode);
 }
 
 function topapiUrl(baseUrl: string, token: string, path: string): URL {
