@@ -24,6 +24,7 @@ const {
   resolveSensitiveWordFlags,
   sortSensitiveWordRows,
   uniqueWords,
+  validateSensitiveRegex,
   zhipuSensitiveContentError,
 } = await import("../src/lib/relay/sensitive-words.js");
 const {
@@ -212,21 +213,50 @@ test("parseSensitiveWordsConfig defaults to detect-on intercept-off", () => {
     detectEnabled: true,
     interceptEnabled: false,
     words: [],
+    regexWords: [],
   });
   assert.deepEqual(parseSensitiveWordsConfig({ enabled: false, words: [" 英雄联盟 ", "英雄联盟"] }), {
     detectEnabled: false,
     interceptEnabled: false,
     words: ["英雄联盟"],
+    regexWords: [],
   });
   assert.deepEqual(
     parseSensitiveWordsConfig({ detectEnabled: true, interceptEnabled: true, words: ["lol"] }),
-    { detectEnabled: true, interceptEnabled: true, words: ["lol"] },
+    { detectEnabled: true, interceptEnabled: true, words: ["lol"], regexWords: [] },
   );
   assert.deepEqual(
     parseSensitiveWordsConfig({ detectEnabled: false, interceptEnabled: true, words: ["lol"] }),
-    { detectEnabled: true, interceptEnabled: true, words: ["lol"] },
+    { detectEnabled: true, interceptEnabled: true, words: ["lol"], regexWords: [] },
   );
   assert.deepEqual(uniqueWords(["lol", "LOL", "  ", "x".repeat(80)]), ["lol"]);
+  assert.deepEqual(
+    parseSensitiveWordsConfig({ regexWords: [" 英[-.·]?雄 ", "英[-.·]?雄", "x".repeat(200)] }),
+    { detectEnabled: true, interceptEnabled: false, words: [], regexWords: ["英[-.·]?雄"] },
+  );
+});
+
+test("regex word type catches punctuation-evasion that normalization misses", () => {
+  const matcher = buildSensitiveWordMatcher(["英雄联盟"], ["英[-—.·]?雄"]);
+  assert.equal(matcher.match("今晚开黑英-雄联盟"), "英[-—.·]?雄");
+  assert.equal(matcher.match("今晚开黑英·雄联盟"), "英[-—.·]?雄");
+  assert.equal(matcher.match("英 雄联盟"), "英雄联盟"); // 空格插空由归一化命中，包含词优先
+  assert.equal(matcher.match("今天天气不错"), null);
+  assert.equal(matcher.regexPatterns.length, 1);
+});
+
+test("regex word validation rejects empty, oversized, and invalid patterns", () => {
+  assert.throws(() => validateSensitiveRegex("  "), /正则敏感词不能为空/);
+  assert.throws(() => validateSensitiveRegex("x".repeat(129)), /不能超过 128 个字符/);
+  assert.throws(() => validateSensitiveRegex("英雄([("), /正则表达式无效/);
+  const pattern = validateSensitiveRegex("英[-.·]?雄");
+  assert.equal(pattern.flags.includes("i"), true);
+});
+
+test("matcher skips invalid regex words at load instead of throwing", () => {
+  const matcher = buildSensitiveWordMatcher([], ["英雄([(", "外[-—]?挂"]);
+  assert.equal(matcher.regexPatterns.length, 1);
+  assert.equal(matcher.match("挖个外-挂"), "外[-—]?挂");
 });
 
 test("intercept requires detect; turning detect off clears intercept", () => {
@@ -284,7 +314,10 @@ test("employee relay scans for sensitive words before acquiring quota", () => {
   const lib = readFileSync(resolve(root, "src/lib/relay/sensitive-words.ts"), "utf8");
   const chat = readFileSync(resolve(root, "src/routes/relay/chat-completions.ts"), "utf8");
   const anthropic = readFileSync(resolve(root, "src/routes/relay/anthropic-messages.ts"), "utf8");
-  assert.match(lib, /if \(!config\.detectEnabled \|\| matcher\.needles\.length === 0\)/);
+  assert.match(
+    lib,
+    /if \(!config\.detectEnabled \|\| \(matcher\.needles\.length === 0 && matcher\.regexPatterns\.length === 0\)\)/,
+  );
   assert.match(lib, /record: true/);
   assert.match(lib, /intercept: config\.interceptEnabled/);
   assert.match(chat, /evaluateSensitiveRequest/);
@@ -334,7 +367,7 @@ test("super-admin 敏感词检测 submenu is wired into the console", () => {
   assert.match(words, /命中次数/);
   assert.match(words, /TABLE_PAGE_SIZE/);
   assert.match(words, /\/api\/admin\/sensitive-words\/import/);
-  assert.match(words, /http\.delete\("\/api\/admin\/sensitive-words", \{ data: \{ word \} \}\)/);
+  assert.match(words, /http\.delete\("\/api\/admin\/sensitive-words", \{\s*data: \{ word, matchType \},\s*\}\)/);
   assert.doesNotMatch(words, /class="page-title"/);
   assert.match(hits, /\/api\/admin\/sensitive-word-hits/);
   assert.match(hits, /命中词/);

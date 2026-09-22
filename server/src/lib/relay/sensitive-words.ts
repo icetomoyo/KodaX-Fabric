@@ -9,6 +9,9 @@ export const SENSITIVE_WORDS_SETTING_KEY = "sensitive_words";
 export const ZHIPU_SENSITIVE_CONTENT_CODE = "1301";
 export const MAX_SENSITIVE_WORD_LENGTH = 64;
 export const MAX_SENSITIVE_WORD_COUNT = 10_000;
+/** 正则词型：单条长度与总条数上限（管理员录入，控制 ReDoS 暴露面）。 */
+export const MAX_REGEX_WORD_LENGTH = 128;
+export const MAX_REGEX_WORD_COUNT = 200;
 const CACHE_TTL_MS = 5_000;
 /** 单个字符串贡献给扫描文本的上限：超长字符串保留首尾各半，中段不扫描（有界 CPU 的既知取舍）。 */
 const MAX_SCAN_STRING_LENGTH = 100_000;
@@ -24,7 +27,11 @@ export type SensitiveWordsConfig = {
   detectEnabled: boolean;
   interceptEnabled: boolean;
   words: string[];
+  /** 正则词型：对付「英-雄」式标点混淆的抗规避词，独立于包含词，见 validateSensitiveRegex。 */
+  regexWords: string[];
 };
+
+export type SensitiveWordMatchType = "contains" | "regex";
 
 /** 预归一化词表条目：needle 用于匹配，word 是命中间报与记录用的原始词。 */
 export type CompiledSensitiveNeedle = {
@@ -40,6 +47,7 @@ export type SensitiveRequestEvaluation = {
 
 export type SensitiveWordRow = {
   word: string;
+  matchType: SensitiveWordMatchType;
   hitCount: number;
 };
 
@@ -234,13 +242,14 @@ export function patchSensitiveWordFlags(
 
 export function parseSensitiveWordsConfig(value: unknown): SensitiveWordsConfig {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return { detectEnabled: true, interceptEnabled: false, words: [] };
+    return { detectEnabled: true, interceptEnabled: false, words: [], regexWords: [] };
   }
   const record = value as {
     enabled?: unknown;
     detectEnabled?: unknown;
     interceptEnabled?: unknown;
     words?: unknown;
+    regexWords?: unknown;
   };
   const detectEnabled =
     record.detectEnabled === false
@@ -252,6 +261,7 @@ export function parseSensitiveWordsConfig(value: unknown): SensitiveWordsConfig 
   return {
     ...resolveSensitiveWordFlags({ detectEnabled, interceptEnabled }),
     words: uniqueWords(Array.isArray(record.words) ? record.words : []),
+    regexWords: uniqueRegexWords(Array.isArray(record.regexWords) ? record.regexWords : []),
   };
 }
 
@@ -271,6 +281,36 @@ export function sortSensitiveWordRows(
 
 export function uniqueWords(words: unknown[]): string[] {
   return compileSensitiveWords(words).map((item) => item.word);
+}
+
+export function uniqueRegexWords(words: unknown[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of words) {
+    if (typeof raw !== "string") continue;
+    const trimmed = raw.trim();
+    if (!trimmed || trimmed.length > MAX_REGEX_WORD_LENGTH) continue;
+    if (seen.has(trimmed)) continue;
+    seen.add(trimmed);
+    out.push(trimmed);
+  }
+  return out;
+}
+
+/** 正则词型只面向管理员录入，长度与数量封顶以控制 ReDoS 暴露面；大小写不敏感。 */
+export function validateSensitiveRegex(source: string): RegExp {
+  const trimmed = source.trim();
+  if (!trimmed) {
+    throw new SensitiveWordsError(400, "正则敏感词不能为空");
+  }
+  if (trimmed.length > MAX_REGEX_WORD_LENGTH) {
+    throw new SensitiveWordsError(400, `正则敏感词不能超过 ${MAX_REGEX_WORD_LENGTH} 个字符`);
+  }
+  try {
+    return new RegExp(trimmed, "i");
+  } catch {
+    throw new SensitiveWordsError(400, "正则表达式无效");
+  }
 }
 
 /**
@@ -293,21 +333,40 @@ export function compileSensitiveWords(words: unknown[]): CompiledSensitiveNeedle
 }
 
 /**
- * 预编译匹配器：词表归一化 + AC 自动机在缓存构建时一次完成，
- * 热路径按文本长度线性匹配，成本与词数无关（1 万词 × 256K 文本仍在毫秒级）。
+ * 预编译匹配器：包含词走 AC 自动机（归一化文本，成本与词数无关）；
+ * 正则词在 AC 未命中后对原始段文本逐条 test（大小写不敏感）。
+ * 写入路径已校验正则；加载时再兜底跳过手工改库产生的无效正则。
  */
 export type SensitiveWordMatcher = {
   needles: readonly CompiledSensitiveNeedle[];
+  regexPatterns: readonly { source: string; pattern: RegExp }[];
   match(haystack: string): string | null;
 };
 
-export function buildSensitiveWordMatcher(words: unknown[]): SensitiveWordMatcher {
+export function buildSensitiveWordMatcher(
+  words: unknown[],
+  regexWords: unknown[] = [],
+): SensitiveWordMatcher {
   const needles = compileSensitiveWords(words);
   const nodes = buildAhoCorasick(needles);
+  const regexPatterns: { source: string; pattern: RegExp }[] = [];
+  for (const source of uniqueRegexWords(regexWords)) {
+    try {
+      regexPatterns.push({ source, pattern: new RegExp(source, "i") });
+    } catch (error) {
+      console.error("[sensitive-words] invalid regex word skipped:", source, error);
+    }
+  }
   return {
     needles,
+    regexPatterns,
     match(haystack: string): string | null {
-      return acMatch(normalizeSensitiveNeedle(haystack), nodes);
+      const acHit = acMatch(normalizeSensitiveNeedle(haystack), nodes);
+      if (acHit) return acHit;
+      for (const { source, pattern } of regexPatterns) {
+        if (pattern.test(haystack)) return source;
+      }
+      return null;
     },
   };
 }
@@ -436,7 +495,7 @@ async function loadSensitiveWordsCacheEntry(): Promise<CacheEntry> {
 function buildCacheEntry(config: SensitiveWordsConfig, now: number): CacheEntry {
   return {
     config,
-    matcher: buildSensitiveWordMatcher(config.words),
+    matcher: buildSensitiveWordMatcher(config.words, config.regexWords),
     expiresAt: now + CACHE_TTL_MS,
   };
 }
@@ -445,7 +504,7 @@ export async function evaluateSensitiveRequest(
   body: unknown,
 ): Promise<SensitiveRequestEvaluation | null> {
   const { config, matcher } = await loadSensitiveWordsCacheEntry();
-  if (!config.detectEnabled || matcher.needles.length === 0) {
+  if (!config.detectEnabled || (matcher.needles.length === 0 && matcher.regexPatterns.length === 0)) {
     return null;
   }
   for (const text of extractUserScanTexts(body)) {
@@ -461,10 +520,27 @@ export async function evaluateSensitiveRequest(
   return null;
 }
 
-export async function addSensitiveWord(word: string): Promise<SensitiveWordsConfig> {
+export async function addSensitiveWord(
+  word: string,
+  matchType: SensitiveWordMatchType = "contains",
+): Promise<SensitiveWordsConfig> {
   const trimmed = word.trim();
   if (!trimmed) {
     throw new SensitiveWordsError(400, "敏感词不能为空");
+  }
+  const current = await readConfigFromDb();
+  if (matchType === "regex") {
+    validateSensitiveRegex(trimmed);
+    if (current.regexWords.includes(trimmed)) {
+      throw new SensitiveWordsError(409, "该正则敏感词已存在");
+    }
+    if (current.regexWords.length >= MAX_REGEX_WORD_COUNT) {
+      throw new SensitiveWordsError(400, `正则敏感词最多 ${MAX_REGEX_WORD_COUNT} 个`);
+    }
+    if (current.words.length + current.regexWords.length + 1 > MAX_SENSITIVE_WORD_COUNT) {
+      throw new SensitiveWordsError(400, `敏感词最多 ${MAX_SENSITIVE_WORD_COUNT} 个`);
+    }
+    return writeConfig({ ...current, regexWords: [...current.regexWords, trimmed] });
   }
   if (trimmed.length > MAX_SENSITIVE_WORD_LENGTH) {
     throw new SensitiveWordsError(400, `敏感词不能超过 ${MAX_SENSITIVE_WORD_LENGTH} 个字符`);
@@ -473,11 +549,10 @@ export async function addSensitiveWord(word: string): Promise<SensitiveWordsConf
   if (!key) {
     throw new SensitiveWordsError(400, "敏感词不能为空");
   }
-  const current = await readConfigFromDb();
   if (current.words.some((item) => normalizeSensitiveNeedle(item) === key)) {
     throw new SensitiveWordsError(409, "该敏感词已存在");
   }
-  if (current.words.length >= MAX_SENSITIVE_WORD_COUNT) {
+  if (current.words.length + current.regexWords.length >= MAX_SENSITIVE_WORD_COUNT) {
     throw new SensitiveWordsError(400, `敏感词最多 ${MAX_SENSITIVE_WORD_COUNT} 个`);
   }
   return writeConfig({ ...current, words: [...current.words, trimmed] });
@@ -511,10 +586,18 @@ export async function listSensitiveWords(query: SensitiveWordListQuery): Promise
   const config = await loadSensitiveWordsConfig();
   const counts = await loadHitCounts();
   const ranked = sortSensitiveWordRows(
-    config.words.map((word) => ({
-      word,
-      hitCount: counts.get(normalizeSensitiveNeedle(word)) ?? 0,
-    })),
+    [
+      ...config.words.map((word) => ({
+        word,
+        matchType: "contains" as const,
+        hitCount: counts.get(normalizeSensitiveNeedle(word)) ?? 0,
+      })),
+      ...config.regexWords.map((word) => ({
+        word,
+        matchType: "regex" as const,
+        hitCount: counts.get(normalizeSensitiveNeedle(word)) ?? 0,
+      })),
+    ],
     query.sort,
     query.order,
   );
@@ -552,10 +635,22 @@ async function loadHitCounts(): Promise<Map<string, number>> {
   return counts;
 }
 
-export async function removeSensitiveWord(word: string): Promise<SensitiveWordsConfig> {
-  const key = normalizeSensitiveNeedle(word.trim());
-  if (!key) throw new SensitiveWordsError(400, "敏感词不能为空");
+export async function removeSensitiveWord(
+  word: string,
+  matchType: SensitiveWordMatchType = "contains",
+): Promise<SensitiveWordsConfig> {
+  const trimmed = word.trim();
+  if (!trimmed) throw new SensitiveWordsError(400, "敏感词不能为空");
   const current = await readConfigFromDb();
+  if (matchType === "regex") {
+    const regexWords = current.regexWords.filter((item) => item !== trimmed);
+    if (regexWords.length === current.regexWords.length) {
+      throw new SensitiveWordsError(404, "正则敏感词不存在");
+    }
+    return writeConfig({ ...current, regexWords });
+  }
+  const key = normalizeSensitiveNeedle(trimmed);
+  if (!key) throw new SensitiveWordsError(400, "敏感词不能为空");
   const words = current.words.filter((item) => normalizeSensitiveNeedle(item) !== key);
   if (words.length === current.words.length) {
     throw new SensitiveWordsError(404, "敏感词不存在");
@@ -587,6 +682,7 @@ async function writeConfig(config: SensitiveWordsConfig): Promise<SensitiveWords
   const next: SensitiveWordsConfig = {
     ...resolveSensitiveWordFlags(config),
     words: uniqueWords(config.words),
+    regexWords: uniqueRegexWords(config.regexWords ?? []),
   };
   const now = new Date();
   await db

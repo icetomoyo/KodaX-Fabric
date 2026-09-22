@@ -112,8 +112,8 @@
 
 - `loadSensitiveWordsConfig` 抛错会 500 在配额之前【已修复完成】：`loadSensitiveWordsCacheEntry` 增加 fail-open——DB 读失败且存在旧缓存时降级用旧配置并打日志，配 2 秒短退避避免每请求都打故障库；从未成功加载过才抛回。仅扫请求体不扫响应流的现状不变。
 - 命中记录同步 await INSERT【已修复完成】：两个 relay 接入点改为 `void recordSensitiveWordHit(…).catch(log)`（上游 `void logBlockedRequest()` 同款），含摘要/预览的第二次遍历一并移出关键路径；进程退出瞬间可能丢最后一条记录，属 best-effort 可接受。
-- 抗规避增强（regex 词型）【缓期，有明确方案】：上游的 regex 匹配类型（如 `b[a@4]d`）是对付「英-雄」式标点混淆的正规出路。现无需求（内置词库已删、管理员词表无抗规避诉求），现在实现属投机通用性；实现时按「词表条目支持 matchType + 导入/管理界面选择类型 + 无效正则跳过并记日志」设计。
-- 清理 `team_admin` 僵尸角色【缓期，独立一轮】：2026-09-22 摸底补充——`team_members.role` 有现役读取方（`org.ts:40` 权限范围、`invite-contacts.ts:357` 通知团队管理员），web 端有完整登录/角色/会话代码（auth store、roles.ts、session-storage、home.ts、LoginView 共 5 文件），服务端 5 个测试文件覆盖。它是横跨登录与权限语义的功能面而非死代码，清理=特性级重构（PG 枚举值删除需重建类型迁移），生产 1027 人零使用但代码面广，须单独排期。另注：`teams`/`team_members` 是团队层取消后被挪用的部门成员连接表（现役），勿当作废弃表清理。
+- 抗规避增强（regex 词型）【已修复完成（2026-09-22）】：配置新增 `regexWords`（单条 ≤128 字符、上限 200 条控制 ReDoS 暴露面）；`buildSensitiveWordMatcher` 在 AC 未命中后对原始段文本逐条 test（`i` 标志）；管理端添加词可选「包含/正则」，录入校验无效正则（400）、加载兜底跳过并记日志；命中优先级包含词 → 正则词。测试 24/24（新增规避命中、校验拒绝、加载跳过三组）。
+- 清理 `team_admin` 僵尸角色【缓期，独立一轮】：横跨登录与权限语义的功能面（web 5 文件 + 服务端 5 个测试文件 + org/invite-contacts 现役读取方），需含 PG 枚举重建迁移的特性级重构，证据见前述摸底记录。
 - 多实例缓存 5 秒 TTL 延迟【已修复完成】：实现 Redis pub/sub 失效广播（参考上游双通道模式）——`writeConfig` 后 publish，各实例订阅后立即清词表缓存与命中计数缓存；订阅/发布全部 fail-open，Redis 不可用时退化为纯 TTL；单实例部署广播发给自己无害。
 - `xlsx@0.18.5` CVE【已修复完成】：换 `exceljs@4.4.0`（维护中、无已知 CVE），`.xls` 旧格式不再支持（报「请使用 .xlsx 格式的表格」，与 `.doc`→`.docx` 同款引导）；`@types/pdf-parse`（v1 类型配 v2 实现，实际未引用）一并移除。
 - `users?q=` 的 `%`/`_` 未转义【已修复完成】：`adminUserListWhere` 对 q 做 `replace(/[\\%_]/g, "\\$&")`，ilike 通配符按普通字符匹配。

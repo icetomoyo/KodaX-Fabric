@@ -47,20 +47,22 @@ export async function adminSensitiveWordRoutes(app: FastifyInstance) {
   app.post("/api/admin/sensitive-words", async (req, reply) => {
     const body = z
       .object({
-        word: z.string().trim().min(1).max(64),
+        word: z.string().trim().min(1).max(128),
+        matchType: z.enum(["contains", "regex"]).optional(),
       })
       .safeParse(req.body);
     if (!body.success) {
       return reply.code(400).send({ success: false, message: "敏感词不能为空" });
     }
+    const matchType = body.data.matchType ?? "contains";
     try {
-      const data = await addSensitiveWord(body.data.word);
+      const data = await addSensitiveWord(body.data.word, matchType);
       await writeOpsAudit({
         actorEmployeeId: req.employeeId,
         action: "sensitive_words.add",
         targetType: "sensitive_word",
         targetId: body.data.word.trim(),
-        detail: { word: body.data.word.trim() },
+        detail: { word: body.data.word.trim(), matchType },
         ip: req.ip,
       });
       return { success: true, data };
@@ -127,20 +129,31 @@ export async function adminSensitiveWordRoutes(app: FastifyInstance) {
       req.query && typeof req.query === "object" && !Array.isArray(req.query)
         ? (req.query as { word?: unknown }).word
         : undefined;
-    const parsed = z.object({ word: z.string().trim().min(1) }).safeParse({
-      word: bodyWord ?? queryWord,
-    });
+    const bodyMatchType =
+      req.body && typeof req.body === "object" && !Array.isArray(req.body)
+        ? (req.body as { matchType?: unknown }).matchType
+        : undefined;
+    const parsed = z
+      .object({
+        word: z.string().trim().min(1),
+        matchType: z.enum(["contains", "regex"]).optional(),
+      })
+      .safeParse({
+        word: bodyWord ?? queryWord,
+        matchType: bodyMatchType,
+      });
     if (!parsed.success) {
       return reply.code(400).send({ success: false, message: "敏感词不能为空" });
     }
+    const matchType = parsed.data.matchType ?? "contains";
     try {
-      const data = await removeSensitiveWord(parsed.data.word);
+      const data = await removeSensitiveWord(parsed.data.word, matchType);
       await writeOpsAudit({
         actorEmployeeId: req.employeeId,
         action: "sensitive_words.delete",
         targetType: "sensitive_word",
         targetId: parsed.data.word,
-        detail: { word: parsed.data.word },
+        detail: { word: parsed.data.word, matchType },
         ip: req.ip,
       });
       return { success: true, data };

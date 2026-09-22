@@ -1,10 +1,14 @@
 <template>
   <el-card shadow="never" class="sensitive-page">
     <div class="toolbar">
+      <el-select v-model="draftType" class="type-select" style="width: 120px">
+        <el-option label="包含匹配" value="contains" />
+        <el-option label="正则匹配" value="regex" />
+      </el-select>
       <el-input
         v-model="draft"
-        placeholder="输入敏感词，例如 英雄联盟"
-        maxlength="64"
+        :placeholder="draftType === 'regex' ? '输入正则，例如 英[-—.·]?雄' : '输入敏感词，例如 英雄联盟'"
+        :maxlength="draftType === 'regex' ? 128 : 64"
         show-word-limit
         clearable
         @keyup.enter="addWord"
@@ -30,10 +34,17 @@
       @sort-change="onSortChange"
     >
       <el-table-column prop="word" label="敏感词" min-width="240" sortable="custom" show-overflow-tooltip />
+      <el-table-column label="类型" width="96">
+        <template #default="{ row }">
+          <el-tag :type="row.matchType === 'regex' ? 'warning' : 'info'" size="small" effect="plain">
+            {{ row.matchType === "regex" ? "正则" : "包含" }}
+          </el-tag>
+        </template>
+      </el-table-column>
       <el-table-column prop="hitCount" label="命中次数" width="120" sortable="custom" />
       <el-table-column label="操作" width="88" align="right">
         <template #default="{ row }">
-          <el-button link type="danger" @click="removeWord(row.word)">删除</el-button>
+          <el-button link type="danger" @click="removeWord(row.word, row.matchType)">删除</el-button>
         </template>
       </el-table-column>
     </el-table>
@@ -59,6 +70,7 @@ import { TABLE_PAGE_SIZE } from "@/lib/table-page";
 
 type SensitiveWordRow = {
   word: string;
+  matchType: "contains" | "regex";
   hitCount: number;
 };
 
@@ -69,6 +81,7 @@ const total = ref(0);
 const page = ref(1);
 const limit = TABLE_PAGE_SIZE;
 const draft = ref("");
+const draftType = ref<"contains" | "regex">("contains");
 const sort = ref<"hitCount" | "word">("hitCount");
 const order = ref<"asc" | "desc">("desc");
 
@@ -113,7 +126,10 @@ async function addWord() {
   if (!word || saving.value) return;
   saving.value = true;
   try {
-    const { data } = await http.post("/api/admin/sensitive-words", { word });
+    const { data } = await http.post("/api/admin/sensitive-words", {
+      word,
+      matchType: draftType.value,
+    });
     if (!data.success) throw new Error(data.message || "添加失败");
     draft.value = "";
     ElMessage.success(`已添加「${word}」`);
@@ -125,18 +141,24 @@ async function addWord() {
   }
 }
 
-async function removeWord(word: string) {
+async function removeWord(word: string, matchType: "contains" | "regex" = "contains") {
   try {
-    await ElMessageBox.confirm(`删除敏感词「${word}」？`, "删除敏感词", {
-      type: "warning",
-      confirmButtonText: "删除",
-      cancelButtonText: "取消",
-    });
+    await ElMessageBox.confirm(
+      `删除${matchType === "regex" ? "正则" : ""}敏感词「${word}」？`,
+      "删除敏感词",
+      {
+        type: "warning",
+        confirmButtonText: "删除",
+        cancelButtonText: "取消",
+      },
+    );
   } catch {
     return;
   }
   try {
-    const { data } = await http.delete("/api/admin/sensitive-words", { data: { word } });
+    const { data } = await http.delete("/api/admin/sensitive-words", {
+      data: { word, matchType },
+    });
     if (!data.success) throw new Error(data.message || "删除失败");
     ElMessage.success("已删除");
     await load();
