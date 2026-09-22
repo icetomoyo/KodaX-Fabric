@@ -74,16 +74,26 @@ test("fillHourCounts always returns 24 buckets", () => {
   assert.equal(hours[0]?.totalTokens, 0);
 });
 
-test("user analytics rank query groups request audits by employee for the day", async () => {
+test("user analytics rank query reads the daily usage counters", async () => {
   const { buildUserAnalyticsRankQuery } = await import("../src/routes/admin/user-analytics.js");
-  const compiled = buildUserAnalyticsRankQuery(
-    new Date("2026-09-18T16:00:00.000Z"),
-    new Date("2026-09-19T16:00:00.000Z"),
-  ).toSQL();
-  const sql = compiled.sql.replace(/\s+/g, " ");
-  assert.match(sql, /"request_audits"/);
-  assert.match(sql, /group by/);
-  assert.match(sql, /sum\("request_audits"\."total_tokens"\)/);
+  const compiled = buildUserAnalyticsRankQuery("2026-09-18").toSQL();
+  const sqlText = compiled.sql.replace(/\s+/g, " ");
+  assert.match(sqlText, /"usage_counters_daily"/);
+  assert.match(
+    sqlText,
+    /inner join "employees" on "usage_counters_daily"\."employee_id" = "employees"\."id"/,
+  );
+  assert.doesNotMatch(sqlText, /"request_audits"/);
+  assert.doesNotMatch(sqlText, /group by/);
+  assert.equal(compiled.params.includes("2026-09-18"), true);
+});
+
+test("migrate backfills usage_counters_daily from historical request audits", async () => {
+  const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+  const migrateSource = readFileSync(resolve(root, "src/db/migrate.ts"), "utf8");
+  assert.match(migrateSource, /INSERT INTO usage_counters_daily/);
+  assert.match(migrateSource, /FROM request_audits ra/);
+  assert.match(migrateSource, /ON CONFLICT \(day, employee_id\) DO UPDATE/);
 });
 
 test("user analytics routes expose ranks and require a session", async () => {

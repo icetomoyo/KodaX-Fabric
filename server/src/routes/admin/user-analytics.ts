@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import { and, desc, eq, gte, lt, sql } from "drizzle-orm";
+import { and, desc, eq, gt, gte, lt, sql } from "drizzle-orm";
 import { z } from "zod";
 import { env } from "../../config.js";
 import { db } from "../../db/client.js";
@@ -7,6 +7,7 @@ import {
   employees,
   enterprises,
   requestAudits,
+  usageCountersDaily,
 } from "../../db/schema/index.js";
 import {
   computeRequestCredits,
@@ -53,7 +54,12 @@ const departmentNameSql = sql<string | null>`(
   limit 1
 )`;
 
-export function buildUserAnalyticsRankQuery(start: Date, endExclusive: Date) {
+/**
+ * 排名读 writeRelayAudit 事务内维护的 usage_counters_daily 预聚合表
+ * （与 request_audits 同事务写入、同 quota-day 口径），一次索引扫描替代
+ * 对审计大表的当天全量 GROUP BY。totalTokens > 0 对应旧查询的 HAVING。
+ */
+export function buildUserAnalyticsRankQuery(day: string) {
   return db
     .select({
       employeeId: employees.id,
@@ -62,30 +68,22 @@ export function buildUserAnalyticsRankQuery(start: Date, endExclusive: Date) {
       usageTier: employees.usageTier,
       enterpriseName: enterprises.name,
       departmentName: departmentNameSql,
-      promptTokens: sql<number>`coalesce(sum(${requestAudits.promptTokens}), 0)`,
-      completionTokens: sql<number>`coalesce(sum(${requestAudits.completionTokens}), 0)`,
-      totalTokens: sql<number>`coalesce(sum(${requestAudits.totalTokens}), 0)`,
-      requestCount: sql<number>`count(*)::int`,
-      errorCount: sql<number>`count(*) filter (where ${requestAudits.status} <> 'success')::int`,
+      promptTokens: usageCountersDaily.promptTokens,
+      completionTokens: usageCountersDaily.completionTokens,
+      totalTokens: usageCountersDaily.totalTokens,
+      requestCount: usageCountersDaily.requestCount,
+      errorCount: usageCountersDaily.errorCount,
     })
-    .from(requestAudits)
-    .innerJoin(employees, eq(requestAudits.employeeId, employees.id))
+    .from(usageCountersDaily)
+    .innerJoin(employees, eq(usageCountersDaily.employeeId, employees.id))
     .leftJoin(enterprises, eq(employees.enterpriseId, enterprises.id))
     .where(and(
-      gte(requestAudits.createdAt, start),
-      lt(requestAudits.createdAt, endExclusive),
+      eq(usageCountersDaily.day, day),
+      gt(usageCountersDaily.totalTokens, 0),
     ))
-    .groupBy(
-      employees.id,
-      employees.name,
-      employees.phone,
-      employees.usageTier,
-      enterprises.name,
-    )
-    .having(sql`coalesce(sum(${requestAudits.totalTokens}), 0) > 0`)
     .orderBy(
-      desc(sql`coalesce(sum(${requestAudits.totalTokens}), 0)`),
-      desc(sql`count(*)`),
+      desc(usageCountersDaily.totalTokens),
+      desc(usageCountersDaily.requestCount),
       employees.id,
     )
     .limit(50);
@@ -111,8 +109,7 @@ export async function adminUserAnalyticsRoutes(app: FastifyInstance) {
       return reply.code(400).send({ success: false, message: "日期无效" });
     }
 
-    const { start, endExclusive } = zonedDateRange(day, day, env.QUOTA_TIMEZONE);
-    const ranks = (await buildUserAnalyticsRankQuery(start, endExclusive)).map((row, index) => ({
+    const ranks = (await buildUserAnalyticsRankQuery(day)).map((row, index) => ({
       rank: index + 1,
       employeeId: row.employeeId,
       name: row.name,

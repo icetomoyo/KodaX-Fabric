@@ -103,6 +103,27 @@ async function main() {
     WHERE uc.product_line_id = pl.id
       AND p.code = 'glm'
   `;
+  // 历史审计行早于 usage_counters_daily 的写入代码时，该日没有计数行；
+  // 从 request_audits 全量重算并 upsert，幂等，保证预聚合表覆盖全部历史。
+  await client`
+    INSERT INTO usage_counters_daily
+      (day, employee_id, prompt_tokens, completion_tokens, total_tokens, request_count, error_count)
+    SELECT (ra.created_at AT TIME ZONE ${env.QUOTA_TIMEZONE})::date,
+           ra.employee_id,
+           coalesce(sum(coalesce(ra.prompt_tokens, 0)), 0),
+           coalesce(sum(coalesce(ra.completion_tokens, 0)), 0),
+           coalesce(sum(coalesce(ra.total_tokens, 0)), 0),
+           count(*)::int,
+           count(*) FILTER (WHERE ra.status <> 'success')::int
+    FROM request_audits ra
+    GROUP BY 1, 2
+    ON CONFLICT (day, employee_id) DO UPDATE SET
+      prompt_tokens = excluded.prompt_tokens,
+      completion_tokens = excluded.completion_tokens,
+      total_tokens = excluded.total_tokens,
+      request_count = excluded.request_count,
+      error_count = excluded.error_count
+  `;
   await client.end();
   console.log("Migrations complete");
 }

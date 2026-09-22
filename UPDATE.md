@@ -56,7 +56,12 @@
 - **决策**（二选一，需产品确认）：在 TempChannelsView 补回「批量登记席位 / 批量挂 KEY」入口；或明确下线，删除两个后端接口和 `bulk-seat-keys.ts`。
 - **验收**：入口可用（或接口与死代码删净），CHANGELOG 同步更新。
 
-### P1-3 用户分析排名改读预聚合表
+### P1-3 用户分析排名改读预聚合表【已修复完成】
+
+> **修复说明（2026-09-22）**：`buildUserAnalyticsRankQuery(day)` 改读 `usage_counters_daily`（唯一索引 `day + employee_id`，一次索引扫描），旧查询对 `request_audits` 的当天全量 GROUP BY、`HAVING totalTokens > 0`、排序与 Top-50 语义全部保留（`WHERE total_tokens > 0`、`ORDER BY total_tokens DESC, request_count DESC, id`）。
+> **本地验证（127.0.0.1 开发库，注意是小规模开发数据）**：开发库存在「有审计、无计数」的历史日期（计数维护代码上线前写入的审计行），据此在 `migrate.ts` 增加了幂等回填（按 `QUOTA_TIMEZONE` 从 `request_audits` 全量重算并 `ON CONFLICT DO UPDATE`）；本地回填后新旧查询逐员工等价。
+> **生产预检与数据清理（10.10.0.144，2026-09-22，经用户确认）**：审计表 353,798 行，重叠区间 887 个「天×员工」聚合对六字段零差异；本地发现的「有审计无计数」缺口生产不存在（回填为等值重写的空操作）。生产存在反向残留——8-28～8-31 的计数行（建库时导入的历史聚合，含上亿 token）与 8-31 晚 23:02～23:38 的 45 行试跑审计。按用户口径「数据从 9 月 1 日开始记录」，已删除 9 月前数据（先备份至本地 `/tmp/kodax-144-pre-sep-backup/`）：usage_counters_daily 31 行、usage_counters_team_daily 30 行、request_audits 45 行、request_error_logs 44 行；四表现在均从 9-01 开始。删除后重跑等价性：**22 天、889 对、diff = 0**，新旧查询在生产完全等价、零行为变化。ops_audit_logs（4,209 行，最早 8-27）为管理员操作留痕，未纳入本次清理。
+> **验证**：`user-analytics.test.ts` 9/9（排名 SQL 形状断言更新 + 新增回填存在性断言）；全量套件 0 fail；tsc 通过。
 
 - **现象**：`server/src/routes/admin/user-analytics.ts:56-92` 每次加载/切日期对 `request_audits` 做全天全量 GROUP BY；而 `writeRelayAudit` 已维护口径一致的 `usage_counters_daily`（唯一索引 `day + employee_id`，见 `server/src/lib/relay/audit.ts:187-204`）。
 - **修复**：排名查询改读 `usage_counters_daily`，一次索引扫描替代全天重聚合。
