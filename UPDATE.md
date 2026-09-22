@@ -91,8 +91,11 @@
 
 ### 语义 / 误报
 
-- **P2-9 跨字符串粘接误报**：`normalizeSensitiveNeedle` 删全部空白 + `collectRequestText` 用 `\n` 拼接，相邻字段值可能粘成敏感词（现有「不粘接」测试只是被 role/type 字符串隔开的巧合）。开了拦截会挡正常请求。修复方向（参考上游 `src/lib/message-extractor.ts`）：按字符串分段提取、分段独立匹配，不拼接。「空格插空规避」发生在单段文本内部，分段不影响该测试的兼容性。
-- **P2-10 base64 图片数据进扫描文本**：英文短词会在 base64 里随机出现造成误报。当前内置词库无 ≤3 字符 ASCII 词暂时安全，自定义导入英文短词后暴露。修复方向（参考上游）：提取时只取 block 的 `text`/`content` 字段，`image_url` 等其他字段天然不进扫描，顺带省掉扫 tools/metadata 的开销。**口径警告**：上游只扫 `role='user'` + system，直接照抄会打开「敏感词藏进 assistant 历史」的绕过口（多轮对话诱导模型复述后下轮携带）；建议扫描范围保留 user + system + 最后一轮 assistant，或明确记录所接受的口径。
+- **P2-9 跨字符串粘接误报**【已修复完成】：`normalizeSensitiveNeedle` 删全部空白 + `collectRequestText` 用 `\n` 拼接，相邻字段值可能粘成敏感词（现有「不粘接」测试只是被 role/type 字符串隔开的巧合）。开了拦截会挡正常请求。修复方向（参考上游 `src/lib/message-extractor.ts`）：按字符串分段提取、分段独立匹配，不拼接。「空格插空规避」发生在单段文本内部，分段不影响该测试的兼容性。**修复（2026-09-22，与 P2-10 合并实现）**：见 P2-10 的口径决策与实现——分段独立匹配后粘接从机制上不可能。
+- **P2-10 base64 图片数据进扫描文本**【已修复完成】：英文短词会在 base64 里随机出现造成误报。当前内置词库无 ≤3 字符 ASCII 词暂时安全，自定义导入英文短词后暴露。修复方向（参考上游）：提取时只取 block 的 `text`/`content` 字段，`image_url` 等其他字段天然不进扫描，顺带省掉扫 tools/metadata 的开销。**口径警告**：上游只扫 `role='user'` + system，直接照抄会打开「敏感词藏进 assistant 历史」的绕过口（多轮对话诱导模型复述后下轮携带）；建议扫描范围保留 user + system + 最后一轮 assistant，或明确记录所接受的口径。**修复（2026-09-22）**：
+  - **口径决策（用户拍板）**：只扫 `role=user` 消息——检测对象是员工输入行为，敏感词进入对话的源头必然经过 user 消息；system 是客户端模板、assistant 历史不是员工输入。附加收益：长对话不再反复重扫 assistant 历史里的历史命中（原实现一旦某轮命中，后续每个请求都重复记录）。**已知并接受的残留缺口**：诱导模型产出敏感内容后藏于 assistant 历史。
+  - **实现**：新 `extractUserScanTexts(body)` 覆盖三种协议（chat `messages` / responses `input` 含字符串形式），只取 user 消息 content 的 `text`/`content` 字段；每段独立截断（单段 10 万字符）+ 段级总量首尾窗口（25.6 万）；`evaluateSensitiveRequest` / `findSensitiveWordInRequest` / `excerptForSensitiveHit` 全部改为分段匹配，摘录取命中所在段。旧 `collectStrings` / `collectRequestText` / `joinScanParts` 删除。
+  - **验证**：`sensitive-words.test.ts` 21/21（新增三协议排除断言、跨块不粘接、分段后单消息空格插空仍命中）；全量 523/523；tsc 通过。
 - **P2-11 `weeklyCreditLimit = 0` 恒判 weekly**【已修复完成】：`web/src/lib/keys-board-cooling.ts:47-53` 补 `limit > 0` 条件，并补该分支与中文排除项的测试。**修复（2026-09-22）**：守卫已加；新增 3 组测试（limit=0 落 5h / limit=100 达 95% 判 weekly / 未达判 5h；bare 错误码路径；使用上限·余额不足·套餐到期/失效排除 + null/空串）。
 
 ### 文档 / 清理

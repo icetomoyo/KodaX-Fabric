@@ -14,9 +14,9 @@ import { createRequire } from "node:module";
 
 const {
   buildSensitiveWordMatcher,
-  collectRequestText,
   compileSensitiveWords,
   excerptForSensitiveHit,
+  extractUserScanTexts,
   findSensitiveWord,
   findSensitiveWordInRequest,
   parseSensitiveWordsConfig,
@@ -102,15 +102,15 @@ test("requests beyond the total scan budget keep head and tail windows only", ()
     return { messages: [{ role: "user", content: blocks }] };
   };
   const plain = { messages: [{ role: "user", content: Array.from({ length: 40 }, () => unit) }] };
-  const bounded = collectRequestText(plain);
+  const bounded = extractUserScanTexts(plain).join("\n");
   assert.ok(bounded.length > 0 && bounded.length <= 257_000);
   assert.equal(findSensitiveWordInRequest(blocksWithWordAt(0), ["英雄联盟"]), "英雄联盟");
   assert.equal(findSensitiveWordInRequest(blocksWithWordAt(39), ["英雄联盟"]), "英雄联盟");
   assert.equal(findSensitiveWordInRequest(blocksWithWordAt(20), ["英雄联盟"]), null);
 });
 
-test("collectRequestText scans chat, responses, and anthropic content blocks", () => {
-  const chat = collectRequestText({
+test("user scan texts cover three protocols and exclude non-user content", () => {
+  const chat = extractUserScanTexts({
     model: "glm-5.3",
     messages: [
       {
@@ -122,21 +122,47 @@ test("collectRequestText scans chat, responses, and anthropic content blocks", (
       },
     ],
   });
-  assert.match(chat, /我们去玩英雄联盟/);
+  // 只取 text 字段：base64 图片数据不进扫描
+  assert.deepEqual(chat, ["我们去玩英雄联盟"]);
 
-  const responses = collectRequestText({
+  const responses = extractUserScanTexts({
     model: "glm-5.3",
     input: [{ role: "user", content: [{ type: "input_text", text: "英雄联盟" }] }],
   });
-  assert.match(responses, /英雄联盟/);
+  assert.deepEqual(responses, ["英雄联盟"]);
 
-  const anthropic = collectRequestText({
+  // 口径决策（2026-09-22）：只扫 role=user，system 模板与 assistant 历史不扫
+  const anthropic = extractUserScanTexts({
     model: "glm-5.3",
     system: "你是助手",
-    messages: [{ role: "user", content: [{ type: "text", text: "今晚开黑英雄联盟" }] }],
+    messages: [
+      { role: "user", content: [{ type: "text", text: "今晚开黑英雄联盟" }] },
+      { role: "assistant", content: [{ type: "text", text: "英雄联盟真好玩" }] },
+    ],
   });
-  assert.match(anthropic, /今晚开黑英雄联盟/);
-  assert.match(anthropic, /你是助手/);
+  assert.deepEqual(anthropic, ["今晚开黑英雄联盟"]);
+});
+
+test("segments are scanned independently and never glue across blocks", () => {
+  const body = {
+    messages: [
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "英雄" },
+          { type: "text", text: "联盟" },
+        ],
+      },
+    ],
+  };
+  const texts = extractUserScanTexts(body);
+  assert.deepEqual(texts, ["英雄", "联盟"]);
+  assert.equal(findSensitiveWordInRequest(body, ["英雄联盟"]), null);
+});
+
+test("single-message space evasion still matches after segmented extraction", () => {
+  const body = { messages: [{ role: "user", content: "英 雄 联 盟" }] };
+  assert.equal(findSensitiveWordInRequest(body, ["英雄联盟"]), "英雄联盟");
 });
 
 test("extractWordsFromText reads one word per line and strips markdown markers", () => {

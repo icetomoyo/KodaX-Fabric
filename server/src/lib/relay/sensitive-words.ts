@@ -88,22 +88,24 @@ export function zhipuSensitiveContentError(): {
 }
 
 export function excerptForSensitiveHit(body: unknown, word: string): string {
-  const text = collectRequestText(body);
-  if (!text) return "";
-  if (text.length <= MAX_EXCERPT_LENGTH) return text;
-  const needle = word.trim();
-  const idx = text.toLowerCase().indexOf(needle.toLowerCase());
+  const texts = extractUserScanTexts(body);
+  const needle = word.trim().toLowerCase();
+  const haystack = (needle && texts.find((text) => text.toLowerCase().includes(needle)))
+    || texts.join("\n…\n");
+  if (!haystack) return "";
+  if (haystack.length <= MAX_EXCERPT_LENGTH) return haystack;
+  const idx = haystack.toLowerCase().indexOf(needle);
   if (idx < 0) {
     const half = Math.floor((MAX_EXCERPT_LENGTH - 3) / 2);
-    const fallback = `${text.slice(0, half)}\n…\n${text.slice(-half)}`;
+    const fallback = `${haystack.slice(0, half)}\n…\n${haystack.slice(-half)}`;
     return fallback.length <= MAX_EXCERPT_LENGTH ? fallback : fallback.slice(0, MAX_EXCERPT_LENGTH);
   }
   const radius = Math.max(0, Math.floor((MAX_EXCERPT_LENGTH - needle.length - 2) / 2));
   const start = Math.max(0, idx - radius);
-  const end = Math.min(text.length, idx + needle.length + radius);
-  let excerpt = text.slice(start, end);
+  const end = Math.min(haystack.length, idx + needle.length + radius);
+  let excerpt = haystack.slice(start, end);
   if (start > 0) excerpt = `…${excerpt}`;
-  if (end < text.length) excerpt = `${excerpt}…`;
+  if (end < haystack.length) excerpt = `${excerpt}…`;
   return excerpt.length <= MAX_EXCERPT_LENGTH ? excerpt : excerpt.slice(0, MAX_EXCERPT_LENGTH);
 }
 
@@ -114,7 +116,15 @@ export function requestPreviewForSensitiveHit(body: unknown): unknown {
     if (json.length <= MAX_PREVIEW_JSON) return truncated;
     return { truncated: true, text: json.slice(0, MAX_PREVIEW_JSON) };
   } catch {
-    return { truncated: true, text: collectRequestText(body).slice(0, MAX_PREVIEW_JSON) };
+    return { truncated: true, text: safePreviewText(body) };
+  }
+}
+
+function safePreviewText(body: unknown): string {
+  try {
+    return JSON.stringify(body)?.slice(0, MAX_PREVIEW_JSON) ?? "";
+  } catch {
+    return "";
   }
 }
 
@@ -265,10 +275,86 @@ export function buildSensitiveWordMatcher(words: unknown[]): SensitiveWordMatche
   };
 }
 
-export function collectRequestText(body: unknown): string {
-  const parts: string[] = [];
-  collectStrings(body, parts);
-  return joinScanParts(parts);
+/**
+ * 提取参与敏感词扫描的用户消息文本段（2026-09-22 口径决策：只扫 role=user）。
+ * 检测对象是员工输入——敏感词进入对话的源头必然经过 user 消息；system 是客户端模板、
+ * assistant 历史与 tools/metadata 不属于员工输入，不进扫描（同时消除长对话重复命中）。
+ * 每段独立扫描、互不拼接：跨字段粘接不再可能产生误报；段与段之间也不存在
+ * 「空格插空规避」的兼容问题（该规避发生在单段文本内部，分段后仍然命中）。
+ * 已知并接受的残留缺口：诱导模型产出敏感内容后藏于 assistant 历史，不在扫描范围。
+ */
+export function extractUserScanTexts(body: unknown): string[] {
+  const texts: string[] = [];
+  if (!body || typeof body !== "object") return texts;
+  const record = body as Record<string, unknown>;
+  if (typeof record.input === "string") {
+    pushScanText(record.input, texts);
+  }
+  for (const key of ["messages", "input"] as const) {
+    const list = record[key];
+    if (!Array.isArray(list)) continue;
+    for (const message of list) {
+      if (!message || typeof message !== "object" || Array.isArray(message)) continue;
+      if ((message as Record<string, unknown>).role !== "user") continue;
+      pushMessageContent((message as Record<string, unknown>).content, texts);
+    }
+  }
+  return capScanTexts(texts);
+}
+
+function pushMessageContent(content: unknown, texts: string[]): void {
+  if (typeof content === "string") {
+    pushScanText(content, texts);
+    return;
+  }
+  if (!Array.isArray(content)) return;
+  for (const block of content) {
+    if (typeof block === "string") {
+      pushScanText(block, texts);
+      continue;
+    }
+    if (!block || typeof block !== "object") continue;
+    const blockRecord = block as Record<string, unknown>;
+    // 只取文本字段：image_url 等其他 block 天然不进扫描（base64 误报源头）
+    if (typeof blockRecord.text === "string") pushScanText(blockRecord.text, texts);
+    else if (typeof blockRecord.content === "string") pushScanText(blockRecord.content, texts);
+  }
+}
+
+function pushScanText(text: string, texts: string[]): void {
+  if (text.length > 0) texts.push(truncateForScan(text));
+}
+
+/** 段级总量上限：超限时保留首尾窗口（段间独立匹配，无需分隔符防粘接）。 */
+function capScanTexts(texts: string[]): string[] {
+  let total = 0;
+  for (const text of texts) total += text.length;
+  if (total <= MAX_SCAN_TOTAL_LENGTH) return texts;
+  const half = Math.floor(MAX_SCAN_TOTAL_LENGTH / 2);
+  const head: string[] = [];
+  let headLength = 0;
+  for (const text of texts) {
+    if (headLength + text.length > half) {
+      const remaining = half - headLength;
+      if (remaining > 0) head.push(text.slice(0, remaining));
+      break;
+    }
+    head.push(text);
+    headLength += text.length;
+  }
+  const tail: string[] = [];
+  let tailLength = 0;
+  for (let i = texts.length - 1; i >= 0; i -= 1) {
+    const text = texts[i];
+    if (tailLength + text.length > half) {
+      const remaining = half - tailLength;
+      if (remaining > 0) tail.unshift(text.slice(-remaining));
+      break;
+    }
+    tail.unshift(text);
+    tailLength += text.length;
+  }
+  return [...head, ...tail];
 }
 
 export function findSensitiveWord(haystack: string, words: string[]): string | null {
@@ -277,7 +363,12 @@ export function findSensitiveWord(haystack: string, words: string[]): string | n
 
 export function findSensitiveWordInRequest(body: unknown, words: string[]): string | null {
   if (words.length === 0) return null;
-  return findSensitiveWord(collectRequestText(body), words);
+  const matcher = buildSensitiveWordMatcher(words);
+  for (const text of extractUserScanTexts(body)) {
+    const word = matcher.match(text);
+    if (word) return word;
+  }
+  return null;
 }
 
 export async function loadSensitiveWordsConfig(): Promise<SensitiveWordsConfig> {
@@ -308,13 +399,17 @@ export async function evaluateSensitiveRequest(
   if (!config.detectEnabled || matcher.needles.length === 0) {
     return null;
   }
-  const word = matcher.match(collectRequestText(body));
-  if (!word) return null;
-  return {
-    word,
-    record: true,
-    intercept: config.interceptEnabled,
-  };
+  for (const text of extractUserScanTexts(body)) {
+    const word = matcher.match(text);
+    if (word) {
+      return {
+        word,
+        record: true,
+        intercept: config.interceptEnabled,
+      };
+    }
+  }
+  return null;
 }
 
 export async function addSensitiveWord(word: string): Promise<SensitiveWordsConfig> {
@@ -463,60 +558,10 @@ async function writeConfig(config: SensitiveWordsConfig): Promise<SensitiveWords
   return next;
 }
 
-function collectStrings(value: unknown, parts: string[]): void {
-  if (typeof value === "string") {
-    if (value.length > 0) parts.push(truncateForScan(value));
-    return;
-  }
-  if (Array.isArray(value)) {
-    for (const item of value) collectStrings(item, parts);
-    return;
-  }
-  if (!value || typeof value !== "object") return;
-  for (const item of Object.values(value as Record<string, unknown>)) {
-    collectStrings(item, parts);
-  }
-}
-
 function truncateForScan(text: string): string {
   if (text.length <= MAX_SCAN_STRING_LENGTH) return text;
   const half = Math.floor(MAX_SCAN_STRING_LENGTH / 2);
   return `${text.slice(0, half)}\n…\n${text.slice(-half)}`;
-}
-
-/**
- * 拼接并限制扫描文本总量：超限时保留首尾两个窗口，
- * 窗口之间插入省略号分隔，避免窗口边界把两个词粘成误匹配。
- */
-function joinScanParts(parts: string[]): string {
-  let total = 0;
-  for (const part of parts) total += part.length;
-  if (total <= MAX_SCAN_TOTAL_LENGTH) return parts.join("\n");
-  const half = Math.floor(MAX_SCAN_TOTAL_LENGTH / 2);
-  const headParts: string[] = [];
-  let headLength = 0;
-  for (const part of parts) {
-    if (headLength + part.length > half) {
-      const remaining = half - headLength;
-      if (remaining > 0) headParts.push(part.slice(0, remaining));
-      break;
-    }
-    headParts.push(part);
-    headLength += part.length;
-  }
-  const tailParts: string[] = [];
-  let tailLength = 0;
-  for (let i = parts.length - 1; i >= 0; i -= 1) {
-    const part = parts[i];
-    if (tailLength + part.length > half) {
-      const remaining = half - tailLength;
-      if (remaining > 0) tailParts.unshift(part.slice(-remaining));
-      break;
-    }
-    tailParts.unshift(part);
-    tailLength += part.length;
-  }
-  return `${headParts.join("\n")}\n…\n${tailParts.join("\n")}`;
 }
 
 type AcNode = { next: Map<string, number>; fail: number; words: string[] };
