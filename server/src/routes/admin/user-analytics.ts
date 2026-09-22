@@ -108,6 +108,9 @@ export async function adminUserAnalyticsRoutes(app: FastifyInstance) {
     if (!day) {
       return reply.code(400).send({ success: false, message: "日期无效" });
     }
+    if (day > today) {
+      return reply.code(400).send({ success: false, message: "日期不能晚于今天" });
+    }
 
     const ranks = (await buildUserAnalyticsRankQuery(day)).map((row, index) => ({
       rank: index + 1,

@@ -68,3 +68,33 @@ test("1310 is never classified as a short rate-limit lane", () => {
   assert.equal(isShortRateLimitCooling("[1308] You have reached the 5-hour usage limit."), false);
   assert.equal(isShortRateLimitCooling("HTTP 429：上游限流，凭证已进入冷却"), true);
 });
+
+test("weekly quota heuristic needs a positive limit", () => {
+  assert.equal(
+    coolingLaneFromLastError({ lastError: "HTTP 429", weeklyCreditLimit: 0, weeklyCredits: 0 }),
+    "cooling_5h",
+  );
+  assert.equal(
+    coolingLaneFromLastError({ lastError: "HTTP 429", weeklyCreditLimit: 100, weeklyCredits: 95 }),
+    "cooling_weekly",
+  );
+  assert.equal(
+    coolingLaneFromLastError({ lastError: "HTTP 429", weeklyCreditLimit: 100, weeklyCredits: 20 }),
+    "cooling_5h",
+  );
+});
+
+test("bare vendor code without brackets is recognized", () => {
+  assert.equal(vendorCodeFromLastError("错误码 1319：quota exceeded"), "1319");
+  assert.equal(vendorCodeFromLastError("no code here"), null);
+});
+
+test("quota and plan-expiry wording never enters the rate-limit lane", () => {
+  assert.equal(isShortRateLimitCooling(null), false);
+  assert.equal(isShortRateLimitCooling(""), false);
+  assert.equal(isShortRateLimitCooling("429 已达到使用上限"), false);
+  assert.equal(isShortRateLimitCooling("429 余额不足"), false);
+  assert.equal(isShortRateLimitCooling("429 套餐已到期"), false);
+  assert.equal(isShortRateLimitCooling("429 套餐已失效"), false);
+  assert.equal(isShortRateLimitCooling("429 上游限流"), true);
+});

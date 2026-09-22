@@ -20,7 +20,6 @@ import {
   addSensitiveWords,
   listSensitiveWords,
   removeSensitiveWord,
-  setSensitiveWordsEnabled,
   SensitiveWordsError,
 } from "../../lib/relay/sensitive-words.js";
 import { requireRoles, requireSession } from "../../middleware/auth.js";
@@ -119,33 +118,6 @@ export async function adminSensitiveWordRoutes(app: FastifyInstance) {
     }
   });
 
-  app.patch("/api/admin/sensitive-words", async (req, reply) => {
-    const body = z.object({ enabled: z.boolean() }).safeParse(req.body);
-    if (!body.success) {
-      return reply.code(400).send({ success: false, message: "参数无效" });
-    }
-    try {
-      const data = await setSensitiveWordsEnabled(body.data.enabled);
-      await writeOpsAudit({
-        actorEmployeeId: req.employeeId,
-        action: "sensitive_words.update",
-        targetType: "sensitive_word",
-        targetId: "config",
-        detail: {
-          detectEnabled: data.detectEnabled,
-          interceptEnabled: data.interceptEnabled,
-        },
-        ip: req.ip,
-      });
-      return { success: true, data };
-    } catch (error) {
-      if (error instanceof SensitiveWordsError) {
-        return reply.code(error.status).send({ success: false, message: error.message });
-      }
-      throw error;
-    }
-  });
-
   app.delete("/api/admin/sensitive-words", async (req, reply) => {
     const bodyWord =
       req.body && typeof req.body === "object" && !Array.isArray(req.body)
@@ -180,8 +152,8 @@ export async function adminSensitiveWordRoutes(app: FastifyInstance) {
     }
   });
 
-  app.get("/api/admin/sensitive-word-hits", async (req) => {
-    const query = z
+  app.get("/api/admin/sensitive-word-hits", async (req, reply) => {
+    const parsed = z
       .object({
         limit: z.coerce.number().int().min(1).max(200).default(10),
         offset: z.coerce.number().min(0).default(0),
@@ -189,7 +161,11 @@ export async function adminSensitiveWordRoutes(app: FastifyInstance) {
         matchedWord: z.string().trim().min(1).max(64).optional(),
         action: z.enum(["detect", "intercept"]),
       })
-      .parse(req.query);
+      .safeParse(req.query);
+    if (!parsed.success) {
+      return reply.code(400).send({ success: false, message: "参数无效" });
+    }
+    const query = parsed.data;
     const conditions = [eq(sensitiveWordHits.action, query.action)];
     if (query.employeeId) conditions.push(eq(sensitiveWordHits.employeeId, query.employeeId));
     if (query.matchedWord) conditions.push(eq(sensitiveWordHits.matchedWord, query.matchedWord));

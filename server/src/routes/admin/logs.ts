@@ -74,8 +74,8 @@ export async function adminLogRoutes(app: FastifyInstance) {
   app.addHook("preHandler", requireSession);
   app.addHook("preHandler", requireRoles("admin"));
 
-  app.get("/api/admin/logs", async (req) => {
-    const query = z
+  app.get("/api/admin/logs", async (req, reply) => {
+    const parsed = z
       .object({
         limit: z.coerce.number().min(1).max(200).default(50),
         offset: z.coerce.number().min(0).default(0),
@@ -92,7 +92,11 @@ export async function adminLogRoutes(app: FastifyInstance) {
         tokensOp: compareOp.optional(),
         tokens: optionalNonNegInt,
       })
-      .parse(req.query);
+      .safeParse(req.query);
+    if (!parsed.success) {
+      return reply.code(400).send({ success: false, message: "参数无效" });
+    }
+    const query = parsed.data;
 
     const conditions: SQL[] = [];
 

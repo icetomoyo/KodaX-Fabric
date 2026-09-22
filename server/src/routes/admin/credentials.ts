@@ -1779,13 +1779,17 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
     },
   );
 
-  app.get("/api/admin/credentials", async (req) => {
-    const query = z
+  app.get("/api/admin/credentials", async (req, reply) => {
+    const parsed = z
       .object({
         productLineId: z.coerce.number().optional(),
         status: z.string().optional(),
       })
-      .parse(req.query);
+      .safeParse(req.query);
+    if (!parsed.success) {
+      return reply.code(400).send({ success: false, message: "参数无效" });
+    }
+    const query = parsed.data;
 
     const rows = await db
       .select({

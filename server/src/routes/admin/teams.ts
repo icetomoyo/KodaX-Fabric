@@ -173,12 +173,16 @@ export async function adminTeamRoutes(app: FastifyInstance) {
   app.addHook("preHandler", requireRoles("admin", "org_admin", "dept_admin", "team_admin"));
 
   app.get("/api/admin/teams", async (req, reply) => {
-    const query = z
+    const parsed = z
       .object({
         enterpriseId: z.coerce.number().int().positive().optional(),
         departmentId: z.coerce.number().int().positive().optional(),
       })
-      .parse(req.query);
+      .safeParse(req.query);
+    if (!parsed.success) {
+      return reply.code(400).send({ success: false, message: "参数无效" });
+    }
+    const query = parsed.data;
     const actor = await actorFrom(req);
     const adminTeamIds = actor.role === "team_admin"
       ? await scopedTeamIds({ teamIds: req.session!.teamIds, employeeId: actor.employeeId })

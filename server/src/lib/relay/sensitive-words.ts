@@ -279,10 +279,6 @@ export function findSensitiveWordInRequest(body: unknown, words: string[]): stri
   return findSensitiveWord(collectRequestText(body), words);
 }
 
-export function invalidateSensitiveWordsCache(): void {
-  cache = null;
-}
-
 export async function loadSensitiveWordsConfig(): Promise<SensitiveWordsConfig> {
   return (await loadSensitiveWordsCacheEntry()).config;
 }
@@ -302,11 +298,6 @@ function buildCacheEntry(config: SensitiveWordsConfig, now: number): CacheEntry 
     matcher: buildSensitiveWordMatcher(config.words),
     expiresAt: now + CACHE_TTL_MS,
   };
-}
-
-export async function findSensitiveHit(body: unknown): Promise<string | null> {
-  const hit = await evaluateSensitiveRequest(body);
-  return hit?.word ?? null;
 }
 
 export async function evaluateSensitiveRequest(
@@ -421,10 +412,6 @@ export async function updateSensitiveWordFlags(patch: {
     ...current,
     ...patchSensitiveWordFlags(current, patch),
   });
-}
-
-export async function setSensitiveWordsEnabled(enabled: boolean): Promise<SensitiveWordsConfig> {
-  return updateSensitiveWordFlags({ interceptEnabled: enabled });
 }
 
 async function readConfigFromDb(): Promise<SensitiveWordsConfig> {

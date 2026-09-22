@@ -26,8 +26,8 @@ export async function adminOpsAuditRoutes(app: FastifyInstance) {
   app.addHook("preHandler", requireSession);
   app.addHook("preHandler", requireRoles("admin"));
 
-  app.get("/api/admin/ops-audit", async (req) => {
-    const query = z
+  app.get("/api/admin/ops-audit", async (req, reply) => {
+    const parsed = z
       .object({
         limit: z.coerce.number().min(1).max(200).default(50),
         offset: z.coerce.number().min(0).default(0),
@@ -36,7 +36,11 @@ export async function adminOpsAuditRoutes(app: FastifyInstance) {
         from: z.string().optional(),
         to: z.string().optional(),
       })
-      .parse(req.query);
+      .safeParse(req.query);
+    if (!parsed.success) {
+      return reply.code(400).send({ success: false, message: "参数无效" });
+    }
+    const query = parsed.data;
 
     const conditions = [];
     if (query.action) conditions.push(eq(opsAuditLogs.action, query.action));

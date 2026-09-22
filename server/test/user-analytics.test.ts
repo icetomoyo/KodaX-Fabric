@@ -96,6 +96,13 @@ test("migrate backfills usage_counters_daily from historical request audits", as
   assert.match(migrateSource, /ON CONFLICT \(day, employee_id\) DO UPDATE/);
 });
 
+test("user analytics rejects future days instead of throwing in zonedDateRange", async () => {
+  const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+  const source = readFileSync(resolve(root, "src/routes/admin/user-analytics.ts"), "utf8");
+  assert.match(source, /day > today/);
+  assert.match(source, /日期不能晚于今天/);
+});
+
 test("user analytics routes expose ranks and require a session", async () => {
   const app = Fastify();
   await app.register(adminUserAnalyticsRoutes);

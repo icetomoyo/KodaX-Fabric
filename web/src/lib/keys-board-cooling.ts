@@ -47,6 +47,7 @@ export function coolingLaneFromLastError(input: {
   if (
     input.weeklyCreditLimit != null
     && Number.isFinite(input.weeklyCreditLimit)
+    && input.weeklyCreditLimit > 0
     && (input.weeklyCredits ?? 0) >= input.weeklyCreditLimit * 0.95
   ) {
     return "cooling_weekly";

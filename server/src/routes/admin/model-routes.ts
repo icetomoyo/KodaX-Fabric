@@ -13,8 +13,8 @@ export async function adminModelRouteRoutes(app: FastifyInstance) {
   app.addHook("preHandler", requireSession);
   app.addHook("preHandler", requireRoles("admin"));
 
-  app.get("/api/admin/model-routes", async (req) => {
-    const query = z
+  app.get("/api/admin/model-routes", async (req, reply) => {
+    const parsed = z
       .object({
         clientModel: z.string().optional(),
         enabled: z
@@ -22,7 +22,11 @@ export async function adminModelRouteRoutes(app: FastifyInstance) {
           .optional()
           .transform((v) => (v === undefined ? undefined : v === "true")),
       })
-      .parse(req.query);
+      .safeParse(req.query);
+    if (!parsed.success) {
+      return reply.code(400).send({ success: false, message: "参数无效" });
+    }
+    const query = parsed.data;
 
     const rows = await db
       .select({

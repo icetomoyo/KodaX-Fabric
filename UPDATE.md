@@ -77,8 +77,8 @@
 - **P2-2 当日明细 5000 条静默截断**：`user-analytics.ts:252-262` 无 ORDER BY 无截断标记，大概率取最早 5000 条、恰好截掉 14–18 点高峰，且与全量 KPI 并排对不上账。加排序 + 截断标记（前端提示估算值）。
 - **P2-3 coolUntil 测试路径覆盖 relay 语义**：`credentials.ts:576-580` 管理员「测试」成功时 `coolUntil: null` 会清掉 relay 刚写的冷却，失败时直接缩短；relay 侧 `upstream.ts:460` 用 `greatest()` 只延长。对齐：测试路径不清不缩 relay 写入的冷却。
 - **P2-4 前端请求竞态**：`UserAnalyticsView.vue` 的 `load()` 无请求序号保护（旧响应回滚新状态，该接口一次跑 7 个聚合 SQL）；`SettingsView.vue` PATCH 期间开关未禁用，乱序响应致 UI 与后端相反。统一加「只认最后一次请求」守卫 / patching 状态。
-- **P2-5 `day=9999-12-31` 返回 500**：`user-analytics.ts:39-43` → `zonedDateRange` 抛错未捕获。校验 day 不得晚于今天。
-- **P2-6 hits 列表用 `.parse()` 而非 `.safeParse()`**：`server/src/routes/admin/sensitive-words.ts:204`，缺 `action` 参数得 500 而非 400；`logs.ts` 既有同类一并改。
+- **P2-5 `day=9999-12-31` 返回 500**【已修复完成】：`user-analytics.ts:39-43` → `zonedDateRange` 抛错未捕获。校验 day 不得晚于今天。**修复（2026-09-22）**：GET 处理器增加 `day > today` 早退返回 400「日期不能晚于今天」（ISO 字符串比较），附源码断言测试。
+- **P2-6 hits 列表用 `.parse()` 而非 `.safeParse()`**【已修复完成】：`server/src/routes/admin/sensitive-words.ts:204`，缺 `action` 参数得 500 而非 400；`logs.ts` 既有同类一并改。**修复（2026-09-22）**：实际全仓排查发现 **7 处**同类（credentials / logs / model-routes / teams / ops-audit / sensitive-words hits / users），全部改为 safeParse + 400「参数无效」守卫，其中 5 个处理器补了缺失的 `reply` 参数。
 
 ### 性能
 
@@ -89,12 +89,12 @@
 
 - **P2-9 跨字符串粘接误报**：`normalizeSensitiveNeedle` 删全部空白 + `collectRequestText` 用 `\n` 拼接，相邻字段值可能粘成敏感词（现有「不粘接」测试只是被 role/type 字符串隔开的巧合）。开了拦截会挡正常请求。修复方向（参考上游 `src/lib/message-extractor.ts`）：按字符串分段提取、分段独立匹配，不拼接。「空格插空规避」发生在单段文本内部，分段不影响该测试的兼容性。
 - **P2-10 base64 图片数据进扫描文本**：英文短词会在 base64 里随机出现造成误报。当前内置词库无 ≤3 字符 ASCII 词暂时安全，自定义导入英文短词后暴露。修复方向（参考上游）：提取时只取 block 的 `text`/`content` 字段，`image_url` 等其他字段天然不进扫描，顺带省掉扫 tools/metadata 的开销。**口径警告**：上游只扫 `role='user'` + system，直接照抄会打开「敏感词藏进 assistant 历史」的绕过口（多轮对话诱导模型复述后下轮携带）；建议扫描范围保留 user + system + 最后一轮 assistant，或明确记录所接受的口径。
-- **P2-11 `weeklyCreditLimit = 0` 恒判 weekly**：`web/src/lib/keys-board-cooling.ts:47-53` 补 `limit > 0` 条件，并补该分支与中文排除项的测试。
+- **P2-11 `weeklyCreditLimit = 0` 恒判 weekly**【已修复完成】：`web/src/lib/keys-board-cooling.ts:47-53` 补 `limit > 0` 条件，并补该分支与中文排除项的测试。**修复（2026-09-22）**：守卫已加；新增 3 组测试（limit=0 落 5h / limit=100 达 95% 判 weekly / 未达判 5h；bare 错误码路径；使用上限·余额不足·套餐到期/失效排除 + null/空串）。
 
 ### 文档 / 清理
 
-- **P2-12 CHANGELOG Unreleased 旧条与现状矛盾**：第 58-59 行仍写「三级联动筛选」「报错日志按 Request ID/企业/部门筛选」，实际已改为按人搜索。更新条目。
-- **P2-13 死代码清理**：`findSensitiveHit`、`invalidateSensitiveWordsCache`（均无调用方）；`ModelRoutesView.vue`/`ProvidersView.vue`（路由已 redirect）；`setSensitiveWordsEnabled` + `PATCH /api/admin/sensitive-words {enabled}`（`enabled` 实为 interceptEnabled，误用即全站拦截，前端已走 settings 接口，直接删）。
+- **P2-12 CHANGELOG Unreleased 旧条与现状矛盾**【已修复完成】：第 58-59 行仍写「三级联动筛选」「报错日志按 Request ID/企业/部门筛选」，实际已改为按人搜索。更新条目。**修复（2026-09-22）**：修正 4 条矛盾条目——调用日志/报错日志两条改为「按员工搜索（远程搜人）」现状；另发现并修正 P1-2 遗留的两条已下线批量席位描述（「批量挂 KEY」「批量添加按姓名+手机号」），Unreleased 现与代码一致。
+- **P2-13 死代码清理**【已修复完成】：`findSensitiveHit`、`invalidateSensitiveWordsCache`（均无调用方）；`ModelRoutesView.vue`/`ProvidersView.vue`（路由已 redirect）；`setSensitiveWordsEnabled` + `PATCH /api/admin/sensitive-words {enabled}`（`enabled` 实为 interceptEnabled，误用即全站拦截，前端已走 settings 接口，直接删）。**修复（2026-09-22）**：四块全部删除，全仓 grep 零残留，web 完整构建（vue-tsc + vite）通过证明视图无引用。备注：`/api/admin/model-routes` 后端接口仍在（不在本条范围），若确认下线可另行清理。
 - **P2-14 `sensitive_word_hits.employee_id` 外键 ON DELETE no action**：删除有命中记录的员工会被阻塞。需产品决策：cascade、删人前归档、或限制删人。
 - **P2-15 姓名筛选只滤 Top-50**：榜外员工搜不到。服务端加关键字参数，或复用 `/api/admin/users?q=` 远程选人。
 - **P2-16 web `npm run build`（vue-tsc）在 dev 上已损坏**【已修复完成】：ErrorLogsView.vue:266 / LogsView.vue:510 / SensitiveHitsView.vue:238 三处 `rows.some((row) => …)` 的 `row` implicit any（2026-09-21 视图重写引入，2026-09-22 验证 P1-2 时发现）。镜像构建走 `build:image`（纯 vite）不受影响，但本地 `npm run build` 失败且类型检查失效。**修复（2026-09-22）**：三处 `const rows` 显式标注 `EmployeeOption[]`（与映射形状一致，源头类型化）。验证：`npm run build`（vue-tsc -b && vite build）完整通过，全量服务端套件无回归。

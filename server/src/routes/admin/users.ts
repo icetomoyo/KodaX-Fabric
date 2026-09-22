@@ -284,7 +284,7 @@ export async function adminUserRoutes(app: FastifyInstance) {
   app.addHook("preHandler", requireRoles("admin", "org_admin", "dept_admin", "team_admin"));
 
   app.get("/api/admin/users", async (req, reply) => {
-    const query = z
+    const parsed = z
       .object({
         limit: z.coerce.number().min(1).max(200).default(50),
         offset: z.coerce.number().min(0).default(0),
@@ -293,7 +293,11 @@ export async function adminUserRoutes(app: FastifyInstance) {
         enterpriseId: z.coerce.number().int().positive().optional(),
         departmentId: z.coerce.number().int().positive().optional(),
       })
-      .parse(req.query);
+      .safeParse(req.query);
+    if (!parsed.success) {
+      return reply.code(400).send({ success: false, message: "参数无效" });
+    }
+    const query = parsed.data;
 
     const scope = resolveUserListScope(
       { role: req.session!.role, enterpriseId: req.session!.enterpriseId },
