@@ -9,8 +9,10 @@ import {
   upstreamCredentials,
 } from "../../db/schema/index.js";
 import {
+  catalogModelTags,
   groupDiscoveredModelsByChannel,
   lastUsedAtForCatalogModel,
+  type CatalogModelTag,
 } from "../../lib/discovered-models.js";
 import { addCalendarDays, quotaDayAt, zonedDayStart } from "../../lib/quota-time.js";
 import { defaultCreditRateFor, type ModelCreditRate } from "../../lib/relay/credit-cost.js";
@@ -72,6 +74,7 @@ export type CatalogModelEntry = {
   lastUsedAt: Date | null;
   seenInLast30Days: boolean;
   creditRate: ModelCreditRate | null;
+  tags: CatalogModelTag[];
 };
 
 export function toCatalogModelEntry(
@@ -83,5 +86,6 @@ export function toCatalogModelEntry(
     lastUsedAt,
     seenInLast30Days: lastUsedAt != null,
     creditRate: defaultCreditRateFor(model),
+    tags: catalogModelTags(model),
   };
 }

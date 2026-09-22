@@ -184,7 +184,7 @@ test("cooling mixed with a permanently unavailable credential produces 503 class
   assert.equal(result.retryAfterSeconds, null);
 });
 
-test("glm provider only accepts glm-5.3, glm-5.3-flash and glm-5.3-flashx", () => {
+test("glm provider only accepts glm-5.3 and glm-5.3-flash", () => {
   const denied = resolveRelayCandidatesFromSnapshot(
     [credential(11, 1, { providerCode: "glm", meta: { discoveredModels: ["glm-4.6", "glm-5.3"] } })],
     [],
@@ -222,8 +222,8 @@ test("glm provider only accepts glm-5.3, glm-5.3-flash and glm-5.3-flashx", () =
     "openai_chat",
     1,
   );
-  assert.equal(flashx.unavailableReason, null);
-  assert.equal(flashx.candidates[0]?.upstreamModel, "glm-5.3-flashx");
+  assert.deepEqual(flashx.candidates, []);
+  assert.equal(flashx.unavailableReason, "model_not_allowed");
 });
 
 test("deepseek provider only accepts deepseek-flash", () => {

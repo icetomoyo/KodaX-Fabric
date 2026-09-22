@@ -30,7 +30,7 @@ import {
   RELAY_PROTOCOLS,
   type RelayProtocol,
 } from "../lib/relay/protocol.js";
-import { groupDiscoveredModelsByChannel } from "../lib/discovered-models.js";
+import { catalogModelTags, groupDiscoveredModelsByChannel } from "../lib/discovered-models.js";
 import {
   isEmployeeSubmittedCredentialMeta,
   issueEmployeeSubmitTestProof,
@@ -734,7 +734,9 @@ export async function meRoutes(app: FastifyInstance) {
     const channels = accessible.map((channel) => {
       const models = [...new Set(
         channel.memberProductLineIds.flatMap((id) => groupedById.get(id)?.models ?? []),
-      )].sort((left, right) => left.localeCompare(right));
+      )]
+        .sort((left, right) => left.localeCompare(right))
+        .map((model) => ({ model, tags: catalogModelTags(model) }));
       return {
         id: channel.productLineId,
         name: channel.productLineName,

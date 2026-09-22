@@ -22,7 +22,7 @@
           <div>
             <h3 class="models-title">{{ currentChannel?.name || "模型" }}</h3>
             <p class="muted" v-if="currentChannel?.providerCode === 'glm'">
-              {{ catalog.length }} 个模型。积分按每 1 万 Token 计；文本归到 glm-5.3，多模态归到 glm-5.3-flash / glm-5.3-flashx
+              {{ catalog.length }} 个模型。积分按每 1 万 Token 计；文本归到 glm-5.3，多模态归到 glm-5.3-flash
             </p>
             <p class="muted" v-else>{{ catalog.length }} 个模型。自定义渠道不按智谱积分计量</p>
           </div>
@@ -38,9 +38,22 @@
         />
 
         <el-table :data="pagedCatalog" stripe empty-text="该渠道暂无已发现模型">
-          <el-table-column label="模型" min-width="200">
+          <el-table-column label="模型" min-width="280">
             <template #default="{ row }">
-              <span class="model-name" :title="row.model">{{ row.model }}</span>
+              <div class="model-cell">
+                <span class="model-name" :title="row.model">{{ row.model }}</span>
+                <span v-if="row.tags?.length" class="capability-tags">
+                  <el-tag
+                    v-for="tag in row.tags"
+                    :key="tag"
+                    size="small"
+                    effect="plain"
+                    type="info"
+                  >
+                    {{ tag }}
+                  </el-tag>
+                </span>
+              </div>
             </template>
           </el-table-column>
           <el-table-column label="积分消耗（每 1 万 Token）" align="center">
@@ -110,6 +123,7 @@ type ChannelModel = {
   lastUsedAt: string | null;
   seenInLast30Days: boolean;
   creditRate: CreditRate | null;
+  tags?: string[];
 };
 
 function formatOffPeak(value: string): string {
@@ -287,10 +301,24 @@ onMounted(load);
   margin-bottom: 12px;
 }
 
+.model-cell {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
 .model-name {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 13px;
   font-weight: 600;
+}
+
+.capability-tags {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
 }
 
 .credit-cell {

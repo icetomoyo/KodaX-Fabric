@@ -35,13 +35,24 @@
         />
 
         <el-table :data="pagedCatalog" stripe empty-text="该渠道暂无可用模型">
-          <el-table-column label="模型" min-width="220">
+          <el-table-column label="模型" min-width="520">
             <template #default="{ row }">
               <div class="model-cell">
-                <button type="button" class="model-id" @click="copyModel(row.model)">
+                <button type="button" class="model-id" :title="row.model" @click="copyModel(row.model)">
                   {{ row.model }}
                 </button>
-                <el-button link type="primary" @click="copyModel(row.model)">复制</el-button>
+                <el-button class="copy-btn" link type="primary" @click="copyModel(row.model)">复制</el-button>
+                <span v-if="row.tags?.length" class="capability-tags">
+                  <el-tag
+                    v-for="tag in row.tags"
+                    :key="tag"
+                    size="small"
+                    effect="plain"
+                    :class="tagClass(tag)"
+                  >
+                    {{ tag }}
+                  </el-tag>
+                </span>
               </div>
             </template>
           </el-table-column>
@@ -69,6 +80,7 @@ import { useTablePage } from "@/lib/table-page";
 
 type CatalogModel = {
   model: string;
+  tags?: string[];
 };
 
 type CatalogChannel = {
@@ -101,6 +113,13 @@ const {
   resetPage: resetCatalogPage,
 } = useTablePage(catalog);
 watch(selectedChannelId, resetCatalogPage);
+
+function tagClass(tag: string): string {
+  if (tag === "图片") return "tag-image";
+  if (tag === "视频") return "tag-video";
+  if (tag === "文件") return "tag-file";
+  return "tag-text";
+}
 
 function channelLabel(channel: Pick<CatalogChannel, "providerName" | "name">): string {
   const company = channel.providerName.trim();
@@ -259,12 +278,15 @@ onMounted(load);
 
 .model-cell {
   display: flex;
+  flex-wrap: nowrap;
   align-items: center;
   gap: 8px;
   min-width: 0;
 }
 
 .model-id {
+  flex: 0 0 18ch;
+  width: 18ch;
   overflow: hidden;
   margin: 0;
   padding: 0;
@@ -278,6 +300,41 @@ onMounted(load);
   text-overflow: ellipsis;
   white-space: nowrap;
   cursor: pointer;
+}
+
+.copy-btn {
+  flex-shrink: 0;
+}
+
+.capability-tags {
+  display: inline-flex;
+  flex-wrap: nowrap;
+  gap: 4px;
+  margin-left: 100px;
+}
+
+.capability-tags :deep(.el-tag.tag-text) {
+  --el-tag-bg-color: #eff6ff;
+  --el-tag-border-color: #bfdbfe;
+  --el-tag-text-color: #1d4ed8;
+}
+
+.capability-tags :deep(.el-tag.tag-image) {
+  --el-tag-bg-color: #ecfdf5;
+  --el-tag-border-color: #a7f3d0;
+  --el-tag-text-color: #047857;
+}
+
+.capability-tags :deep(.el-tag.tag-video) {
+  --el-tag-bg-color: #fff7ed;
+  --el-tag-border-color: #fed7aa;
+  --el-tag-text-color: #c2410c;
+}
+
+.capability-tags :deep(.el-tag.tag-file) {
+  --el-tag-bg-color: #f5f3ff;
+  --el-tag-border-color: #ddd6fe;
+  --el-tag-text-color: #6d28d9;
 }
 
 .model-id:hover {
@@ -297,6 +354,14 @@ onMounted(load);
 
   .channel-pane {
     width: auto;
+  }
+
+  .model-cell {
+    flex-wrap: wrap;
+  }
+
+  .capability-tags {
+    flex-wrap: wrap;
   }
 }
 </style>

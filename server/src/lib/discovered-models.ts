@@ -4,16 +4,23 @@ function uniqueSorted(values: string[]): string[] {
 
 /** Current Zhipu coding-plan text model; historical text names fold here. */
 export const GLM_TEXT_CATALOG_MODEL = "glm-5.3";
-/** Current Zhipu coding-plan multimodal model; flash / turbo / 4.7 fold here. */
+/** Current Zhipu coding-plan multimodal model; flash / turbo / 4.7 / *flashx fold here. */
 export const GLM_MULTIMODAL_CATALOG_MODEL = "glm-5.3-flash";
-/** Current Zhipu coding-plan FlashX model; historical *flashx names fold here. */
-export const GLM_FLASHX_CATALOG_MODEL = "glm-5.3-flashx";
 
 export const GLM_CATALOG_MODELS = [
   GLM_TEXT_CATALOG_MODEL,
   GLM_MULTIMODAL_CATALOG_MODEL,
-  GLM_FLASHX_CATALOG_MODEL,
 ] as const;
+
+/** Official input modalities shown on the model list. FlashX is not on Coding Plan yet. */
+export type CatalogModelTag = "文本" | "图片" | "视频" | "文件";
+
+export function catalogModelTags(model: string): CatalogModelTag[] {
+  const name = toCatalogModelName(model);
+  if (name === GLM_TEXT_CATALOG_MODEL) return ["文本"];
+  if (name === GLM_MULTIMODAL_CATALOG_MODEL) return ["文本", "图片", "视频", "文件"];
+  return [];
+}
 
 const GLM_CODING_PLAN_MODEL = /^glm-(\d+(?:\.\d+)?)(?:-air|-turbo|-flashx?)*$/i;
 
@@ -24,14 +31,13 @@ export const DEEPSEEK_CATALOG_MODELS = [DEEPSEEK_FLASH_CATALOG_MODEL] as const;
 /**
  * Catalog name used on the model-price and employee model lists.
  * Zhipu coding-plan text transfers to glm-5.3; Flash / Turbo / GLM-4.7
- * transfer to glm-5.3-flash; *flashx names transfer to glm-5.3-flashx.
+ * and *flashx names transfer to glm-5.3-flash (FlashX is not on Coding Plan).
  * DeepSeek names transfer to deepseek-flash. OCR and other product lines
  * stay as returned.
  */
 export function toCatalogModelName(model: string): string {
   const name = model.trim().toLowerCase();
   if (GLM_CODING_PLAN_MODEL.test(name)) {
-    if (name.includes("flashx")) return GLM_FLASHX_CATALOG_MODEL;
     if (name.includes("flash") || name.includes("turbo") || name === "glm-4.7") {
       return GLM_MULTIMODAL_CATALOG_MODEL;
     }
@@ -169,9 +175,12 @@ export function groupDiscoveredModelsByChannel(rows: ChannelModelSource[]): Chan
         : isDeepseekProvider(group.providerCode)
           ? DEEPSEEK_CATALOG_MODELS
           : [];
-      const models = extras.length > 0 && discovered.length > 0
+      const merged = extras.length > 0 && discovered.length > 0
         ? uniqueSorted([...discovered, ...extras])
         : discovered;
+      const models = isGlmProvider(group.providerCode)
+        ? merged.filter((model) => (GLM_CATALOG_MODELS as readonly string[]).includes(model))
+        : merged;
       return {
         id: group.id,
         name: group.name,

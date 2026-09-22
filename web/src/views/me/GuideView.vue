@@ -312,7 +312,7 @@
 
       <ol class="steps">
         <li>打开「模型列表」，在左侧选择与 API Key 相同的上游渠道。</li>
-        <li>点击模型名旁的「复制」，粘贴到客户端。智谱渠道当前常用：<code>glm-5.3</code>（文本）、<code>glm-5.3-flash</code>（多模态）。</li>
+        <li>点击模型名旁的「复制」，粘贴到客户端。智谱渠道当前常用：<code>glm-5.3</code>（文本）、<code>glm-5.3-flash</code>（文本 / 图片 / 视频 / 文件）。</li>
         <li>在客户端发送一句短消息，例如「ping」或「你好」。</li>
         <li>打开「我的调用」。成功时会显示 Request ID、模型和 Tokens；失败时也可查看错误信息，复制 Request ID 后用于排查。</li>
       </ol>

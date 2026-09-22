@@ -10,6 +10,7 @@
 
 ### Changed
 
+- 智谱模型列表隐藏 `glm-5.3-flashx`（GLM Coding Plan 尚未开放，转发也拒绝）；`glm-5.3` 打「文本」标签，`glm-5.3-flash` 打「文本 / 图片 / 视频 / 文件」（官方输入模态，输出仍是文本）
 - 调用日志上下文落盘改为内容寻址去重（contextFormat 2），调用日志仍可下载当时全文、盘上改为「新内容存一份、重复共用」：超过阈值（`REQUEST_CONTEXT_BLOB_MIN_BYTES`，默认 1024）的大块——system/tools/skills 定义、长 tool_result、长文本——打码后按 SHA-256 全局存一份（`blocks/<aa>/<sha256>.gz`），PDF/图片 base64 块解码后存原始二进制（`files/<aa>/<sha256>`）；每次请求只写瘦信封到 `users/<employeeId>/<日>/threq_*.json.gz`（引用带 kind/bytes/media_type）。详情抽屉按引用 bytes 零 IO 估算水合大小，下载全文按引用拼回与旧版相同形状的 JSON，部署前的旧整包文件永久可读；指纹写失败自动降级内联保证每次请求都能拼回，密钥仍先打码再算指纹。新增 `static_files` / `static_file_owners` 登记表（迁移 0053，仅新指纹首见时入库）。按 2026-09-22 上午 144 样本（11,364 请求）实测试算，日磁盘增量约为原 16%（10–15G → 约 2.5–3G）；指纹对象全年千万级，部署时文件系统需预留足够 inode（或用 XFS）
 
 ### Removed
