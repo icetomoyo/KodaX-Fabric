@@ -6,6 +6,7 @@
 
 ### Removed
 
+- 批量登记席位（`POST /api/admin/channel-seats/bulk`）与批量挂 KEY（`POST /api/admin/channel-seats/bulk-keys`）正式下线，前后端代码与词表解析库一并清理；席位仍可单个登记、编辑、回收，历史操作审计记录不受影响
 - 内置敏感词库文件「新思想启蒙」「补充词库」；迁移和种子不再自动灌入词表，词表由管理员自行添加或导入
 - 超管侧栏「企业钉钉」及查看钉钉部门树的后台页和接口（`/admin/enterprise-dingtalk`）。钉钉部门 ID 同步脚本和环境变量仍保留
 

@@ -46,7 +46,11 @@
 - **修复参考（上游已验证）**：claude-code-hub（github.com/ding113/claude-code-hub）的 `src/lib/sensitive-word-detector.ts` 把词表全部转换成本（小写化、分桶、正则预编译）放在缓存 reload 时一次付清，`detect()` 热路径只做一次 `toLowerCase`；且 reload 先构建完整快照再原子替换引用，不暴露半套规则。我们的 NFC/零宽/去空白 normalize 照此移到缓存构建时做，生产环境已验证该路径可行。
 - **验收**：新增测试覆盖「超长字符串中的敏感词仍被检出」「总量超限的请求只扫首尾」；基准：1 万词 + 1MB 文本的扫描耗时应为毫秒级。
 
-### P1-2 批量席位功能回归
+### P1-2 批量席位功能回归【已修复完成】
+
+> **修复说明（2026-09-22）**：决策为**正式下线**。删除 `POST /api/admin/channel-seats/bulk` 与 `POST /api/admin/channel-seats/bulk-keys` 两个接口及其专属辅助代码（`planBulkChannelSeats` / `planBulkSeatKeys` / `SEAT_BULK_MAX` / `SEAT_KEY_*` 消息与类型，lib 386→183 行）；删除 `web/src/lib/bulk-seat-keys.ts` 及其测试并从 `server/package.json` 测试清单移除；CONTEXT.md 三处批量描述同步更新；CHANGELOG 增补 Removed 条目。**保留**：`/api/admin/credentials/bulk-*`（上游渠道 KEY 批量导入是另一个在用功能）、`ops-audit-dictionary.ts` 中 `channel_seat.bulk_*` 标签（渲染历史审计记录）。
+> **验证**：`channel-seats.test.ts` 9/9（删除 2 个 bulk 单测、401 注入，路由存在性断言反转为 `doesNotMatch` 下线断言）；全量服务端套件 511/511；tsc 通过；`vite build`（镜像构建路径）通过。
+> **新发现的存量问题**：验证 web 构建时发现 `npm run build`（vue-tsc）在 HEAD 上即报 3 处 implicit any 错误（ErrorLogsView.vue:266 / LogsView.vue:510 / SensitiveHitsView.vue:238，均为昨日视图重写引入），已登记为 P2-16；Docker 用 `build:image`（纯 vite）不受影响。
 
 - **现象**：SeatsView 删除后，`POST /api/admin/channel-seats/bulk`（`server/src/routes/admin/channel-seats.ts:235`）和 `/bulk-keys`（`:381`）在 web 端零调用方；`web/src/lib/bulk-seat-keys.ts` 只剩测试引用。CHANGELOG/CONTEXT 仍宣传批量能力。
 - **决策**（二选一，需产品确认）：在 TempChannelsView 补回「批量登记席位 / 批量挂 KEY」入口；或明确下线，删除两个后端接口和 `bulk-seat-keys.ts`。
@@ -88,6 +92,7 @@
 - **P2-13 死代码清理**：`findSensitiveHit`、`invalidateSensitiveWordsCache`（均无调用方）；`ModelRoutesView.vue`/`ProvidersView.vue`（路由已 redirect）；`setSensitiveWordsEnabled` + `PATCH /api/admin/sensitive-words {enabled}`（`enabled` 实为 interceptEnabled，误用即全站拦截，前端已走 settings 接口，直接删）。
 - **P2-14 `sensitive_word_hits.employee_id` 外键 ON DELETE no action**：删除有命中记录的员工会被阻塞。需产品决策：cascade、删人前归档、或限制删人。
 - **P2-15 姓名筛选只滤 Top-50**：榜外员工搜不到。服务端加关键字参数，或复用 `/api/admin/users?q=` 远程选人。
+- **P2-16 web `npm run build`（vue-tsc）在 dev 上已损坏**：ErrorLogsView.vue:266 / LogsView.vue:510 / SensitiveHitsView.vue:238 三处 `rows.some((row) => …)` 的 `row` implicit any（2026-09-21 视图重写引入，2026-09-22 验证 P1-2 时发现）。镜像构建走 `build:image`（纯 vite）不受影响，但本地 `npm run build` 失败且类型检查失效。修复：给 `rows` 的来源（接口返回）补类型或标注 `row` 参数类型。
 
 ---
 

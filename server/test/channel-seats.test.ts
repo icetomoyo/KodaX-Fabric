@@ -14,8 +14,6 @@ const {
   collectSubmitableChannelIds,
   collectSubmitableSeats,
   normalizeSeatTag,
-  planBulkChannelSeats,
-  planBulkSeatKeys,
   planChannelSeatCreate,
   planChannelSeatUpdate,
   planSeatCapacity,
@@ -270,59 +268,6 @@ test("submitable seats keep unsubmitted tagged seats on active channels", () => 
   );
 });
 
-test("bulk seat plan matches phones, skips duplicates, and fails missing accounts", () => {
-  const employeesByPhone = new Map([
-    ["13800138000", { id: 1, name: "张三", role: "employee", status: "active" }],
-    ["13900139000", { id: 2, name: "李四", role: "admin", status: "active" }],
-    ["13700137000", { id: 3, name: "王五", role: "employee", status: "disabled" }],
-    ["13600136000", { id: 4, name: "赵六", role: "org_admin", status: "active" }],
-  ]);
-  const plan = planBulkChannelSeats({
-    people: [
-      { name: "张三", phone: "13800138000" },
-      { name: "李四", phone: "13900139000" },
-      { name: "王五", phone: "13700137000" },
-      { name: "赵六", phone: "13600136000" },
-      { name: "钱七", phone: "13500135000" },
-      { name: "张三重复", phone: "13800138000" },
-    ],
-    employeesByPhone,
-    seatedEmployeeIds: new Set([4]),
-  });
-  assert.deepEqual(
-    plan.map((item) => item.kind),
-    ["create", "create", "fail", "skip", "fail", "skip"],
-  );
-  assert.equal(plan[0]?.kind === "create" && plan[0].employeeId, 1);
-  assert.equal(plan[1]?.kind === "create" && plan[1].employeeId, 2);
-  assert.equal(plan[2]?.kind === "fail" && plan[2].reason, "inactive");
-  assert.equal(plan[3]?.kind === "skip" && plan[3].reason, "duplicate");
-  assert.equal(plan[4]?.kind === "fail" && plan[4].reason, "not_found");
-  assert.equal(plan[5]?.kind === "skip" && plan[5].reason, "duplicate");
-});
-
-test("bulk seat keys match unique seated names and skip already submitted", () => {
-  const plan = planBulkSeatKeys({
-    entries: [
-      { name: "张三", secret: "secret-aaa-111" },
-      { name: "李四", secret: "secret-bbb-222" },
-      { name: "王五", secret: "secret-ccc-333" },
-      { name: "钱七", secret: "secret-ddd-444" },
-    ],
-    seats: [
-      { id: 10, employeeId: 1, employeeName: "张三", tag: "", credentialId: null },
-      { id: 11, employeeId: 2, employeeName: "李四", tag: "", credentialId: 88 },
-      { id: 12, employeeId: 3, employeeName: "王五", tag: "", credentialId: null },
-      { id: 13, employeeId: 4, employeeName: "王五", tag: "", credentialId: null },
-    ],
-  });
-  assert.equal(plan[0]?.kind, "assign");
-  assert.equal(plan[0]?.kind === "assign" && plan[0].seatId, 10);
-  assert.equal(plan[1]?.kind === "skip" && plan[1].reason, "already_submitted");
-  assert.equal(plan[2]?.kind === "fail" && plan[2].reason, "ambiguous_name");
-  assert.equal(plan[3]?.kind === "fail" && plan[3].reason, "not_seated");
-});
-
 test("seat copy is the product language", () => {
   assert.match(SEAT_REQUIRED_MESSAGE, /席位/);
   assert.match(SEAT_ALREADY_SUBMITTED_MESSAGE, /已提交/);
@@ -339,18 +284,6 @@ test("admin seat routes exist and require a session", async () => {
     payload: { employeeId: 1, productLineId: 1, tag: "备用" },
   });
   assert.equal(create.statusCode, 401);
-  const bulk = await app.inject({
-    method: "POST",
-    url: "/api/admin/channel-seats/bulk",
-    payload: { productLineId: 1, people: [{ name: "张三", phone: "13800138000" }] },
-  });
-  assert.equal(bulk.statusCode, 401);
-  const bulkKeys = await app.inject({
-    method: "POST",
-    url: "/api/admin/channel-seats/bulk-keys",
-    payload: { productLineId: 1, entries: [{ name: "张三", secret: "abcdefghijkl" }] },
-  });
-  assert.equal(bulkKeys.statusCode, 401);
   const removed = await app.inject({
     method: "DELETE",
     url: "/api/admin/channel-seats/1",
@@ -380,7 +313,6 @@ test("seat registry and personal-center gate use the product language", async ()
   assert.match(channelFields, /v-model="seatCount"/);
   assert.match(channelFields, /标签/);
   assert.match(credentials, /from ["']@\/lib\/channel-display["']/);
-  assert.match(adminSeats, /channel-seats\/bulk-keys/);
   assert.match(profile, /没有席位，无需提交渠道 KEY/);
   assert.match(profile, /channelKeyForm.seatId/);
   assert.match(profile, /seatOptionLabel/);
@@ -390,7 +322,7 @@ test("seat registry and personal-center gate use the product language", async ()
   assert.match(me, /seatId/);
   assert.match(me, /for\("update"\)/);
   assert.match(adminSeats, /tx.delete\(upstreamCredentials\)/);
-  assert.match(adminSeats, /channel-seats\/bulk/);
+  assert.doesNotMatch(adminSeats, /channel-seats\/bulk/);
   assert.match(adminSeats, /app.patch\(/);
   assert.match(adminSeats, /channel_seat.update/);
 
