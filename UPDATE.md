@@ -86,7 +86,7 @@
 
 ### 性能
 
-- **P2-7 `team_members` 缺 `employee_id` 前导索引**：部门名相关子查询（`user-analytics.ts:45-54`）逐行扫描，`0042` 还删过单列索引，属系统性缺口。补 `(employee_id, team_id)` 索引。
+- **P2-7 `team_members` 缺 `employee_id` 前导索引**【已修复完成】：部门名相关子查询（`user-analytics.ts:45-54`）逐行扫描，`0042` 还删过单列索引，属系统性缺口。补 `(employee_id, team_id)` 索引。**修复（2026-09-22）**：迁移 `0050` + schema 条目 `team_members_employee_team_idx (employee_id, team_id)`，本地库已应用验证。**生产实证（144 只读 EXPLAIN ANALYZE）**：修复前部门子查询对 `team_members` 全表扫描（`Rows Removed by Filter: 1052`，单次 0.6ms，每次排名页加载执行约 50 次），表 1053 行随编制增长；唯一索引 `(team_id, employee_id)` 因前导列不匹配无法服务 `employee_id` 过滤。**附带发现（已记 P3）**：`teams`/`team_members` 是团队层取消后被挪用的部门成员连接表现役使用，`team_admin` 角色生产零用户属僵尸。验证：`user-analytics.test.ts` 新增索引存在性断言，全量 521/521，tsc 通过。
 - **P2-8 `listSensitiveWords` 每次分页全表 GROUP BY**：`sensitive-words.ts:336-342` 对只增不减的流水表聚合，量大后变慢。加短 TTL 缓存或改物化计数。
 
 ### 语义 / 误报
@@ -110,6 +110,7 @@
 - `loadSensitiveWordsConfig` 抛错会 500 在配额之前（DB 挂了 relay 本来也不可用）；可用 stale-cache 兜底。
 - 命中记录目前同步 await INSERT（`recordSensitiveWordHit`），可改 fire-and-forget（上游 `sensitive-word-guard.ts` 用 `void logBlockedRequest()` 模式，可直接照搬）。
 - 抗规避增强：上游的 regex 匹配类型（如 `b[a@4]d`）是对付「英-雄」式标点混淆的正规出路，比继续加归一化规则干净，将来需要时优先加这类词。
+- 清理 `team_admin` 僵尸角色（2026-09-22 排查 P2-7 时发现）：`employee_role` 枚举仍含 `team_admin` 且 `auth.ts` / `act-as.ts` / JWT 会话角色保留完整分支，但产品口径已取消（CONTEXT.md「已取消，原团队管理员转为所在子部门的部门管理员」），生产 1027 名员工中该角色为 0；`team_members.role` 枚举（"member" | "team_admin"）的 1053 行也全是默认值 `member`。涉及枚举变更迁移，单独一轮做。另注：`teams`/`team_members` 是团队层取消后被挪用的部门成员连接表（现役），勿当作废弃表清理。
 - 多实例部署下词表/开关变更最多 5 秒延迟生效（缓存 TTL），可接受；若上多实例，参考上游本地事件 + Redis pub/sub 双通道失效（我们已有 ioredis 依赖）。
 - `xlsx@0.18.5` 有已知 CVE（仅解析 admin 上传文件，风险低），漏洞扫描会持续报警；`@types/pdf-parse` 是 v1 类型实际用 v2。
 - `users?q=` 的 `%`/`_` 未转义（ilike 通配符，非注入）。

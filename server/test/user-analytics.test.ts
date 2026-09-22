@@ -155,3 +155,14 @@ test("user analytics credits use settled values with the settlement interval", (
     /defaultCreditRateFor\(row\.clientModel\),\n        startedAt,\n        row\.createdAt,\n      \);/,
   );
 });
+
+test("team_members has a leading-employee index for department lookups", () => {
+  const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+  const schema = readFileSync(resolve(root, "src/db/schema/index.ts"), "utf8");
+  assert.match(schema, /team_members_employee_team_idx"\)\.on\(t\.employeeId, t\.teamId\)/);
+  const migration = readFileSync(
+    resolve(root, "drizzle/0050_team_members_employee_idx.sql"),
+    "utf8",
+  );
+  assert.match(migration, /CREATE INDEX "team_members_employee_team_idx"/);
+});
