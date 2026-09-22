@@ -1,7 +1,7 @@
 {
   "name": "kodax-fabric",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.0.1",
   "description": "KodaX Fabric — enterprise token access platform; Token Hub module provides shared official LLM keys, relay, and audit",
   "workspaces": [
     "server",
