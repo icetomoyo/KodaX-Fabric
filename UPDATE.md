@@ -3,12 +3,17 @@
 > 来源：三份评审（内部评审 + 外部评审 A/B）交叉核实后的统一结论。
 > 所有条目均已对照代码验证；已反驳与待验证的结论见文末附录，不要重复排查。
 > 范围：`0ee81ac`、`7360ac0`、`fa543d5`、`e8cd840`、`e9125eb`、`0e72d02`。
+>
+> **状态标记约定**：某条修复完成并通过验收后，在标题末尾追加「【已修复完成】」（例：`### P1-1 敏感词热路径三合一（性能 + 绕过）【已修复完成】`）。条目原文保留作验收记录，不删除；列表型条目（P2-xx）在条目开头追加同样的标记。
 
 ---
 
 ## P0 — 部署阻断，发版前必须修复
 
-### P0-1 Docker 镜像缺内置词库，容器起不来
+### P0-1 Docker 镜像缺内置词库，容器起不来【已修复完成】
+
+> **修复说明（2026-09-22，提交 `7b2ca22`）**：实际采用比方案 2 更彻底的做法——整体移除内置词库（词表由管理员自行添加或导入），而非把词库拷进镜像。migrate/seed 的自动导入、路由的 `source:"bundled"` 分支、导入库的 `readFileSync`/`LEXICON_DIR` 全部删除。原两个关注点（Docker migrate 崩溃、管理员删词被迁移复活）随之消失，Dockerfile 无需改动。
+> **验证**：全局 grep 无任何残留引用；前端无内置词库入口；`sensitive-words.test.ts` 14/14 通过；tsc 构建通过且 dist 产物零词库引用。
 
 - **现象**：`deploy/Dockerfile` 的 CMD 先跑 `node server/dist/db/migrate.js`；`server/src/db/migrate.ts:107-110` 无条件调用 `mergeBundledSensitiveWords()` 且无 try/catch；词库按 `import.meta.url` 定位到 `dist/data/sensitive-lexicon`，但 tsc 不拷 `.txt`（Dockerfile 只拷了 `server/data`，那是 haizhi-org.json 所在的另一个目录）。migrate 抛 ENOENT → `&&` 短路 → 容器 crashloop。
 - **修复**（二选一）：
@@ -29,6 +34,7 @@
 1. **每请求重算词表 normalize**：`server/src/lib/relay/sensitive-words.ts:238` 每次请求对全词表做 NFC 归一 + 正则 + 去重（默认内置词库约 1080 词，上限 1 万）。改为在 5 秒配置缓存里同时缓存 normalize 后的 needle 数组。
 2. **>100K 字符字符串整体跳过 = 确定性绕过**：`sensitive-words.ts:425` 超长字符串直接不进扫描文本，把敏感词放进超长 content 字段即可同时绕过检测和拦截。改为截断扫描（取前 N + 后 N 拼接）。
 3. **拼接后扫描文本无总量上限**：`collectStrings` 只限单字符串长度，bodyLimit 20–32MB，最坏情况词表 × 全文的 `includes` 扫描是秒级 CPU。给 haystack 设总量上限（如 256KB，截断保留首尾）。
+- **修复参考（上游已验证）**：claude-code-hub（github.com/ding113/claude-code-hub）的 `src/lib/sensitive-word-detector.ts` 把词表全部转换成本（小写化、分桶、正则预编译）放在缓存 reload 时一次付清，`detect()` 热路径只做一次 `toLowerCase`；且 reload 先构建完整快照再原子替换引用，不暴露半套规则。我们的 NFC/零宽/去空白 normalize 照此移到缓存构建时做，生产环境已验证该路径可行。
 - **验收**：新增测试覆盖「超长字符串中的敏感词仍被检出」「总量超限的请求只扫首尾」；基准：1 万词 + 1MB 文本的扫描耗时应为毫秒级。
 
 ### P1-2 批量席位功能回归
@@ -63,8 +69,8 @@
 
 ### 语义 / 误报
 
-- **P2-9 跨字符串粘接误报**：`normalizeSensitiveNeedle` 删全部空白 + `collectRequestText` 用 `\n` 拼接，相邻字段值可能粘成敏感词（现有「不粘接」测试只是被 role/type 字符串隔开的巧合）。开了拦截会挡正常请求。修复方向：按字符串分段匹配而非拼接后匹配（注意与「空格插空规避」测试的兼容）。
-- **P2-10 base64 图片数据进扫描文本**：英文短词会在 base64 里随机出现造成误报。当前内置词库无 ≤3 字符 ASCII 词暂时安全，自定义导入英文短词后暴露。跳过 `data:` URL 前缀的长字符串或降权。
+- **P2-9 跨字符串粘接误报**：`normalizeSensitiveNeedle` 删全部空白 + `collectRequestText` 用 `\n` 拼接，相邻字段值可能粘成敏感词（现有「不粘接」测试只是被 role/type 字符串隔开的巧合）。开了拦截会挡正常请求。修复方向（参考上游 `src/lib/message-extractor.ts`）：按字符串分段提取、分段独立匹配，不拼接。「空格插空规避」发生在单段文本内部，分段不影响该测试的兼容性。
+- **P2-10 base64 图片数据进扫描文本**：英文短词会在 base64 里随机出现造成误报。当前内置词库无 ≤3 字符 ASCII 词暂时安全，自定义导入英文短词后暴露。修复方向（参考上游）：提取时只取 block 的 `text`/`content` 字段，`image_url` 等其他字段天然不进扫描，顺带省掉扫 tools/metadata 的开销。**口径警告**：上游只扫 `role='user'` + system，直接照抄会打开「敏感词藏进 assistant 历史」的绕过口（多轮对话诱导模型复述后下轮携带）；建议扫描范围保留 user + system + 最后一轮 assistant，或明确记录所接受的口径。
 - **P2-11 `weeklyCreditLimit = 0` 恒判 weekly**：`web/src/lib/keys-board-cooling.ts:47-53` 补 `limit > 0` 条件，并补该分支与中文排除项的测试。
 
 ### 文档 / 清理
@@ -79,11 +85,12 @@
 ## P3 — 观察项 / 加固（不阻塞）
 
 - `loadSensitiveWordsConfig` 抛错会 500 在配额之前（DB 挂了 relay 本来也不可用）；可用 stale-cache 兜底。
-- 命中记录目前同步 await INSERT（`recordSensitiveWordHit`），可改 fire-and-forget。
+- 命中记录目前同步 await INSERT（`recordSensitiveWordHit`），可改 fire-and-forget（上游 `sensitive-word-guard.ts` 用 `void logBlockedRequest()` 模式，可直接照搬）。
+- 抗规避增强：上游的 regex 匹配类型（如 `b[a@4]d`）是对付「英-雄」式标点混淆的正规出路，比继续加归一化规则干净，将来需要时优先加这类词。
+- 多实例部署下词表/开关变更最多 5 秒延迟生效（缓存 TTL），可接受；若上多实例，参考上游本地事件 + Redis pub/sub 双通道失效（我们已有 ioredis 依赖）。
 - `xlsx@0.18.5` 有已知 CVE（仅解析 admin 上传文件，风险低），漏洞扫描会持续报警；`@types/pdf-parse` 是 v1 类型实际用 v2。
 - `users?q=` 的 `%`/`_` 未转义（ilike 通配符，非注入）。
 - 检测只扫请求体不扫响应流，拦截文案却写「输入或生成内容」——文档里明确当前范围。
-- 多实例部署下词表/开关变更最多 5 秒延迟生效（缓存 TTL），可接受，知晓即可。
 
 ---
 
