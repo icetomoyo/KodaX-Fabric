@@ -359,12 +359,6 @@
             <el-option v-for="item in teamOptions" :key="item.id" :label="item.name" :value="item.id" />
           </el-select>
         </el-form-item>
-        <el-form-item label="角色">
-          <el-select v-model="inviteRole" style="width: 100%">
-            <el-option label="成员" value="member" />
-            <el-option label="团队管理员" value="team_admin" />
-          </el-select>
-        </el-form-item>
         <el-alert
           type="info"
           :closable="false"
@@ -464,7 +458,7 @@ import EmployeeUsageDrawer from "./EmployeeUsageDrawer.vue";
 
 type EnterpriseStatus = "pending" | "active" | "disabled";
 type UserStatus = "pending" | "active" | "disabled";
-type UserRole = "employee" | "admin" | "org_admin" | "dept_admin" | "team_admin";
+type UserRole = "employee" | "admin" | "org_admin" | "dept_admin";
 
 type EnterpriseRow = {
   id: number;
@@ -524,14 +518,13 @@ type EmployeeRow = {
   teamId: number | null;
   teamIds: number[];
   teamName: string | null;
-  teamRole: "member" | "team_admin" | null;
   lastLoginAt: string | null;
 };
 
 const route = useRoute();
 const router = useRouter();
 const auth = useAuthStore();
-const showOrgTree = computed(() => !auth.isTeamAdmin);
+const showOrgTree = computed(() => true);
 const canCreateEnterprise = computed(() => auth.isSuperAdmin);
 const canBulkRegisterUsers = computed(() => auth.isSuperAdmin);
 const canManageDepartments = computed(() => auth.isSuperAdmin || auth.isOrgAdmin || auth.isDeptAdmin);
@@ -540,7 +533,7 @@ const canCreateChildDepartment = computed(() => auth.isSuperAdmin || auth.isOrgA
 const canManageTeams = computed(() => auth.isSuperAdmin || auth.isOrgAdmin || auth.isDeptAdmin);
 const canAppointOrgAdmin = computed(() => auth.isSuperAdmin);
 const canAppointDeptAdmin = computed(() => auth.isSuperAdmin || auth.isOrgAdmin);
-const layoutClass = computed(() => (auth.isTeamAdmin ? "layout-people" : "layout-tree"));
+const layoutClass = computed(() => "layout-tree");
 const loading = ref(false);
 const enterprises = ref<EnterpriseRow[]>([]);
 const departments = ref<DepartmentRow[]>([]);
@@ -596,7 +589,6 @@ const editTeam = ref<TeamRow | null>(null);
 const bulkRegisterRaw = ref("");
 const invitePhone = ref("");
 const inviteTeamId = ref<number | undefined>();
-const inviteRole = ref<"member" | "team_admin">("member");
 const editUser = ref<EmployeeRow | null>(null);
 const detailEmployee = ref<EmployeeRow | null>(null);
 const resetUser = ref<EmployeeRow | null>(null);
@@ -611,10 +603,7 @@ const editUserForm = reactive({
 
 const bulkRegisterParse = computed(() => parseBulkRegisterText(bulkRegisterRaw.value));
 
-const canInvite = computed(() => {
-  if (auth.isTeamAdmin) return teams.value.length > 0 || selectedTeamId.value != null;
-  return selectedEnterpriseId.value != null;
-});
+const canInvite = computed(() => selectedEnterpriseId.value != null);
 const selectedEnterprise = computed(
   () => enterprises.value.find((row) => row.id === selectedEnterpriseId.value) ?? null,
 );
@@ -744,14 +733,12 @@ let peopleLoadSeq = 0;
 
 const employeeSectionTitle = computed(() => {
   if (employeeQuery.value.trim()) return "搜索结果";
-  if (auth.isTeamAdmin) return "员工";
   if (selectedNodeKind.value === "department") return selectedDepartment.value?.name ?? "部门成员";
   return selectedEnterprise.value?.name ?? "员工";
 });
 
 const employeeEmptyText = computed(() => {
   if (employeeQuery.value.trim()) return "未找到匹配的员工";
-  if (auth.isTeamAdmin) return "本部门暂无员工";
   if (selectedNodeKind.value === "department") return "该部门暂无员工";
   return "该企业暂无员工";
 });
@@ -775,7 +762,6 @@ function statusTagType(status: string) {
 }
 
 function employeeRoleLabel(role: UserRole): string {
-  if (role === "team_admin") return "部门管理员";
   return roleLabel(role);
 }
 
@@ -912,7 +898,7 @@ async function loadEnterprises() {
 
 async function loadPeople() {
   const seq = ++peopleLoadSeq;
-  if (selectedEnterpriseId.value == null && !auth.isTeamAdmin) {
+  if (selectedEnterpriseId.value == null) {
     if (seq === peopleLoadSeq) {
       employees.value = [];
       employeeTotal.value = 0;
@@ -948,7 +934,7 @@ async function loadPeople() {
     teamId?: number | null;
     teamIds?: number[];
     teamName?: string | null;
-    teamRole?: "member" | "team_admin" | null;
+    teamRole?: string | null;
     departmentName?: string | null;
     lastLoginAt: string | null;
   }>;
@@ -969,17 +955,13 @@ async function loadPeople() {
         teamId: row.teamId ?? teamIds[0] ?? null,
         teamIds,
         teamName: row.departmentName || row.teamName || null,
-        teamRole: row.teamRole ?? (row.role === "team_admin" ? "team_admin" : row.teamId ? "member" : null),
+        teamRole: row.teamRole ?? (row.teamId ? "member" : null),
         lastLoginAt: row.lastLoginAt,
       };
     });
 }
 
 async function loadTeamsAndPeople() {
-  if (auth.isTeamAdmin) {
-    const teamRes = await http.get("/api/admin/teams");
-    teams.value = teamRes.data.success ? teamRes.data.data : [];
-  }
   await loadPeople();
 }
 
@@ -1389,7 +1371,6 @@ async function submitBulkRegister() {
 
 function openInvite() {
   invitePhone.value = "";
-  inviteRole.value = "member";
   const selectedDepartmentTeamId = selectedDepartmentId.value
     ? namedDepartments.value.find((row) => row.id === selectedDepartmentId.value)?.defaultTeamId
     : null;
@@ -1411,7 +1392,6 @@ async function inviteMember() {
   try {
     const { data } = await http.post(`/api/admin/teams/${inviteTeamId.value}/members`, {
       phone,
-      role: inviteRole.value,
     });
     if (!data.success) throw new Error(data.message);
     ElMessage.success("已邀请进团队");
@@ -1435,7 +1415,7 @@ function openEditUser(person: EmployeeRow) {
   editUser.value = person;
   editUserForm.name = person.name;
   editUserForm.phone = person.phone;
-  editUserForm.role = person.role === "team_admin" ? "dept_admin" : person.role;
+  editUserForm.role = person.role;
   editUserForm.status = person.status === "pending" ? "active" : person.status;
   editUserForm.teamId = person.teamId ?? undefined;
   showEditUser.value = true;
@@ -1445,20 +1425,15 @@ async function syncUserTeam(
   employeeId: number,
   fromTeamId: number | null,
   toTeamId: number | undefined,
-  teamRole: "member" | "team_admin" = "member",
 ) {
   const prev = fromTeamId ?? null;
   const next = toTeamId ?? null;
   if (prev != null && prev !== next) {
     await http.delete(`/api/admin/teams/${prev}/members/${employeeId}`);
   }
-  if (next == null) return;
-  if (prev === next) {
-    await http.patch(`/api/admin/teams/${next}/members/${employeeId}`, { role: teamRole });
-    return;
-  }
+  if (next == null || prev === next) return;
   try {
-    const { data } = await http.post(`/api/admin/teams/${next}/members`, { employeeId, role: teamRole });
+    const { data } = await http.post(`/api/admin/teams/${next}/members`, { employeeId });
     if (!data.success) throw new Error(data.message);
   } catch (error: unknown) {
     const response = (error as { response?: { status?: number; data?: { message?: string } } }).response;
@@ -1466,7 +1441,6 @@ async function syncUserTeam(
       response?.status === 409
       && (response.data?.message === "该员工已在该部门中" || response.data?.message === "该员工已在团队中")
     ) {
-      await http.patch(`/api/admin/teams/${next}/members/${employeeId}`, { role: teamRole });
       return;
     }
     throw error;
@@ -1488,12 +1462,7 @@ async function updateUser() {
     if (editUserForm.role === "org_admin") {
       await syncUserTeam(editUser.value.id, editUser.value.teamId, undefined);
     } else {
-      await syncUserTeam(
-        editUser.value.id,
-        editUser.value.teamId,
-        editUserForm.teamId,
-        "member",
-      );
+      await syncUserTeam(editUser.value.id, editUser.value.teamId, editUserForm.teamId);
     }
     const { data } = await http.patch(`/api/admin/users/${editUser.value.id}`, {
       name: editUserForm.name.trim(),
@@ -1535,14 +1504,6 @@ async function approveUser(person: EmployeeRow) {
   } finally {
     approvingUserId.value = null;
   }
-}
-
-async function toggleTeamAdmin(person: EmployeeRow) {
-  if (!person.teamId) return;
-  const next = person.teamRole === "team_admin" ? "member" : "team_admin";
-  await http.patch(`/api/admin/teams/${person.teamId}/members/${person.id}`, { role: next });
-  ElMessage.success(next === "team_admin" ? "已设为团队管理员" : "已取消团队管理员");
-  await loadTeamsAndPeople();
 }
 
 async function removeFromTeam(person: EmployeeRow) {

@@ -142,7 +142,6 @@ async function authenticateRelayApiKey(
 
   const relayRoles =
     principal?.employeeRole === "employee" ||
-    principal?.employeeRole === "team_admin" ||
     principal?.employeeRole === "dept_admin" ||
     principal?.employeeRole === "org_admin";
   if (

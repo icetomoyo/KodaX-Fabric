@@ -310,7 +310,6 @@ export async function joinDepartmentForEmployee(input: {
     await db.insert(teamMembers).values({
       teamId: plan.match.teamId,
       employeeId: employee.id,
-      role: "member",
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

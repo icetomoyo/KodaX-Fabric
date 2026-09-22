@@ -10,7 +10,6 @@ import {
   canCreateTeam,
   loadOrgActor,
   resolveTeamListScope,
-  scopedTeamIds,
   type OrgActor,
 } from "../../lib/org.js";
 import { detachAndDeleteTeam } from "./teams.js";
@@ -39,7 +38,7 @@ async function actorFrom(req: {
 
 export async function adminDepartmentRoutes(app: FastifyInstance) {
   app.addHook("preHandler", requireSession);
-  app.addHook("preHandler", requireRoles("admin", "org_admin", "dept_admin", "team_admin"));
+  app.addHook("preHandler", requireRoles("admin", "org_admin", "dept_admin"));
 
   app.get("/api/admin/departments", async (req, reply) => {
     const query = z
@@ -49,10 +48,7 @@ export async function adminDepartmentRoutes(app: FastifyInstance) {
       .safeParse(req.query);
     if (!query.success) return reply.code(400).send({ success: false, message: "参数无效" });
     const actor = await actorFrom(req);
-    const adminTeamIds = actor.role === "team_admin"
-      ? await scopedTeamIds({ teamIds: req.session!.teamIds, employeeId: actor.employeeId })
-      : [];
-    const scope = resolveTeamListScope(actor, query.data.enterpriseId, adminTeamIds);
+    const scope = resolveTeamListScope(actor, query.data.enterpriseId, []);
     if ("forbidden" in scope) {
       return reply.code(403).send({ success: false, message: "权限不足" });
     }

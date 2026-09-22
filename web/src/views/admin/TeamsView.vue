@@ -164,7 +164,7 @@
             <el-table-column prop="name" label="姓名" min-width="100" />
             <el-table-column label="团队角色" width="110">
               <template #default="{ row }">
-                {{ row.role === "team_admin" ? "团队管理员" : "成员" }}
+                成员
               </template>
             </el-table-column>
             <el-table-column label="今日 Tokens" min-width="120">
@@ -220,7 +220,6 @@ type TeamRow = {
 type MemberRow = {
   id: number;
   name: string;
-  role: "member" | "team_admin";
   todayTotalTokens: number;
   monthTotalTokens: number;
 };

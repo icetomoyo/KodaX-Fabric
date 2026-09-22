@@ -65,14 +65,12 @@ function employeeTeamIds(row: { teamId: number | null; teamIds?: number[] }): nu
 }
 
 export function visibleOrgEmployees<T extends { teamId: number | null; teamIds?: number[] }>(input: {
-  isTeamAdmin: boolean;
   selectedKind: OrgEmployeeScope;
   selectedDepartmentId: number | null;
   employees: readonly T[];
   teams: readonly OrgTeamNode[];
   departments: readonly OrgDepartmentNode[];
 }): T[] {
-  if (input.isTeamAdmin) return [...input.employees];
   if (input.selectedKind === "department" && input.selectedDepartmentId != null) {
     const subtree = new Set(departmentSubtreeIds(input.selectedDepartmentId, input.departments));
     const teamIds = new Set(

@@ -52,7 +52,6 @@ const directory: InviteDirectory = {
   admins: [
     { name: "王企管", role: "org_admin", enterpriseId: 1, departmentId: null, teamId: null },
     { name: "李部门", role: "dept_admin", enterpriseId: 1, departmentId: 101, teamId: null },
-    { name: "张团队", role: "team_admin", enterpriseId: 1, departmentId: 101, teamId: 11 },
   ],
 };
 
@@ -79,9 +78,9 @@ test("invite lookup requires names, stays read-only, and never mentions phones",
     teamName: "平台组",
   });
   assert.equal(found.status, "found");
-  assert.match(found.message, /张团队/);
-  assert.match(found.message, /团队管理员/);
-  assert.doesNotMatch(found.message, /李部门|王企管/);
+  assert.match(found.message, /李部门/);
+  assert.match(found.message, /部门管理员/);
+  assert.doesNotMatch(found.message, /张团队/);
   assert.doesNotMatch(found.message, /1[3-9]\d{9}/);
   assert.doesNotMatch(found.message, /phone/i);
   assert.equal(found.matches[0]?.contacts.every((item) => item.name !== ""), true);

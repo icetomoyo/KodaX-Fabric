@@ -17,7 +17,7 @@ export type UserEnterprise = {
 };
 
 export type ActAsPayload = {
-  role: "org_admin" | "dept_admin" | "team_admin" | "employee";
+  role: "org_admin" | "dept_admin" | "employee";
   enterpriseId: number;
   departmentId?: number;
   teamId?: number;
@@ -33,13 +33,13 @@ export type User = {
   name: string;
   phone: string;
   dept?: string | null;
-  role: "employee" | "admin" | "org_admin" | "dept_admin" | "team_admin";
+  role: "employee" | "admin" | "org_admin" | "dept_admin";
   status: string;
   enterpriseId?: number | null;
   enterprise?: UserEnterprise | null;
   mustChangePassword: boolean;
   lastLoginAt?: string | null;
-  trueRole?: "employee" | "admin" | "org_admin" | "dept_admin" | "team_admin";
+  trueRole?: "employee" | "admin" | "org_admin" | "dept_admin";
   actAs?: UserActAs | null;
 };
 
@@ -56,9 +56,9 @@ export const useAuthStore = defineStore("auth", () => {
   const isSuperAdmin = computed(() => user.value?.role === "admin");
   const isOrgAdmin = computed(() => user.value?.role === "org_admin");
   const isDeptAdmin = computed(() => user.value?.role === "dept_admin");
-  const isTeamAdmin = computed(() => user.value?.role === "team_admin");
+
   const isAdmin = computed(
-    () => isSuperAdmin.value || isOrgAdmin.value || isDeptAdmin.value || isTeamAdmin.value,
+    () => isSuperAdmin.value || isOrgAdmin.value || isDeptAdmin.value,
   );
 
   function setSession(nextToken: string, nextUser: User) {
@@ -133,7 +133,6 @@ export const useAuthStore = defineStore("auth", () => {
     isSuperAdmin,
     isOrgAdmin,
     isDeptAdmin,
-    isTeamAdmin,
     trueRole,
     canSwitchActAs,
     setSession,

@@ -170,7 +170,6 @@
             "
           >
             <el-option label="员工" value="employee" />
-            <el-option label="团队管理员" value="team_admin" />
             <el-option label="部门管理员" value="dept_admin" />
             <el-option v-if="auth.isSuperAdmin" label="企业管理员" value="org_admin" />
             <el-option v-if="auth.isSuperAdmin" label="超级管理员" value="admin" />
@@ -204,12 +203,6 @@
         <el-form-item label="团队" required>
           <el-select v-model="inviteTeamId" style="width: 100%" placeholder="选择团队">
             <el-option v-for="item in teams" :key="item.id" :label="teamLabel(item)" :value="item.id" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="角色">
-          <el-select v-model="inviteRole" style="width: 100%">
-            <el-option label="成员" value="member" />
-            <el-option label="团队管理员" value="team_admin" />
           </el-select>
         </el-form-item>
       </el-form>
@@ -271,7 +264,7 @@ type UserRow = {
   name: string;
   phone: string;
   dept: string | null;
-  role: "employee" | "admin" | "org_admin" | "dept_admin" | "team_admin";
+  role: "employee" | "admin" | "org_admin" | "dept_admin";
   status: "pending" | "active" | "disabled";
   enterpriseId: number | null;
   createdAt: string;
@@ -312,7 +305,6 @@ const inviting = ref(false);
 const resetting = ref(false);
 const invitePhone = ref("");
 const inviteTeamId = ref<number | undefined>();
-const inviteRole = ref<"member" | "team_admin">("member");
 const approvingId = ref<number | null>(null);
 const editUser = ref<UserRow | null>(null);
 const resetUser = ref<UserRow | null>(null);
@@ -437,7 +429,6 @@ async function loadTeams() {
 
 function openInvite() {
   invitePhone.value = "";
-  inviteRole.value = "member";
   inviteTeamId.value = typeof selectedKey.value === "number" ? selectedKey.value : undefined;
   showInvite.value = true;
 }
@@ -456,7 +447,6 @@ async function inviteMember() {
   try {
     const { data } = await http.post(`/api/admin/teams/${inviteTeamId.value}/members`, {
       phone,
-      role: inviteRole.value,
     });
     if (!data.success) throw new Error(data.message);
     ElMessage.success("已邀请进团队");
@@ -567,23 +557,15 @@ async function syncUserTeam(
   employeeId: number,
   fromTeamId: number | null | undefined,
   toTeamId: number | undefined,
-  teamRole: "member" | "team_admin" = "member",
 ) {
   const prev = fromTeamId ?? null;
   const next = toTeamId ?? null;
   if (prev != null && prev !== next) {
     await http.delete(`/api/admin/teams/${prev}/members/${employeeId}`);
   }
-  if (next == null) return;
-  if (prev === next) {
-    await http.patch(`/api/admin/teams/${next}/members/${employeeId}`, { role: teamRole });
-    return;
-  }
+  if (next == null || prev === next) return;
   try {
-    const { data } = await http.post(`/api/admin/teams/${next}/members`, {
-      employeeId,
-      role: teamRole,
-    });
+    const { data } = await http.post(`/api/admin/teams/${next}/members`, { employeeId });
     if (!data.success) throw new Error(data.message);
   } catch (error: unknown) {
     const response = (error as { response?: { status?: number; data?: { message?: string } } })
@@ -592,7 +574,6 @@ async function syncUserTeam(
       response?.status === 409
       && (response.data?.message === "该员工已在该部门中" || response.data?.message === "该员工已在团队中");
     if (!alreadyHere) throw error;
-    await http.patch(`/api/admin/teams/${next}/members/${employeeId}`, { role: teamRole });
   }
 }
 
@@ -603,10 +584,8 @@ async function updateUser() {
     return;
   }
 
-  if ((editForm.role === "team_admin" || editForm.role === "dept_admin") && !editForm.teamId) {
-    ElMessage.warning(
-      editForm.role === "dept_admin" ? "部门管理员必须选择所属团队" : "团队管理员必须选择所属团队",
-    );
+  if (editForm.role === "dept_admin" && !editForm.teamId) {
+    ElMessage.warning("部门管理员必须选择所属团队");
     return;
   }
 
@@ -618,12 +597,7 @@ async function updateUser() {
       if (editForm.role === "org_admin" || editForm.role === "admin") {
         await syncUserTeam(editUser.value.id, editUser.value.teamId, undefined);
       } else {
-        await syncUserTeam(
-          editUser.value.id,
-          editUser.value.teamId,
-          editForm.teamId,
-          editForm.role === "team_admin" ? "team_admin" : "member",
-        );
+        await syncUserTeam(editUser.value.id, editUser.value.teamId, editForm.teamId);
       }
     }
     const { data } = await http.patch(`/api/admin/users/${editUser.value.id}`, {

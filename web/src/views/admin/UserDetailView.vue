@@ -166,7 +166,7 @@ type UsageResponse = {
     name: string;
     phone: string;
     dept: string | null;
-    role: "employee" | "admin" | "org_admin" | "dept_admin" | "team_admin";
+    role: "employee" | "admin" | "org_admin" | "dept_admin";
     status: "pending" | "active" | "disabled";
     lastLoginAt: string | null;
   };
@@ -395,7 +395,6 @@ function roleLabel(role: UsageResponse["employee"]["role"]): string {
     admin: "超级管理员",
     org_admin: "企业管理员",
     dept_admin: "部门管理员",
-    team_admin: "团队管理员",
   }[role];
 }
 

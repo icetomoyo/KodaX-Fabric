@@ -42,7 +42,6 @@ test("collectOrgEmployeeOptions drops super-admins and merges multi-department m
 
 test("selecting an enterprise lists department members even when every remaining team is default", () => {
   const rows = visibleOrgEmployees({
-    isTeamAdmin: false,
     selectedKind: "enterprise",
     selectedDepartmentId: null,
     employees,
@@ -57,7 +56,6 @@ test("selecting an enterprise lists department members even when every remaining
 
 test("selecting a department lists members of that node and nested children only", () => {
   const rows = visibleOrgEmployees({
-    isTeamAdmin: false,
     selectedKind: "department",
     selectedDepartmentId: 8,
     employees,
@@ -91,7 +89,6 @@ test("department path joins enterprise and nested departments with slashes", () 
 
 test("selecting a department includes people who also belong to other departments", () => {
   const rows = visibleOrgEmployees({
-    isTeamAdmin: false,
     selectedKind: "department",
     selectedDepartmentId: 8,
     employees: [

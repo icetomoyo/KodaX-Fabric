@@ -445,7 +445,6 @@ export async function applyOrgChartSync(plan: OrgChartSyncPlan): Promise<{
       await db.insert(teamMembers).values({
         teamId,
         employeeId: item.employeeId,
-        role: "member",
       }).onConflictDoNothing({ target: [teamMembers.teamId, teamMembers.employeeId] });
       membershipChanges += 1;
     }

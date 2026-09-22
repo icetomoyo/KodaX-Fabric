@@ -150,7 +150,7 @@ import {
 import { useAuthStore } from "@/stores/auth";
 
 type OverviewData = {
-  role?: "admin" | "org_admin" | "dept_admin" | "team_admin";
+  role?: "admin" | "org_admin" | "dept_admin";
   enterprises?: { total: number; active: number };
   channels?: { total: number; enabled: number; unavailable: number };
   providers?: number;
@@ -244,7 +244,6 @@ const primaryAction = computed(() => {
   if (role.value === "org_admin" || role.value === "dept_admin") {
     return { to: "/admin/enterprises", label: "部门管理" };
   }
-  if (role.value === "team_admin") return { to: "/admin/enterprises", label: "员工" };
   return { to: "/admin/temp-channels", label: "管理渠道" };
 });
 
@@ -304,7 +303,7 @@ const kpis = computed((): KpiCard[] => {
       },
     ];
   }
-  if (role.value === "dept_admin" || role.value === "team_admin") {
+  if (role.value === "dept_admin") {
     return [
       {
         label: "今日 Tokens",
@@ -376,13 +375,6 @@ const quickLinks = computed(() => {
       { to: "/admin/profile", title: "个人中心", desc: "账号、密码与渠道 KEY", dot: "amber" },
     ];
   }
-  if (role.value === "team_admin") {
-    return [
-      { to: "/admin/enterprises", title: "员工", desc: "本团队成员", dot: "blue" },
-      { to: "/admin/keys", title: "API Key", desc: "我的调用凭据", dot: "teal" },
-      { to: "/admin/profile", title: "个人中心", desc: "账号、密码与渠道 KEY", dot: "amber" },
-    ];
-  }
   return [
     { to: "/admin/temp-channels", title: "上游渠道", desc: "渠道 · 席位 · KEY", dot: "blue" },
     { to: "/admin/enterprises", title: "企业管理", desc: "企业 · 部门 · 团队 · 员工", dot: "violet" },
@@ -430,7 +422,6 @@ const rankLink = computed(() => {
   if (role.value === "org_admin" || role.value === "dept_admin") {
     return { to: "/admin/enterprises", label: "部门管理" };
   }
-  if (role.value === "team_admin") return { to: "/admin/enterprises", label: "员工" };
   return { to: "/admin/logs", label: "查看日志" };
 });
 

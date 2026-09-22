@@ -31,9 +31,7 @@ import {
   canCreateTeam,
   canReadTeam,
   employeeDepartmentConflictMessage,
-  listAdminTeamIds,
   loadOrgActor,
-  scopedTeamIds,
   loadTeamAccessForActor,
   resolveTeamListScope,
   type OrgActor,
@@ -132,30 +130,6 @@ async function loadEmployeeDepartmentMemberships(employeeId: number) {
     .where(eq(teamMembers.employeeId, employeeId));
 }
 
-async function refreshConsoleRole(employeeId: number) {
-  const [employee] = await db
-    .select({ id: employees.id, role: employees.role })
-    .from(employees)
-    .where(eq(employees.id, employeeId))
-    .limit(1);
-  if (
-    !employee ||
-    employee.role === "admin" ||
-    employee.role === "org_admin" ||
-    employee.role === "dept_admin"
-  ) {
-    return;
-  }
-  const adminIds = await listAdminTeamIds(employeeId);
-  const nextRole: SessionRole = adminIds.length ? "team_admin" : "employee";
-  if (employee.role !== nextRole) {
-    await db
-      .update(employees)
-      .set({ role: nextRole, updatedAt: new Date() })
-      .where(eq(employees.id, employeeId));
-  }
-}
-
 export async function detachAndDeleteTeam(teamId: number): Promise<void> {
   await db
     .delete(credentialBindings)
@@ -170,7 +144,7 @@ export async function detachAndDeleteTeam(teamId: number): Promise<void> {
 
 export async function adminTeamRoutes(app: FastifyInstance) {
   app.addHook("preHandler", requireSession);
-  app.addHook("preHandler", requireRoles("admin", "org_admin", "dept_admin", "team_admin"));
+  app.addHook("preHandler", requireRoles("admin", "org_admin", "dept_admin"));
 
   app.get("/api/admin/teams", async (req, reply) => {
     const parsed = z
@@ -184,10 +158,7 @@ export async function adminTeamRoutes(app: FastifyInstance) {
     }
     const query = parsed.data;
     const actor = await actorFrom(req);
-    const adminTeamIds = actor.role === "team_admin"
-      ? await scopedTeamIds({ teamIds: req.session!.teamIds, employeeId: actor.employeeId })
-      : [];
-    const scope = resolveTeamListScope(actor, query.enterpriseId, adminTeamIds);
+    const scope = resolveTeamListScope(actor, query.enterpriseId, []);
     if ("forbidden" in scope) {
       return reply.code(403).send({ success: false, message: "权限不足" });
     }
@@ -214,9 +185,6 @@ export async function adminTeamRoutes(app: FastifyInstance) {
       return reply.code(400).send({ success: false, message: "参数无效" });
     }
     const actor = await actorFrom(req);
-    if (actor.role === "team_admin") {
-      return reply.code(403).send({ success: false, message: "权限不足" });
-    }
     const [department] = await db
       .select({
         id: departments.id,
@@ -443,7 +411,6 @@ export async function adminTeamRoutes(app: FastifyInstance) {
         name: employees.name,
         phone: employees.phone,
         dept: employees.dept,
-        role: teamMembers.role,
         status: employees.status,
         todayTotalTokens: sql<number>`coalesce(${usageCountersTeamDaily.totalTokens}, 0)`,
         monthTotalTokens,
@@ -529,7 +496,6 @@ export async function adminTeamRoutes(app: FastifyInstance) {
       .object({
         employeeId: z.number().int().positive().optional(),
         phone: z.string().trim().min(5).max(20).optional(),
-        role: z.enum(["member", "team_admin"]).default("member"),
       })
       .refine((data) => data.employeeId != null || Boolean(data.phone))
       .safeParse(req.body);
@@ -539,10 +505,7 @@ export async function adminTeamRoutes(app: FastifyInstance) {
     const actor = await actorFrom(req);
     const access = await loadTeamAccessForActor(actor, params.data.id);
     if (!access) return reply.code(404).send({ success: false, message: "团队不存在" });
-    if (body.data.role === "team_admin" && !canCreateTeam(actor, access.enterpriseId)) {
-      return reply.code(403).send({ success: false, message: "权限不足" });
-    }
-    if (body.data.role === "member" && !canAdminTeam(actor, access)) {
+    if (!canAdminTeam(actor, access)) {
       return reply.code(403).send({ success: false, message: "权限不足" });
     }
     const [target] = await db
@@ -588,20 +551,17 @@ export async function adminTeamRoutes(app: FastifyInstance) {
         .values({
           teamId: access.teamId,
           employeeId: target.id,
-          role: body.data.role,
         })
         .returning({
           id: teamMembers.id,
           employeeId: teamMembers.employeeId,
-          role: teamMembers.role,
         });
-      await refreshConsoleRole(target.id);
       await writeOpsAudit({
         actorEmployeeId: actor.employeeId,
         action: "team.member_add",
         targetType: "team",
         targetId: String(access.teamId),
-        detail: { employeeId: target.id, role: row.role },
+        detail: { employeeId: target.id },
         ip: req.ip,
       });
       return { success: true, data: row };
@@ -620,56 +580,6 @@ export async function adminTeamRoutes(app: FastifyInstance) {
       }
       throw error;
     }
-  });
-
-  app.patch("/api/admin/teams/:id/members/:employeeId", async (req, reply) => {
-    const params = z
-      .object({
-        id: z.coerce.number().int().positive(),
-        employeeId: z.coerce.number().int().positive(),
-      })
-      .safeParse(req.params);
-    const body = z
-      .object({
-        role: z.enum(["member", "team_admin"]),
-      })
-      .safeParse(req.body);
-    if (!params.success || !body.success) {
-      return reply.code(400).send({ success: false, message: "参数无效" });
-    }
-    const actor = await actorFrom(req);
-    const access = await loadTeamAccessForActor(actor, params.data.id);
-    if (!access) return reply.code(404).send({ success: false, message: "团队不存在" });
-    if (body.data.role !== undefined && !canCreateTeam(actor, access.enterpriseId)) {
-      return reply.code(403).send({ success: false, message: "权限不足" });
-    }
-    if (!canAdminTeam(actor, access)) {
-      return reply.code(403).send({ success: false, message: "权限不足" });
-    }
-    const [row] = await db
-      .update(teamMembers)
-      .set({ role: body.data.role })
-      .where(
-        and(
-          eq(teamMembers.teamId, access.teamId),
-          eq(teamMembers.employeeId, params.data.employeeId),
-        ),
-      )
-      .returning({
-        employeeId: teamMembers.employeeId,
-        role: teamMembers.role,
-      });
-    if (!row) return reply.code(404).send({ success: false, message: "成员不存在" });
-    await refreshConsoleRole(row.employeeId);
-    await writeOpsAudit({
-      actorEmployeeId: actor.employeeId,
-      action: "team.member_role",
-      targetType: "team",
-      targetId: String(access.teamId),
-      detail: { employeeId: row.employeeId, role: row.role },
-      ip: req.ip,
-    });
-    return { success: true, data: row };
   });
 
   app.delete("/api/admin/teams/:id/members/:employeeId", async (req, reply) => {
@@ -696,7 +606,6 @@ export async function adminTeamRoutes(app: FastifyInstance) {
       )
       .returning({ employeeId: teamMembers.employeeId });
     if (!deleted.length) return reply.code(404).send({ success: false, message: "成员不存在" });
-    await refreshConsoleRole(params.data.employeeId);
     await writeOpsAudit({
       actorEmployeeId: actor.employeeId,
       action: "team.member_remove",

@@ -6,8 +6,7 @@ export function homePathForUser(user: Pick<User, "role"> | null | undefined): st
   if (
     user.role === "admin" ||
     user.role === "org_admin" ||
-    user.role === "dept_admin" ||
-    user.role === "team_admin"
+    user.role === "dept_admin"
   ) {
     return "/admin";
   }
@@ -18,8 +17,7 @@ export function canUseAdminConsole(user: Pick<User, "role"> | null | undefined):
   return (
     user?.role === "admin" ||
     user?.role === "org_admin" ||
-    user?.role === "dept_admin" ||
-    user?.role === "team_admin"
+    user?.role === "dept_admin"
   );
 }
 

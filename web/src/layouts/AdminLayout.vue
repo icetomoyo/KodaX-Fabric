@@ -21,11 +21,10 @@
         </el-sub-menu>
         <el-menu-item v-if="auth.isSuperAdmin" index="/admin/enterprises">企业管理</el-menu-item>
         <el-menu-item v-if="auth.isOrgAdmin || auth.isDeptAdmin" index="/admin/enterprises">部门管理</el-menu-item>
-        <el-menu-item v-if="auth.isTeamAdmin" index="/admin/enterprises">员工</el-menu-item>
-        <el-menu-item v-if="auth.isOrgAdmin || auth.isDeptAdmin || auth.isTeamAdmin" index="/admin/keys">API Key</el-menu-item>
-        <el-menu-item v-if="auth.isOrgAdmin || auth.isDeptAdmin || auth.isTeamAdmin" index="/admin/models">模型列表</el-menu-item>
-        <el-menu-item v-if="auth.isOrgAdmin || auth.isDeptAdmin || auth.isTeamAdmin" index="/admin/guide">接入教程</el-menu-item>
-        <el-menu-item v-if="auth.isOrgAdmin || auth.isDeptAdmin || auth.isTeamAdmin" index="/admin/my-logs">我的调用</el-menu-item>
+        <el-menu-item v-if="auth.isOrgAdmin || auth.isDeptAdmin" index="/admin/keys">API Key</el-menu-item>
+        <el-menu-item v-if="auth.isOrgAdmin || auth.isDeptAdmin" index="/admin/models">模型列表</el-menu-item>
+        <el-menu-item v-if="auth.isOrgAdmin || auth.isDeptAdmin" index="/admin/guide">接入教程</el-menu-item>
+        <el-menu-item v-if="auth.isOrgAdmin || auth.isDeptAdmin" index="/admin/my-logs">我的调用</el-menu-item>
         <el-sub-menu v-if="auth.isSuperAdmin" index="upstream">
           <template #title>上游</template>
           <el-menu-item index="/admin/temp-channels">上游渠道</el-menu-item>
@@ -56,9 +55,7 @@
             <strong>{{ auth.user?.name }}</strong>
             <span class="muted">
               · {{
-                auth.isTeamAdmin
-                  ? "团队管理"
-                  : auth.isDeptAdmin
+                auth.isDeptAdmin
                     ? "本部门管理"
                     : auth.isOrgAdmin
                       ? "本企业管理"

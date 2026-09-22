@@ -119,7 +119,7 @@ async function loadOwnedSeat(employeeId: number, seatId: number) {
 
 export async function meRoutes(app: FastifyInstance) {
   app.addHook("preHandler", requireSession);
-  app.addHook("preHandler", requireRoles("employee", "team_admin", "dept_admin", "org_admin"));
+  app.addHook("preHandler", requireRoles("employee", "dept_admin", "org_admin"));
 
   app.post("/api/me/enterprise-applications", async (_req, reply) => {
     return reply.code(403).send({
@@ -169,7 +169,6 @@ export async function meRoutes(app: FastifyInstance) {
         id: teams.id,
         name: teams.name,
         status: teams.status,
-        role: teamMembers.role,
         isDefault: teams.isDefault,
         departmentId: departments.id,
         departmentName: departments.name,
@@ -800,7 +799,6 @@ export async function meRoutes(app: FastifyInstance) {
       if (
         !owner ||
         (owner.role !== "employee" &&
-          owner.role !== "team_admin" &&
           owner.role !== "dept_admin" &&
           owner.role !== "org_admin") ||
         owner.status !== "active"

@@ -102,18 +102,6 @@
                 <div class="unit-copy">
                   <strong>{{ team.name }}</strong>
                 </div>
-                <el-button
-                  link
-                  type="primary"
-                  @click="select({
-                    role: 'team_admin',
-                    enterpriseId: enterprise.id,
-                    departmentId: department.id,
-                    teamId: team.id,
-                  })"
-                >
-                  团队管理员
-                </el-button>
               </div>
               <div
                 v-for="person in team.employees"

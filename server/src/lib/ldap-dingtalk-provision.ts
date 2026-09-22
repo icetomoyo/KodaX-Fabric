@@ -148,7 +148,6 @@ export async function provisionEmployeeFromLdapDingtalk(
     await db.insert(teamMembers).values({
       teamId,
       employeeId: row.id,
-      role: "member",
     });
     await writeOpsAudit({
       actorEmployeeId: row.id,

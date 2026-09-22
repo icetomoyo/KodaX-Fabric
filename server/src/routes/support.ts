@@ -43,7 +43,7 @@ function sendSupportError(reply: FastifyReply, error: SupportBotError) {
 
 export async function supportRoutes(app: FastifyInstance) {
   app.addHook("preHandler", requireSession);
-  app.addHook("preHandler", requireRoles("employee", "team_admin", "dept_admin", "org_admin", "admin"));
+  app.addHook("preHandler", requireRoles("employee", "dept_admin", "org_admin", "admin"));
 
   app.get("/api/support/status", async () => {
     return { success: true, data: { enabled: env.SUPPORT_BOT_ENABLED } };

@@ -11,7 +11,6 @@ import {
 } from "../../db/schema/index.js";
 import {
   scopedDepartmentIds,
-  scopedTeamIds,
   listTeamIdsInDepartments,
   resolveLogTeamIds,
 } from "../../lib/org.js";
@@ -124,10 +123,6 @@ async function resolveListScope(
     }));
     return input;
   }
-  if (role === "team_admin") {
-    input.teamIds = await scopedTeamIds({ teamIds: session.teamIds, employeeId: employeeId! });
-    return input;
-  }
   input.enterpriseId = query.enterpriseId;
   input.teamIds = await resolveLogTeamIds({
     departmentId: query.departmentId,
@@ -228,14 +223,6 @@ export async function adminErrorLogRoutes(app: FastifyInstance) {
         departmentIds: req.session!.departmentIds,
         employeeId: req.employeeId!,
       }));
-      if (row.teamId == null || !teamIds.includes(row.teamId)) {
-        return reply.code(403).send({ success: false, message: "权限不足" });
-      }
-    } else if (role === "team_admin") {
-      const teamIds = await scopedTeamIds({
-        teamIds: req.session!.teamIds,
-        employeeId: req.employeeId!,
-      });
       if (row.teamId == null || !teamIds.includes(row.teamId)) {
         return reply.code(403).send({ success: false, message: "权限不足" });
       }

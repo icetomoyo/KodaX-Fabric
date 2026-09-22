@@ -3,7 +3,7 @@ import { env } from "../config.js";
 
 const secret = new TextEncoder().encode(env.JWT_SECRET);
 
-export const SESSION_ROLES = ["employee", "admin", "org_admin", "dept_admin", "team_admin"] as const;
+export const SESSION_ROLES = ["employee", "admin", "org_admin", "dept_admin"] as const;
 export type SessionRole = (typeof SESSION_ROLES)[number];
 
 const SESSION_ROLE_SET = new Set<string>(SESSION_ROLES);
@@ -12,7 +12,7 @@ export function isSessionRole(value: unknown): value is SessionRole {
   return typeof value === "string" && SESSION_ROLE_SET.has(value);
 }
 
-export type ActAsRole = "org_admin" | "dept_admin" | "team_admin" | "employee";
+export type ActAsRole = "org_admin" | "dept_admin" | "employee";
 
 export type SessionActAs = {
   role: ActAsRole;

@@ -2,8 +2,8 @@ export const TOKEN_KEY = "th_token";
 export const USER_KEY = "th_user";
 export const ACT_AS_KEY = "th_act_as";
 
-const SESSION_ROLES = ["employee", "admin", "org_admin", "dept_admin", "team_admin"] as const;
-const ACT_AS_ROLES = ["org_admin", "dept_admin", "team_admin", "employee"] as const;
+const SESSION_ROLES = ["employee", "admin", "org_admin", "dept_admin"] as const;
+const ACT_AS_ROLES = ["org_admin", "dept_admin", "employee"] as const;
 
 function isSessionRole(value: unknown): value is (typeof SESSION_ROLES)[number] {
   return typeof value === "string" && (SESSION_ROLES as readonly string[]).includes(value);

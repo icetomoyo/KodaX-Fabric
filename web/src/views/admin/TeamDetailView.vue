@@ -61,11 +61,6 @@
         <el-table-column prop="name" label="姓名" width="140" />
         <el-table-column prop="phone" label="手机号" width="140" />
         <el-table-column prop="dept" label="部门" min-width="140" />
-        <el-table-column label="团队角色" width="140">
-          <template #default="{ row }">
-            {{ row.role === "team_admin" ? "团队管理员" : "成员" }}
-          </template>
-        </el-table-column>
         <el-table-column label="今日已用" width="120">
           <template #default="{ row }">
             <span class="mono-num">{{ formatTokenMillion(row.todayTotalTokens) }}</span>
@@ -78,22 +73,6 @@
         </el-table-column>
         <el-table-column label="操作" width="280">
           <template #default="{ row }">
-            <el-button
-              v-if="canAssignAdmin && row.role !== 'team_admin'"
-              link
-              type="primary"
-              @click="setMemberRole(row, 'team_admin')"
-            >
-              设为团队管理员
-            </el-button>
-            <el-button
-              v-if="canAssignAdmin && row.role === 'team_admin'"
-              link
-              type="warning"
-              @click="setMemberRole(row, 'member')"
-            >
-              取消管理员
-            </el-button>
             <el-button link type="danger" @click="removeMember(row)">移除</el-button>
           </template>
         </el-table-column>
@@ -113,12 +92,6 @@
       <el-form label-width="90px">
         <el-form-item label="手机号" required>
           <el-input v-model="addPhone" placeholder="已注册用户的手机号" />
-        </el-form-item>
-        <el-form-item v-if="canAssignAdmin" label="角色">
-          <el-select v-model="addRole" style="width: 100%">
-            <el-option label="成员" value="member" />
-            <el-option label="团队管理员" value="team_admin" />
-          </el-select>
         </el-form-item>
       </el-form>
       <template #footer>
@@ -153,7 +126,6 @@ type MemberRow = {
   name: string;
   phone: string;
   dept: string | null;
-  role: "member" | "team_admin";
   todayTotalTokens: number;
   monthTotalTokens: number;
 };
@@ -191,7 +163,6 @@ const {
 const showAddMember = ref(false);
 const addingMember = ref(false);
 const addPhone = ref("");
-const addRole = ref<"member" | "team_admin">("member");
 const canAssignAdmin = computed(() => auth.isSuperAdmin || auth.isOrgAdmin);
 const usage = ref<TeamUsage | null>(null);
 const {
@@ -292,7 +263,6 @@ const usageChartOption = computed<EChartsCoreOption>(() => ({
 
 function openAddMember() {
   addPhone.value = "";
-  addRole.value = "member";
   showAddMember.value = true;
 }
 
@@ -306,7 +276,6 @@ async function addMember() {
   try {
     const { data } = await http.post(`/api/admin/teams/${teamId.value}/members`, {
       phone,
-      role: canAssignAdmin.value ? addRole.value : "member",
     });
     if (!data.success) throw new Error(data.message);
     ElMessage.success("已添加");
@@ -317,12 +286,6 @@ async function addMember() {
   } finally {
     addingMember.value = false;
   }
-}
-
-async function setMemberRole(row: MemberRow, role: "member" | "team_admin") {
-  await http.patch(`/api/admin/teams/${teamId.value}/members/${row.employeeId}`, { role });
-  ElMessage.success("已更新");
-  await loadMembers();
 }
 
 async function removeMember(row: MemberRow) {

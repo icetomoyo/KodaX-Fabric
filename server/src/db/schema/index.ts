@@ -19,13 +19,11 @@ export const employeeRoleEnum = pgEnum("employee_role", [
   "employee",
   "admin",
   "org_admin",
-  "team_admin",
   "dept_admin",
 ]);
 export const employeeStatusEnum = pgEnum("employee_status", ["pending", "active", "disabled"]);
 export const enterpriseStatusEnum = pgEnum("enterprise_status", ["pending", "active", "disabled"]);
 export const orgUnitStatusEnum = pgEnum("org_unit_status", ["active", "disabled"]);
-export const teamMemberRoleEnum = pgEnum("team_member_role", ["member", "team_admin"]);
 export const apiKeyStatusEnum = pgEnum("api_key_status", ["active", "revoked"]);
 export const relayProtocolEnum = pgEnum("relay_protocol", [
   "openai_chat",
@@ -163,7 +161,6 @@ export const teamMembers = pgTable(
     employeeId: bigint("employee_id", { mode: "number" })
       .notNull()
       .references(() => employees.id, { onDelete: "cascade", onUpdate: "no action" }),
-    role: teamMemberRoleEnum("role").notNull().default("member"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [

@@ -4,7 +4,6 @@ import { departments, teamMembers, teams } from "../db/schema/index.js";
 import { departmentAndDescendantIds } from "./department-tree.js";
 import type { SessionRole } from "./jwt.js";
 
-export const TEAM_ADMIN_ROLE = "team_admin" as const;
 export const DEPT_ADMIN_ROLE = "dept_admin" as const;
 
 export type OrgActor = {
@@ -18,7 +17,7 @@ export type TeamAccess = {
   teamId: number;
   enterpriseId: number;
   departmentId: number;
-  memberRole: "member" | "team_admin" | null;
+  isMember: boolean;
 };
 
 export function canManageEnterpriseOrg(role: SessionRole): boolean {
@@ -26,19 +25,11 @@ export function canManageEnterpriseOrg(role: SessionRole): boolean {
 }
 
 export function canUseOrgConsole(role: SessionRole): boolean {
-  return role === "admin" || role === "org_admin" || role === "dept_admin" || role === "team_admin";
+  return role === "admin" || role === "org_admin" || role === "dept_admin";
 }
 
 function actorDepartmentIds(actor: OrgActor): number[] {
   return actor.departmentIds ?? [];
-}
-
-export async function listAdminTeamIds(employeeId: number): Promise<number[]> {
-  const rows = await db
-    .select({ teamId: teamMembers.teamId })
-    .from(teamMembers)
-    .where(and(eq(teamMembers.employeeId, employeeId), eq(teamMembers.role, "team_admin")));
-  return rows.map((row) => row.teamId);
 }
 
 export async function listAdminDepartmentIds(employeeId: number): Promise<number[]> {
@@ -122,14 +113,6 @@ export async function scopedDepartmentIds(input: {
   return listAdminDepartmentIds(input.employeeId);
 }
 
-export async function scopedTeamIds(input: {
-  teamIds?: number[];
-  employeeId: number;
-}): Promise<number[]> {
-  if (input.teamIds?.length) return input.teamIds;
-  return listAdminTeamIds(input.employeeId);
-}
-
 export async function loadTeamAccess(teamId: number): Promise<TeamAccess | null> {
   const [row] = await db
     .select({
@@ -141,7 +124,7 @@ export async function loadTeamAccess(teamId: number): Promise<TeamAccess | null>
     .where(eq(teams.id, teamId))
     .limit(1);
   if (!row) return null;
-  return { ...row, memberRole: null };
+  return { ...row, isMember: false };
 }
 
 export async function loadTeamAccessForActor(
@@ -153,7 +136,7 @@ export async function loadTeamAccessForActor(
       teamId: teams.id,
       enterpriseId: teams.enterpriseId,
       departmentId: teams.departmentId,
-      memberRole: teamMembers.role,
+      isMember: teamMembers.employeeId,
     })
     .from(teams)
     .leftJoin(
@@ -167,7 +150,7 @@ export async function loadTeamAccessForActor(
     teamId: row.teamId,
     enterpriseId: row.enterpriseId,
     departmentId: row.departmentId,
-    memberRole: row.memberRole ?? null,
+    isMember: row.isMember != null,
   };
 }
 
@@ -181,7 +164,7 @@ export function canReadTeam(actor: OrgActor, access: TeamAccess): boolean {
   ) {
     return true;
   }
-  return access.memberRole != null;
+  return access.isMember;
 }
 
 export function canAdminTeam(actor: OrgActor, access: TeamAccess): boolean {
@@ -194,7 +177,7 @@ export function canAdminTeam(actor: OrgActor, access: TeamAccess): boolean {
   ) {
     return true;
   }
-  return access.memberRole === "team_admin";
+  return false;
 }
 
 export function canCreateTeam(
@@ -268,10 +251,6 @@ export function resolveTeamListScope(
     const departmentIds = actorDepartmentIds(actor);
     if (departmentIds.length === 0) return { forbidden: true };
     return { departmentIds };
-  }
-  if (actor.role === "team_admin") {
-    if (adminTeamIds.length === 0) return { forbidden: true };
-    return { teamIds: adminTeamIds };
   }
   return { forbidden: true };
 }

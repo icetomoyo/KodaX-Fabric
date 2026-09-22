@@ -71,13 +71,13 @@ export const router = createRouter({
     {
       path: "/admin",
       component: () => import("@/layouts/AdminLayout.vue"),
-      meta: { roles: ["admin", "org_admin", "dept_admin", "team_admin"] },
+      meta: { roles: ["admin", "org_admin", "dept_admin"] },
       children: [
         {
           path: "",
           name: "admin-home",
           component: () => import("@/views/admin/DashboardView.vue"),
-          meta: { roles: ["admin", "org_admin", "dept_admin", "team_admin"] },
+          meta: { roles: ["admin", "org_admin", "dept_admin"] },
         },
         {
           path: "usage",
@@ -95,7 +95,7 @@ export const router = createRouter({
           path: "enterprises",
           name: "admin-enterprises",
           component: () => import("@/views/admin/EnterprisesView.vue"),
-          meta: { roles: ["admin", "org_admin", "dept_admin", "team_admin"] },
+          meta: { roles: ["admin", "org_admin", "dept_admin"] },
         },
         {
           path: "departments",
@@ -117,25 +117,25 @@ export const router = createRouter({
           path: "keys",
           name: "admin-keys",
           component: () => import("@/views/me/KeysView.vue"),
-          meta: { roles: ["org_admin", "dept_admin", "team_admin"] },
+          meta: { roles: ["org_admin", "dept_admin"] },
         },
         {
           path: "models",
           name: "admin-models",
           component: () => import("@/views/me/ModelsView.vue"),
-          meta: { roles: ["org_admin", "dept_admin", "team_admin"] },
+          meta: { roles: ["org_admin", "dept_admin"] },
         },
         {
           path: "guide",
           name: "admin-guide",
           component: () => import("@/views/me/GuideView.vue"),
-          meta: { roles: ["org_admin", "dept_admin", "team_admin"] },
+          meta: { roles: ["org_admin", "dept_admin"] },
         },
         {
           path: "my-logs",
           name: "admin-my-logs",
           component: () => import("@/views/me/LogsView.vue"),
-          meta: { roles: ["org_admin", "dept_admin", "team_admin"] },
+          meta: { roles: ["org_admin", "dept_admin"] },
         },
         {
           path: "users",
@@ -252,7 +252,7 @@ export const router = createRouter({
           path: "profile",
           name: "admin-profile",
           component: () => import("@/views/admin/ProfileView.vue"),
-          meta: { roles: ["admin", "org_admin", "dept_admin", "team_admin"] },
+          meta: { roles: ["admin", "org_admin", "dept_admin"] },
         },
       ],
     },

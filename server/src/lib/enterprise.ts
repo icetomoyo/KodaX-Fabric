@@ -41,8 +41,7 @@ export function canUseAdminConsole(role: SessionRole): boolean {
   return (
     role === SUPER_ADMIN_ROLE ||
     role === ORG_ADMIN_ROLE ||
-    role === "dept_admin" ||
-    role === "team_admin"
+    role === "dept_admin"
   );
 }
 
@@ -75,14 +74,11 @@ export function resolveUserListScope(
     }
     return { enterpriseId: actor.enterpriseId, excludeRoles: [SUPER_ADMIN_ROLE, ORG_ADMIN_ROLE] };
   }
-  if (actor.role === "dept_admin" || actor.role === "team_admin") {
+  if (actor.role === "dept_admin") {
     if (actor.enterpriseId == null) return { forbidden: true };
     return {
       enterpriseId: actor.enterpriseId,
-      excludeRoles:
-        actor.role === "team_admin"
-          ? [SUPER_ADMIN_ROLE, ORG_ADMIN_ROLE, "dept_admin"]
-          : [SUPER_ADMIN_ROLE, ORG_ADMIN_ROLE],
+      excludeRoles: [SUPER_ADMIN_ROLE, ORG_ADMIN_ROLE],
     };
   }
   return { forbidden: true };
@@ -95,9 +91,6 @@ export function canAccessEmployee(actor: EnterpriseActor, target: EmployeeMember
   if (actor.enterpriseId == null || target.enterpriseId !== actor.enterpriseId) return false;
   if (actor.role === ORG_ADMIN_ROLE) return true;
   if (actor.role === "dept_admin") return target.role !== ORG_ADMIN_ROLE;
-  if (actor.role === "team_admin") {
-    return target.role === "employee" || target.role === "team_admin";
-  }
   return false;
 }
 
@@ -120,14 +113,12 @@ export function resolveCreatedUserFields(
   return { error: "权限不足", status: 403 };
 }
 
-const ORG_ADMIN_ASSIGNABLE_ROLES: SessionRole[] = ["employee", "dept_admin", "team_admin"];
-const DEPT_ADMIN_ASSIGNABLE_ROLES: SessionRole[] = ["employee", "team_admin"];
-const TEAM_ADMIN_ASSIGNABLE_ROLES: SessionRole[] = ["employee", "team_admin"];
+const ORG_ADMIN_ASSIGNABLE_ROLES: SessionRole[] = ["employee", "dept_admin"];
+const DEPT_ADMIN_ASSIGNABLE_ROLES: SessionRole[] = ["employee"];
 
 const SUPER_ADMIN_ASSIGNABLE_ROLES: SessionRole[] = [
   "employee",
   "dept_admin",
-  "team_admin",
   "org_admin",
 ];
 
@@ -160,9 +151,7 @@ export function resolveUpdatedUserFields(
       ? ORG_ADMIN_ASSIGNABLE_ROLES
       : actor.role === "dept_admin"
         ? DEPT_ADMIN_ASSIGNABLE_ROLES
-        : actor.role === "team_admin"
-          ? TEAM_ADMIN_ASSIGNABLE_ROLES
-          : null;
+        : null;
   if (!assignable) {
     return { error: "权限不足", status: 403 };
   }

@@ -24,7 +24,7 @@ const {
 
 const teamAdminSession = {
   sub: "11",
-  role: "team_admin" as const,
+  role: "team_admin" as never,
   phone: "13800000011",
   name: "TeamAdmin",
   mustChangePassword: false,
@@ -102,7 +102,7 @@ test("creating an API key without a team is rejected", async () => {
   }
 });
 
-test("team_admin cannot create teams or call super-admin enterprise APIs", async () => {
+test("team_admin role is rejected by console routes entirely", async () => {
   const app = Fastify();
   app.addHook("onRequest", attachSession(teamAdminSession));
   await app.register(adminTeamRoutes);
@@ -122,22 +122,13 @@ test("team_admin cannot create teams or call super-admin enterprise APIs", async
   }
 });
 
-test("team_admin list SQL is constrained to administered teams", () => {
+test("team_admin role is no longer a console role and gets no team scope", () => {
   const scope = resolveTeamListScope(
-    { role: "team_admin", enterpriseId: 3, employeeId: 11 },
+    { role: "team_admin" as never, enterpriseId: 3, employeeId: 11 },
     undefined,
     [8, 9],
   );
-  assert.equal("forbidden" in scope, false);
-  if ("forbidden" in scope) return;
-  const compiled = buildTeamListQuery(scope).toSQL();
-  const compiledSql = compiled.sql.replace(/\s+/g, " ");
-  assert.match(compiledSql, /from "teams"/);
-  assert.doesNotMatch(compiledSql, /monthly_yuan_quota/);
-  assert.match(compiledSql, /usage_counters_team_daily/);
-  assert.match(compiledSql, /"teams"\."id" in/i);
-  assert.equal(compiled.params.includes(8), true);
-  assert.equal(compiled.params.includes(9), true);
+  assert.equal("forbidden" in scope, true);
 });
 
 test("org_admin list SQL constrains teams to one enterprise", () => {
@@ -466,8 +457,9 @@ test("admin shell uses org board for all console roles", () => {
   assert.match(layout, /部门管理/);
   assert.doesNotMatch(layout, /本企业编制/);
   assert.doesNotMatch(layout, /本部门编制/);
-  assert.match(layout, /v-if="auth.isTeamAdmin" index="\/admin\/enterprises">员工/);
-  assert.match(layout, /isOrgAdmin \|\| auth.isDeptAdmin \|\| auth.isTeamAdmin" index="\/admin\/keys">API Key/);
+  assert.doesNotMatch(layout, /isTeamAdmin/);
+  assert.doesNotMatch(layout, /团队管理员/);
+  assert.match(layout, /isOrgAdmin \|\| auth.isDeptAdmin" index="\/admin\/keys">API Key/);
   assert.match(layout, /index="\/admin\/guide">接入教程/);
   assert.match(layout, /index="\/admin\/key-bindings">调度画布/);
   assert.match(layout, /index="\/admin\/error-logs">报错日志/);
@@ -493,13 +485,13 @@ test("admin shell uses org board for all console roles", () => {
   assert.match(router, /dept_admin/);
   assert.doesNotMatch(layout, /项目管理/);
   assert.doesNotMatch(layout, /\/admin\/projects/);
-  assert.match(home, /team_admin/);
+  assert.doesNotMatch(home, /team_admin/);
   assert.match(home, /return \"\/admin\"/);
   assert.doesNotMatch(router, /admin-projects/);
   assert.match(router, /admin-keys/);
   assert.match(router, /name: "admin-keys-board"/);
   assert.match(router, /admin-guide/);
-  assert.match(router, /team_admin/);
+  assert.doesNotMatch(router, /team_admin/);
   assert.doesNotMatch(router, /admin-enterprise-dingtalk/);
   assert.match(router, /name: "admin-key-bindings"[\s\S]*roles: \["admin"\]/);
   assert.match(router, /name: "admin-error-logs"[\s\S]*roles: \["admin"\]/);

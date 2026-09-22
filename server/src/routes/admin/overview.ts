@@ -17,7 +17,7 @@ import {
 } from "../../db/schema/index.js";
 import { getChannelOverviewStats } from "../../lib/channel-overview.js";
 import { departmentUsageRows, firstLevelDepartmentUsage } from "../../lib/department-usage-tree.js";
-import { scopedDepartmentIds, scopedTeamIds, listTeamIdsInDepartments } from "../../lib/org.js";
+import { scopedDepartmentIds, listTeamIdsInDepartments } from "../../lib/org.js";
 import {
   addCalendarDays,
   inclusiveDayCount,
@@ -844,7 +844,7 @@ async function enterpriseOverview(enterpriseId: number) {
 async function teamScopeOverview(teamIds: number[]) {
   if (teamIds.length === 0) {
     return {
-      role: "team_admin" as const,
+      role: "dept_admin" as const,
       team: { teamCount: 0, memberCount: 0, monthUsedTokens: 0 },
       today: { requests: 0, tokens: 0, errors: 0 },
       topEnterprisesToday: [],
@@ -877,7 +877,7 @@ async function teamScopeOverview(teamIds: number[]) {
     loadDepartmentUsageTree({ now, teamIds, departmentIds }),
   ]);
   return {
-    role: "team_admin" as const,
+    role: "dept_admin" as const,
     team: {
       teamCount: teamIds.length,
       memberCount: Number(memberCount?.n ?? 0),
@@ -897,7 +897,7 @@ async function teamScopeOverview(teamIds: number[]) {
 
 export async function adminOverviewRoutes(app: FastifyInstance) {
   app.addHook("preHandler", requireSession);
-  app.addHook("preHandler", requireRoles("admin", "org_admin", "dept_admin", "team_admin"));
+  app.addHook("preHandler", requireRoles("admin", "org_admin", "dept_admin"));
 
   app.get("/api/admin/overview", async (req, reply) => {
     const role = req.session!.role;
@@ -916,13 +916,7 @@ export async function adminOverviewRoutes(app: FastifyInstance) {
       );
       return { success: true, data: { ...(await teamScopeOverview(teamIds)), role: "dept_admin" } };
     }
-    if (role === "team_admin") {
-      const teamIds = await scopedTeamIds({
-        teamIds: req.session!.teamIds,
-        employeeId: req.employeeId!,
-      });
-      return { success: true, data: await teamScopeOverview(teamIds) };
-    }
+    return reply.code(403).send({ success: false, message: "权限不足" });
     return { success: true, data: await platformOverview() };
   });
 

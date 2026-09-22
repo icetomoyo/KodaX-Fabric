@@ -72,7 +72,7 @@ async function issueLoginSession(
   user: typeof employees.$inferSelect,
   options: { action: string },
 ) {
-  if (user.role === "org_admin" || user.role === "dept_admin" || user.role === "team_admin") {
+  if (user.role === "org_admin" || user.role === "dept_admin") {
     const enterprise = await loadEnterprise(user.enterpriseId);
     if (!enterprise || enterprise.status !== "active") {
       return reply.code(401).send({ success: false, message: "用户不可用" });

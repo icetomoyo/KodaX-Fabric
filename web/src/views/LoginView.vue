@@ -65,13 +65,13 @@ onMounted(() => {
   if (typeof preset === "string") phone.value = preset;
 });
 
-function resolveRedirect(role: "employee" | "admin" | "org_admin" | "dept_admin" | "team_admin") {
+function resolveRedirect(role: "employee" | "admin" | "org_admin" | "dept_admin") {
   const home = homePathForUser({ role });
   const raw = route.query.redirect as string | undefined;
   if (raw === "/change-password") {
     return role === "employee" ? "/me/profile" : "/admin/profile";
   }
-  if (role === "admin" || role === "org_admin" || role === "dept_admin" || role === "team_admin") {
+  if (role === "admin" || role === "org_admin" || role === "dept_admin") {
     if (!raw || raw.startsWith("/me")) return home;
     if (raw.startsWith("/admin")) return raw;
     return home;

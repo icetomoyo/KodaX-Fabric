@@ -26,7 +26,6 @@ import {
 } from "../../lib/enterprise.js";
 import {
   scopedDepartmentIds,
-  scopedTeamIds,
   listTeamIdsInDepartments,
   listTeamIdsInDepartmentSubtree,
   departmentBelongsToEnterprise,
@@ -57,7 +56,7 @@ import {
   requireSession,
 } from "../../middleware/auth.js";
 
-const updateRoleSchema = z.enum(["employee", "admin", "org_admin", "dept_admin", "team_admin"]);
+const updateRoleSchema = z.enum(["employee", "admin", "org_admin", "dept_admin"]);
 
 const updateUserSchema = z
   .object({
@@ -93,7 +92,6 @@ export type AdminUserListRow = {
   createdAt: Date;
   teamId: number | null;
   teamName: string | null;
-  teamRole: "member" | "team_admin" | null;
   departmentId: number | null;
   departmentName: string | null;
   departmentIsDefault: boolean | null;
@@ -152,7 +150,6 @@ export function buildAdminUserListQuery(query: AdminUserListQuery) {
       createdAt: employees.createdAt,
       teamId: teams.id,
       teamName: teams.name,
-      teamRole: teamMembers.role,
       departmentId: departments.id,
       departmentName: departments.name,
       departmentIsDefault: departments.isDefault,
@@ -259,9 +256,6 @@ async function actorTeamScopeIds(
       employeeId,
     }));
   }
-  if (session.role === "team_admin") {
-    return scopedTeamIds({ teamIds: session.teamIds, employeeId });
-  }
   return null;
 }
 
@@ -283,7 +277,7 @@ async function canManageScopedUser(
 
 export async function adminUserRoutes(app: FastifyInstance) {
   app.addHook("preHandler", requireSession);
-  app.addHook("preHandler", requireRoles("admin", "org_admin", "dept_admin", "team_admin"));
+  app.addHook("preHandler", requireRoles("admin", "org_admin", "dept_admin"));
 
   app.get("/api/admin/users", async (req, reply) => {
     const parsed = z
@@ -314,11 +308,6 @@ export async function adminUserRoutes(app: FastifyInstance) {
         departmentIds: req.session!.departmentIds,
         employeeId: req.employeeId!,
       }));
-    } else if (req.session!.role === "team_admin") {
-      teamIds = await scopedTeamIds({
-        teamIds: req.session!.teamIds,
-        employeeId: req.employeeId!,
-      });
     }
     if (query.departmentId != null) {
       if (

@@ -66,7 +66,6 @@ async function main() {
       await db.insert(teamMembers).values({
         teamId,
         employeeId: employee.id,
-        role: "member",
       });
     }
   }

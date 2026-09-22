@@ -316,7 +316,7 @@ test("super-admin still cannot create employees", async () => {
   }
 });
 
-test("org_admin can assign employee, dept_admin and team_admin but not org_admin or super-admin", () => {
+test("org_admin can assign employee and dept_admin but not team_admin, org_admin or super-admin", () => {
   const actor = { role: "org_admin" as const, enterpriseId: 3 };
   const target = { role: "employee" as const, enterpriseId: 3 };
   const keep = resolveUpdatedUserFields(actor, target, {});
@@ -324,10 +324,8 @@ test("org_admin can assign employee, dept_admin and team_admin but not org_admin
   if ("error" in keep) return;
   assert.equal(keep.role, "employee");
 
-  const toTeamAdmin = resolveUpdatedUserFields(actor, target, { role: "team_admin" });
-  assert.equal("error" in toTeamAdmin, false);
-  if ("error" in toTeamAdmin) return;
-  assert.equal(toTeamAdmin.role, "team_admin");
+  const toTeamAdmin = resolveUpdatedUserFields(actor, target, { role: "team_admin" as never });
+  assert.equal("error" in toTeamAdmin, true);
 
   const toDeptAdmin = resolveUpdatedUserFields(actor, target, { role: "dept_admin" });
   assert.equal("error" in toDeptAdmin, false);

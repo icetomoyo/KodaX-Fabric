@@ -2,7 +2,7 @@ import { and, eq } from "drizzle-orm";
 import { db } from "../../db/client.js";
 import { departments, employees, enterprises, teamMembers, teams } from "../../db/schema/index.js";
 
-export type InviteRole = "team_admin" | "dept_admin" | "org_admin";
+export type InviteRole = "dept_admin" | "org_admin";
 
 export type InviteContact = {
   name: string;
@@ -59,7 +59,6 @@ export type InviteLookupQuery = {
 };
 
 const ROLE_LABEL: Record<InviteRole, string> = {
-  team_admin: "团队管理员",
   dept_admin: "部门管理员",
   org_admin: "企业管理员",
 };
@@ -95,11 +94,6 @@ function contactsFor(
   directory: InviteDirectory,
   match: { enterpriseId: number; departmentId?: number | null; teamId?: number | null },
 ): InviteContact[] {
-  const teamAdmins = match.teamId
-    ? directory.admins.filter(
-        (admin) => admin.role === "team_admin" && admin.teamId === match.teamId,
-      )
-    : [];
   const deptAdmins = match.departmentId
     ? directory.admins.filter(
         (admin) =>
@@ -113,7 +107,6 @@ function contactsFor(
   );
 
   if (match.teamId) {
-    if (teamAdmins.length > 0) return uniqueContacts(teamAdmins);
     if (deptAdmins.length > 0) return uniqueContacts([...deptAdmins, ...orgAdmins]);
     return uniqueContacts(orgAdmins);
   }
@@ -286,7 +279,7 @@ function foundResult(match: InviteMatch, extra?: string): InviteLookupResult {
   if (match.departmentName) lines[0] += ` / 部门「${match.departmentName}」`;
   if (match.teamName) lines[0] += ` / 团队「${match.teamName}」`;
   if (match.contacts.length === 0) {
-    lines.push("没有查到可邀请的管理员姓名。请用户向所在团队的团队管理员、部门管理员或企业管理员求助，不要编造人名。");
+    lines.push("没有查到可邀请的管理员姓名。请用户向所在部门的部门管理员或企业管理员求助，不要编造人名。");
   } else {
     lines.push("可邀请你进团队的管理员：");
     for (const contact of match.contacts) {
@@ -344,18 +337,6 @@ export async function loadInviteDirectory(): Promise<InviteDirectory> {
     .innerJoin(teams, eq(teamMembers.teamId, teams.id))
     .where(and(eq(employees.role, "dept_admin"), eq(employees.status, "active")));
 
-  const teamAdminRows = await db
-    .select({
-      name: employees.name,
-      enterpriseId: teams.enterpriseId,
-      departmentId: teams.departmentId,
-      teamId: teams.id,
-    })
-    .from(teamMembers)
-    .innerJoin(employees, eq(teamMembers.employeeId, employees.id))
-    .innerJoin(teams, eq(teamMembers.teamId, teams.id))
-    .where(and(eq(teamMembers.role, "team_admin"), eq(employees.status, "active")));
-
   const admins: InviteDirectoryAdmin[] = [];
   for (const row of orgAdminRows) {
     if (row.enterpriseId == null) continue;
@@ -377,16 +358,6 @@ export async function loadInviteDirectory(): Promise<InviteDirectory> {
       teamId: null,
     });
   }
-  for (const row of teamAdminRows) {
-    admins.push({
-      name: row.name,
-      role: "team_admin",
-      enterpriseId: row.enterpriseId,
-      departmentId: row.departmentId,
-      teamId: row.teamId,
-    });
-  }
-
   return {
     enterprises: enterpriseRows,
     teams: teamRows,

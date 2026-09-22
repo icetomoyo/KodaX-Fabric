@@ -21,7 +21,7 @@ export type ResolvedActAs = {
 };
 
 const actAsSchema = z.object({
-  role: z.enum(["org_admin", "dept_admin", "team_admin", "employee"]),
+  role: z.enum(["org_admin", "dept_admin", "employee"]),
   enterpriseId: z.number().int().positive(),
   departmentId: z.number().int().positive().optional(),
   teamId: z.number().int().positive().optional(),
@@ -41,7 +41,6 @@ export function parseActAsHeader(raw: unknown): ActAsRequest | { invalid: true }
   const result = actAsSchema.safeParse(parsed);
   if (!result.success) return { invalid: true };
   if (result.data.role === "dept_admin" && result.data.departmentId == null) return { invalid: true };
-  if (result.data.role === "team_admin" && result.data.teamId == null) return { invalid: true };
   if (result.data.role === "employee" && result.data.employeeId == null) return { invalid: true };
   return result.data;
 }
@@ -159,37 +158,7 @@ export async function resolveActAs(input: ActAsRequest): Promise<ResolvedActAs |
     };
   }
 
-  if (input.teamId == null) return null;
-  const [team] = await db
-    .select({
-      id: teams.id,
-      name: teams.name,
-      enterpriseId: teams.enterpriseId,
-      departmentId: teams.departmentId,
-      status: teams.status,
-      isDefault: teams.isDefault,
-      departmentName: departments.name,
-    })
-    .from(teams)
-    .innerJoin(departments, eq(teams.departmentId, departments.id))
-    .where(eq(teams.id, input.teamId))
-    .limit(1);
-  if (!team || team.status !== "active" || team.enterpriseId !== enterprise.id) return null;
-  return {
-    role: "team_admin",
-    enterpriseId: enterprise.id,
-    departmentIds: [team.departmentId],
-    teamIds: [team.id],
-    actAs: {
-      role: "team_admin",
-      enterpriseId: enterprise.id,
-      departmentId: team.departmentId,
-      teamId: team.id,
-      label: team.isDefault
-        ? `${enterprise.name} · ${team.departmentName}`
-        : `${enterprise.name} · ${team.departmentName} · ${team.name}`,
-    },
-  };
+  return null;
 }
 
 export async function loadActAsOrgTree() {
