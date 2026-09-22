@@ -4,7 +4,6 @@ import { db, sql } from "./client.js";
 import { employees, systemSettings } from "./schema/index.js";
 import { getDefaultEnterpriseId } from "../lib/enterprise.js";
 import { hashPassword } from "../lib/password.js";
-import { mergeBundledSensitiveWords } from "../lib/relay/sensitive-words.js";
 
 /** 仅种子管理员账号；供应商/凭证/路由等由管理员在后台录入，不做演示数据。 */
 async function seedAdmin() {
@@ -52,7 +51,6 @@ async function seedMinimalSystemConfig() {
       },
     ])
     .onConflictDoNothing();
-  await mergeBundledSensitiveWords();
 }
 
 async function main() {

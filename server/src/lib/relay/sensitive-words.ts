@@ -321,11 +321,6 @@ export async function addSensitiveWords(words: string[]): Promise<SensitiveWordI
   };
 }
 
-export async function mergeBundledSensitiveWords(): Promise<SensitiveWordImportResult> {
-  const { loadBundledSensitiveWords } = await import("./sensitive-word-import.js");
-  return addSensitiveWords(loadBundledSensitiveWords());
-}
-
 export async function listSensitiveWords(query: SensitiveWordListQuery): Promise<{
   detectEnabled: boolean;
   interceptEnabled: boolean;

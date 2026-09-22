@@ -104,10 +104,6 @@ async function main() {
       AND p.code = 'glm'
   `;
   await client.end();
-  const { mergeBundledSensitiveWords } = await import("../lib/relay/sensitive-words.js");
-  const { sql } = await import("./client.js");
-  await mergeBundledSensitiveWords();
-  await sql.end({ timeout: 5 });
   console.log("Migrations complete");
 }
 

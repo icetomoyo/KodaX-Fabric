@@ -1,7 +1,5 @@
-import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { dirname, extname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { extname } from "node:path";
 import { uniqueWords } from "./sensitive-words.js";
 
 const require = createRequire(import.meta.url);
@@ -25,11 +23,6 @@ const { PDFParse } = require("pdf-parse") as {
 };
 
 export const MAX_SENSITIVE_WORD_IMPORT_BYTES = 5 * 1024 * 1024;
-const LEXICON_DIR = resolve(
-  dirname(fileURLToPath(import.meta.url)),
-  "../../data/sensitive-lexicon",
-);
-const BUNDLED_LEXICON_FILES = ["xin-si-xiang-qi-meng.txt", "bu-chong-ci-ku.txt"] as const;
 const HEADER_CELL = /^(敏感词|word|words)$/i;
 
 export function extractWordsFromText(text: string): string[] {
@@ -46,15 +39,6 @@ export function extractWordsFromText(text: string): string[] {
     raw.push(value);
   }
   return uniqueWords(raw);
-}
-
-export function loadBundledSensitiveWords(): string[] {
-  const collected: string[] = [];
-  for (const name of BUNDLED_LEXICON_FILES) {
-    const text = readFileSync(resolve(LEXICON_DIR, name), "utf8");
-    collected.push(...extractWordsFromText(text));
-  }
-  return uniqueWords(collected);
 }
 
 export async function parseSensitiveWordFile(filename: string, buffer: Buffer): Promise<string[]> {

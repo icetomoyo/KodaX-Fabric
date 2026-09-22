@@ -19,7 +19,6 @@ import {
   addSensitiveWord,
   addSensitiveWords,
   listSensitiveWords,
-  mergeBundledSensitiveWords,
   removeSensitiveWord,
   setSensitiveWordsEnabled,
   SensitiveWordsError,
@@ -77,7 +76,6 @@ export async function adminSensitiveWordRoutes(app: FastifyInstance) {
   app.post("/api/admin/sensitive-words/import", async (req, reply) => {
     const body = z
       .union([
-        z.object({ source: z.literal("bundled") }),
         z.object({ words: z.array(z.string()).min(1).max(10_000) }),
         z.object({
           filename: z.string().trim().min(1).max(200),
@@ -90,18 +88,6 @@ export async function adminSensitiveWordRoutes(app: FastifyInstance) {
     }
     try {
       let incoming: string[];
-      if ("source" in body.data) {
-        const imported = await mergeBundledSensitiveWords();
-        await writeOpsAudit({
-          actorEmployeeId: req.employeeId,
-          action: "sensitive_words.import",
-          targetType: "sensitive_word",
-          targetId: "bundled",
-          detail: { added: imported.added, skipped: imported.skipped, source: "bundled" },
-          ip: req.ip,
-        });
-        return { success: true, data: imported };
-      }
       if ("words" in body.data) {
         incoming = body.data.words;
       } else {

@@ -26,7 +26,6 @@ const {
 } = await import("../src/lib/relay/sensitive-words.js");
 const {
   extractWordsFromText,
-  loadBundledSensitiveWords,
   parseSensitiveWordFile,
 } = await import("../src/lib/relay/sensitive-word-import.js");
 const { adminSensitiveWordRoutes } = await import("../src/routes/admin/sensitive-words.js");
@@ -94,13 +93,6 @@ test("extractWordsFromText reads one word per line and strips markdown markers",
     extractWordsFromText("# 词库\n- 英雄联盟\n1. lol\n\n`原神`\n"),
     ["英雄联盟", "lol", "原神"],
   );
-});
-
-test("bundled lexicons include 新思想启蒙 and 补充词库", () => {
-  const words = loadBundledSensitiveWords();
-  assert.ok(words.length >= 1070);
-  assert.ok(words.includes("力工梭哈"));
-  assert.ok(words.includes("发票"));
 });
 
 test("parseSensitiveWordFile reads txt and xlsx", async () => {
@@ -285,7 +277,7 @@ test("unauthenticated sensitive-word admin calls return 401", async () => {
     const imported = await app.inject({
       method: "POST",
       url: "/api/admin/sensitive-words/import",
-      payload: { source: "bundled" },
+      payload: { filename: "words.txt", contentBase64: Buffer.from("lol\n").toString("base64") },
     });
     const settings = await app.inject({ method: "GET", url: "/api/admin/settings" });
     assert.equal(list.statusCode, 401);
