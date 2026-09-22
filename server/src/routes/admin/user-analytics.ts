@@ -259,8 +259,13 @@ async function loadSelectedUser(employeeId: number, day: string) {
       })
       .from(requestAudits)
       .where(dayFilter)
-      .limit(5_000),
+      .orderBy(desc(requestAudits.createdAt), desc(requestAudits.id))
+      // 多取 1 行用于判断是否截断；积分类 KPI 基于最近 5000 条估算
+      .limit(5_001),
   ]);
+
+  const detailTruncated = auditRows.length > 5_000;
+  const detailRows = detailTruncated ? auditRows.slice(0, 5_000) : auditRows;
 
   const heatmap = buildContributionGrid(
     heatmapTo,
@@ -309,7 +314,7 @@ async function loadSelectedUser(employeeId: number, day: string) {
   let offPeakCredits = 0;
   let peakTokens = 0;
   let offPeakTokens = 0;
-  for (const row of auditRows) {
+  for (const row of detailRows) {
     const startedAt = row.createdAt;
     const tokens = (Number(row.promptTokens) || 0) + (Number(row.completionTokens) || 0);
     const peak = isPeakHour(startedAt);
@@ -361,6 +366,7 @@ async function loadSelectedUser(employeeId: number, day: string) {
       cacheHitRate: cacheHitRate(cacheReadTokens, promptTokens),
       avgTokens: avgTokensPerRequest(totalTokens, requestCount),
       credits: roundCredits(credits),
+      creditsEstimated: detailTruncated,
       peakCredits: roundCredits(peakCredits),
       offPeakCredits: roundCredits(offPeakCredits),
       peakTokens,

@@ -295,7 +295,7 @@ test("super-admin 敏感词检测 submenu is wired into the console", () => {
   assert.match(settings, /敏感词拦截/);
   assert.match(settings, /启用拦截/);
   assert.match(settings, /需先启用检测/);
-  assert.match(settings, /loading \|\| !sensitiveWordDetectEnabled/);
+  assert.match(settings, /!settingsLoaded \|\| loading \|\| patching \|\| !sensitiveWordDetectEnabled/);
   assert.match(settings, /\/api\/admin\/settings/);
   assert.doesNotMatch(settings, /class="page-title"/);
   assert.match(words, /导入文档/);

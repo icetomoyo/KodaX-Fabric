@@ -573,10 +573,23 @@ async function testCredentialConnection(
   );
   const shouldCool = !result.ok
     && (result.httpStatus === 429 || cooldown.quotaExhausted || cooldown.cap != null);
-  const coolUntil = result.ok
-    ? null
+  // 对齐 relay 语义：成功仅在冷却已到期时解除（markCredentialSuccess 同款条件），
+  // 失败只延长不缩短（coolCredential 的 greatest），避免管理员「测试」清掉/缩短 relay 写入的冷却。
+  const failedCoolUntilIso = (
+    cooldown.coolUntil ?? new Date(now.getTime() + cooldown.cooldownSeconds * 1_000)
+  ).toISOString();
+  const cooldownExpired = sql`(${upstreamCredentials.coolUntil} is null or ${upstreamCredentials.coolUntil} <= now())`;
+  const coolUntilUpdate = result.ok
+    ? sql`case
+        when ${upstreamCredentials.status} = 'cooling' and ${cooldownExpired}
+        then null
+        else ${upstreamCredentials.coolUntil}
+      end`
     : shouldCool
-      ? cooldown.coolUntil ?? new Date(now.getTime() + cooldown.cooldownSeconds * 1_000)
+      ? sql`greatest(
+          coalesce(${upstreamCredentials.coolUntil}, ${failedCoolUntilIso}::timestamptz),
+          ${failedCoolUntilIso}::timestamptz
+        )`
       : undefined;
 
   await db.transaction(async (tx) => {
@@ -627,10 +640,10 @@ async function testCredentialConnection(
         },
         lastError: result.ok ? null : result.message,
         lastErrorAt: result.ok ? null : now,
-        ...(coolUntil !== undefined ? { coolUntil } : {}),
+        ...(coolUntilUpdate !== undefined ? { coolUntil: coolUntilUpdate } : {}),
         status: result.ok
           ? sql`case
-              when ${upstreamCredentials.status} = 'cooling'
+              when ${upstreamCredentials.status} = 'cooling' and ${cooldownExpired}
               then 'active'::credential_status
               else ${upstreamCredentials.status}
             end`

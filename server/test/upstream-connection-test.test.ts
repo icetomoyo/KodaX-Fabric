@@ -166,3 +166,25 @@ test("unsaved credential probe rejects unofficial template hosts", async () => {
     /已确认供应商的官方 HTTPS 地址/,
   );
 });
+
+test("admin connection test never clears or shortens a live relay cooldown", async () => {
+  const { readFileSync } = await import("node:fs");
+  const { dirname, resolve } = await import("node:path");
+  const { fileURLToPath } = await import("node:url");
+  const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+  const source = readFileSync(resolve(root, "src/routes/admin/credentials.ts"), "utf8");
+  // 失败路径只延长不缩短（对齐 relay coolCredential 的 greatest）
+  assert.match(
+    source,
+    /greatest\(\s*coalesce\(\$\{upstreamCredentials\.coolUntil\}, \$\{failedCoolUntilIso\}::timestamptz\),\s*\$\{failedCoolUntilIso\}::timestamptz\s*\)/,
+  );
+  // 成功路径仅在冷却已到期时解除（对齐 relay markCredentialSuccess 的条件）
+  assert.match(
+    source,
+    /when \$\{upstreamCredentials\.status\} = 'cooling' and \$\{cooldownExpired\}\s*then null/,
+  );
+  assert.match(
+    source,
+    /when \$\{upstreamCredentials\.status\} = 'cooling' and \$\{cooldownExpired\}\s*then 'active'::credential_status/,
+  );
+});

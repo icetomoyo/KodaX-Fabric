@@ -153,12 +153,14 @@
               <span class="kpi-foot">次均 {{ selected.day.avgTokens == null ? "—" : formatTokenCompact(selected.day.avgTokens) }}</span>
             </div>
             <div class="kpi-card">
-              <span class="kpi-label">积分</span>
+              <span class="kpi-label">积分{{ selected.day.creditsEstimated ? "（估算）" : "" }}</span>
               <strong class="kpi-value">{{ formatCredits(selected.day.credits) }}</strong>
               <span class="kpi-foot">
                 高峰 {{ formatCredits(selected.day.peakCredits) }}
                 <br>
                 非高峰 {{ formatCredits(selected.day.offPeakCredits) }}
+                <br v-if="selected.day.creditsEstimated">
+                <span v-if="selected.day.creditsEstimated" class="kpi-hint">当日超 5000 条，按最近 5000 条估算</span>
               </span>
             </div>
             <div class="kpi-card">
@@ -318,6 +320,7 @@ type SelectedUser = {
     cacheHitRate: number | null;
     avgTokens: number | null;
     credits: number;
+    creditsEstimated?: boolean;
     peakCredits: number;
     offPeakCredits: number;
     peakTokens: number;
@@ -479,7 +482,11 @@ function onHeatmapClick(date: string) {
   void load();
 }
 
+// 请求序号守卫：日期/员工快速切换时只认最后一次响应，避免先发慢回的旧响应回滚新状态
+let loadSeq = 0;
+
 async function load() {
+  const seq = ++loadSeq;
   loading.value = true;
   try {
     const { data } = await http.get("/api/admin/user-analytics", {
@@ -488,6 +495,7 @@ async function load() {
         employeeId: selectedId.value || undefined,
       },
     });
+    if (seq !== loadSeq) return;
     if (!data.success) throw new Error(data.message || "加载失败");
     ranks.value = data.data.ranks ?? [];
     selected.value = data.data.selected ?? null;
@@ -501,12 +509,13 @@ async function load() {
       },
     });
   } catch (error) {
+    if (seq !== loadSeq) return;
     const status = (error as { response?: { status?: number } }).response?.status;
     if (status === 403) return;
     const message = (error as { response?: { data?: { message?: unknown } } })?.response?.data?.message;
     ElMessage.error(typeof message === "string" ? message : "加载用户分析失败");
   } finally {
-    loading.value = false;
+    if (seq === loadSeq) loading.value = false;
   }
 }
 
@@ -765,6 +774,10 @@ onMounted(load);
   color: #94a3b8;
   font-size: 12px;
   line-height: 1.45;
+}
+.kpi-hint {
+  color: #f59e0b;
+  font-size: 11px;
 }
 .mix-card,
 .chart-card {

@@ -74,9 +74,9 @@
 ### 可靠性 / 正确性
 
 - **P2-1 积分展示口径 ≠ 结算口径**：`server/src/routes/admin/logs.ts:55-64`、`user-analytics.ts:307-330` 用 `createdAt` 当起止时刻重算折扣，而结算（`audit.ts:124-133`）按 `[startedAt, now]` 跨峰加权且只计成功行。修复：`request_audits` 落 `request_credits`（及 `started_at`），展示端直读；短期先在 UI 注明「按结束时刻估算」。
-- **P2-2 当日明细 5000 条静默截断**：`user-analytics.ts:252-262` 无 ORDER BY 无截断标记，大概率取最早 5000 条、恰好截掉 14–18 点高峰，且与全量 KPI 并排对不上账。加排序 + 截断标记（前端提示估算值）。
-- **P2-3 coolUntil 测试路径覆盖 relay 语义**：`credentials.ts:576-580` 管理员「测试」成功时 `coolUntil: null` 会清掉 relay 刚写的冷却，失败时直接缩短；relay 侧 `upstream.ts:460` 用 `greatest()` 只延长。对齐：测试路径不清不缩 relay 写入的冷却。
-- **P2-4 前端请求竞态**：`UserAnalyticsView.vue` 的 `load()` 无请求序号保护（旧响应回滚新状态，该接口一次跑 7 个聚合 SQL）；`SettingsView.vue` PATCH 期间开关未禁用，乱序响应致 UI 与后端相反。统一加「只认最后一次请求」守卫 / patching 状态。
+- **P2-2 当日明细 5000 条静默截断**【已修复完成】：`user-analytics.ts:252-262` 无 ORDER BY 无截断标记，大概率取最早 5000 条、恰好截掉 14–18 点高峰，且与全量 KPI 并排对不上账。加排序 + 截断标记（前端提示估算值）。**修复（2026-09-22）**：明细查询加 `ORDER BY created_at DESC, id DESC`（取最近 5000 条），`limit(5_001)` 精确判断截断；`day` 载荷新增 `creditsEstimated` 标记，前端积分卡片在截断时标题加「（估算）」并显示琥珀色提示「当日超 5000 条，按最近 5000 条估算」。附源码断言测试。
+- **P2-3 coolUntil 测试路径覆盖 relay 语义**【已修复完成】：`credentials.ts:576-580` 管理员「测试」成功时 `coolUntil: null` 会清掉 relay 刚写的冷却，失败时直接缩短；relay 侧 `upstream.ts:460` 用 `greatest()` 只延长。对齐：测试路径不清不缩 relay 写入的冷却。**修复（2026-09-22）**：成功路径复刻 `markCredentialSuccess` 条件——仅当 `status='cooling'` 且 `coolUntil` 已到期/为空才解除（status 与 coolUntil 同条件）；失败路径用 `greatest(coalesce(existing, new), new)` 只延长不缩短。附对齐语义源码断言测试（`upstream-connection-test.test.ts` 11/11）。
+- **P2-4 前端请求竞态**【已修复完成】：`UserAnalyticsView.vue` 的 `load()` 无请求序号保护（旧响应回滚新状态，该接口一次跑 7 个聚合 SQL）；`SettingsView.vue` PATCH 期间开关未禁用，乱序响应致 UI 与后端相反。统一加「只认最后一次请求」守卫 / patching 状态。**修复（2026-09-22）**：`load()` 加自增序号守卫（旧响应丢弃、loading 只由最新请求收口）；SettingsView 加 `patching` 状态（PATCH 期间禁用两个开关）与 `settingsLoaded`（GET 失败后开关保持禁用，防在未知基线上修改——顺带解决评审前端的「失败基线可交互」发现）。
 - **P2-5 `day=9999-12-31` 返回 500**【已修复完成】：`user-analytics.ts:39-43` → `zonedDateRange` 抛错未捕获。校验 day 不得晚于今天。**修复（2026-09-22）**：GET 处理器增加 `day > today` 早退返回 400「日期不能晚于今天」（ISO 字符串比较），附源码断言测试。
 - **P2-6 hits 列表用 `.parse()` 而非 `.safeParse()`**【已修复完成】：`server/src/routes/admin/sensitive-words.ts:204`，缺 `action` 参数得 500 而非 400；`logs.ts` 既有同类一并改。**修复（2026-09-22）**：实际全仓排查发现 **7 处**同类（credentials / logs / model-routes / teams / ops-audit / sensitive-words hits / users），全部改为 safeParse + 400「参数无效」守卫，其中 5 个处理器补了缺失的 `reply` 参数。
 

@@ -103,6 +103,14 @@ test("user analytics rejects future days instead of throwing in zonedDateRange",
   assert.match(source, /日期不能晚于今天/);
 });
 
+test("daily credit detail is sampled from the latest rows with a truncation flag", async () => {
+  const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+  const source = readFileSync(resolve(root, "src/routes/admin/user-analytics.ts"), "utf8");
+  assert.match(source, /orderBy\(desc\(requestAudits\.createdAt\), desc\(requestAudits\.id\)\)/);
+  assert.match(source, /limit\(5_001\)/);
+  assert.match(source, /creditsEstimated: detailTruncated/);
+});
+
 test("user analytics routes expose ranks and require a session", async () => {
   const app = Fastify();
   await app.register(adminUserAnalyticsRoutes);

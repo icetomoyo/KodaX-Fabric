@@ -5,7 +5,7 @@
         <el-switch
           v-model="sensitiveWordDetectEnabled"
           active-text="启用检测"
-          :disabled="loading"
+          :disabled="!settingsLoaded || loading || patching"
           @change="onDetectChange"
         />
         <p class="hint">命中后写入检测记录，请求继续转发上游。</p>
@@ -14,7 +14,7 @@
         <el-switch
           v-model="sensitiveWordInterceptEnabled"
           active-text="启用拦截"
-          :disabled="loading || !sensitiveWordDetectEnabled"
+          :disabled="!settingsLoaded || loading || patching || !sensitiveWordDetectEnabled"
           @change="onInterceptChange"
         />
         <p class="hint">需先启用检测。开启后命中同时写入拦截记录并拦截请求。</p>
@@ -29,6 +29,10 @@ import { ElMessage } from "element-plus";
 import { http } from "@/api/http";
 
 const loading = ref(false);
+// PATCH 进行中禁用两个开关：避免连点产生并发 PATCH、乱序响应把 UI 改回旧状态
+const patching = ref(false);
+// GET 成功前 / 失败后开关保持禁用，防止在未知基线上修改
+const settingsLoaded = ref(false);
 const sensitiveWordDetectEnabled = ref(true);
 const sensitiveWordInterceptEnabled = ref(false);
 
@@ -44,7 +48,10 @@ async function load() {
   loading.value = true;
   try {
     const { data } = await http.get("/api/admin/settings");
-    if (data.success) applySettings(data.data);
+    if (data.success) {
+      applySettings(data.data);
+      settingsLoaded.value = true;
+    }
   } catch (e: any) {
     ElMessage.error(e.response?.data?.message || "加载系统设置失败");
   } finally {
@@ -60,6 +67,7 @@ async function patchSettings(
   revert: () => void,
   success: string,
 ) {
+  patching.value = true;
   try {
     const { data } = await http.patch("/api/admin/settings", payload);
     if (!data.success) throw new Error(data.message || "保存失败");
@@ -68,6 +76,8 @@ async function patchSettings(
   } catch (e: any) {
     revert();
     ElMessage.error(e.response?.data?.message || e.message || "保存失败");
+  } finally {
+    patching.value = false;
   }
 }
 
