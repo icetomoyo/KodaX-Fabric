@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
-import { encryptSecret } from "./crypto-secret.js";
+import { decryptSecret, encryptSecret } from "./crypto-secret.js";
 
 export const EMPLOYEE_API_KEY_ENCRYPTION_PURPOSE = "employee-api-key:v1";
 
@@ -25,4 +25,8 @@ export function isGeneratedApiKey(raw: string): boolean {
 export function encryptEmployeeApiKey(raw: string): string {
   if (!isGeneratedApiKey(raw)) throw new Error("invalid employee API key format");
   return encryptSecret(raw, EMPLOYEE_API_KEY_ENCRYPTION_PURPOSE);
+}
+
+export function decryptEmployeeApiKey(payload: string): string {
+  return decryptSecret(payload, EMPLOYEE_API_KEY_ENCRYPTION_PURPOSE);
 }

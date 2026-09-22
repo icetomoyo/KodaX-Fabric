@@ -1,8 +1,12 @@
 <template>
   <el-card shadow="never">
-      <div class="page-head">
-        <el-button type="primary" :disabled="!canIssueKey" @click="openCreate">创建 Key</el-button>
-      </div>
+      <el-alert
+        class="auto-alert"
+        title="系统已为你的每个部门按协议自动生成 API Key（每个协议一把），明文仅你自己可见，请妥善保管。"
+        type="info"
+        show-icon
+        :closable="false"
+      />
       <el-alert
         v-if="!hasDepartment"
         class="join-alert"
@@ -12,40 +16,54 @@
         :closable="false"
       />
 
-      <el-table v-loading="loading" :data="pagedKeys" stripe empty-text="暂无 API Key">
-        <el-table-column label="部门" min-width="180">
-          <template #default="{ row }">
-            {{ row.departmentName || row.teamName || "未绑定部门" }}
-          </template>
-        </el-table-column>
-        <el-table-column label="名称" min-width="140">
-          <template #default="{ row }">
-            {{ row.name }}
-          </template>
-        </el-table-column>
-        <el-table-column label="协议" min-width="140">
-          <template #default="{ row }">
-            {{ relayProtocolLabel(row.protocol, true) }}
-          </template>
-        </el-table-column>
-        <el-table-column label="上游渠道" min-width="210">
-          <template #default="{ row }">
-            {{ keyChannelLabel(row) }}
-          </template>
-        </el-table-column>
-        <el-table-column label="状态" width="100">
-          <template #default="{ row }">
-            <el-tag
-              :type="row.status === 'active' ? 'success' : 'info'"
-              effect="light"
-            >
-              {{ keyStatusLabel(row.status) }}
-            </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="操作" width="90" fixed="right">
-          <template #default="{ row }">
+      <div v-loading="loading" class="key-board">
+        <el-empty
+          v-if="!loading && groups.length === 0"
+          description="暂无 API Key"
+          :image-size="72"
+        />
+
+        <section
+          v-for="group in groups"
+          :key="group.key"
+          class="dept-section"
+        >
+          <h3 class="dept-title">{{ group.label }}</h3>
+          <div v-for="row in group.rows" :key="row.id" class="key-row">
+            <span class="proto-label">
+              {{ relayProtocolLabel(row.protocol, true) }}
+              <el-tag
+                v-if="row.status !== 'active'"
+                type="info"
+                effect="light"
+                size="small"
+              >
+                {{ keyStatusLabel(row.status) }}
+              </el-tag>
+            </span>
+            <code class="key-text" :title="row.key || row.keyPrefix">{{ row.key ?? `${row.keyPrefix}••••` }}</code>
             <el-button
+              class="row-action"
+              link
+              type="warning"
+              :loading="regeneratingId === row.id"
+              @click="regenerateKey(row)"
+            >
+              更新
+            </el-button>
+            <el-button
+              class="row-action"
+              link
+              type="primary"
+              :disabled="!row.key"
+              :loading="copyingId === row.id"
+              @click="copyKey(row)"
+            >
+              复制
+            </el-button>
+            <el-button
+              v-if="row.deletable"
+              class="row-action"
               link
               type="danger"
               :loading="deletingId === row.id"
@@ -53,220 +71,23 @@
             >
               删除
             </el-button>
-          </template>
-        </el-table-column>
-      </el-table>
-      <div class="pager">
-        <el-pagination
-          v-model:current-page="keyPage"
-          background
-          layout="total, prev, pager, next"
-          :total="keyTotal"
-          :page-size="keyPageSize"
-        />
+          </div>
+        </section>
       </div>
   </el-card>
-
-    <el-dialog
-      v-model="showCreate"
-      :title="createdResult ? '复制新 API Key' : '创建 API Key'"
-      width="520px"
-      destroy-on-close
-      :close-on-click-modal="!creating"
-      :close-on-press-escape="!creating"
-      :before-close="handleCreateBeforeClose"
-      @closed="onCreateClosed"
-    >
-      <div v-if="createdResult" class="create-result">
-        <el-alert
-          title="API Key 已创建，请立即复制；关闭后无法再次查看"
-          type="warning"
-          :closable="false"
-          show-icon
-        />
-
-        <el-descriptions :column="1" border>
-          <el-descriptions-item label="名称">{{ createdResult.name }}</el-descriptions-item>
-          <el-descriptions-item label="上游渠道">
-            {{ channelLabel({ providerName: createdResult.providerName, productLineName: createdResult.productLineName }) }}
-          </el-descriptions-item>
-          <el-descriptions-item label="协议">{{ relayProtocolLabel(createdResult.protocol) }}</el-descriptions-item>
-        </el-descriptions>
-
-        <div class="secret-label">API Key（仅显示一次）</div>
-        <div class="secret-box">
-          <el-input
-            :model-value="createdResult.key"
-            readonly
-            class="secret-input"
-            aria-label="新创建的 API Key，仅显示一次"
-            @focus="selectSecretInput"
-          />
-          <el-button
-            type="primary"
-            :loading="copyingCreatedKey"
-            @click="copyCreatedKey"
-          >
-            复制 API Key
-          </el-button>
-        </div>
-        <p class="result-tip">关闭后无法再次查看，请先复制。</p>
-      </div>
-
-      <div v-else class="create-form-state">
-        <el-skeleton v-if="channelsLoading" :rows="4" animated />
-
-        <div v-else-if="channelsError" class="channel-state">
-          <el-alert
-            :title="channelsError"
-            type="error"
-            :closable="false"
-            show-icon
-          />
-          <el-button :loading="channelsLoading" @click="loadChannels">重新加载</el-button>
-        </div>
-
-        <el-empty
-          v-else-if="upstreamChannels.length === 0"
-          description="暂无可用上游渠道，请联系管理员在“上游渠道”中配置并授权"
-          :image-size="72"
-        />
-
-        <el-form v-else label-position="top" @submit.prevent>
-          <el-form-item label="所属部门" required>
-            <el-select
-              v-if="departmentChoices.length > 1"
-              v-model="createForm.departmentId"
-              placeholder="选择要绑定的部门"
-              style="width: 100%"
-              :disabled="creating"
-            >
-              <el-option
-                v-for="department in departmentChoices"
-                :key="department.id"
-                :label="department.path || department.name"
-                :value="department.id"
-              />
-            </el-select>
-            <el-input
-              v-else
-              :model-value="departmentChoices[0]?.path || departmentChoices[0]?.name || ''"
-              disabled
-            />
-          </el-form-item>
-          <el-form-item label="名称" required>
-            <el-input
-              v-model="createForm.name"
-              maxlength="100"
-              placeholder="例如 Cursor"
-              :disabled="creating"
-            />
-          </el-form-item>
-          <el-form-item v-if="upstreamChannels.length > 1" label="上游渠道" required>
-            <el-select
-              v-model="createForm.productLineId"
-              placeholder="选择渠道"
-              style="width: 100%"
-              :disabled="creating"
-              @change="onChannelChange"
-            >
-              <el-option
-                v-for="channel in upstreamChannels"
-                :key="channel.productLineId"
-                :label="channelLabel(channel)"
-                :value="channel.productLineId"
-              />
-            </el-select>
-          </el-form-item>
-          <el-form-item v-else-if="selectedChannel" label="上游渠道">
-            <el-input :model-value="channelLabel(selectedChannel)" disabled />
-          </el-form-item>
-          <el-form-item v-if="selectedChannel" label="协议" required>
-            <el-radio-group
-              v-if="compatibleProtocolOptions.length > 0"
-              v-model="createForm.protocol"
-              class="protocol-list"
-              :disabled="creating"
-            >
-              <div
-                v-for="option in compatibleProtocolOptions"
-                :key="option.value"
-                class="protocol-option"
-                :class="{ selected: createForm.protocol === option.value }"
-                @click="selectProtocol(option.value)"
-              >
-                <el-radio :value="option.value" :disabled="creating">
-                  {{ relayProtocolPickerLabel(option) }}
-                </el-radio>
-                <el-tooltip
-                  placement="top"
-                  :show-after="120"
-                  :content="relayProtocolClientHint(option)"
-                >
-                  <span
-                    class="protocol-hint"
-                    role="img"
-                    :aria-label="relayProtocolClientHint(option)"
-                    @click.stop
-                  >
-                    <el-icon :size="14"><WarningFilled /></el-icon>
-                  </span>
-                </el-tooltip>
-              </div>
-            </el-radio-group>
-            <div v-else class="form-help">
-              该渠道暂无可用协议
-            </div>
-          </el-form-item>
-
-          <div v-if="submitError" class="submit-error">
-            <el-alert :title="submitError" type="error" :closable="false" show-icon style="flex: 1" />
-            <el-button link type="primary" @click="loadChannels">刷新渠道列表</el-button>
-          </div>
-        </el-form>
-      </div>
-
-      <template #footer>
-        <template v-if="createdResult">
-          <el-button
-            type="primary"
-            @click="requestCreateClose"
-          >
-            完成，关闭
-          </el-button>
-        </template>
-        <template v-else>
-          <el-button :disabled="creating" @click="requestCreateClose">取消</el-button>
-          <el-button
-            type="primary"
-            :loading="creating"
-            :disabled="!canCreate"
-            @click="createKey"
-          >
-            创建
-          </el-button>
-        </template>
-      </template>
-    </el-dialog>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
-import { WarningFilled } from "@element-plus/icons-vue";
 import { http } from "@/api/http";
-import { useAuthStore } from "@/stores/auth";
 import { copyText } from "@/lib/clipboard";
-import { useTablePage } from "@/lib/table-page";
 import {
-  relayProtocolClientHint,
   relayProtocolLabel,
   relayProtocolOptions,
-  relayProtocolPickerLabel,
   type RelayProtocol,
 } from "@/views/relay-protocol";
 
-const auth = useAuthStore();
 type OrgDepartment = {
   id: number;
   name: string;
@@ -274,14 +95,10 @@ type OrgDepartment = {
   teamId: number;
 };
 
-const departments = ref<OrgDepartment[]>([]);
-const hasDepartment = computed(() => departments.value.length > 0);
-const canIssueKey = computed(() => hasDepartment.value);
-const departmentChoices = computed(() => departments.value);
-
 type KeyRow = {
   id: number;
   name: string;
+  key: string | null;
   keyPrefix: string;
   protocol: RelayProtocol;
   productLineId: number;
@@ -297,76 +114,62 @@ type KeyRow = {
   lastUsedAt?: string | null;
 };
 
-type UpstreamChannel = {
-  productLineId: number;
-  productLineCode: string;
-  productLineName: string;
-  productType: "api" | "coding_plan" | string;
-  providerId: number;
-  providerCode: string;
-  providerName: string;
-  compatibleProtocols: RelayProtocol[];
-  credentialCount: number;
+type KeyRowView = KeyRow & { deletable: boolean };
+
+type DepartmentGroup = {
+  key: string;
+  label: string;
+  rows: KeyRowView[];
 };
 
-type CreatedKeyResult = {
-  id: number;
-  name: string;
-  key: string;
-  keyPrefix: string;
-  protocol: RelayProtocol;
-  productLineId: number;
-  productLineName: string;
-  providerName: string;
-};
+const departments = ref<OrgDepartment[]>([]);
+const hasDepartment = computed(() => departments.value.length > 0);
 
 const keys = ref<KeyRow[]>([]);
-const {
-  page: keyPage,
-  paged: pagedKeys,
-  total: keyTotal,
-  pageSize: keyPageSize,
-} = useTablePage(keys);
 const loading = ref(false);
-const creating = ref(false);
 const deletingId = ref<number | null>(null);
-const showCreate = ref(false);
-const channelsLoading = ref(false);
-const channelsError = ref("");
-const submitError = ref("");
-const upstreamChannels = ref<UpstreamChannel[]>([]);
-const createdResult = ref<CreatedKeyResult | null>(null);
-const copyingCreatedKey = ref(false);
-const createForm = reactive({
-  name: "",
-  departmentId: null as number | null,
-  productLineId: null as number | null,
-  protocol: null as RelayProtocol | null,
+const copyingId = ref<number | null>(null);
+const regeneratingId = ref<number | null>(null);
+
+function protocolOrder(protocol: RelayProtocol): number {
+  return relayProtocolOptions.findIndex((option) => option.value === protocol);
+}
+
+/** 部门做分组标题，组内按协议固定顺序；同部门同协议只有一把 Key 时不允许删除。 */
+const groups = computed<DepartmentGroup[]>(() => {
+  const grouped = new Map<string, KeyRow[]>();
+  for (const row of keys.value) {
+    const groupKey = String(row.departmentId ?? row.teamId ?? "none");
+    const rows = grouped.get(groupKey);
+    if (rows) {
+      rows.push(row);
+    } else {
+      grouped.set(groupKey, [row]);
+    }
+  }
+  const labelOf = (rows: KeyRow[]) =>
+    rows[0]?.departmentName || rows[0]?.teamName || "未绑定部门";
+  return [...grouped.entries()]
+    .map(([groupKey, rows]) => ({ groupKey, rows }))
+    .sort((left, right) =>
+      labelOf(left.rows).localeCompare(labelOf(right.rows), "zh-Hans-CN"),
+    )
+    .map(({ groupKey, rows }) => {
+      rows.sort((left, right) => protocolOrder(left.protocol) - protocolOrder(right.protocol));
+      const protocolCounts = new Map<RelayProtocol, number>();
+      for (const row of rows) {
+        protocolCounts.set(row.protocol, (protocolCounts.get(row.protocol) ?? 0) + 1);
+      }
+      return {
+        key: groupKey,
+        label: labelOf(rows),
+        rows: rows.map((row) => ({
+          ...row,
+          deletable: (protocolCounts.get(row.protocol) ?? 0) > 1,
+        })),
+      };
+    });
 });
-let channelRequestSequence = 0;
-
-const selectedChannel = computed(() =>
-  upstreamChannels.value.find(
-    (channel) => channel.productLineId === createForm.productLineId,
-  ) ?? null,
-);
-
-const compatibleProtocolOptions = computed(() => {
-  const protocols = selectedChannel.value?.compatibleProtocols ?? [];
-  return relayProtocolOptions.filter((option) => protocols.includes(option.value));
-});
-
-const canCreate = computed(() =>
-  !channelsLoading.value
-  && !channelsError.value
-  && Boolean(createForm.departmentId)
-  && Boolean(createForm.name.trim())
-  && Boolean(selectedChannel.value)
-  && Boolean(createForm.protocol)
-  && compatibleProtocolOptions.value.some(
-    (option) => option.value === createForm.protocol,
-  ),
-);
 
 function getErrorMessage(error: unknown, fallback: string): string {
   const responseMessage = (error as { response?: { data?: { message?: unknown } } })
@@ -401,12 +204,25 @@ async function loadDepartments() {
   }
 }
 
+async function provisionKeys() {
+  try {
+    await http.post("/api/me/api-keys/provision");
+  } catch (error) {
+    ElMessage.error(getErrorMessage(error, "自动生成 API Key 失败，请刷新重试"));
+  }
+}
+
+async function loadKeys() {
+  const { data } = await http.get("/api/me/api-keys");
+  if (data.success) keys.value = Array.isArray(data.data) ? data.data : [];
+}
+
 async function load() {
   loading.value = true;
   try {
     await loadDepartments();
-    const { data } = await http.get("/api/me/api-keys");
-    if (data.success) keys.value = Array.isArray(data.data) ? data.data : [];
+    await provisionKeys();
+    await loadKeys();
   } catch (error) {
     ElMessage.error(getErrorMessage(error, "加载 API Key 失败"));
   } finally {
@@ -414,191 +230,45 @@ async function load() {
   }
 }
 
-function openCreate() {
-  resetCreateState();
-  showCreate.value = true;
-  void loadChannels();
-}
-
-function onCreateClosed() {
-  resetCreateState();
-}
-
-function resetCreateState() {
-  channelRequestSequence += 1;
-  createForm.name = "";
-  createForm.departmentId = departments.value.length === 1 ? departments.value[0]?.id ?? null : null;
-  createForm.productLineId = null;
-  createForm.protocol = null;
-  upstreamChannels.value = [];
-  channelsError.value = "";
-  submitError.value = "";
-  createdResult.value = null;
-  copyingCreatedKey.value = false;
-  channelsLoading.value = false;
-}
-
-/** 公司名称/模型名称，如 智谱/GLM、深度求索/DeepSeek */
-function channelLabel(channel: Pick<UpstreamChannel, "providerName" | "productLineName">): string {
-  const company = channel.providerName.trim();
-  const model = channel.productLineName.trim();
-  if (!company) return model;
-  if (!model) return company;
-  if (company === model || model.startsWith(`${company}/`)) return model;
-  return `${company}/${model}`;
-}
-
-function keyChannelLabel(row: KeyRow): string {
-  return channelLabel(row);
-}
-
-function onChannelChange() {
-  submitError.value = "";
-  const available = selectedChannel.value?.compatibleProtocols ?? [];
-  if (!createForm.protocol || !available.includes(createForm.protocol)) {
-    createForm.protocol = null;
-  }
-}
-
-function selectProtocol(protocol: RelayProtocol) {
-  if (creating.value) return;
-  createForm.protocol = protocol;
-}
-
-async function loadChannels() {
-  const requestId = ++channelRequestSequence;
-  channelsLoading.value = true;
-  channelsError.value = "";
-  submitError.value = "";
-  createForm.productLineId = null;
-  createForm.protocol = null;
+async function copyKey(row: KeyRow) {
+  if (!row.key) return;
+  copyingId.value = row.id;
   try {
-    const { data } = await http.get("/api/me/upstream-channels");
-    if (requestId !== channelRequestSequence) return;
-    if (!data.success) throw new Error(data.message || "加载上游渠道失败");
-    upstreamChannels.value = Array.isArray(data.data) ? data.data : [];
-    if (upstreamChannels.value.length === 1) {
-      createForm.productLineId = upstreamChannels.value[0].productLineId;
-      onChannelChange();
-    }
-  } catch (error) {
-    if (requestId !== channelRequestSequence) return;
-    upstreamChannels.value = [];
-    channelsError.value = getErrorMessage(error, "加载上游渠道失败，请稍后重试");
-  } finally {
-    if (requestId === channelRequestSequence) channelsLoading.value = false;
-  }
-}
-
-function requestCreateClose() {
-  if (creating.value) {
-    ElMessage.warning("API Key 正在创建，请稍候");
-    return;
-  }
-  showCreate.value = false;
-}
-
-function handleCreateBeforeClose(done: () => void) {
-  if (creating.value) {
-    ElMessage.warning("API Key 正在创建，请稍候");
-    return;
-  }
-  done();
-}
-
-async function createKey() {
-  if (!selectedChannel.value) {
-    ElMessage.warning("请选择上游渠道");
-    return;
-  }
-  if (
-    !createForm.protocol
-    || !compatibleProtocolOptions.value.some(
-      (option) => option.value === createForm.protocol,
-    )
-  ) {
-    ElMessage.warning("请选择协议");
-    return;
-  }
-  if (!createForm.name.trim()) {
-    ElMessage.warning("请填写名称");
-    return;
-  }
-  if (!createForm.departmentId) {
-    ElMessage.warning(departments.value.length > 1 ? "请选择要绑定的部门" : "尚未加入部门");
-    return;
-  }
-
-  const channel = selectedChannel.value;
-  const protocol = createForm.protocol;
-  const name = createForm.name.trim();
-  submitError.value = "";
-  creating.value = true;
-  try {
-    const { data } = await http.post("/api/me/api-keys", {
-      name,
-      departmentId: createForm.departmentId,
-      productLineId: channel.productLineId,
-      protocol,
-    });
-    if (!data.success) throw new Error(data.message || "创建失败");
-    if (typeof data.data?.key !== "string" || data.data.key.length === 0) {
-      throw new Error("API Key 已创建，但服务端未返回明文，请立即联系管理员");
-    }
-
-    createdResult.value = {
-      id: Number(data.data.id),
-      name: typeof data.data.name === "string" ? data.data.name : name,
-      key: data.data.key,
-      keyPrefix: typeof data.data.keyPrefix === "string" ? data.data.keyPrefix : "",
-      protocol,
-      productLineId: channel.productLineId,
-      productLineName:
-        typeof data.data.productLineName === "string"
-          ? data.data.productLineName
-          : channel.productLineName,
-      providerName:
-        typeof data.data.providerName === "string"
-          ? data.data.providerName
-          : channel.providerName,
-    };
-    void load();
-  } catch (error) {
-    const errorCode = (error as {
-      response?: { data?: { code?: unknown } };
-    })?.response?.data?.code;
-    if (errorCode === "channel_protocol_incompatible") {
-      submitError.value = "所选协议与上游渠道不兼容，请刷新渠道列表后重新选择";
-    } else if (errorCode === "upstream_channel_unavailable") {
-      submitError.value = "上游渠道不可用，请刷新后重新选择";
-    } else {
-      submitError.value = getErrorMessage(error, "创建失败");
-    }
-    ElMessage.error(submitError.value);
-  } finally {
-    creating.value = false;
-  }
-}
-
-function selectSecretInput(event: FocusEvent) {
-  const target = event.target;
-  if (target instanceof HTMLTextAreaElement || target instanceof HTMLInputElement) {
-    target.select();
-  }
-}
-
-async function copyCreatedKey() {
-  if (!createdResult.value) return;
-  copyingCreatedKey.value = true;
-  try {
-    const copied = await copyText(createdResult.value.key);
+    const copied = await copyText(row.key);
     if (copied) {
       ElMessage.success("API Key 已复制");
     } else {
-      ElMessage.error("复制失败，请点击 Key 文本全选后手动复制");
+      ElMessage.error("复制失败，请手动选中 Key 文本复制");
     }
   } finally {
-    copyingCreatedKey.value = false;
+    copyingId.value = null;
+  }
+}
+
+async function regenerateKey(row: KeyRow) {
+  try {
+    await ElMessageBox.confirm(
+      `确认更新「${relayProtocolLabel(row.protocol, true)}」的 API Key（${row.keyPrefix}••••）？更新后立即换发新 Key，旧 Key 马上失效，正在使用的客户端需要改用新 Key。`,
+      "更新 API Key",
+      {
+        type: "warning",
+        confirmButtonText: "更新",
+        cancelButtonText: "取消",
+      },
+    );
+  } catch {
+    return;
+  }
+
+  regeneratingId.value = row.id;
+  try {
+    await http.post(`/api/me/api-keys/${row.id}/regenerate`);
+    ElMessage.success("API Key 已更新");
+    await loadKeys();
+  } catch (error) {
+    ElMessage.error(getErrorMessage(error, "更新失败"));
+  } finally {
+    regeneratingId.value = null;
   }
 }
 
@@ -641,7 +311,7 @@ async function removeKey(row: KeyRow) {
   try {
     await http.delete(`/api/me/api-keys/${row.id}`);
     ElMessage.success("已删除");
-    await load();
+    await loadKeys();
   } catch (error) {
     ElMessage.error(getErrorMessage(error, "删除失败"));
   } finally {
@@ -653,10 +323,7 @@ onMounted(load);
 </script>
 
 <style scoped>
-.page-head {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
+.auto-alert {
   margin-bottom: 16px;
 }
 
@@ -664,105 +331,50 @@ onMounted(load);
   margin-bottom: 16px;
 }
 
-.create-form-state {
-  min-height: 220px;
+.dept-section + .dept-section {
+  margin-top: 20px;
+  padding-top: 20px;
+  border-top: 1px solid var(--el-border-color-lighter);
 }
 
-.channel-state {
-  display: grid;
-  justify-items: start;
-  gap: 16px;
-  padding: 12px 0;
+.dept-title {
+  margin: 0 0 12px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--el-text-color-primary);
 }
 
-.form-help {
-  margin-top: 8px;
-  color: var(--el-text-color-secondary);
-}
-
-.protocol-list {
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  flex-wrap: nowrap;
-  gap: 8px;
-  width: 100%;
-  font-size: inherit;
-}
-
-.protocol-option {
+.key-row {
   display: flex;
   align-items: center;
-  gap: 8px;
-  width: 100%;
-  min-height: 40px;
-  padding: 8px 12px;
-  border: 1px solid var(--el-border-color);
-  border-radius: 8px;
-  background: #fff;
-  cursor: pointer;
+  gap: 16px;
 }
 
-.protocol-option:hover {
-  border-color: #93c5fd;
+.key-row + .key-row {
+  margin-top: 12px;
 }
 
-.protocol-option.selected {
-  border-color: #3b82f6;
-  background: #eff6ff;
-  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.12);
-}
-
-.protocol-option :deep(.el-radio) {
-  flex: 1;
-  margin-right: 0;
-  height: auto;
-  white-space: nowrap;
-}
-
-.protocol-option :deep(.el-radio__label) {
-  white-space: nowrap;
-}
-
-.protocol-hint {
-  display: inline-flex;
+.proto-label {
   flex-shrink: 0;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  color: #f59e0b;
-  cursor: help;
-}
-
-.submit-error {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.create-result {
-  display: grid;
-  gap: 16px;
-}
-
-.secret-label {
+  width: 260px;
+  font-size: 14px;
   color: var(--el-text-color-regular);
 }
 
-.secret-box {
-  display: flex;
-  align-items: stretch;
-  gap: 10px;
+.key-text {
+  flex-shrink: 0;
+  width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--el-font-family-mono, ui-monospace, monospace);
+  font-size: 13px;
+  color: var(--el-text-color-regular);
+  user-select: all;
 }
 
-.secret-input {
-  flex: 1;
-  min-width: 0;
-}
-
-.result-tip {
-  margin: 0;
-  color: var(--el-text-color-secondary);
+.row-action {
+  flex-shrink: 0;
+  padding: 0;
 }
 </style>

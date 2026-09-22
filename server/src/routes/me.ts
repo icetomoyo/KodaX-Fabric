@@ -20,10 +20,15 @@ import {
 } from "../db/schema/index.js";
 import { parseDateOnly, quotaDayAt, zonedDateRange, zonedMonthRange } from "../lib/quota-time.js";
 import { listEmployeeTeamUsageViews } from "../lib/team-quota.js";
-import { encryptEmployeeApiKey, generateApiKey } from "../lib/api-key.js";
+import {
+  decryptEmployeeApiKey,
+  encryptEmployeeApiKey,
+  generateApiKey,
+} from "../lib/api-key.js";
 import {
   RELAY_BASE_PATH,
   RELAY_PROTOCOLS,
+  type RelayProtocol,
 } from "../lib/relay/protocol.js";
 import { groupDiscoveredModelsByChannel } from "../lib/discovered-models.js";
 import {
@@ -97,6 +102,27 @@ export function buildRelayBaseUrl(
 function meId(req: FastifyRequest): number {
   return actingEmployeeId(req);
 }
+
+function noStore(reply: { header: (key: string, value: string) => unknown }) {
+  reply.header("Cache-Control", "no-store");
+  reply.header("Pragma", "no-cache");
+}
+
+/** 员工 Key 页面按明文展示，解密失败时返回 null，前端回退展示前缀。 */
+function revealEmployeeApiKey(keyEncrypted: string): string | null {
+  try {
+    return decryptEmployeeApiKey(keyEncrypted);
+  } catch {
+    return null;
+  }
+}
+
+/** 自动生成 Key 的名称：按协议命名，一个部门一个协议一把 Key。 */
+const AUTO_KEY_PROTOCOL_NAMES: Record<RelayProtocol, string> = {
+  anthropic_messages: "Anthropic Message",
+  openai_chat: "OpenAI Chat Completion",
+  openai_responses: "OpenAI Response",
+};
 
 async function loadOwnedSeat(employeeId: number, seatId: number) {
   const [seat] = await db
@@ -722,12 +748,14 @@ export async function meRoutes(app: FastifyInstance) {
     return { success: true, data: { channels } };
   });
 
-  app.get("/api/me/api-keys", async (req) => {
+  app.get("/api/me/api-keys", async (req, reply) => {
+    noStore(reply);
     const rows = await db
       .select({
         id: employeeApiKeys.id,
         name: employeeApiKeys.name,
         keyPrefix: employeeApiKeys.keyPrefix,
+        keyEncrypted: employeeApiKeys.keyEncrypted,
         protocol: employeeApiKeys.protocol,
         productLineId: employeeApiKeys.productLineId,
         teamId: employeeApiKeys.teamId,
@@ -750,14 +778,11 @@ export async function meRoutes(app: FastifyInstance) {
       .where(eq(employeeApiKeys.employeeId, meId(req)))
       .orderBy(desc(employeeApiKeys.id));
 
-    if (rows.length === 0) {
-      return { success: true, data: [] };
-    }
-
     return {
       success: true,
-      data: rows.map(({ relayPoolKey, ...row }) => ({
+      data: rows.map(({ relayPoolKey, keyEncrypted, ...row }) => ({
         ...row,
+        key: revealEmployeeApiKey(keyEncrypted),
         productLineName: pooledProductLineDisplayName({
           relayPoolKey,
           productLineName: row.productLineName,
@@ -968,6 +993,294 @@ export async function meRoutes(app: FastifyInstance) {
         key: raw,
       },
     };
+  });
+
+  /**
+   * 自动补齐：为员工的每个部门 × 每个协议确保一把可用 Key，缺则创建。
+   * 已有该（部门默认团队, 协议）组合的 active Key 时跳过，幂等可重复调用。
+   */
+  app.post("/api/me/api-keys/provision", async (req, reply) => {
+    noStore(reply);
+
+    const result = await db.transaction(async (tx) => {
+      // 与手动创建保持同一把员工行锁，避免与管理员角色变更并发。
+      const [owner] = await tx
+        .select({
+          role: employees.role,
+          status: employees.status,
+          enterpriseId: employees.enterpriseId,
+        })
+        .from(employees)
+        .where(eq(employees.id, meId(req)))
+        .limit(1)
+        .for("update");
+
+      if (
+        !owner ||
+        (owner.role !== "employee" &&
+          owner.role !== "dept_admin" &&
+          owner.role !== "org_admin") ||
+        owner.status !== "active"
+      ) {
+        return { outcome: "forbidden" } as const;
+      }
+      if (owner.enterpriseId == null) {
+        return { outcome: "no_enterprise" } as const;
+      }
+
+      const membershipRows = await tx
+        .select({
+          teamId: teams.id,
+          departmentId: teams.departmentId,
+          departmentName: departments.name,
+          isDefault: teams.isDefault,
+          status: teams.status,
+        })
+        .from(teamMembers)
+        .innerJoin(teams, eq(teamMembers.teamId, teams.id))
+        .innerJoin(departments, eq(teams.departmentId, departments.id))
+        .where(eq(teamMembers.employeeId, meId(req)));
+
+      // 每个部门取一个团队（优先默认团队），与 resolveEmployeeApiKeyTeam 的选择一致。
+      const departmentTeams = new Map<number, (typeof membershipRows)[number]>();
+      for (const row of membershipRows) {
+        if (row.status !== "active") continue;
+        const current = departmentTeams.get(row.departmentId);
+        if (!current || (row.isDefault && !current.isDefault)) {
+          departmentTeams.set(row.departmentId, row);
+        }
+      }
+      if (departmentTeams.size === 0) {
+        return { outcome: "no_team" } as const;
+      }
+
+      const previewChannels = await getEmployeeUpstreamChannels(meId(req), tx);
+      const poolKeys = [...new Set(previewChannels.map((channel) => channel.relayPoolKey))]
+        .sort();
+      for (const poolKey of poolKeys) {
+        await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${poolKey}))`);
+      }
+      const channels = await getEmployeeUpstreamChannels(meId(req), tx, {
+        lockForCreate: true,
+      });
+      if (channels.length === 0) {
+        return { outcome: "channel_unavailable" } as const;
+      }
+
+      const existingRows = await tx
+        .select({
+          teamId: employeeApiKeys.teamId,
+          protocol: employeeApiKeys.protocol,
+        })
+        .from(employeeApiKeys)
+        .where(
+          and(
+            eq(employeeApiKeys.employeeId, meId(req)),
+            eq(employeeApiKeys.status, "active"),
+          ),
+        );
+      const existing = new Set(
+        existingRows.map((row) => `${row.teamId}:${row.protocol}`),
+      );
+
+      const created: {
+        id: number;
+        name: string;
+        key: string;
+        keyPrefix: string;
+        protocol: RelayProtocol;
+        productLineId: number;
+        productLineName: string;
+        providerCode: string;
+        providerName: string;
+        teamId: number;
+        departmentId: number;
+        departmentName: string;
+      }[] = [];
+
+      const memberships = [...departmentTeams.values()]
+        .sort((left, right) => left.departmentId - right.departmentId);
+      for (const membership of memberships) {
+        for (const protocol of RELAY_PROTOCOLS) {
+          if (existing.has(`${membership.teamId}:${protocol}`)) continue;
+          const channel = channels.find((item) =>
+            item.compatibleProtocols.includes(protocol),
+          );
+          if (!channel) continue;
+
+          const { raw, prefix, hash } = generateApiKey();
+          const [row] = await tx
+            .insert(employeeApiKeys)
+            .values({
+              employeeId: meId(req),
+              name: AUTO_KEY_PROTOCOL_NAMES[protocol],
+              keyPrefix: prefix,
+              keyHash: hash,
+              keyEncrypted: encryptEmployeeApiKey(raw),
+              protocol,
+              productLineId: channel.productLineId,
+              teamId: membership.teamId,
+            })
+            .returning({
+              id: employeeApiKeys.id,
+              name: employeeApiKeys.name,
+              keyPrefix: employeeApiKeys.keyPrefix,
+              protocol: employeeApiKeys.protocol,
+              productLineId: employeeApiKeys.productLineId,
+              teamId: employeeApiKeys.teamId,
+            });
+
+          await tx.insert(opsAuditLogs).values({
+            actorEmployeeId: req.employeeId,
+            action: "api_key.create",
+            targetType: "employee_api_key",
+            targetId: String(row.id),
+            detail: {
+              productLineId: row.productLineId,
+              productLineName: channel.productLineName,
+              providerCode: channel.providerCode,
+              providerName: channel.providerName,
+              protocol: row.protocol,
+              teamId: row.teamId,
+              departmentId: membership.departmentId,
+              departmentName: membership.departmentName,
+              autoProvisioned: true,
+            },
+            ip: req.ip,
+          });
+
+          existing.add(`${membership.teamId}:${protocol}`);
+          created.push({
+            ...row,
+            teamId: membership.teamId,
+            key: raw,
+            productLineName: channel.productLineName,
+            providerCode: channel.providerCode,
+            providerName: channel.providerName,
+            departmentId: membership.departmentId,
+            departmentName: membership.departmentName,
+          });
+        }
+      }
+
+      return { outcome: "provisioned", created } as const;
+    });
+
+    if (result.outcome === "forbidden") {
+      return reply.code(403).send({
+        success: false,
+        code: "forbidden",
+        message: "权限不足",
+      });
+    }
+    if (result.outcome === "no_enterprise") {
+      return reply.code(403).send({
+        success: false,
+        code: "enterprise_required",
+        message: "未加入企业，暂无 Token 额度",
+      });
+    }
+    if (result.outcome === "no_team") {
+      return { success: true, data: { created: [] } };
+    }
+    if (result.outcome === "channel_unavailable") {
+      return reply.code(404).send({
+        success: false,
+        code: "upstream_channel_unavailable",
+        message: "暂无可用上游渠道，请联系管理员配置",
+      });
+    }
+
+    return { success: true, data: { created: result.created } };
+  });
+
+  /** 更新 Key：原位换发新密钥，绑定（部门/协议/渠道）不变，旧 Key 立即失效。 */
+  app.post("/api/me/api-keys/:id/regenerate", async (req, reply) => {
+    const params = z.object({ id: z.coerce.number().int().positive() }).safeParse(req.params);
+    if (!params.success) {
+      return reply.code(400).send({ success: false, message: "参数无效" });
+    }
+    noStore(reply);
+
+    const result = await db.transaction(async (tx) => {
+      // 与创建/补齐同一把员工行锁，避免员工角色变更与换发并发。
+      const [owner] = await tx
+        .select({
+          role: employees.role,
+          status: employees.status,
+        })
+        .from(employees)
+        .where(eq(employees.id, meId(req)))
+        .limit(1)
+        .for("update");
+      if (
+        !owner ||
+        (owner.role !== "employee" &&
+          owner.role !== "dept_admin" &&
+          owner.role !== "org_admin") ||
+        owner.status !== "active"
+      ) {
+        return { outcome: "forbidden" } as const;
+      }
+
+      const { raw, prefix, hash } = generateApiKey();
+      const [row] = await tx
+        .update(employeeApiKeys)
+        .set({
+          keyPrefix: prefix,
+          keyHash: hash,
+          keyEncrypted: encryptEmployeeApiKey(raw),
+        })
+        .where(
+          and(
+            eq(employeeApiKeys.id, params.data.id),
+            eq(employeeApiKeys.employeeId, meId(req)),
+          ),
+        )
+        .returning({
+          id: employeeApiKeys.id,
+          name: employeeApiKeys.name,
+          keyPrefix: employeeApiKeys.keyPrefix,
+          protocol: employeeApiKeys.protocol,
+          productLineId: employeeApiKeys.productLineId,
+          teamId: employeeApiKeys.teamId,
+        });
+      if (!row) return { outcome: "not_found" } as const;
+
+      await tx.insert(opsAuditLogs).values({
+        actorEmployeeId: req.employeeId,
+        action: "api_key.regenerate",
+        targetType: "employee_api_key",
+        targetId: String(row.id),
+        detail: {
+          name: row.name,
+          keyPrefix: row.keyPrefix,
+          protocol: row.protocol,
+          productLineId: row.productLineId,
+          teamId: row.teamId,
+        },
+        ip: req.ip,
+      });
+
+      return { outcome: "regenerated", row, key: raw } as const;
+    });
+
+    if (result.outcome === "forbidden") {
+      return reply.code(403).send({
+        success: false,
+        code: "forbidden",
+        message: "权限不足",
+      });
+    }
+    if (result.outcome === "not_found") {
+      return reply.code(404).send({
+        success: false,
+        code: "api_key_not_found",
+        message: "API Key 不存在或已删除",
+      });
+    }
+
+    return { success: true, data: { ...result.row, key: result.key } };
   });
 
   app.delete("/api/me/api-keys/:id", async (req, reply) => {

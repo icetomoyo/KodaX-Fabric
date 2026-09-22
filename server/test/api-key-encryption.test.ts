@@ -9,6 +9,7 @@ process.env.CREDENTIAL_ENCRYPT_KEY = "unit-test-credential-secret";
 const apiKeyModule = await import("../src/lib/api-key.js");
 const {
   EMPLOYEE_API_KEY_ENCRYPTION_PURPOSE,
+  decryptEmployeeApiKey,
   encryptEmployeeApiKey,
   generateApiKey,
 } = apiKeyModule;
@@ -37,7 +38,9 @@ test("employee API keys are stored with purpose-scoped encryption", () => {
 
   assert.notEqual(encrypted, generated.raw);
   assert.equal(decryptSecret(encrypted, EMPLOYEE_API_KEY_ENCRYPTION_PURPOSE), generated.raw);
-  assert.equal("decryptEmployeeApiKey" in apiKeyModule, false);
+  // Key 页面按明文展示，解密必须能在同一 purpose 下往返。
+  assert.equal(decryptEmployeeApiKey(encrypted), generated.raw);
+  assert.throws(() => decryptEmployeeApiKey(encryptSecret(generated.raw, "other:v1")));
 });
 
 test("purpose-scoped ciphertext cannot be decrypted under a different purpose", () => {

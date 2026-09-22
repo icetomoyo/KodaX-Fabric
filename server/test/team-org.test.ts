@@ -568,18 +568,25 @@ test("API Key department binding uses the only membership or the chosen departme
   );
 });
 
-test("API Key create form binds a department and locks it when there is only one", () => {
+test("API Key page auto-provisions per department and protocol, plaintext shown", () => {
   const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
   const keysView = readFileSync(resolve(root, "web/src/views/me/KeysView.vue"), "utf8");
-  assert.match(keysView, /所属部门/);
-  assert.match(keysView, /departmentChoices.length > 1/);
-  assert.match(keysView, /departmentId: createForm.departmentId/);
+  assert.match(keysView, /\/api\/me\/api-keys\/provision/);
   assert.match(keysView, /尚未加入部门/);
   assert.doesNotMatch(keysView, /尚未加入团队，没有员工权限/);
-  assert.match(keysView, /class="protocol-list"/);
-  assert.match(keysView, /WarningFilled/);
-  assert.match(keysView, /relayProtocolClientHint/);
-  assert.doesNotMatch(keysView, /:value="option.value"\s+border/);
+  assert.doesNotMatch(keysView, /创建 Key/);
+  assert.doesNotMatch(keysView, /departmentChoices/);
+  assert.match(keysView, /row\.key \?\?/);
+  assert.match(keysView, /keyPrefix\}••••/);
+  assert.match(keysView, /copyKey/);
+  assert.match(keysView, /regenerateKey/);
+  assert.match(keysView, /v-if="row\.deletable"/);
+  const meRoute = readFileSync(resolve(root, "server/src/routes/me.ts"), "utf8");
+  assert.match(meRoute, /api-keys\/provision/);
+  assert.match(meRoute, /api-keys\/:id\/regenerate/);
+  assert.match(meRoute, /api_key\.regenerate/);
+  assert.match(meRoute, /revealEmployeeApiKey/);
+  assert.match(meRoute, /autoProvisioned/);
   const protocol = readFileSync(resolve(root, "web/src/views/relay-protocol.ts"), "utf8");
   assert.match(protocol, /Claude Code/);
   assert.match(protocol, /WorkBuddy/);
