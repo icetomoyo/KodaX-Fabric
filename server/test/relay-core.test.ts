@@ -547,13 +547,13 @@ test("429 usage cap without a reset time falls back to the window boundary", () 
 
 test("429 usage cap without a reset time falls back to the learned per-key phase", () => {
   const now = new Date("2026-09-20T07:33:36.000Z");
-  // 报文没有时间戳时，用此前写进 meta 的该 Key 周窗口相位。
+  // 报文没有时间戳时，用该 Key 的周窗口相位列（weekly_window_reset_at）。
   const decision = resolveRelayRateLimitCooldown(
     JSON.stringify({ error: { code: "1310", message: "已达到 7 天使用上限" } }),
     60,
     1800,
     now,
-    { weekly: "2026-09-24T07:33:36.000Z" },
+    { fiveHourAnchor: null, weeklyResetAt: new Date("2026-09-24T07:33:36.000Z") },
   );
   assert.equal(decision.quotaExhausted, true);
   assert.deepEqual(decision.coolUntil, new Date("2026-09-24T07:33:36.000Z"));
@@ -565,14 +565,86 @@ test("429 usage cap without a reset time falls back to the learned per-key phase
     60,
     1800,
     now,
-    null,
+    { fiveHourAnchor: null, weeklyResetAt: null },
   );
   assert.deepEqual(unlearned.coolUntil, weeklyResetAt(now));
 });
 
+test("429 five-hour cap without a reset time uses the first-use anchor boundary", () => {
+  const now = new Date("2026-09-22T04:30:00.000Z");
+  // 1 点首用锚定 → 无时刻 1308 冷到锚点+5h（06:00），而不是下一个整点。
+  const anchored = resolveRelayRateLimitCooldown(
+    JSON.stringify({ error: { code: "1316", message: "已达到 5 小时使用上限" } }),
+    60,
+    1800,
+    now,
+    { fiveHourAnchor: new Date("2026-09-22T01:00:00.000Z"), weeklyResetAt: null },
+  );
+  assert.equal(anchored.quotaExhausted, true);
+  assert.deepEqual(anchored.coolUntil, new Date("2026-09-22T06:00:00.000Z"));
+
+  // 未锚定的 Key 回退下一个 UTC 整点（旧滚动模型兜底）。
+  const unanchored = resolveRelayRateLimitCooldown(
+    JSON.stringify({ error: { code: "1316", message: "已达到 5 小时使用上限" } }),
+    60,
+    1800,
+    now,
+    { fiveHourAnchor: null, weeklyResetAt: null },
+  );
+  assert.deepEqual(unanchored.coolUntil, fiveHourResetAt(now));
+
+  // 锚点已过期（窗口早就翻转）→ 同样回退整点，不把旧窗口前滚。
+  const staleAnchor = resolveRelayRateLimitCooldown(
+    JSON.stringify({ error: { code: "1316", message: "已达到 5 小时使用上限" } }),
+    60,
+    1800,
+    now,
+    { fiveHourAnchor: new Date("2026-09-21T22:00:00.000Z"), weeklyResetAt: null },
+  );
+  assert.deepEqual(staleAnchor.coolUntil, fiveHourResetAt(now));
+});
+
+test("cooldown decisions carry the vendor code and structured failure kind", () => {
+  const now = new Date("2026-09-20T07:00:00.000Z");
+  const cap = resolveRelayRateLimitCooldown(
+    JSON.stringify({
+      error: {
+        code: "1308",
+        message: "已达到 5 小时使用上限，2026-09-20 15:32:01 后可继续使用。",
+      },
+    }),
+    60,
+    1800,
+    now,
+  );
+  assert.equal(cap.vendorCode, "1308");
+  assert.equal(cap.failureKind, "five_hour_cap");
+
+  const weekly = resolveRelayRateLimitCooldown(
+    JSON.stringify({ error: { code: "1310", message: "已达到 7 天使用上限" } }),
+    60,
+    1800,
+    now,
+  );
+  assert.equal(weekly.vendorCode, "1310");
+  assert.equal(weekly.failureKind, "weekly_cap");
+
+  const rateLimit = resolveRelayRateLimitCooldown(
+    JSON.stringify({ error: { code: "1302", message: "您的账户已达到速率限制，请您控制请求频率" } }),
+    60,
+    1800,
+  );
+  assert.equal(rateLimit.vendorCode, "1302");
+  assert.equal(rateLimit.failureKind, "rate_limit");
+
+  const nonJson = resolveRelayRateLimitCooldown("rate limited, retry later", 60, 1800);
+  assert.equal(nonJson.vendorCode, null);
+  assert.equal(nonJson.failureKind, "rate_limit");
+});
+
 test("429 usage cap with an already-elapsed reset time keeps the short cooldown", () => {
-  // 14:50 打满、报文写 15:32:01 恢复；15:32:03 才落到 Hub 时，learned
-  // 相位已过期。前滚 5 小时会把 Key 冷到 20:32，所以只走 60 秒短冷却。
+  // 14:50 打满、报文写 15:32:01 恢复；15:32:03 才落到 Hub 时，报文里的
+  // 重置时刻已过期。前滚窗口会把 Key 冷到 20:32，所以只走 60 秒短冷却。
   const now = new Date("2026-09-20T07:32:03.000Z");
   const decision = resolveRelayRateLimitCooldown(
     JSON.stringify({
@@ -585,7 +657,7 @@ test("429 usage cap with an already-elapsed reset time keeps the short cooldown"
     60,
     1800,
     now,
-    { fiveHour: "2026-09-20T07:32:01.000Z" },
+    { fiveHourAnchor: new Date("2026-09-20T02:32:01.000Z"), weeklyResetAt: null },
   );
   assert.equal(decision.quotaExhausted, false);
   assert.equal(decision.cooldownSeconds, 60);

@@ -9,20 +9,21 @@ process.env.QUOTA_TIMEZONE = "Asia/Shanghai";
 
 const {
   CREDENTIAL_WEEKLY_EPOCH,
+  aggregateCredentialUsage,
+  activeFiveHourWindow,
   creditCoolingKind,
   evaluateCredentialQuota,
   externalDrainObservation,
   fiveHourResetAt,
   fiveHourWindowStart,
   hourStartOf,
-  learnedCapResetFromMeta,
-  learnedNextReset,
-  mergeLearnedCapReset,
-  quotaExhaustedLastError,
+  nextFiveHourResetAt,
+  nextWeeklyResetAt,
   remainingQuotaFraction,
   resolveGraphCoolingKind,
   weekStartOf,
   weeklyResetAt,
+  weeklyWindowStart,
   withInFlightEstimate,
 } = await import("../src/lib/relay/credential-quota.js");
 
@@ -102,7 +103,6 @@ test("evaluateCredentialQuota exhausts a single five-hour window", () => {
   assert.equal(status.weeklyExhausted, false);
   assert.equal(status.exhaustedUntil?.toISOString(), fiveHourResetAt(now).toISOString());
   assert.equal(creditCoolingKind(status), "five_hour");
-  assert.equal(quotaExhaustedLastError(status), "5 小时积分达到 85%，冷却至窗口重置");
 });
 
 test("evaluateCredentialQuota cools five-hour usage at 85% of the limit", () => {
@@ -136,7 +136,6 @@ test("evaluateCredentialQuota treats usage equal to the weekly limit as exhauste
   assert.equal(status.weeklyExhausted, true);
   assert.equal(status.exhaustedUntil?.toISOString(), weeklyResetAt(now).toISOString());
   assert.equal(creditCoolingKind(status), "weekly");
-  assert.equal(quotaExhaustedLastError(status), "周积分达到 95%，冷却至窗口重置");
 });
 
 test("evaluateCredentialQuota cools weekly usage at 95% of the limit", () => {
@@ -243,59 +242,190 @@ test("remainingQuotaFraction takes the tighter window and clamps to [0, 1]", () 
   );
 });
 
-test("learnedNextReset returns the learned instant or rolls it forward by the window", () => {
-  const now = new Date("2026-09-20T07:33:36.000Z");
-  // 学到的相位仍在未来 → 直接用。
-  assert.equal(
-    learnedNextReset({ weekly: "2026-09-24T07:33:36.000Z" }, "weekly", now)?.toISOString(),
-    "2026-09-24T07:33:36.000Z",
-  );
-  // 已过去 → 按 7 天周期前滚到下一个未来时刻。
-  assert.equal(
-    learnedNextReset({ weekly: "2026-09-10T07:33:36.000Z" }, "weekly", now)?.toISOString(),
-    "2026-09-24T07:33:36.000Z",
-  );
-  // 非法 ISO / 没学到该窗口 → null。
-  assert.equal(learnedNextReset({ weekly: "not-a-date" }, "weekly", now), null);
-  assert.equal(
-    learnedNextReset({ fiveHour: "2026-09-24T07:33:36.000Z" }, "weekly", now),
-    null,
-  );
-  assert.equal(learnedNextReset(null, "weekly", now), null);
-});
-
-test("mergeLearnedCapReset preserves other meta keys and merges per-kind phases", () => {
-  const merged = mergeLearnedCapReset(
-    {
-      discoveredModels: ["glm-5.3"],
-      learnedCapReset: { weekly: "2026-09-17T09:49:49.000Z" },
-    },
-    "five_hour",
-    new Date("2026-09-20T12:00:00.000Z"),
-  );
-  assert.deepEqual(merged, {
-    discoveredModels: ["glm-5.3"],
-    learnedCapReset: {
-      weekly: "2026-09-17T09:49:49.000Z",
-      fiveHour: "2026-09-20T12:00:00.000Z",
-      monthly: undefined,
-    },
+test("activeFiveHourWindow covers [anchor, anchor+5h) and expires exactly at the boundary", () => {
+  const anchor = new Date("2026-09-22T01:00:00.000Z");
+  // 窗口进行中。
+  assert.deepEqual(activeFiveHourWindow(anchor, new Date("2026-09-22T04:30:00.000Z")), {
+    start: new Date("2026-09-22T01:00:00.000Z"),
+    end: new Date("2026-09-22T06:00:00.000Z"),
   });
-
-  const learned = learnedCapResetFromMeta(merged);
-  assert.equal(learned?.fiveHour, "2026-09-20T12:00:00.000Z");
-  assert.equal(learned?.weekly, "2026-09-17T09:49:49.000Z");
-  assert.equal(learned?.monthly, undefined);
-
-  // other 类上限没有对应窗口键，原样返回。
-  assert.deepEqual(mergeLearnedCapReset({ a: 1 }, "other", new Date()), { a: 1 });
+  // 锚点+5h 整点即过期（满血）；无锚点 → null（走旧滚动兜底）。
+  assert.equal(activeFiveHourWindow(anchor, new Date("2026-09-22T06:00:00.000Z")), null);
+  assert.equal(activeFiveHourWindow(anchor, new Date("2026-09-22T10:00:00.000Z")), null);
+  assert.equal(activeFiveHourWindow(null, new Date("2026-09-22T04:30:00.000Z")), null);
 });
 
-test("learnedCapResetFromMeta rejects garbage input", () => {
-  assert.equal(learnedCapResetFromMeta(null), null);
-  assert.equal(learnedCapResetFromMeta("garbage"), null);
-  assert.equal(learnedCapResetFromMeta({ learnedCapReset: "x" }), null);
-  assert.equal(learnedCapResetFromMeta({ learnedCapReset: { weekly: 42 } }), null);
+test("nextFiveHourResetAt only reports a reset while the anchored window is active", () => {
+  const anchor = new Date("2026-09-22T01:00:00.000Z");
+  assert.equal(
+    nextFiveHourResetAt(anchor, new Date("2026-09-22T04:30:00.000Z"))?.toISOString(),
+    "2026-09-22T06:00:00.000Z",
+  );
+  // 6 点后窗口已过期：额度已满，重置时刻由下次首用决定，返回 null。
+  assert.equal(nextFiveHourResetAt(anchor, new Date("2026-09-22T08:00:00.000Z")), null);
+  assert.equal(nextFiveHourResetAt(null, new Date("2026-09-22T08:00:00.000Z")), null);
+});
+
+test("weeklyWindowStart rolls the learned per-key phase by whole weeks", () => {
+  // GLM-50 实测相位：2026-09-24 18:49 Asia/Shanghai = 10:49Z。
+  const learned = new Date("2026-09-24T10:49:00.000Z");
+  // 学到的时刻仍在未来 → 当前窗口从相位−7d 开始。
+  assert.equal(
+    weeklyWindowStart(learned, new Date("2026-09-22T02:00:00.000Z")).toISOString(),
+    "2026-09-17T10:49:00.000Z",
+  );
+  // 相位过后 → 滚到包含当前时刻的那一期。
+  assert.equal(
+    weeklyWindowStart(learned, new Date("2026-09-25T00:00:00.000Z")).toISOString(),
+    "2026-09-24T10:49:00.000Z",
+  );
+  // 三个周期后。
+  assert.equal(
+    weeklyWindowStart(learned, new Date("2026-10-08T00:00:00.000Z")).toISOString(),
+    "2026-10-01T10:49:00.000Z",
+  );
+  // 未学到相位 → 共享 epoch 对齐。
+  assert.equal(
+    weeklyWindowStart(null, new Date("2026-09-22T02:00:00.000Z")).toISOString(),
+    weekStartOf(new Date("2026-09-22T02:00:00.000Z")).toISOString(),
+  );
+});
+
+test("nextWeeklyResetAt lands on the learned phase, not the epoch alignment", () => {
+  const learned = new Date("2026-09-24T10:49:00.000Z");
+  assert.equal(
+    nextWeeklyResetAt(learned, new Date("2026-09-22T02:00:00.000Z")).toISOString(),
+    "2026-09-24T10:49:00.000Z",
+  );
+  assert.equal(
+    nextWeeklyResetAt(null, new Date("2026-09-22T02:00:00.000Z")).toISOString(),
+    weeklyResetAt(new Date("2026-09-22T02:00:00.000Z")).toISOString(),
+  );
+});
+
+test("evaluateCredentialQuota resets anchored windows at their own boundaries", () => {
+  const now = new Date("2026-09-22T04:30:00.000Z");
+  const anchors = {
+    fiveHourAnchor: new Date("2026-09-22T01:00:00.000Z"),
+    weeklyResetAt: new Date("2026-09-24T10:49:00.000Z"),
+  };
+  // 5h 打满 → 冷却终点是锚点+5h（06:00），不再是「下一个整点」。
+  const fiveHour = evaluateCredentialQuota(
+    { fiveHourCredits: 1_000, weeklyCredits: 0 },
+    { fiveHourLimit: 1_000, weeklyLimit: 10_000 },
+    now,
+    anchors,
+  );
+  assert.equal(fiveHour.exhaustedUntil?.toISOString(), "2026-09-22T06:00:00.000Z");
+
+  // 周积分打满 → 冷却终点是学到的相位，而不是 epoch 对齐点。
+  const weekly = evaluateCredentialQuota(
+    { fiveHourCredits: 0, weeklyCredits: 10_000 },
+    { fiveHourLimit: 1_000, weeklyLimit: 10_000 },
+    now,
+    anchors,
+  );
+  assert.equal(weekly.exhaustedUntil?.toISOString(), "2026-09-24T10:49:00.000Z");
+});
+
+test("anchored 5h usage follows the first-use window: 1点锚定, 4点打满, 6点整窗清零, 10点重新起算", () => {
+  const credentialId = 50;
+  const anchors = (anchor: Date | null) => new Map([[credentialId, {
+    fiveHourAnchor: anchor,
+    weeklyResetAt: null,
+  }]]);
+
+  // 1点-4点 消耗 35000 积分（小时桶），5h 限额 35000。
+  const buckets = [
+    { credentialId, hourStart: new Date("2026-09-22T01:00:00.000Z"), totalTokens: 1_000, totalCredits: "12000", requestCount: 30 },
+    { credentialId, hourStart: new Date("2026-09-22T02:00:00.000Z"), totalTokens: 1_000, totalCredits: "12000", requestCount: 30 },
+    { credentialId, hourStart: new Date("2026-09-22T03:00:00.000Z"), totalTokens: 1_000, totalCredits: "11000", requestCount: 30 },
+  ];
+
+  // 04:30：窗口 [01:00, 06:00) 进行中，账本 35000/35000 → 打满。
+  const atFourThirty = aggregateCredentialUsage(
+    buckets,
+    [credentialId],
+    anchors(new Date("2026-09-22T01:00:00.000Z")),
+    new Date("2026-09-22T04:30:00.000Z"),
+  ).get(credentialId);
+  assert.equal(atFourThirty?.fiveHourCredits, 35_000);
+  const quota = evaluateCredentialQuota(
+    atFourThirty!,
+    { fiveHourLimit: 35_000, weeklyLimit: 155_000 },
+    new Date("2026-09-22T04:30:00.000Z"),
+    { fiveHourAnchor: new Date("2026-09-22T01:00:00.000Z"), weeklyResetAt: null },
+  );
+  assert.equal(quota.fiveHourExhausted, true);
+  assert.equal(quota.exhaustedUntil?.toISOString(), "2026-09-22T06:00:00.000Z");
+
+  // 06:30：窗口已过期 → 0/35000，立刻满血（不再等本地滚动桶滑出）。
+  const atSixThirty = aggregateCredentialUsage(
+    buckets,
+    [credentialId],
+    anchors(new Date("2026-09-22T01:00:00.000Z")),
+    new Date("2026-09-22T06:30:00.000Z"),
+  ).get(credentialId);
+  assert.equal(atSixThirty?.fiveHourCredits, 0);
+
+  // 10 点员工再次调用（新桶 10:00），锚点被首用重写为 10:00 → 下次重置 15:00。
+  const newWindowBuckets = [
+    ...buckets,
+    { credentialId, hourStart: new Date("2026-09-22T10:00:00.000Z"), totalTokens: 100, totalCredits: "500", requestCount: 2 },
+  ];
+  const reanchored = new Date("2026-09-22T10:00:00.000Z");
+  const atTenOhFive = aggregateCredentialUsage(
+    newWindowBuckets,
+    [credentialId],
+    anchors(reanchored),
+    new Date("2026-09-22T10:05:00.000Z"),
+  ).get(credentialId);
+  // 旧窗口（1点-4点）的桶不在 [10:00, 15:00) 内，不计入。
+  assert.equal(atTenOhFive?.fiveHourCredits, 500);
+  assert.equal(
+    nextFiveHourResetAt(reanchored, new Date("2026-09-22T10:05:00.000Z"))?.toISOString(),
+    "2026-09-22T15:00:00.000Z",
+  );
+});
+
+test("weekly usage zeroes at the learned phase flip (GLM-50 2026-09-24 18:49)", () => {
+  const credentialId = 51;
+  const learned = new Date("2026-09-24T10:49:00.000Z");
+  const anchors = new Map([[credentialId, { fiveHourAnchor: null, weeklyResetAt: learned }]]);
+
+  // 周窗口内累计 92000；翻转到 09-24 10:49Z（=18:49 +08:00）后应立即归零。
+  const buckets = [
+    { credentialId, hourStart: new Date("2026-09-23T02:00:00.000Z"), totalTokens: 0, totalCredits: "92000", requestCount: 100 },
+    { credentialId, hourStart: new Date("2026-09-24T11:00:00.000Z"), totalTokens: 0, totalCredits: "1000", requestCount: 2 },
+  ];
+  const beforeFlip = aggregateCredentialUsage(
+    [buckets[0]],
+    [credentialId],
+    anchors,
+    new Date("2026-09-24T02:00:00.000Z"),
+  ).get(credentialId);
+  assert.equal(beforeFlip?.weeklyCredits, 92_000);
+
+  const afterFlip = aggregateCredentialUsage(
+    buckets,
+    [credentialId],
+    anchors,
+    new Date("2026-09-24T12:00:00.000Z"),
+  ).get(credentialId);
+  // 09-24 10:49Z 翻转：之前的 92000 不再计入，只有翻转后的 1000。
+  assert.equal(afterFlip?.weeklyCredits, 1_000);
+});
+
+test("unanchored keys keep the legacy rolling five-hour window", () => {
+  const credentialId = 60;
+  const now = new Date("2026-09-22T04:30:00.000Z");
+  const buckets = [
+    { credentialId, hourStart: new Date("2026-09-21T23:00:00.000Z"), totalTokens: 0, totalCredits: "5000", requestCount: 1 },
+    { credentialId, hourStart: new Date("2026-09-22T01:00:00.000Z"), totalTokens: 0, totalCredits: "7000", requestCount: 1 },
+  ];
+  // 滚动窗口起点 00:00（04:30 的整点 −4h）→ 只计入 01:00 的桶。
+  const usage = aggregateCredentialUsage(buckets, [credentialId], null, now).get(credentialId);
+  assert.equal(usage?.fiveHourCredits, 7_000);
 });
 
 test("externalDrainObservation records a gap only well below the limit", () => {

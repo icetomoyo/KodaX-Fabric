@@ -34,11 +34,14 @@ export type RelayCandidate = {
   baseUrl: string;
   credentialPriority: number;
   credentialWeight: number;
-  /** Raw credential meta JSON (learned cap resets, test results, …); absent on hand-built candidates. */
+  /** Raw credential meta JSON (test results, external drain evidence, …); absent on hand-built candidates. */
   meta?: unknown;
   /** Configured credit limits when the candidate came through the bound/open-pool path. */
   fiveHourCreditLimit?: number | null;
   weeklyCreditLimit?: number | null;
+  /** Upstream window state columns, when available on the candidate. */
+  fiveHourWindowAnchor?: Date | null;
+  weeklyWindowResetAt?: Date | null;
 };
 
 export type RelayUsage = {

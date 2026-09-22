@@ -17,8 +17,11 @@ import {
 } from "../../db/schema/index.js";
 import { env } from "../../config.js";
 import {
+  FIVE_HOUR_MS,
   getCredentialQuotaUsage,
-  learnedCapResetFromMeta,
+  nextFiveHourResetAt,
+  nextWeeklyResetAt,
+  type CredentialWindowAnchors,
 } from "../../lib/relay/credential-quota.js";
 import { resolveRelayRateLimitCooldown } from "../../lib/relay/upstream.js";
 import {
@@ -493,6 +496,8 @@ async function testCredentialConnection(
       productLineId: upstreamCredentials.productLineId,
       secretEncrypted: upstreamCredentials.secretEncrypted,
       meta: upstreamCredentials.meta,
+      fiveHourWindowAnchor: upstreamCredentials.fiveHourWindowAnchor,
+      weeklyWindowResetAt: upstreamCredentials.weeklyWindowResetAt,
       supportedProtocols: upstreamCredentials.supportedProtocols,
       providerCode: providers.code,
       authStyle: providers.authStyle,
@@ -569,7 +574,10 @@ async function testCredentialConnection(
     env.RELAY_COOLDOWN_SECONDS,
     env.RELAY_QUOTA_COOLDOWN_SECONDS,
     now,
-    learnedCapResetFromMeta(previousMeta),
+    {
+      fiveHourAnchor: credential.fiveHourWindowAnchor,
+      weeklyResetAt: credential.weeklyWindowResetAt,
+    },
   );
   const shouldCool = !result.ok
     && (result.httpStatus === 429 || cooldown.quotaExhausted || cooldown.cap != null);
@@ -578,6 +586,11 @@ async function testCredentialConnection(
   const failedCoolUntilIso = (
     cooldown.coolUntil ?? new Date(now.getTime() + cooldown.cooldownSeconds * 1_000)
   ).toISOString();
+  // 报文带未来重置时刻时校准窗口状态列（1308 → 首用锚点，1310 → 周相位）。
+  const calibrationReset = cooldown.cap?.resetAt
+    && cooldown.cap.resetAt.getTime() > now.getTime()
+    ? cooldown.cap.resetAt
+    : null;
   const cooldownExpired = sql`(${upstreamCredentials.coolUntil} is null or ${upstreamCredentials.coolUntil} <= now())`;
   const coolUntilUpdate = result.ok
     ? sql`case
@@ -640,6 +653,14 @@ async function testCredentialConnection(
         },
         lastError: result.ok ? null : result.message,
         lastErrorAt: result.ok ? null : now,
+        lastFailureKind: result.ok ? null : (shouldCool ? cooldown.failureKind : "other"),
+        lastVendorCode: result.ok ? null : cooldown.vendorCode,
+        ...(calibrationReset && cooldown.cap?.kind === "five_hour"
+          ? { fiveHourWindowAnchor: new Date(calibrationReset.getTime() - FIVE_HOUR_MS) }
+          : {}),
+        ...(calibrationReset && cooldown.cap?.kind === "weekly"
+          ? { weeklyWindowResetAt: calibrationReset }
+          : {}),
         ...(coolUntilUpdate !== undefined ? { coolUntil: coolUntilUpdate } : {}),
         status: result.ok
           ? sql`case
@@ -820,6 +841,9 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
         supportedProtocols: upstreamCredentials.supportedProtocols,
         fiveHourCreditLimit: upstreamCredentials.fiveHourCreditLimit,
         weeklyCreditLimit: upstreamCredentials.weeklyCreditLimit,
+        fiveHourWindowAnchor: upstreamCredentials.fiveHourWindowAnchor,
+        weeklyWindowResetAt: upstreamCredentials.weeklyWindowResetAt,
+        lastFailureKind: upstreamCredentials.lastFailureKind,
       })
       .from(upstreamCredentials)
       .where(eq(upstreamCredentials.productLineId, located.productLine.id));
@@ -839,8 +863,14 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
       : [{ recentSuccessCount: 0, recentErrorCount: 0 }];
 
     const now = new Date();
+    const summaryAnchorsById = new Map<number, CredentialWindowAnchors>(
+      credentialRows.map((row) => [
+        row.id,
+        { fiveHourAnchor: row.fiveHourWindowAnchor, weeklyResetAt: row.weeklyWindowResetAt },
+      ]),
+    );
     const [usageById, bindingById] = await Promise.all([
-      getCredentialQuotaUsage(credentialIds, now),
+      getCredentialQuotaUsage(credentialIds, now, summaryAnchorsById),
       loadCredentialBindingViews(credentialIds),
     ]);
     const effectiveStatuses = credentialRows.map((row) => ({
@@ -909,6 +939,9 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
             weeklyCreditLimit: parseStoredCreditLimit(row.weeklyCreditLimit),
             fiveHourCredits: usage.fiveHourCredits,
             weeklyCredits: usage.weeklyCredits,
+            nextFiveHourResetAt: nextFiveHourResetAt(row.fiveHourWindowAnchor, now),
+            nextWeeklyResetAt: nextWeeklyResetAt(row.weeklyWindowResetAt, now),
+            lastFailureKind: row.lastFailureKind,
             binding: bindingById.get(row.id) ?? null,
           };
         }),
@@ -1824,6 +1857,10 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
         meta: upstreamCredentials.meta,
         fiveHourCreditLimit: upstreamCredentials.fiveHourCreditLimit,
         weeklyCreditLimit: upstreamCredentials.weeklyCreditLimit,
+        fiveHourWindowAnchor: upstreamCredentials.fiveHourWindowAnchor,
+        weeklyWindowResetAt: upstreamCredentials.weeklyWindowResetAt,
+        lastFailureKind: upstreamCredentials.lastFailureKind,
+        lastVendorCode: upstreamCredentials.lastVendorCode,
         createdAt: upstreamCredentials.createdAt,
         updatedAt: upstreamCredentials.updatedAt,
         productLineCode: productLines.code,
@@ -1856,6 +1893,13 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
 
     const credentialIds = rows.map((row) => row.id);
     const recentSince = new Date(Date.now() - RECENT_WINDOW_MS);
+    const now = new Date();
+    const anchorsById = new Map<number, CredentialWindowAnchors>(
+      rows.map((row) => [
+        row.id,
+        { fiveHourAnchor: row.fiveHourWindowAnchor, weeklyResetAt: row.weeklyWindowResetAt },
+      ]),
+    );
     const [recentRows, usageById, bindingById, connectedNamesById] = await Promise.all([
       credentialIds.length
         ? db
@@ -1873,7 +1917,7 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
           )
           .groupBy(requestAudits.credentialId)
         : Promise.resolve([]),
-      getCredentialQuotaUsage(credentialIds),
+      getCredentialQuotaUsage(credentialIds, now, anchorsById),
       loadCredentialBindingViews(credentialIds),
       loadConnectedNamesByCredential(rows),
     ]);
@@ -1928,6 +1972,13 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
           weeklyCreditLimit: parseStoredCreditLimit(row.weeklyCreditLimit),
           fiveHourCredits: usage.fiveHourCredits,
           weeklyCredits: usage.weeklyCredits,
+          // 5h：窗口进行中 → 锚点+5h；已过期/未锚定 → null（满血，下次调用起算）。
+          nextFiveHourResetAt: nextFiveHourResetAt(row.fiveHourWindowAnchor, now),
+          // 周窗口：学到的相位滚到下一期；未学到时按共享 epoch 估算并标记。
+          nextWeeklyResetAt: nextWeeklyResetAt(row.weeklyWindowResetAt, now),
+          weeklyResetEstimated: row.weeklyWindowResetAt == null,
+          lastFailureKind: row.lastFailureKind,
+          lastVendorCode: row.lastVendorCode,
           binding,
           connectedNames,
         };

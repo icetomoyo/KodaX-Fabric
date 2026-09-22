@@ -44,10 +44,10 @@ import type { UsageTier } from "../usage-tier.js";
 import {
   evaluateCredentialQuota,
   getCredentialQuotaUsage,
-  quotaExhaustedLastError,
   remainingQuotaFraction,
   withInFlightEstimate,
   type CredentialQuotaStatus,
+  type CredentialWindowAnchors,
 } from "./credential-quota.js";
 import { getCredentialLoad } from "./credential-load.js";
 import { isRelayProtocol, type RelayProtocol } from "./protocol.js";
@@ -91,6 +91,8 @@ export type BoundCredential = {
   baseUrl: string;
   fiveHourCreditLimit: number | null;
   weeklyCreditLimit: number | null;
+  fiveHourWindowAnchor: Date | null;
+  weeklyWindowResetAt: Date | null;
   meta: unknown;
 };
 
@@ -161,6 +163,8 @@ type CredentialSnapshotRow = {
   protocolConfigs: unknown;
   fiveHourCreditLimit: string | null;
   weeklyCreditLimit: string | null;
+  fiveHourWindowAnchor: Date | null;
+  weeklyWindowResetAt: Date | null;
   meta: unknown;
 };
 
@@ -199,6 +203,8 @@ const credentialSnapshotSelect = {
   protocolConfigs: productLines.protocolConfigs,
   fiveHourCreditLimit: upstreamCredentials.fiveHourCreditLimit,
   weeklyCreditLimit: upstreamCredentials.weeklyCreditLimit,
+  fiveHourWindowAnchor: upstreamCredentials.fiveHourWindowAnchor,
+  weeklyWindowResetAt: upstreamCredentials.weeklyWindowResetAt,
   meta: upstreamCredentials.meta,
 };
 
@@ -526,6 +532,24 @@ async function isOpenPoolProductLine(productLineId: number): Promise<boolean> {
   return isOpenPoolProvider(row?.providerCode);
 }
 
+/** Per-Key upstream window state carried on credential snapshots. */
+function snapshotAnchors(
+  snapshot: Pick<CredentialSnapshotRow, "fiveHourWindowAnchor" | "weeklyWindowResetAt">,
+): CredentialWindowAnchors {
+  return {
+    fiveHourAnchor: snapshot.fiveHourWindowAnchor,
+    weeklyResetAt: snapshot.weeklyWindowResetAt,
+  };
+}
+
+function anchorsMapFromSnapshots(
+  snapshots: readonly CredentialSnapshotRow[],
+): Map<number, CredentialWindowAnchors> {
+  return new Map(
+    snapshots.map((snapshot) => [snapshot.credentialId, snapshotAnchors(snapshot)]),
+  );
+}
+
 async function acquireOpenPoolCredential(
   params: AcquireBindingParams,
   now: Date,
@@ -540,6 +564,7 @@ async function acquireOpenPoolCredential(
   const usageMap = await getCredentialQuotaUsage(
     pool.map((row) => row.credentialId),
     now,
+    anchorsMapFromSnapshots(pool),
   );
   const usable: Array<{
     snapshot: CredentialSnapshotRow;
@@ -556,7 +581,7 @@ async function acquireOpenPoolCredential(
       usageMap.get(snapshot.credentialId) ?? { fiveHourCredits: 0, weeklyCredits: 0 },
       getCredentialLoad(snapshot.credentialId).inFlight,
     );
-    const quota = evaluateCredentialQuota(usage, limits, now);
+    const quota = evaluateCredentialQuota(usage, limits, now, snapshotAnchors(snapshot));
     const status = effectiveCredentialStatus(snapshot.credentialStatus, snapshot.coolUntil, now);
     if (quota.exhausted && quota.exhaustedUntil) {
       retryTimes.push(quota.exhaustedUntil.getTime());
@@ -596,9 +621,9 @@ async function acquireOpenPoolCredential(
  * relay pool (Zhipu coding-plan packages share one pool).
  *
  * Reuses the current binding when the Key is active, in-protocol, not excluded,
- * and under quota. Keys at 85% of the 5-hour or 95% of the weekly credit
- * limit are cooled until that window resets (this may lengthen an existing
- * coolUntil) and the binding is released.
+ * and under quota. Keys at 85% of the 5-hour or 95% of the weekly credit limit
+ * are skipped as a scheduling preference only (no cooling write — upstream 429
+ * signals own the cooling state) and the binding is released.
  * Cooling / disabled / excluded Keys only release the row. Replacement picks
  * the highest priority unbound Key; insert uses ON CONFLICT DO NOTHING and
  * a reread so a concurrent winner for the same scope is adopted when usable.
@@ -662,9 +687,7 @@ export async function acquireBoundCredential(
           replaced: false,
         };
       } else {
-        if (verdict.kind === "exhausted") {
-          await coolCredentialForQuota(existing.snapshot.credentialId, verdict.status, now);
-        }
+        // 配额判定只做调度避让，不写冷却状态（上游 429 才写）。
         await deleteBinding(existing.bindingId);
         result = await bindFromPool(pooled, scope, now, true);
       }
@@ -700,9 +723,7 @@ async function acquireEnterpriseShare(
         replaced: false,
       };
     }
-    if (verdict.kind === "exhausted") {
-      await coolCredentialForQuota(existingMember.snapshot.credentialId, verdict.status, now);
-    }
+    // 配额判定只做调度避让，不写冷却状态（上游 429 才写）。
     await deleteBinding(existingMember.bindingId);
   }
 
@@ -752,9 +773,7 @@ async function acquireEnterpriseShare(
         }
         continue;
       }
-      if (verdict.kind === "exhausted") {
-        await coolCredentialForQuota(snapshot.credentialId, verdict.status, now);
-      }
+      // 配额判定只做调度避让，不写冷却状态（上游 429 才写）。
       await deleteBinding(shard.bindingId);
       exclude.add(shard.credentialId);
       continue;
@@ -966,7 +985,11 @@ async function inspectSnapshot(
   now: Date,
   excludeCredentialIds: ReadonlySet<number> | undefined,
 ): Promise<SnapshotVerdict> {
-  const usageMap = await getCredentialQuotaUsage([snapshot.credentialId], now);
+  const usageMap = await getCredentialQuotaUsage(
+    [snapshot.credentialId],
+    now,
+    anchorsMapFromSnapshots([snapshot]),
+  );
   const usage = withInFlightEstimate(
     usageMap.get(snapshot.credentialId) ?? { fiveHourCredits: 0, weeklyCredits: 0 },
     getCredentialLoad(snapshot.credentialId).inFlight,
@@ -978,6 +1001,7 @@ async function inspectSnapshot(
       weeklyLimit: creditLimitNumber(snapshot.weeklyCreditLimit),
     },
     now,
+    snapshotAnchors(snapshot),
   );
   if (quota.exhausted) {
     return { kind: "exhausted", status: quota };
@@ -1027,6 +1051,7 @@ async function tryBindFromPool(
   const usageMap = await getCredentialQuotaUsage(
     pool.map((row) => row.credentialId),
     now,
+    anchorsMapFromSnapshots(pool),
   );
 
   const usable: Array<{
@@ -1044,7 +1069,7 @@ async function tryBindFromPool(
       usageMap.get(snapshot.credentialId) ?? { fiveHourCredits: 0, weeklyCredits: 0 },
       getCredentialLoad(snapshot.credentialId).inFlight,
     );
-    const quota = evaluateCredentialQuota(usage, limits, now);
+    const quota = evaluateCredentialQuota(usage, limits, now, snapshotAnchors(snapshot));
     const status = effectiveCredentialStatus(snapshot.credentialStatus, snapshot.coolUntil, now);
     if (quota.exhausted) {
       if (quota.exhaustedUntil) retryTimes.push(quota.exhaustedUntil.getTime());
@@ -1114,9 +1139,8 @@ async function tryBindFromPool(
       },
     };
   }
-  if (verdict.kind === "exhausted") {
-    await coolCredentialForQuota(reread.snapshot.credentialId, verdict.status, now);
-  }
+  // 配额判定只做调度避让（本轮不选它、解绑换 Key），不写入 cooling 状态：
+  // 本地账本是推导值，冷却状态只由上游 429 信号写入。
   await deleteBinding(reread.bindingId);
   return { kind: "retry", excludeMore: [reread.snapshot.credentialId, picked.snapshot.credentialId] };
 }
@@ -1360,40 +1384,6 @@ async function loadChannelPool(
   return unique.filter((row) => supportsProtocol(row.supportedProtocols, protocol));
 }
 
-async function coolCredentialForQuota(
-  credentialId: number,
-  quota: CredentialQuotaStatus,
-  now: Date,
-): Promise<void> {
-  if (!quota.exhaustedUntil) return;
-  const coolUntilIso = quota.exhaustedUntil.toISOString();
-  await db
-    .update(upstreamCredentials)
-    .set({
-      status: sql`case
-        when ${upstreamCredentials.status} in ('active', 'cooling')
-        then 'cooling'::credential_status
-        else ${upstreamCredentials.status}
-      end`,
-      // Quota windows are hours/days; take the later of the existing cooldown
-      // and exhaustedUntil so a short rate-limit coolUntil is not preserved.
-      coolUntil: sql`case
-        when ${upstreamCredentials.status} in ('active', 'cooling')
-        then greatest(
-          coalesce(${upstreamCredentials.coolUntil}, ${coolUntilIso}::timestamptz),
-          ${coolUntilIso}::timestamptz
-        )
-        else ${upstreamCredentials.coolUntil}
-      end`,
-      errorCount: sql`${upstreamCredentials.errorCount} + 1`,
-      lastError: quotaExhaustedLastError(quota).slice(0, 1_000),
-      lastErrorAt: now,
-      lastUsedAt: now,
-      updatedAt: now,
-    })
-    .where(eq(upstreamCredentials.id, credentialId));
-}
-
 async function deleteBinding(bindingId: number): Promise<void> {
   await db.delete(credentialBindings).where(eq(credentialBindings.id, bindingId));
 }
@@ -1433,6 +1423,8 @@ function toBoundCredential(
     baseUrl: upstreamConfig.baseUrl,
     fiveHourCreditLimit: creditLimitNumber(snapshot.fiveHourCreditLimit),
     weeklyCreditLimit: creditLimitNumber(snapshot.weeklyCreditLimit),
+    fiveHourWindowAnchor: snapshot.fiveHourWindowAnchor,
+    weeklyWindowResetAt: snapshot.weeklyWindowResetAt,
     meta: snapshot.meta,
   };
 }

@@ -4,19 +4,19 @@ import { db } from "../../db/client.js";
 import { upstreamCredentials } from "../../db/schema/index.js";
 import { decryptSecret } from "../crypto-secret.js";
 import {
+  extractUpstreamBusinessError,
   extractUpstreamUsageCap,
   formatUpstreamVendorError,
   type UpstreamUsageCap,
 } from "../glm-error-codes.js";
 import {
+  FIVE_HOUR_MS,
+  activeFiveHourWindow,
   externalDrainObservation,
   fiveHourResetAt,
   getCredentialQuotaUsage,
-  learnedCapResetFromMeta,
-  learnedNextReset,
-  mergeLearnedCapReset,
-  weeklyResetAt,
-  type LearnedCapResets,
+  nextWeeklyResetAt,
+  type CredentialWindowAnchors,
 } from "./credential-quota.js";
 import { beginCredentialUse } from "./credential-load.js";
 import {
@@ -194,6 +194,8 @@ function selectedCredential(candidate: RelayCandidate) {
 
 async function markCredentialSuccess(candidate: RelayCandidate): Promise<void> {
   const now = new Date();
+  const nowIso = now.toISOString();
+  const fiveHoursAgoIso = new Date(now.getTime() - FIVE_HOUR_MS).toISOString();
   await db
     .update(upstreamCredentials)
     .set({
@@ -219,6 +221,22 @@ async function markCredentialSuccess(candidate: RelayCandidate): Promise<void> {
         when ${upstreamCredentials.status} in ('active', 'cooling') then null
         else ${upstreamCredentials.lastErrorAt}
       end`,
+      lastFailureKind: sql`case
+        when ${upstreamCredentials.status} in ('active', 'cooling') then null
+        else ${upstreamCredentials.lastFailureKind}
+      end`,
+      lastVendorCode: sql`case
+        when ${upstreamCredentials.status} in ('active', 'cooling') then null
+        else ${upstreamCredentials.lastVendorCode}
+      end`,
+      // 5h 是首用锚定的翻转窗口：上一个窗口过期（或从未锚定）时，
+      // 这次成功就是新窗口的「首用」，锚定到当前时刻。
+      fiveHourWindowAnchor: sql`case
+        when ${upstreamCredentials.fiveHourWindowAnchor} is null
+          or ${upstreamCredentials.fiveHourWindowAnchor} <= ${fiveHoursAgoIso}::timestamptz
+        then ${nowIso}::timestamptz
+        else ${upstreamCredentials.fiveHourWindowAnchor}
+      end`,
       updatedAt: now,
     })
     .where(selectedCredential(candidate));
@@ -235,6 +253,7 @@ async function markCredentialUsed(candidate: RelayCandidate): Promise<void> {
 async function markCredentialFailure(
   candidate: RelayCandidate,
   message: string,
+  failureKind = "network",
 ): Promise<void> {
   const now = new Date();
   await db
@@ -243,6 +262,8 @@ async function markCredentialFailure(
       errorCount: sql`${upstreamCredentials.errorCount} + 1`,
       lastError: message.slice(0, 1_000),
       lastErrorAt: now,
+      lastFailureKind: failureKind.slice(0, 32),
+      lastVendorCode: null,
       lastUsedAt: now,
       updatedAt: now,
     })
@@ -266,6 +287,8 @@ async function autoDisableCredential(
       errorCount: sql`${upstreamCredentials.errorCount} + 1`,
       lastError: `HTTP ${status}：上游凭证鉴权失败`,
       lastErrorAt: now,
+      lastFailureKind: "auth",
+      lastVendorCode: null,
       lastUsedAt: now,
       updatedAt: now,
     })
@@ -287,7 +310,20 @@ export type RelayRateLimitCooldownDecision = {
   quotaExhausted: boolean;
   /** 识别出的配额上限信号；普通限流/非 JSON 报文为 null。 */
   cap: UpstreamUsageCap | null;
+  /** 上游业务码（1308/1310/1302…），非 JSON 报文为 null。 */
+  vendorCode: string | null;
+  /** 结构化失败分类（rate_limit / five_hour_cap / weekly_cap / …）。 */
+  failureKind: string;
 };
+
+/** Structured failure kind persisted on the credential for board lane display. */
+export function rateLimitFailureKind(cap: UpstreamUsageCap | null): string {
+  if (!cap) return "rate_limit";
+  if (cap.kind === "five_hour") return "five_hour_cap";
+  if (cap.kind === "weekly") return "weekly_cap";
+  if (cap.kind === "monthly") return "monthly_cap";
+  return "other";
+}
 
 function parseJsonValue(text: string): unknown | undefined {
   try {
@@ -307,7 +343,7 @@ function parseJsonValue(text: string): unknown | undefined {
 function usageCapResetAt(
   cap: UpstreamUsageCap,
   now: Date,
-  learned?: LearnedCapResets | null,
+  windows?: CredentialWindowAnchors | null,
 ): Date | null {
   if (cap.resetAt) {
     if (cap.resetAt.getTime() > now.getTime()) {
@@ -317,17 +353,22 @@ function usageCapResetAt(
     }
     return null;
   }
-  // 报文没带时刻时，先回退到该 Key 此前学到的同窗口相位。
-  const learnedReset = learnedNextReset(learned ?? null, cap.kind, now);
-  if (learnedReset) {
-    return new Date(
-      Math.min(learnedReset.getTime(), now.getTime() + MAX_USAGE_CAP_COOLDOWN_MS),
-    );
+  // 报文没带时刻时回退到该 Key 的窗口状态列：5h 用首用锚点推窗口终点
+  //（锚点缺失则退回下一个 UTC 整点），周/月窗口用学到的相位滚到下一期。
+  if (cap.kind === "five_hour") {
+    return activeFiveHourWindow(windows?.fiveHourAnchor ?? null, now)?.end
+      ?? fiveHourResetAt(now);
   }
-  if (cap.kind === "five_hour") return fiveHourResetAt(now);
   // monthly has no dedicated Hub window; reuse the 7-day boundary as a
   // conservative bound. Live monthly replies so far always include resetAt.
-  if (cap.kind === "weekly" || cap.kind === "monthly") return weeklyResetAt(now);
+  if (cap.kind === "weekly" || cap.kind === "monthly") {
+    return new Date(
+      Math.min(
+        nextWeeklyResetAt(windows?.weeklyResetAt ?? null, now).getTime(),
+        now.getTime() + MAX_USAGE_CAP_COOLDOWN_MS,
+      ),
+    );
+  }
   return null;
 }
 
@@ -337,43 +378,62 @@ export function resolveRelayRateLimitCooldown(
   defaultCooldownSeconds: number,
   quotaCooldownSeconds: number,
   now: Date = new Date(),
-  learned?: LearnedCapResets | null,
+  windows?: CredentialWindowAnchors | null,
 ): RelayRateLimitCooldownDecision {
   if (bodyText) {
     const parsed = parseJsonValue(bodyText);
-    const cap = parsed === undefined ? null : extractUpstreamUsageCap(parsed);
-    if (cap) {
-      // 报文带了恢复时刻但已过期：窗口已开，或 429 跨过了重置点。
-      // 15:32:01 的 429 在 15:32:03 才落到 Hub 时，前滚 learned/本地窗口
-      // 会再冷 5 小时（周额度则可能几天），所以只走普通短冷却。
-      if (cap.resetAt && cap.resetAt.getTime() <= now.getTime()) {
+    if (parsed !== undefined) {
+      const cap = extractUpstreamUsageCap(parsed);
+      const vendorCode = extractUpstreamBusinessError(parsed)?.code ?? null;
+      const failureKind = rateLimitFailureKind(cap);
+      if (cap) {
+        // 报文带了恢复时刻但已过期：窗口已开，或 429 跨过了重置点。
+        // 15:32:01 的 429 在 15:32:03 才落到 Hub 时，前滚窗口相位会再冷
+        // 5 小时（周额度则可能几天），所以只走普通短冷却。
+        if (cap.resetAt && cap.resetAt.getTime() <= now.getTime()) {
+          return {
+            cooldownSeconds: defaultCooldownSeconds,
+            coolUntil: null,
+            lastError: RATE_LIMIT_LAST_ERROR,
+            quotaExhausted: false,
+            cap,
+            vendorCode,
+            failureKind,
+          };
+        }
+        const resetAt = usageCapResetAt(cap, now, windows);
+        if (resetAt) {
+          return {
+            cooldownSeconds: Math.max(
+              1,
+              Math.ceil((resetAt.getTime() - now.getTime()) / 1_000),
+            ),
+            coolUntil: resetAt,
+            lastError: USAGE_CAP_LAST_ERROR,
+            quotaExhausted: true,
+            cap,
+            vendorCode,
+            failureKind,
+          };
+        }
         return {
-          cooldownSeconds: defaultCooldownSeconds,
+          cooldownSeconds: quotaCooldownSeconds,
           coolUntil: null,
-          lastError: RATE_LIMIT_LAST_ERROR,
-          quotaExhausted: false,
-          cap,
-        };
-      }
-      const resetAt = usageCapResetAt(cap, now, learned);
-      if (resetAt) {
-        return {
-          cooldownSeconds: Math.max(
-            1,
-            Math.ceil((resetAt.getTime() - now.getTime()) / 1_000),
-          ),
-          coolUntil: resetAt,
-          lastError: USAGE_CAP_LAST_ERROR,
+          lastError: QUOTA_EXHAUSTED_LAST_ERROR,
           quotaExhausted: true,
           cap,
+          vendorCode,
+          failureKind,
         };
       }
       return {
-        cooldownSeconds: quotaCooldownSeconds,
+        cooldownSeconds: defaultCooldownSeconds,
         coolUntil: null,
-        lastError: QUOTA_EXHAUSTED_LAST_ERROR,
-        quotaExhausted: true,
-        cap,
+        lastError: RATE_LIMIT_LAST_ERROR,
+        quotaExhausted: false,
+        cap: null,
+        vendorCode,
+        failureKind,
       };
     }
   }
@@ -383,6 +443,8 @@ export function resolveRelayRateLimitCooldown(
     lastError: RATE_LIMIT_LAST_ERROR,
     quotaExhausted: false,
     cap: null,
+    vendorCode: null,
+    failureKind: "rate_limit",
   };
 }
 
@@ -405,14 +467,9 @@ async function usageCapMetaPatch(
   now: Date,
 ): Promise<Record<string, unknown> | null> {
   if (!cap) return null;
-  // Stale 429: the quoted reset already passed. Do not persist it as a
-  // learned phase (that would roll the next window forward) or as drain evidence.
+  // Stale 429: the quoted reset already passed. Do not persist it as drain evidence.
   if (cap.resetAt && cap.resetAt.getTime() <= now.getTime()) return null;
   const patch: Record<string, unknown> = {};
-  if (cap.resetAt) {
-    const merged = mergeLearnedCapReset(candidate.meta, cap.kind, cap.resetAt);
-    if (merged.learnedCapReset) patch.learnedCapReset = merged.learnedCapReset;
-  }
   // 本地账本远低于限额时 429 说明 Key 在站外被直接消耗，留下证据。
   const limit = cap.kind === "five_hour"
     ? (candidate.fiveHourCreditLimit ?? null)
@@ -420,7 +477,11 @@ async function usageCapMetaPatch(
       ? (candidate.weeklyCreditLimit ?? null)
       : null;
   if (limit != null) {
-    const usage = await getCredentialQuotaUsage([candidate.credentialId], now);
+    const usage = await getCredentialQuotaUsage(
+      [candidate.credentialId],
+      now,
+      credentialAnchorsFromCandidate(candidate),
+    );
     const local = usage.get(candidate.credentialId);
     const localCredits = cap.kind === "five_hour"
       ? (local?.fiveHourCredits ?? 0)
@@ -436,12 +497,43 @@ async function usageCapMetaPatch(
   return Object.keys(patch).length > 0 ? patch : null;
 }
 
+/** Window columns for the candidate, when it came through the bound/open-pool path. */
+function credentialAnchorsFromCandidate(
+  candidate: RelayCandidate,
+): Map<number, CredentialWindowAnchors> | null {
+  if (
+    candidate.fiveHourWindowAnchor === undefined
+    && candidate.weeklyWindowResetAt === undefined
+  ) {
+    return null;
+  }
+  return new Map([
+    [
+      candidate.credentialId,
+      {
+        fiveHourAnchor: candidate.fiveHourWindowAnchor ?? null,
+        weeklyResetAt: candidate.weeklyWindowResetAt ?? null,
+      },
+    ],
+  ]);
+}
+
+type CoolCredentialOptions = {
+  failureKind: string;
+  vendorCode?: string | null;
+  /** 1308 校准：报文重置时刻倒推 5 小时的首用锚点。 */
+  fiveHourAnchor?: Date;
+  /** 1310 校准：学到的周窗口翻转时刻。 */
+  weeklyResetAt?: Date;
+};
+
 async function coolCredential(
   candidate: RelayCandidate,
   cooldownSeconds: number,
   lastError: string,
   explicitCoolUntil?: Date | null,
   metaPatch?: Record<string, unknown> | null,
+  options?: CoolCredentialOptions,
 ): Promise<void> {
   const now = new Date();
   const coolUntil =
@@ -468,6 +560,22 @@ async function coolCredential(
       lastErrorAt: now,
       lastUsedAt: now,
       updatedAt: now,
+      ...(options
+        ? {
+            lastFailureKind: options.failureKind.slice(0, 32),
+            lastVendorCode: options.vendorCode ? options.vendorCode.slice(0, 16) : null,
+            // 校准只在报文带了未来重置时刻时写入；过期时刻不回写锚点/相位。
+            ...(options.fiveHourAnchor
+              ? {
+                  fiveHourWindowAnchor: sql`greatest(
+                    coalesce(${upstreamCredentials.fiveHourWindowAnchor}, ${options.fiveHourAnchor.toISOString()}::timestamptz),
+                    ${options.fiveHourAnchor.toISOString()}::timestamptz
+                  )`,
+                }
+              : {}),
+            ...(options.weeklyResetAt ? { weeklyWindowResetAt: options.weeklyResetAt } : {}),
+          }
+        : {}),
       // 有配额观测时才合并 meta；普通 429 完全不写这一列。
       ...(metaPatch
         ? {
@@ -778,25 +886,46 @@ export async function sendRelayUpstream(
     } else if (classification.kind === "rate_limited") {
       const bodyText = await peekResponseText(response);
       const now = new Date();
+      const candidateAnchors: CredentialWindowAnchors = {
+        fiveHourAnchor: input.candidate.fiveHourWindowAnchor ?? null,
+        weeklyResetAt: input.candidate.weeklyWindowResetAt ?? null,
+      };
       const decision = resolveRelayRateLimitCooldown(
         bodyText,
         cooldownSeconds,
         env.RELAY_QUOTA_COOLDOWN_SECONDS,
         now,
-        learnedCapResetFromMeta(input.candidate.meta),
+        candidateAnchors,
       );
       const metaPatch = await usageCapMetaPatch(input.candidate, decision.cap, now);
+      // 报文带未来重置时刻时校准窗口状态列：1308 → 首用锚点（重置−5h），
+      // 1310 → 周窗口相位。过期时刻不回写（避免把旧窗口相位前滚）。
+      const calibrationReset = decision.cap?.resetAt
+        && decision.cap.resetAt.getTime() > now.getTime()
+        ? decision.cap.resetAt
+        : null;
       await coolCredential(
         input.candidate,
         decision.cooldownSeconds,
         formatUpstreamVendorError(response.status, bodyText),
         decision.coolUntil,
         metaPatch,
+        {
+          failureKind: decision.failureKind,
+          vendorCode: decision.vendorCode,
+          ...(calibrationReset && decision.cap?.kind === "five_hour"
+            ? { fiveHourAnchor: new Date(calibrationReset.getTime() - FIVE_HOUR_MS) }
+            : {}),
+          ...(calibrationReset && decision.cap?.kind === "weekly"
+            ? { weeklyResetAt: calibrationReset }
+            : {}),
+        },
       );
     } else if (response.status >= 500 && response.status <= 599) {
       await markCredentialFailure(
         input.candidate,
         classification.errorMessage ?? `HTTP ${response.status}`,
+        "upstream_error",
       );
     } else {
       await markCredentialUsed(input.candidate);

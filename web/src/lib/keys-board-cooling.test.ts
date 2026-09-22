@@ -111,3 +111,17 @@ test("real 144 upstream 429 texts classify into the rate-limit lane", () => {
   assert.equal(isShortRateLimitCooling("余额不足或无可用资源包,请充值。"), false);
   assert.equal(isShortRateLimitCooling("上游服务异常（HTTP 500）"), false);
 });
+
+test("structured failure kind drives the lane without parsing lastError", async () => {
+  const { coolingLaneFromFailureKind } = await import("./keys-board-cooling");
+  assert.equal(coolingLaneFromFailureKind("rate_limit"), "rate_limit");
+  assert.equal(coolingLaneFromFailureKind("five_hour_cap"), "cooling_5h");
+  assert.equal(coolingLaneFromFailureKind("weekly_cap"), "cooling_weekly");
+  assert.equal(coolingLaneFromFailureKind("monthly_cap"), "cooling_weekly");
+  // auth / network / other 不是冷却分类，交回调用方走旧文本推断。
+  assert.equal(coolingLaneFromFailureKind("auth"), null);
+  assert.equal(coolingLaneFromFailureKind("network"), null);
+  assert.equal(coolingLaneFromFailureKind("other"), null);
+  assert.equal(coolingLaneFromFailureKind(null), null);
+  assert.equal(coolingLaneFromFailureKind(undefined), null);
+});

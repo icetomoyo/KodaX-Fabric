@@ -104,6 +104,8 @@ export async function adminKeyBindingRoutes(app: FastifyInstance) {
           coolUntil: upstreamCredentials.coolUntil,
           fiveHourCreditLimit: upstreamCredentials.fiveHourCreditLimit,
           weeklyCreditLimit: upstreamCredentials.weeklyCreditLimit,
+          fiveHourWindowAnchor: upstreamCredentials.fiveHourWindowAnchor,
+          weeklyWindowResetAt: upstreamCredentials.weeklyWindowResetAt,
           supportedProtocols: upstreamCredentials.supportedProtocols,
         })
         .from(upstreamCredentials)
@@ -175,6 +177,15 @@ export async function adminKeyBindingRoutes(app: FastifyInstance) {
     const usageById = await getCredentialQuotaUsage(
       credentialRows.map((row) => row.id),
       now,
+      new Map(
+        credentialRows.map((row) => [
+          row.id,
+          {
+            fiveHourAnchor: row.fiveHourWindowAnchor,
+            weeklyResetAt: row.weeklyWindowResetAt,
+          },
+        ]),
+      ),
     );
     const bindingViewById = await loadCredentialBindingViews(bindingRows);
 
@@ -202,6 +213,10 @@ export async function adminKeyBindingRoutes(app: FastifyInstance) {
             weeklyLimit: creditLimitNumber(row.weeklyCreditLimit),
           },
           now,
+          {
+            fiveHourAnchor: row.fiveHourWindowAnchor,
+            weeklyResetAt: row.weeklyWindowResetAt,
+          },
         );
         const coolingKind = resolveGraphCoolingKind(status, quota);
         return {

@@ -47,6 +47,8 @@ export type AvailableRelayCredential = {
   authStyle: string;
   supportedProtocols: RelayProtocol[];
   baseUrl: string;
+  fiveHourWindowAnchor?: Date | null;
+  weeklyWindowResetAt?: Date | null;
 };
 
 export type AvailableRelayModelRoute = {
@@ -168,6 +170,8 @@ async function loadAccessibleCredentials(
       credentialStatus: upstreamCredentials.status,
       coolUntil: upstreamCredentials.coolUntil,
       meta: upstreamCredentials.meta,
+      fiveHourWindowAnchor: upstreamCredentials.fiveHourWindowAnchor,
+      weeklyWindowResetAt: upstreamCredentials.weeklyWindowResetAt,
       productLineId: productLines.id,
       productType: productLines.productType,
       retryPolicy: productLines.retryPolicy,
@@ -208,6 +212,8 @@ async function loadAccessibleCredentials(
         ),
         coolUntil: row.coolUntil,
         meta: row.meta,
+        fiveHourWindowAnchor: row.fiveHourWindowAnchor,
+        weeklyWindowResetAt: row.weeklyWindowResetAt,
         productLineId: row.productLineId,
         productType: row.productType,
         retryPolicy: row.retryPolicy,
@@ -402,6 +408,8 @@ type CandidateCredentialSource = Pick<
 > & {
   fiveHourCreditLimit?: number | null;
   weeklyCreditLimit?: number | null;
+  fiveHourWindowAnchor?: Date | null;
+  weeklyWindowResetAt?: Date | null;
 };
 
 function toRelayCandidate(
@@ -432,6 +440,8 @@ function toRelayCandidate(
     meta: credential.meta,
     fiveHourCreditLimit: credential.fiveHourCreditLimit ?? null,
     weeklyCreditLimit: credential.weeklyCreditLimit ?? null,
+    fiveHourWindowAnchor: credential.fiveHourWindowAnchor ?? null,
+    weeklyWindowResetAt: credential.weeklyWindowResetAt ?? null,
   };
 }
 

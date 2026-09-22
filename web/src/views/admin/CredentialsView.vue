@@ -787,8 +787,28 @@
                 <dd>{{ formatQuotaPair(detailRow.fiveHourCredits, detailRow.fiveHourCreditLimit) }}</dd>
               </div>
               <div class="info-item">
+                <dt>5 小时重置</dt>
+                <dd>
+                  {{
+                    detailRow.nextFiveHourResetAt
+                      ? `${formatDateTime(detailRow.nextFiveHourResetAt)} 恢复 100%`
+                      : "已恢复，下次调用起算"
+                  }}
+                </dd>
+              </div>
+              <div class="info-item">
                 <dt>本周用量</dt>
                 <dd>{{ formatQuotaPair(detailRow.weeklyCredits, detailRow.weeklyCreditLimit) }}</dd>
+              </div>
+              <div class="info-item">
+                <dt>周额度重置</dt>
+                <dd>
+                  <template v-if="detailRow.nextWeeklyResetAt">
+                    {{ formatDateTime(detailRow.nextWeeklyResetAt) }} 恢复 100%
+                    <span v-if="detailRow.weeklyResetEstimated" class="estimate-mark">（估算）</span>
+                  </template>
+                  <template v-else>—</template>
+                </dd>
               </div>
             </dl>
             <div v-if="detailRow.fiveHourCreditLimit != null" class="quota-progress">
@@ -977,7 +997,11 @@ import { ElMessage, ElMessageBox } from "element-plus";
 import { http } from "@/api/http";
 import { channelDisplayName, formatChannelName } from "@/lib/channel-display";
 import { formatDateTime } from "@/lib/date-time";
-import { coolingLaneFromLastError, isShortRateLimitCooling } from "@/lib/keys-board-cooling";
+import {
+  coolingLaneFromFailureKind,
+  coolingLaneFromLastError,
+  isShortRateLimitCooling,
+} from "@/lib/keys-board-cooling";
 import { roleLabel as formatRoleLabel } from "@/lib/roles";
 import { usagePercent, usageProgressStatus } from "@/lib/tokens";
 import { useAuthStore } from "@/stores/auth";
@@ -1047,6 +1071,14 @@ type CredentialRow = {
   weeklyCreditLimit: number | null;
   fiveHourCredits: number;
   weeklyCredits: number;
+  /** 结构化失败分类（服务端写入/迁移回填），泳道划分优先读它。 */
+  lastFailureKind: string | null;
+  lastVendorCode: string | null;
+  /** 5h：窗口进行中 → 锚点+5h；已过期/未锚定 → null（下次调用起算）。 */
+  nextFiveHourResetAt: string | null;
+  /** 周窗口下一次翻转时刻（未学到相位时为 epoch 估算，见 weeklyResetEstimated）。 */
+  nextWeeklyResetAt: string | null;
+  weeklyResetEstimated?: boolean;
   binding: CredentialBinding | null;
   connectedNames?: string[];
   createdAt?: string;
@@ -1411,6 +1443,9 @@ function boardLaneOf(row: CredentialRow): BoardLane {
   }
   if (status === "disabled" || status === "auto_disabled") return "stopped";
   if (status === "cooling") {
+    // 服务端写入的结构化分类优先；缺失时回退旧文本推断（迁移前/手工数据）。
+    const lane = coolingLaneFromFailureKind(row.lastFailureKind);
+    if (lane) return lane;
     if (isShortRateLimitCooling(row.lastError)) return "rate_limit";
     return coolingLaneOf(row);
   }
@@ -1500,8 +1535,14 @@ function keyRingTitle(row: CredentialRow): string {
   const week = row.weeklyCreditLimit == null
     ? "7 天 不限"
     : `7 天 ${formatQuotaPair(row.weeklyCredits, row.weeklyCreditLimit)}`;
+  const fiveReset = row.nextFiveHourResetAt
+    ? `5 小时重置 ${formatDateTime(row.nextFiveHourResetAt)}`
+    : "5 小时已恢复，下次调用起算";
+  const weekReset = row.nextWeeklyResetAt
+    ? `周额度重置 ${formatDateTime(row.nextWeeklyResetAt)}${row.weeklyResetEstimated ? "（估算）" : ""}`
+    : "";
   const people = (row.connectedNames ?? []).join("、") || row.binding?.scopeName || "未连接";
-  return `${channelDisplayName(row)} · •••• ${row.secretSuffix}\n${people}\n${five}\n${week}`;
+  return `${channelDisplayName(row)} · •••• ${row.secretSuffix}\n${people}\n${five}\n${fiveReset}\n${week}${weekReset ? `\n${weekReset}` : ""}`;
 }
 
 const boardStats = computed(() => {
@@ -3538,6 +3579,7 @@ onMounted(refreshAll);
 .kanban-column-head.is-waiting { color: #64748b; }
 .kanban-column-head.is-in_use { color: #15803d; }
 .kanban-column-head.is-cooling_5h { color: #d97706; }
+.estimate-mark { color: #94a3b8; font-size: 12px; }
 .kanban-column-head.is-cooling_weekly { color: #b45309; }
 .kanban-column-head.is-rate_limit { color: #2563eb; }
 .kanban-column-head.is-stopped { color: #94a3b8; }

@@ -365,6 +365,13 @@
       "when": 1790066474000,
       "tag": "0051_drop_team_admin_role",
       "breakpoints": true
+    },
+    {
+      "idx": 52,
+      "version": "7",
+      "when": 1790121600000,
+      "tag": "0052_credential_window_state",
+      "breakpoints": true
     }
   ]
 }

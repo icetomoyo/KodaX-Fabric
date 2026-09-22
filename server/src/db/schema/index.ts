@@ -276,6 +276,13 @@ export const upstreamCredentials = pgTable(
     meta: jsonb("meta"),
     fiveHourCreditLimit: numeric("five_hour_credit_limit", { precision: 14, scale: 4 }),
     weeklyCreditLimit: numeric("weekly_credit_limit", { precision: 14, scale: 4 }),
+    /** 5h 窗口为「首用锚定的翻转窗口」：窗口起点，过期后由下一次成功调用重新锚定。 */
+    fiveHourWindowAnchor: timestamp("five_hour_window_anchor", { withTimezone: true }),
+    /** 周窗口为「固定相位翻转窗口」：从 1310 报文学到的下一次翻转时刻。 */
+    weeklyWindowResetAt: timestamp("weekly_window_reset_at", { withTimezone: true }),
+    /** 结构化失败分类；看板泳道据此划分，不再解析 last_error 文本。 */
+    lastFailureKind: varchar("last_failure_kind", { length: 32 }),
+    lastVendorCode: varchar("last_vendor_code", { length: 16 }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },

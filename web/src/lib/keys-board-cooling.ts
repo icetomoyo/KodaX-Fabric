@@ -61,3 +61,17 @@ export function coolingLaneFromLastError(input: {
   }
   return "cooling_5h";
 }
+
+/**
+ * Structured lane from the server-written `last_failure_kind` column.
+ * Returns null when the kind is missing or not a cooling classification —
+ * the caller then falls back to the legacy lastError inference.
+ */
+export function coolingLaneFromFailureKind(
+  kind: string | null | undefined,
+): KeysBoardCoolingLane | "rate_limit" | null {
+  if (kind === "rate_limit") return "rate_limit";
+  if (kind === "five_hour_cap") return "cooling_5h";
+  if (kind === "weekly_cap" || kind === "monthly_cap") return "cooling_weekly";
+  return null;
+}
