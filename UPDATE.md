@@ -87,7 +87,7 @@
 ### 性能
 
 - **P2-7 `team_members` 缺 `employee_id` 前导索引**【已修复完成】：部门名相关子查询（`user-analytics.ts:45-54`）逐行扫描，`0042` 还删过单列索引，属系统性缺口。补 `(employee_id, team_id)` 索引。**修复（2026-09-22）**：迁移 `0050` + schema 条目 `team_members_employee_team_idx (employee_id, team_id)`，本地库已应用验证。**生产实证（144 只读 EXPLAIN ANALYZE）**：修复前部门子查询对 `team_members` 全表扫描（`Rows Removed by Filter: 1052`，单次 0.6ms，每次排名页加载执行约 50 次），表 1053 行随编制增长；唯一索引 `(team_id, employee_id)` 因前导列不匹配无法服务 `employee_id` 过滤。**附带发现（已记 P3）**：`teams`/`team_members` 是团队层取消后被挪用的部门成员连接表现役使用，`team_admin` 角色生产零用户属僵尸。验证：`user-analytics.test.ts` 新增索引存在性断言，全量 521/521，tsc 通过。
-- **P2-8 `listSensitiveWords` 每次分页全表 GROUP BY**：`sensitive-words.ts:336-342` 对只增不减的流水表聚合，量大后变慢。加短 TTL 缓存或改物化计数。
+- **P2-8 `listSensitiveWords` 每次分页全表 GROUP BY**【已修复完成】：`sensitive-words.ts:336-342` 对只增不减的流水表聚合，量大后变慢。加短 TTL 缓存或改物化计数。**修复（2026-09-22）**：命中计数抽为 `loadHitCounts()`——30 秒 TTL 缓存 + `recordSensitiveWordHit` 写入后失效，管理端最多滞后 30 秒看到新命中，分页/翻页不再重复聚合。
 
 ### 语义 / 误报
 
@@ -100,7 +100,7 @@
 - **P2-12 CHANGELOG Unreleased 旧条与现状矛盾**【已修复完成】：第 58-59 行仍写「三级联动筛选」「报错日志按 Request ID/企业/部门筛选」，实际已改为按人搜索。更新条目。**修复（2026-09-22）**：修正 4 条矛盾条目——调用日志/报错日志两条改为「按员工搜索（远程搜人）」现状；另发现并修正 P1-2 遗留的两条已下线批量席位描述（「批量挂 KEY」「批量添加按姓名+手机号」），Unreleased 现与代码一致。
 - **P2-13 死代码清理**【已修复完成】：`findSensitiveHit`、`invalidateSensitiveWordsCache`（均无调用方）；`ModelRoutesView.vue`/`ProvidersView.vue`（路由已 redirect）；`setSensitiveWordsEnabled` + `PATCH /api/admin/sensitive-words {enabled}`（`enabled` 实为 interceptEnabled，误用即全站拦截，前端已走 settings 接口，直接删）。**修复（2026-09-22）**：四块全部删除，全仓 grep 零残留，web 完整构建（vue-tsc + vite）通过证明视图无引用。备注：`/api/admin/model-routes` 后端接口仍在（不在本条范围），若确认下线可另行清理。
 - **P2-14 `sensitive_word_hits.employee_id` 外键 ON DELETE no action**：删除有命中记录的员工会被阻塞。需产品决策：cascade、删人前归档、或限制删人。
-- **P2-15 姓名筛选只滤 Top-50**：榜外员工搜不到。服务端加关键字参数，或复用 `/api/admin/users?q=` 远程选人。
+- **P2-15 姓名筛选只滤 Top-50**【已修复完成】：榜外员工搜不到。服务端加关键字参数，或复用 `/api/admin/users?q=` 远程选人。**修复（2026-09-22）**：采用远程搜人方案——本地过滤输入框替换为 LogsView 同款 `el-select` 远程搜索（`/api/admin/users?q=`，姓名+手机号选项），选中任意员工即加载其当日详情（后端 `employeeId` 本就支持全量员工），榜外员工可查；`nameQuery`/`visibleRanks` 本地过滤逻辑移除，榜单保持 Top-50 排名语义。前端零后端改动。
 - **P2-16 web `npm run build`（vue-tsc）在 dev 上已损坏**【已修复完成】：ErrorLogsView.vue:266 / LogsView.vue:510 / SensitiveHitsView.vue:238 三处 `rows.some((row) => …)` 的 `row` implicit any（2026-09-21 视图重写引入，2026-09-22 验证 P1-2 时发现）。镜像构建走 `build:image`（纯 vite）不受影响，但本地 `npm run build` 失败且类型检查失效。**修复（2026-09-22）**：三处 `const rows` 显式标注 `EmployeeOption[]`（与映射形状一致，源头类型化）。验证：`npm run build`（vue-tsc -b && vite build）完整通过，全量服务端套件无回归。
 
 ---

@@ -152,6 +152,7 @@ export async function recordSensitiveWordHit(input: {
       ip: input.ip?.slice(0, 64) || null,
     })
     .onConflictDoNothing();
+  hitCountsCache = null;
 }
 
 export function normalizeSensitiveNeedle(word: string): string {
@@ -364,18 +365,7 @@ export async function listSensitiveWords(query: SensitiveWordListQuery): Promise
   items: SensitiveWordRow[];
 }> {
   const config = await loadSensitiveWordsConfig();
-  const countRows = await db
-    .select({
-      word: sensitiveWordHits.matchedWord,
-      n: sql<number>`count(*)::int`,
-    })
-    .from(sensitiveWordHits)
-    .groupBy(sensitiveWordHits.matchedWord);
-  const counts = new Map<string, number>();
-  for (const row of countRows) {
-    const key = normalizeSensitiveNeedle(row.word);
-    counts.set(key, (counts.get(key) ?? 0) + Number(row.n));
-  }
+  const counts = await loadHitCounts();
   const ranked = sortSensitiveWordRows(
     config.words.map((word) => ({
       word,
@@ -390,6 +380,32 @@ export async function listSensitiveWords(query: SensitiveWordListQuery): Promise
     total: ranked.length,
     items: ranked.slice(query.offset, query.offset + query.limit),
   };
+}
+
+type HitCountsCache = { expiresAt: number; counts: Map<string, number> };
+const HIT_COUNTS_TTL_MS = 30_000;
+let hitCountsCache: HitCountsCache | null = null;
+
+/**
+ * 命中计数是对只增不减流水表的全表 GROUP BY，管理页每次分页都拉一遍会随表增长变慢；
+ * 短 TTL 缓存 + 命中写入时失效，管理端最多滞后 30 秒看到新命中。
+ */
+async function loadHitCounts(): Promise<Map<string, number>> {
+  if (hitCountsCache && hitCountsCache.expiresAt > Date.now()) return hitCountsCache.counts;
+  const countRows = await db
+    .select({
+      word: sensitiveWordHits.matchedWord,
+      n: sql<number>`count(*)::int`,
+    })
+    .from(sensitiveWordHits)
+    .groupBy(sensitiveWordHits.matchedWord);
+  const counts = new Map<string, number>();
+  for (const row of countRows) {
+    const key = normalizeSensitiveNeedle(row.word);
+    counts.set(key, (counts.get(key) ?? 0) + Number(row.n));
+  }
+  hitCountsCache = { counts, expiresAt: Date.now() + HIT_COUNTS_TTL_MS };
+  return counts;
 }
 
 export async function removeSensitiveWord(word: string): Promise<SensitiveWordsConfig> {

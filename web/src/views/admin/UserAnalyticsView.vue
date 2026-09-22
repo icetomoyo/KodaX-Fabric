@@ -16,19 +16,30 @@
       <aside class="rank-pane page-card">
         <div class="pane-head">
           <h3>单日使用量</h3>
-          <span>{{ day }} · {{ visibleRanks.length }}{{ nameQuery.trim() ? ` / ${ranks.length}` : "" }} 人</span>
+          <span>{{ day }} · {{ ranks.length }} 人</span>
         </div>
-        <el-input
-          v-model="nameQuery"
+        <el-select
+          v-model="pickerEmployeeId"
           class="rank-search"
           clearable
-          placeholder="输入姓名"
-        />
+          filterable
+          remote
+          :remote-method="searchEmployees"
+          :loading="employeesLoading"
+          placeholder="搜索姓名查看任何人（不限榜内）"
+          @change="onEmployeeChange"
+        >
+          <el-option
+            v-for="item in employees"
+            :key="item.id"
+            :label="employeeOptionLabel(item)"
+            :value="item.id"
+          />
+        </el-select>
         <div class="rank-list">
         <el-empty v-if="!loading && !ranks.length" description="这一天还没有人调用" :image-size="64" />
-        <el-empty v-else-if="!loading && !visibleRanks.length" description="没有匹配的人" :image-size="64" />
         <button
-          v-for="row in visibleRanks"
+          v-for="row in ranks"
           :key="row.employeeId"
           type="button"
           class="rank-row"
@@ -360,15 +371,49 @@ const selectedId = ref<number | null>(
   Number(route.query.employeeId) > 0 ? Number(route.query.employeeId) : null,
 );
 const ranks = ref<RankRow[]>([]);
-const nameQuery = ref("");
 const selected = ref<SelectedUser | null>(null);
 const detailPane = ref<HTMLElement | null>(null);
 
-const visibleRanks = computed(() => {
-  const q = nameQuery.value.trim().toLowerCase();
-  if (!q) return ranks.value;
-  return ranks.value.filter((row) => row.name.toLowerCase().includes(q));
-});
+type EmployeeOption = { id: number; name: string; phone: string };
+const pickerEmployeeId = ref<number | null>(null);
+const employees = ref<EmployeeOption[]>([]);
+const employeesLoading = ref(false);
+
+// 远程搜人：榜外员工也能查（后端 employeeId 支持任意员工），与日志页同款
+async function searchEmployees(query: string) {
+  employeesLoading.value = true;
+  try {
+    const { data } = await http.get("/api/admin/users", {
+      params: { q: query.trim() || undefined, limit: 30, status: "active" },
+    });
+    if (!data.success) throw new Error(data.message || "搜索员工失败");
+    const rows: EmployeeOption[] = Array.isArray(data.data)
+      ? data.data.map((row: EmployeeOption) => ({
+          id: row.id,
+          name: row.name,
+          phone: row.phone,
+        }))
+      : [];
+    const current = selected.value?.employee;
+    employees.value =
+      current && !rows.some((row) => row.id === current.id) ? [current, ...rows] : rows;
+  } catch (e: any) {
+    employees.value = selected.value?.employee ? [selected.value.employee] : [];
+    ElMessage.error(e.response?.data?.message || "搜索员工失败");
+  } finally {
+    employeesLoading.value = false;
+  }
+}
+
+function employeeOptionLabel(item: EmployeeOption): string {
+  return item.phone ? `${item.name} · ${item.phone}` : item.name;
+}
+
+function onEmployeeChange(value: number | null) {
+  if (value == null) return;
+  selectedId.value = value;
+  void load();
+}
 
 const compositionTotal = computed(() => {
   const row = selected.value?.day.composition;
