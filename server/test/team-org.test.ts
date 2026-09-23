@@ -460,7 +460,9 @@ test("admin shell uses org board for all console roles", () => {
   assert.doesNotMatch(layout, /isTeamAdmin/);
   assert.doesNotMatch(layout, /团队管理员/);
   assert.match(layout, /isOrgAdmin \|\| auth.isDeptAdmin" index="\/admin\/keys">API Key/);
-  assert.match(layout, /index="\/admin\/guide">接入教程/);
+  assert.match(layout, /index="guide"/);
+  assert.match(layout, /index="\/admin\/guide">接入流程/);
+  assert.match(layout, /index="\/admin\/guide\/workbuddy">WorkBuddy 接入/);
   assert.match(layout, /index="\/admin\/key-bindings">调度画布/);
   assert.match(layout, /index="\/admin\/error-logs">报错日志/);
   assert.match(layout, />敏感词检测</);
