@@ -34,7 +34,7 @@ export const relayProtocolOptions: readonly RelayProtocolOption[] = [
     label: "Anthropic Message 协议",
     shortLabel: "Anthropic Message 协议",
     description: "Anthropic Messages 原生转发",
-    endpoint: `POST ${RELAY_BASE_PATH}/v1/messages`,
+    endpoint: "POST /v1/messages",
     authHeaders: [
       "x-api-key: <你的 API Key>",
       "anthropic-version: 2023-06-01",
@@ -46,7 +46,7 @@ export const relayProtocolOptions: readonly RelayProtocolOption[] = [
     label: "OpenAI Chat Completion 协议",
     shortLabel: "OpenAI Chat Completion 协议",
     description: "OpenAI Chat Completions 原生转发",
-    endpoint: `POST ${RELAY_BASE_PATH}/chat/completions`,
+    endpoint: "POST /v1/chat/completions",
     authHeaders: ["Authorization: Bearer <你的 API Key>"],
     recommendedClients: [
       "Cursor",
@@ -61,7 +61,7 @@ export const relayProtocolOptions: readonly RelayProtocolOption[] = [
     label: "OpenAI Response 协议",
     shortLabel: "OpenAI Response 协议",
     description: "OpenAI Responses 原生转发",
-    endpoint: `POST ${RELAY_BASE_PATH}/responses`,
+    endpoint: "POST /v1/responses",
     authHeaders: ["Authorization: Bearer <你的 API Key>"],
     recommendedClients: ["Codex", "其他 Responses 客户端"],
   },

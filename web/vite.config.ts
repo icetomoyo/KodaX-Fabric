@@ -33,6 +33,10 @@ export default defineConfig(({ mode }) => {
         "/api": proxy,
         "/health": proxy,
         "/ai": proxy,
+        "/v1": proxy,
+        "/chat/completions": proxy,
+        "/responses": proxy,
+        "/models": proxy,
       },
     },
   };

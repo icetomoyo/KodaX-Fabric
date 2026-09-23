@@ -86,14 +86,14 @@ test("relay base URL uses the proxy-facing host instead of the API listener port
       },
     });
     assert.equal(response.statusCode, 200);
-    assert.deepEqual(response.json(), { baseUrl: "https://10.10.0.144/ai" });
+    assert.deepEqual(response.json(), { baseUrl: "https://10.10.0.144" });
   } finally {
     await app.close();
   }
 
   assert.equal(
     buildRelayBaseUrl({ protocol: "https", host: "gateway.example.test:8443" }),
-    "https://gateway.example.test:8443/ai",
+    "https://gateway.example.test:8443",
   );
 });
 

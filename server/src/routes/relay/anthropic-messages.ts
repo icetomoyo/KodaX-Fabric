@@ -15,7 +15,7 @@ import {
 } from "../../lib/relay/audit.js";
 import { createNativeSsePassthrough } from "../../lib/relay/native-sse.js";
 import {
-  RELAY_ENDPOINTS,
+  RELAY_PATHS,
   type RelayProtocol,
 } from "../../lib/relay/protocol.js";
 import {
@@ -57,9 +57,7 @@ type NativeRequestBody = JsonObject & {
 };
 
 type NativeRouteConfig = {
-  path:
-    | typeof RELAY_ENDPOINTS.messages
-    | typeof RELAY_ENDPOINTS.messagesCountTokens;
+  paths: readonly string[];
   protocol: NativeProtocol;
   operation: Extract<
     RelayUpstreamOperation,
@@ -89,7 +87,7 @@ const messagesCountTokensSchema = z
 
 const routeConfigs: NativeRouteConfig[] = [
   {
-    path: RELAY_ENDPOINTS.messages,
+    paths: RELAY_PATHS.messages,
     protocol: "anthropic_messages",
     operation: "messages",
     schema: messagesSchema,
@@ -98,7 +96,7 @@ const routeConfigs: NativeRouteConfig[] = [
     requiresAnthropicVersion: true,
   },
   {
-    path: RELAY_ENDPOINTS.messagesCountTokens,
+    paths: RELAY_PATHS.messagesCountTokens,
     protocol: "anthropic_messages",
     operation: "messages_count_tokens",
     schema: messagesCountTokensSchema,
@@ -1072,14 +1070,16 @@ export async function anthropicMessageRoutes(app: FastifyInstance) {
   app.setErrorHandler((error, req, reply) =>
     handleNativeParsingError(app, error, req, reply));
   for (const config of routeConfigs) {
-    app.post(
-      config.path,
-      {
-        onRequest: createRequireRelayApiKey(config.protocol),
-        // Anthropic's Messages API accepts request bodies up to 32 MiB.
-        bodyLimit: 32 * 1024 * 1024,
-      },
-      (req, reply) => handleNativeRequest(app, config, req, reply),
-    );
+    for (const path of config.paths) {
+      app.post(
+        path,
+        {
+          onRequest: createRequireRelayApiKey(config.protocol),
+          // Anthropic's Messages API accepts request bodies up to 32 MiB.
+          bodyLimit: 32 * 1024 * 1024,
+        },
+        (req, reply) => handleNativeRequest(app, config, req, reply),
+      );
+    }
   }
 }

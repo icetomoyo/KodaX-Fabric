@@ -1,3 +1,5 @@
+import { clientModelUpstreamName } from "./relay/client-model.js";
+
 function uniqueSorted(values: string[]): string[] {
   return [...new Set(values)].sort((left, right) => left.localeCompare(right));
 }
@@ -16,7 +18,7 @@ export const GLM_CATALOG_MODELS = [
 export type CatalogModelTag = "文本" | "图片" | "视频" | "文件";
 
 export function catalogModelTags(model: string): CatalogModelTag[] {
-  const name = toCatalogModelName(model);
+  const name = toCatalogModelName(clientModelUpstreamName(model));
   if (name === GLM_TEXT_CATALOG_MODEL) return ["文本"];
   if (name === GLM_MULTIMODAL_CATALOG_MODEL) return ["文本", "图片", "视频", "文件"];
   return [];
@@ -36,7 +38,8 @@ export const DEEPSEEK_CATALOG_MODELS = [DEEPSEEK_FLASH_CATALOG_MODEL] as const;
  * stay as returned.
  */
 export function toCatalogModelName(model: string): string {
-  const name = model.trim().toLowerCase();
+  const raw = model.trim();
+  const name = clientModelUpstreamName(raw);
   if (GLM_CODING_PLAN_MODEL.test(name)) {
     if (name.includes("flash") || name.includes("turbo") || name === "glm-4.7") {
       return GLM_MULTIMODAL_CATALOG_MODEL;
@@ -44,7 +47,7 @@ export function toCatalogModelName(model: string): string {
     return GLM_TEXT_CATALOG_MODEL;
   }
   if (name.startsWith("deepseek")) return DEEPSEEK_FLASH_CATALOG_MODEL;
-  return model.trim();
+  return raw;
 }
 
 const GLM_PROVIDER_CODE = "glm";
@@ -60,13 +63,13 @@ export function isDeepseekProvider(providerCode: string): boolean {
 
 /** Relay allow-list for Zhipu Keys. Other names are rejected. */
 export function isGlmClientModelAllowed(model: string): boolean {
-  const name = model.trim().toLowerCase();
+  const name = clientModelUpstreamName(model);
   return (GLM_CATALOG_MODELS as readonly string[]).includes(name);
 }
 
 /** Relay allow-list for DeepSeek Keys. Other names are rejected. */
 export function isDeepseekClientModelAllowed(model: string): boolean {
-  return model.trim().toLowerCase() === DEEPSEEK_FLASH_CATALOG_MODEL;
+  return clientModelUpstreamName(model) === DEEPSEEK_FLASH_CATALOG_MODEL;
 }
 
 export function glmProviderBlocksClientModel(providerCode: string, clientModel: string): boolean {

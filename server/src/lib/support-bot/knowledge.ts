@@ -25,7 +25,7 @@ export function buildSupportAgentSystemPrompt(relayBaseUrl: string): string {
 
 # 当前这次请求
 
-员工侧 Base URL（可直接复制）：\`${baseUrl}\`
+员工侧 Base URL（可直接复制）：\`${origin}\`
 
 用户问 Base URL / 填什么地址时：第一行给出上面这个完整 URL。不要写 {origin}，不要让用户自己拼。不要加 :3000 或 :3100。一两句说明即可。
 

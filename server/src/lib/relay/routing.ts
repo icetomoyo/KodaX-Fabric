@@ -14,9 +14,11 @@ import {
   getCredentialLoad,
 } from "./credential-load.js";
 import {
+  findActiveProductLineIdByProviderCode,
   loadRelayPool,
   resolveRelayUpstreamConfig,
 } from "./channel-pool.js";
+import { catalogModelsForProvider, parseClientModel } from "./client-model.js";
 import {
   acquireBoundCredential,
   type BoundCredential,
@@ -566,14 +568,20 @@ export async function resolveRelayBoundCandidate(
   excludeCredentialIds?: ReadonlySet<number>,
   teamId?: number | null,
 ): Promise<RelayBoundCandidateResolution> {
-  if (!isValidRelayProductLineId(productLineId)) {
+  const parsed = parseClientModel(clientModel);
+  const routedProductLineId = parsed.kind === "legacy"
+    ? productLineId
+    : await findActiveProductLineIdByProviderCode(parsed.providerCode);
+  const upstreamModel = parsed.upstreamModel;
+
+  if (!isValidRelayProductLineId(routedProductLineId)) {
     return {
       candidate: null,
-      unavailableReason: "bound_channel_unavailable",
+      unavailableReason: parsed.kind === "legacy" ? "bound_channel_unavailable" : "model_not_allowed",
       retryAfterSeconds: null,
     };
   }
-  const access = await loadAccessibleCredentials(protocol, productLineId);
+  const access = await loadAccessibleCredentials(protocol, routedProductLineId);
   if (access.boundChannelUnavailable) {
     return {
       candidate: null,
@@ -581,7 +589,7 @@ export async function resolveRelayBoundCandidate(
       retryAfterSeconds: null,
     };
   }
-  if (access.providerCode && providerBlocksClientModel(access.providerCode, clientModel)) {
+  if (access.providerCode && providerBlocksClientModel(access.providerCode, upstreamModel)) {
     return {
       candidate: null,
       unavailableReason: "model_not_allowed",
@@ -591,7 +599,7 @@ export async function resolveRelayBoundCandidate(
 
   const acquired = await acquireBoundCredential({
     employeeId,
-    productLineId,
+    productLineId: routedProductLineId,
     protocol,
     teamId,
     excludeCredentialIds,
@@ -605,7 +613,7 @@ export async function resolveRelayBoundCandidate(
     return { candidate: null, ...mapAcquireFailure("no_binding_available", null) };
   }
 
-  const routes = await loadEnabledModelRoutes(bound.productLineId, clientModel);
+  const routes = await loadEnabledModelRoutes(bound.productLineId, upstreamModel);
   const modelRoute = pickModelRoute(routes, bound.productLineId);
   if (modelRoute.kind === "suppressed") {
     return {
@@ -615,9 +623,11 @@ export async function resolveRelayBoundCandidate(
     };
   }
   const route = modelRoute.kind === "routed" ? modelRoute.route : undefined;
+  const candidate = toRelayCandidate(bound, clientModel, protocol, route);
+  candidate.upstreamModel = route?.upstreamModel ?? upstreamModel;
 
   return {
-    candidate: toRelayCandidate(bound, clientModel, protocol, route),
+    candidate,
     unavailableReason: null,
     retryAfterSeconds: null,
   };
@@ -638,6 +648,16 @@ export async function resolveAccessibleRelayModels(
   );
   if (access.boundChannelUnavailable) {
     return { models: [], unavailableReason: "bound_channel_unavailable" };
+  }
+  const catalog = catalogModelsForProvider(access.providerCode ?? "");
+  if (catalog.length > 0) {
+    return {
+      models: catalog.flatMap((item) => [
+        { id: item.canonicalId, ownedBy: item.providerCode },
+        { id: item.alias, ownedBy: item.providerCode },
+      ]),
+      unavailableReason: null,
+    };
   }
   const credentials = access.credentials.filter(
     (credential) =>

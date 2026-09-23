@@ -35,25 +35,40 @@
         />
 
         <el-table :data="pagedCatalog" stripe empty-text="该渠道暂无可用模型">
-          <el-table-column label="模型" min-width="520">
+          <el-table-column label="模型名称" min-width="280">
             <template #default="{ row }">
               <div class="model-cell">
                 <button type="button" class="model-id" :title="row.model" @click="copyModel(row.model)">
                   {{ row.model }}
                 </button>
                 <el-button class="copy-btn" link type="primary" @click="copyModel(row.model)">复制</el-button>
-                <span v-if="row.tags?.length" class="capability-tags">
-                  <el-tag
-                    v-for="tag in row.tags"
-                    :key="tag"
-                    size="small"
-                    effect="plain"
-                    :class="tagClass(tag)"
-                  >
-                    {{ tag }}
-                  </el-tag>
-                </span>
               </div>
+            </template>
+          </el-table-column>
+          <el-table-column label="别称" min-width="200">
+            <template #default="{ row }">
+              <div v-if="row.alias" class="model-cell">
+                <button type="button" class="model-id" :title="row.alias" @click="copyModel(row.alias)">
+                  {{ row.alias }}
+                </button>
+                <el-button class="copy-btn" link type="primary" @click="copyModel(row.alias)">复制</el-button>
+              </div>
+              <span v-else class="muted">—</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="能力" min-width="200">
+            <template #default="{ row }">
+              <span v-if="row.tags?.length" class="capability-tags">
+                <el-tag
+                  v-for="tag in row.tags"
+                  :key="tag"
+                  size="small"
+                  effect="plain"
+                  :class="tagClass(tag)"
+                >
+                  {{ tag }}
+                </el-tag>
+              </span>
             </template>
           </el-table-column>
         </el-table>
@@ -80,6 +95,7 @@ import { useTablePage } from "@/lib/table-page";
 
 type CatalogModel = {
   model: string;
+  alias?: string;
   tags?: string[];
 };
 

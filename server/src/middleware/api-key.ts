@@ -6,7 +6,6 @@ import { employeeApiKeys, employees, teamMembers, teams } from "../db/schema/ind
 import { hashApiKey } from "../lib/api-key.js";
 import {
   DEFAULT_RELAY_PROTOCOL,
-  isRelayProtocol,
   type RelayProtocol,
 } from "../lib/relay/protocol.js";
 import { isValidRelayProductLineId } from "../lib/relay/types.js";
@@ -102,7 +101,6 @@ async function authenticateRelayApiKey(
   reply: FastifyReply,
   rawKey: string,
   errorProtocol: RelayProtocol,
-  expectedProtocol?: RelayProtocol,
 ) {
   if (!rawKey.startsWith("th_")) {
     return relayError(
@@ -133,7 +131,6 @@ async function authenticateRelayApiKey(
     .where(
       and(
         eq(employeeApiKeys.keyHash, hashApiKey(rawKey)),
-        expectedProtocol ? eq(employeeApiKeys.protocol, expectedProtocol) : undefined,
         eq(employeeApiKeys.status, "active"),
         or(isNull(employeeApiKeys.expiresAt), gt(employeeApiKeys.expiresAt, new Date())),
       ),
@@ -148,12 +145,11 @@ async function authenticateRelayApiKey(
     !principal ||
     principal.employeeStatus !== "active" ||
     !relayRoles ||
-    !isRelayProtocol(principal.protocol) ||
     !isValidRelayProductLineId(principal.productLineId)
   ) {
     return relayError(
       reply,
-      principal && isRelayProtocol(principal.protocol) ? principal.protocol : errorProtocol,
+      errorProtocol,
       401,
       "无效的 KodaX Fabric API Key",
       "authentication_error",
@@ -174,7 +170,7 @@ async function authenticateRelayApiKey(
     if (!membership || membership.teamStatus !== "active" || membership.memberId == null) {
       return relayError(
         reply,
-        principal.protocol,
+        errorProtocol,
         403,
         "未加入该部门，无法使用此 API Key",
         "permission_error",
@@ -187,7 +183,7 @@ async function authenticateRelayApiKey(
     employeeId: principal.employeeId,
     employeeApiKeyId: principal.employeeApiKeyId,
     teamId: principal.teamId,
-    protocol: principal.protocol,
+    protocol: errorProtocol,
     productLineId: principal.productLineId,
     employeeName: principal.employeeName,
     employeePhone: principal.employeePhone,
@@ -200,21 +196,17 @@ export function createRequireRelayApiKey(expectedProtocol: RelayProtocol) {
     req: FastifyRequest,
     reply: FastifyReply,
   ) {
-    const extracted = extractRelayApiKey(req.headers, expectedProtocol);
+    const extracted = extractAnyRelayApiKey(req.headers);
     if (!extracted.ok) return sendExtractionError(reply, expectedProtocol, extracted);
-    return authenticateRelayApiKey(req, reply, extracted.key, expectedProtocol, expectedProtocol);
+    return authenticateRelayApiKey(req, reply, extracted.key, expectedProtocol);
   };
 }
 
 /** Chat Completions authentication hook. */
 export const requireRelayApiKey = createRequireRelayApiKey(DEFAULT_RELAY_PROTOCOL);
 
-/** Authenticate model discovery with any protocol-bound employee Key. */
+/** Authenticate model discovery with any employee Key. */
 export async function requireAnyRelayApiKey(req: FastifyRequest, reply: FastifyReply) {
-  // Model discovery accepts every Key protocol. Before a Key can be resolved,
-  // x-api-key is the only protocol signal available; after lookup,
-  // authenticateRelayApiKey uses the persisted Key protocol for post-lookup
-  // failures such as a disabled owner or corrupt binding.
   const errorProtocol = req.headers["x-api-key"] !== undefined
     ? "anthropic_messages"
     : DEFAULT_RELAY_PROTOCOL;

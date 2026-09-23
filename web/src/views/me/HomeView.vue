@@ -25,7 +25,7 @@
         <li>
           <button type="button" class="tip-link" @click="router.push('/me/guide')">
             <strong>教程看了吗？</strong>
-            <span>先看接入教程，按所用产品选对协议再创建 Key。</span>
+            <span>先看接入教程，复制 Base URL 和部门 Key 填进客户端。</span>
           </button>
         </li>
         <li>

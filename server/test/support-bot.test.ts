@@ -63,9 +63,9 @@ function attachSession(
 
 test("knowledge covers GuideView facts and refuses invented features", () => {
   assert.match(SUPPORT_BOT_KNOWLEDGE, /th_\.\.\./);
-  assert.match(SUPPORT_BOT_KNOWLEDGE, /\/ai\/v1\/messages/);
-  assert.match(SUPPORT_BOT_KNOWLEDGE, /\/ai\/chat\/completions/);
-  assert.match(SUPPORT_BOT_KNOWLEDGE, /\/ai\/responses/);
+  assert.match(SUPPORT_BOT_KNOWLEDGE, /\/v1\/messages/);
+  assert.match(SUPPORT_BOT_KNOWLEDGE, /\/v1\/chat\/completions/);
+  assert.match(SUPPORT_BOT_KNOWLEDGE, /\/v1\/responses/);
   assert.match(SUPPORT_BOT_KNOWLEDGE, /:3000/);
   assert.match(SUPPORT_BOT_KNOWLEDGE, /127\.0\.0\.1:15721/);
   assert.match(SUPPORT_BOT_KNOWLEDGE, /team_required/);
@@ -77,9 +77,8 @@ test("knowledge covers GuideView facts and refuses invented features", () => {
   assert.match(SUPPORT_BOT_KNOWLEDGE, /zcode-add-provider\.png/);
   assert.match(SUPPORT_BOT_KNOWLEDGE, /zcode-add-model\.png/);
   assert.match(SUPPORT_BOT_KNOWLEDGE, /WorkBuddy/);
-  assert.match(SUPPORT_BOT_KNOWLEDGE, /OpenAI Chat Completion 协议/);
+  assert.match(SUPPORT_BOT_KNOWLEDGE, /Chat Completions API/);
   assert.match(SUPPORT_BOT_KNOWLEDGE, /图片输入/);
-  assert.match(SUPPORT_BOT_KNOWLEDGE, /workbuddy-create-key\.png/);
   assert.match(SUPPORT_BOT_KNOWLEDGE, /workbuddy-add-model\.png/);
   assert.match(SUPPORT_BOT_KNOWLEDGE, /dingtalk-department\.png/);
   assert.match(SUPPORT_BOT_KNOWLEDGE, /token-bot-join-department\.png/);
@@ -90,26 +89,21 @@ test("knowledge covers GuideView facts and refuses invented features", () => {
   assert.match(SUPPORT_BOT_KNOWLEDGE, /wire_api = "responses"/);
   assert.match(SUPPORT_BOT_KNOWLEDGE, /~\/\.codex\/config\.toml/);
   assert.match(SUPPORT_BOT_KNOWLEDGE, /用户问协议怎么选/);
-  const prompt = buildSupportAgentSystemPrompt("https://tokenhub.haizhi.com/ai");
-  assert.match(prompt, /https:\/\/tokenhub\.haizhi\.com\/ai/);
+  const prompt = buildSupportAgentSystemPrompt("https://tokenhub.haizhi.com");
+  assert.match(prompt, /https:\/\/tokenhub\.haizhi\.com/);
   assert.match(prompt, /https:\/\/tokenhub\.haizhi\.com\/guides\/zcode-add-provider\.png/);
   assert.match(prompt, /https:\/\/tokenhub\.haizhi\.com\/guides\/zcode-add-model\.png/);
-  assert.match(prompt, /https:\/\/tokenhub\.haizhi\.com\/guides\/workbuddy-create-key\.png/);
   assert.match(prompt, /https:\/\/tokenhub\.haizhi\.com\/guides\/workbuddy-add-model\.png/);
   assert.match(prompt, /https:\/\/tokenhub\.haizhi\.com\/guides\/dingtalk-department\.png/);
   assert.match(prompt, /https:\/\/tokenhub\.haizhi\.com\/guides\/token-bot-join-department\.png/);
-  assert.match(prompt, /"ANTHROPIC_BASE_URL": "https:\/\/tokenhub\.haizhi\.com\/ai"/);
-  assert.match(prompt, /base_url = "https:\/\/tokenhub\.haizhi\.com\/ai"/);
+  assert.match(prompt, /"ANTHROPIC_BASE_URL": "https:\/\/tokenhub\.haizhi\.com"/);
+  assert.match(prompt, /base_url = "https:\/\/tokenhub\.haizhi\.com"/);
   assert.equal(
     existsSync(resolve(dirname(fileURLToPath(import.meta.url)), "../../web/public/guides/zcode-add-provider.png")),
     true,
   );
   assert.equal(
     existsSync(resolve(dirname(fileURLToPath(import.meta.url)), "../../web/public/guides/zcode-add-model.png")),
-    true,
-  );
-  assert.equal(
-    existsSync(resolve(dirname(fileURLToPath(import.meta.url)), "../../web/public/guides/workbuddy-create-key.png")),
     true,
   );
   assert.equal(
@@ -137,10 +131,10 @@ test("Base URL answers use the request origin, not the {origin} template", () =>
   assert.equal(publicSiteOrigin("https://tokenhub.haizhi.com/ai"), "https://tokenhub.haizhi.com");
   assert.equal(publicSiteOrigin("https://tokenhub.haizhi.com/ai/"), "https://tokenhub.haizhi.com");
   const filled = applySupportOriginPlaceholders(
-    "Base URL 一律是当前站点的 `{origin}/ai`。",
+    "Base URL 一律是当前站点的 `{origin}`。",
     "https://tokenhub.haizhi.com",
   );
-  assert.equal(filled, "Base URL 一律是当前站点的 `https://tokenhub.haizhi.com/ai`。");
+  assert.equal(filled, "Base URL 一律是当前站点的 `https://tokenhub.haizhi.com`。");
   assert.doesNotMatch(filled, /\{origin\}/);
 });
 
@@ -185,7 +179,7 @@ test("parses chat message length and public relay base URL", () => {
   assert.equal(parseSupportChatMessage("x".repeat(2000)), "x".repeat(2000));
   assert.equal(
     buildPublicRelayBaseUrl({ protocol: "https", host: "tokenhub.example.com" }),
-    "https://tokenhub.example.com/ai",
+    "https://tokenhub.example.com",
   );
   assert.equal(truncateErrorMessage("a".repeat(400)), "a".repeat(400));
   assert.equal(truncateErrorMessage("a".repeat(401))?.length, 401);

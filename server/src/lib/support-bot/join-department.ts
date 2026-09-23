@@ -213,7 +213,7 @@ export function formatDepartmentJoinResult(input: {
   joined: boolean;
 }): string {
   if (input.plan.action === "join" && input.joined) {
-    return `已把你加入「${input.plan.match.path}」。请刷新页面，然后就可以创建 API Key。`;
+    return `已把你加入「${input.plan.match.path}」。请刷新页面，然后到「API Key」复制 Base URL 和 Key。`;
   }
   if (input.plan.action === "join") {
     return `没能加入「${input.plan.match.path}」，请稍后再试或联系部门管理员。`;

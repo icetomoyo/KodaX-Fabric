@@ -3,7 +3,7 @@
     <section class="page-card pin-card" aria-label="接入必看">
       <div class="pin-item">
         <span class="pin-label">Base URL</span>
-        <p class="pin-copy">所有客户端均填写此地址。Base URL 不需要包含端口号或接口路径。</p>
+        <p class="pin-copy">所有客户端都填这个地址。只要站点根，不要加端口，也不要再拼 <code>/ai</code>、<code>/v1/messages</code> 或 <code>/chat/completions</code>。</p>
         <div class="pin-row">
           <code class="pin-value">{{ clientBaseUrl }}</code>
           <el-button type="primary" @click="copyValue('Base URL', clientBaseUrl)">复制 Base URL</el-button>
@@ -12,14 +12,13 @@
       <div class="pin-item">
         <span class="pin-label">遇到问题？咨询 Token Bot</span>
         <p class="pin-copy">
-          协议、API Key 或客户端配置遇到问题，可点击页面<strong>右下角 Token Bot</strong> 咨询。
-          它能查看你的 API Key 和调用记录。
+          点页面<strong>右下角 Token Bot</strong>。它可以看你的 Key 前缀和调用记录，也能帮你加入部门。
         </p>
       </div>
       <div v-if="!loaded || !inTeam" class="pin-item">
         <span class="pin-label">尚未加入部门</span>
         <p class="pin-copy">
-          点击右下角 Token Bot，直接说出你所属的部门（有同名时再补企业名），即可加入该部门。
+          先加入部门才有 API Key。打开右下角 Token Bot，说出所属部门（有同名时再补企业名）。
         </p>
       </div>
     </section>
@@ -29,7 +28,7 @@
         <span class="step-index">1</span>
         <div>
           <h3>加入部门</h3>
-          <p>注册完成后需加入部门，才能创建 API Key。当前账号为普通注册用户，加入部门后即为员工身份。</p>
+          <p>注册后只是普通用户。加入部门后才有员工权限，系统会按部门自动生成 API Key。</p>
         </div>
       </div>
 
@@ -42,46 +41,41 @@
         :closable="false"
       >
         <p v-if="teamNames">当前部门：{{ teamNames }}</p>
-        <p>下一步请确认所用产品，创建 API Key 时选择对应协议。</p>
+        <p>下一步到「API Key」复制 Base URL 和 Key。</p>
       </el-alert>
       <el-alert
         v-else-if="loaded"
         class="status-alert"
-        title="你尚未加入部门。请先完成本步，再创建 API Key 或配置客户端。"
+        title="你尚未加入部门。请先完成本步，再复制 API Key 或配置客户端。"
         type="warning"
         show-icon
         :closable="false"
       />
 
       <ol class="steps">
-        <li>使用手机号注册并登录，即当前账号。</li>
+        <li>用手机号注册并登录。</li>
         <li>
-          打开右下角 Token Bot，说出你的部门名（有同名时再补企业名），由助手加入该部门。
-          部门名可在钉钉个人资料的「部门」一栏查看。
+          打开右下角 Token Bot，说出部门名（有同名时再补企业名）。
+          部门名在钉钉个人资料的「部门」一栏。
         </li>
+        <li>加入成功后刷新页面。</li>
       </ol>
 
-      <p class="lead">用 Token Bot 加入部门时，对照下面两张图。</p>
+      <p class="lead">对照下面两张图加入部门。</p>
       <div class="guide-shots" aria-label="Token Bot 加入部门截图">
         <figure>
-          <img
-            :src="dingtalkDepartmentSrc"
-            alt="钉钉个人资料中的部门一栏"
-          />
-          <figcaption>在钉钉打开个人资料，部门名就是「部门」这一栏。有同名部门时再补「企业/组织」。</figcaption>
+          <img :src="dingtalkDepartmentSrc" alt="钉钉个人资料中的部门一栏" />
+          <figcaption>钉钉个人资料里，「部门」这一栏就是部门名。有同名时再补「企业/组织」。</figcaption>
         </figure>
         <figure>
-          <img
-            :src="tokenBotJoinDepartmentSrc"
-            alt="Token Bot 对话中说出部门名并加入成功"
-          />
-          <figcaption>打开右下角 Token Bot，直接说出部门名。加入成功后刷新页面，即可创建 API Key。</figcaption>
+          <img :src="tokenBotJoinDepartmentSrc" alt="Token Bot 对话中说出部门名并加入成功" />
+          <figcaption>打开右下角 Token Bot，直接说出部门名。加入成功后刷新页面，再到「API Key」复制。</figcaption>
         </figure>
       </div>
 
       <ul class="notes">
-        <li>工作台仍提示「普通注册用户」，表示尚未加入部门。</li>
-        <li>「API Key」页的「创建 Key」为灰色，表示尚未加入部门。</li>
+        <li>工作台仍提示「普通注册用户」，表示还没加入部门。</li>
+        <li>部门管理员也可以用你的注册手机号邀请进部门。</li>
       </ul>
     </section>
 
@@ -89,103 +83,39 @@
       <div class="step-heading">
         <span class="step-index">2</span>
         <div>
-          <h3>选择协议</h3>
-          <p>
-            创建 API Key 时需选择协议。协议在创建后不可修改；选错会导致路径不匹配并返回 404，或能列出模型但无法调用。
-            每种产品使用对应协议的 API Key。
-          </p>
-        </div>
-      </div>
-
-      <p class="lead">对照下表，按实际使用的客户端选择协议。创建 API Key 时，「协议」选项名称与下表右列一致。</p>
-
-      <div class="protocol-table" aria-label="产品与协议对照">
-        <div class="protocol-row protocol-head">
-          <span>所用产品</span>
-          <span>对应协议</span>
-        </div>
-        <div class="protocol-row">
-          <span>Claude Code</span>
-          <strong>Anthropic Message 协议</strong>
-        </div>
-        <div class="protocol-row">
-          <span>Cursor</span>
-          <strong>OpenAI Chat Completion 协议</strong>
-        </div>
-        <div class="protocol-row">
-          <span>ZCode（自定义供应商）</span>
-          <strong>OpenAI Chat Completion 协议</strong>
-        </div>
-        <div class="protocol-row">
-          <span>WorkBuddy（自定义模型）</span>
-          <strong>OpenAI Chat Completion 协议</strong>
-        </div>
-        <div class="protocol-row">
-          <span>KodaX、KodaX Space</span>
-          <span>支持两种协议，推荐选 <strong>OpenAI Chat Completion 协议</strong></span>
-        </div>
-        <div class="protocol-row">
-          <span>Codex（自定义模型）</span>
-          <strong>OpenAI Response 协议</strong>
-        </div>
-        <div class="protocol-row">
-          <span>CC Switch</span>
-          <span>按 CC Switch 中配置的 API 格式选择：Anthropic 对应 <strong>Anthropic Message 协议</strong>，OpenAI Chat 对应 <strong>OpenAI Chat Completion 协议</strong></span>
-        </div>
-        <div class="protocol-row">
-          <span>其他 OpenAI 兼容客户端（走 Chat Completions）</span>
-          <strong>OpenAI Chat Completion 协议</strong>
-        </div>
-        <div class="protocol-row">
-          <span>走 Responses API 的客户端</span>
-          <strong>OpenAI Response 协议</strong>
-        </div>
-      </div>
-
-      <ul class="notes">
-        <li>如不确定协议，先确认客户端要求填写 Anthropic 还是 OpenAI。公司产品 KodaX / KodaX Space 选择 Chat Completion；常见外部工具为 Claude Code、Cursor、WorkBuddy 或 Codex。</li>
-        <li>Chat Completion 协议的 API Key 无法调用 Responses 接口，Responses 协议的 API Key 也无法调用 Chat Completions 接口。</li>
-        <li>Codex 自定义模型默认使用 Responses 接口，应选择 OpenAI Response 协议。</li>
-        <li>同时使用 Claude Code、Cursor、Codex 时，分别为每种产品创建对应协议的 API Key。</li>
-        <li>上游渠道不支持所选协议时，创建页不会显示该选项。可更换上游渠道，或选择该渠道支持的协议。</li>
-      </ul>
-    </section>
-
-    <section class="page-card step-card">
-      <div class="step-heading">
-        <span class="step-index">3</span>
-        <div>
-          <h3>创建 API Key</h3>
-          <p>加入部门后，在「API Key」页按所用产品创建 API Key。协议按上一步对照表选择，创建后不可修改。</p>
+          <h3>复制 Base URL 和 API Key</h3>
+          <p>打开「API Key」页。每个部门会自动生成一把通用 Key，三种协议都能用。需要多把时，点「新增 Key」，填写名称；多个部门时再选部门，只有一个部门则固定。</p>
         </div>
       </div>
 
       <el-alert
         v-if="loaded && !inTeam"
         class="status-alert"
-        title="尚未加入部门时，「创建 Key」不可用。请先完成第一步。"
+        title="尚未加入部门时没有 API Key。请先完成第一步。"
         type="warning"
         show-icon
         :closable="false"
       />
 
+      <div class="phone-card">
+        <span class="phone-label">Base URL（复制后填入客户端）</span>
+        <code class="phone-value">{{ clientBaseUrl }}</code>
+        <el-button type="primary" @click="copyValue('Base URL', clientBaseUrl)">复制 Base URL</el-button>
+      </div>
+
       <ol class="steps">
-        <li>打开「API Key」页，点击「创建 Key」。</li>
-        <li>填写名称，建议使用产品名，例如 <code>Cursor</code>、<code>Claude Code</code>、<code>KodaX</code>、<code>workbuddy</code>。</li>
-        <li>选择上游渠道。若无可选项，请联系团队管理员先配置渠道。</li>
-        <li>选择协议，须与上一步对照表一致：Claude Code 选择 Anthropic Message，Cursor / ZCode / WorkBuddy / KodaX / KodaX Space 选择 OpenAI Chat Completion，Codex 选择 OpenAI Response。</li>
-        <li>创建成功后立即复制完整 API Key（<code>th_</code> 开头）。关闭窗口后将无法再次查看明文。</li>
+        <li>打开「API Key」页，复制上方 Base URL。</li>
+        <li>默认隐藏明文。打开「显示 Key」后复制 <code>th_</code> 开头的完整 Key；复制按钮在隐藏时也可以用。</li>
+        <li>以前按协议生成的多把 Key 仍然有效，任意一把都能用。</li>
       </ol>
 
       <div class="script-card">
         <strong>注意</strong>
-        <p>API Key 只显示一次。未复制即关闭窗口后，只能删除后重新创建。如怀疑泄漏，同样删除后重新创建。请勿将完整 API Key 发送到聊天工具或截图中。</p>
+        <p>
+          API Key 记在部门上，用来记账。同一把 Key 可以同时填进 Claude Code、Cursor、Codex。
+          不要把完整 Key 发到聊天或截图里。怀疑泄漏时，在「API Key」页更新或删除后新增。
+        </p>
       </div>
-
-      <ul class="notes">
-        <li>每把 API Key 绑定固定的上游渠道和协议，创建后不可修改。更换协议或产品时，需另行创建。</li>
-        <li>Claude Code、Cursor、Codex 需分别使用各自协议的 API Key。</li>
-      </ul>
 
       <div class="step-actions">
         <el-button type="primary" :disabled="loaded && !inTeam" @click="router.push(keysPath)">
@@ -196,20 +126,50 @@
 
     <section class="page-card step-card">
       <div class="step-heading">
-        <span class="step-index">4</span>
+        <span class="step-index">3</span>
         <div>
-          <h3>配置客户端</h3>
-          <p>所有产品的 Base URL 均为当前站点的 <code>/ai</code>。Base URL 不需要包含端口号或接口路径，例如 <code>:3000</code>、<code>:3100</code>、<code>/v1/messages</code>、<code>/chat/completions</code>。</p>
+          <h3>确认客户端走哪条 API 协议</h3>
+          <p>Key 不绑定协议。客户端拿 Base URL 自己去拼路径。对照下表即可，不要把路径写进 Base URL。</p>
         </div>
       </div>
 
-      <div class="phone-card">
-        <span class="phone-label">Base URL（复制后填入客户端）</span>
-        <code class="phone-value">{{ clientBaseUrl }}</code>
-        <el-button type="primary" @click="copyValue('Base URL', clientBaseUrl)">复制 Base URL</el-button>
+      <div class="protocol-table" aria-label="产品与协议对照">
+        <div class="protocol-row protocol-head">
+          <span>所用产品</span>
+          <span>API协议</span>
+        </div>
+        <div class="protocol-row">
+          <span>Claude Code</span>
+          <strong>Messages API（<code>/v1/messages</code>）</strong>
+        </div>
+        <div class="protocol-row">
+          <span>Cursor、ZCode、WorkBuddy、KodaX / KodaX Space</span>
+          <strong>Chat Completions API（<code>/v1/chat/completions</code>）</strong>
+        </div>
+        <div class="protocol-row">
+          <span>Codex（自定义模型）</span>
+          <strong>Responses API（<code>/v1/responses</code>）</strong>
+        </div>
+        <div class="protocol-row">
+          <span>CC Switch</span>
+          <span>按其 API 格式：Anthropic 走 Messages API，OpenAI Chat 走 Chat Completions API</span>
+        </div>
       </div>
 
-      <p class="lead">API Key 填写第三步复制的 <code>th_</code> 开头字符串。各产品字段名称不同，请对照下表填写。</p>
+      <ul class="notes">
+        <li>不确定时看客户端要填 Anthropic 还是 OpenAI。Claude Code 走 Messages；Cursor / WorkBuddy / ZCode / KodaX 走 Chat Completions；Codex 走 Responses。</li>
+        <li>旧地址 <code>/ai</code> 仍然可用。新配置请用站点根。</li>
+      </ul>
+    </section>
+
+    <section class="page-card step-card">
+      <div class="step-heading">
+        <span class="step-index">4</span>
+        <div>
+          <h3>配置客户端</h3>
+          <p>Base URL 填 <code>{{ clientBaseUrl }}</code>。API Key 填第二步复制的 <code>th_</code> 字符串。模型到下一步再复制。</p>
+        </div>
+      </div>
 
       <div class="protocol-table" aria-label="客户端填写对照">
         <div class="protocol-row protocol-head">
@@ -219,85 +179,87 @@
         <div class="protocol-row">
           <span>Claude Code</span>
           <span>
-            将下方 JSON <strong>合并</strong>到 <code>~/.claude/settings.json</code> 的 <code>env</code> 中，保留文件中的其余配置。修改后完全退出客户端再重新打开。
+            把下方 JSON <strong>合并</strong>到 <code>~/.claude/settings.json</code> 的 <code>env</code>，保留其余配置。改完后完全退出再打开。
           </span>
         </div>
         <div class="protocol-row">
           <span>Cursor</span>
-          <span>自定义模型 / OpenAI 兼容：Base URL 填写上方地址，API Key 填写第三步创建的 API Key。</span>
+          <span>自定义模型 / OpenAI 兼容：Base URL 填上方地址，API Key 填部门 Key。</span>
         </div>
         <div class="protocol-row">
           <span>ZCode</span>
           <span>
-            添加自定义供应商，Base URL 填写上方地址，API 格式选 Chat Completions。
-            添加模型 <code>glm-5.3-flash</code> 时必须勾选输入类型「图片」；只勾默认「文本」则贴图不会发给上游。
+            添加自定义供应商，Base URL 填上方地址，API 格式选 Chat Completions。
+            添加 <code>glm/glm-5.3-flash</code>（或别称 <code>glm-5.3-flash</code>）时必须勾选输入类型「图片」。
           </span>
         </div>
         <div class="protocol-row">
           <span>WorkBuddy</span>
           <span>
-            设置 → 模型 → 添加模型。供应商选「自定义」，接口地址填写上方地址，不要再拼
-            <code>/chat/completions</code>。API Key 填写第三步创建的 OpenAI Chat Completion Key。
-            模型建议 <code>glm-5.3-flash</code>（多模态），必须勾选「图片输入」。点「测试连接」成功后再保存。
+            设置 → 模型 → 添加模型。供应商选「自定义」，接口地址填上方地址，不要再拼
+            <code>/chat/completions</code>。模型建议 <code>glm/glm-5.3-flash</code>，必须勾选「图片输入」，测试连接成功后再保存。
           </span>
         </div>
         <div class="protocol-row">
           <span>KodaX、KodaX Space</span>
-          <span>按 OpenAI Chat Completion 配置：Base URL 填写上方地址，API Key 填写第三步创建的 API Key。</span>
+          <span>按 OpenAI Chat Completions 配置：Base URL 填上方地址，API Key 填部门 Key。</span>
         </div>
         <div class="protocol-row">
           <span>Codex（自定义模型）</span>
           <span>
-            在 <code>~/.codex/config.toml</code> 中，将自定义 provider 的 <code>base_url</code> 设为上方地址，
-            并设置 <code>wire_api = "responses"</code>。Codex 会自行请求 <code>/responses</code>。
+            在 <code>~/.codex/config.toml</code> 里把自定义 provider 的 <code>base_url</code> 设为上方地址，并设置
+            <code>wire_api = "responses"</code>。Codex 会自行请求 <code>/responses</code>。
           </span>
         </div>
         <div class="protocol-row">
           <span>CC Switch</span>
           <span>
-            <strong>上游</strong> Base URL 填写上方地址，API Key 填写第三步创建的 API Key。
-            CC Switch 的本地代理地址 <code>127.0.0.1:15721</code> 不能作为上游地址，否则会形成请求循环。
+            <strong>上游</strong> Base URL 填上方地址，API Key 填部门 Key。
+            不要把本地代理 <code>127.0.0.1:15721</code> 当成上游，否则会循环。
           </span>
         </div>
       </div>
 
-      <p class="lead">WorkBuddy 对接对照下面两张图：创建 Key 必须选 OpenAI Chat Completion；自定义模型建议用多模态并勾选「图片输入」。</p>
-      <div class="guide-shots" aria-label="WorkBuddy 配置截图">
+      <p class="lead">ZCode 添加供应商和模型时对照下面两张图。识图必须勾「图片」。</p>
+      <div class="guide-shots" aria-label="ZCode 配置截图">
         <figure>
-          <img
-            :src="workbuddyCreateKeySrc"
-            alt="创建 API Key 时选择 OpenAI Chat Completion 协议"
-          />
-          <figcaption>创建 Key 时协议必须选 OpenAI Chat Completion，不能选 Anthropic Message 或 OpenAI Response。</figcaption>
+          <img :src="zcodeAddProviderSrc" alt="ZCode 添加 TokenHub 自定义供应商" />
+          <figcaption>供应商名称可填 TokenHub，Base URL 填站点根，API 格式选 Chat Completions。</figcaption>
         </figure>
         <figure>
-          <img
-            :src="workbuddyAddModelSrc"
-            alt="WorkBuddy 添加自定义模型 glm-5.3-flash 并勾选图片输入"
-          />
+          <img :src="zcodeAddModelSrc" alt="ZCode 添加 glm-5.3-flash 并勾选图片" />
           <figcaption>
-            供应商选「自定义」，接口地址填上方 Base URL，模型建议
-            <code>glm-5.3-flash</code>，必须勾选「图片输入」，测试连接成功后再保存。
+            模型填 <code>glm/glm-5.3-flash</code>（或别称 <code>glm-5.3-flash</code>），输入类型必须勾选「图片」。
           </figcaption>
         </figure>
       </div>
 
-      <p class="lead">Claude Code 可直接复制以下配置，将其中的 Key 替换为你的 API Key：</p>
+      <p class="lead">WorkBuddy 添加自定义模型时对照下图，必须勾选「图片输入」。</p>
+      <div class="guide-shots" aria-label="WorkBuddy 配置截图">
+        <figure>
+          <img :src="workbuddyAddModelSrc" alt="WorkBuddy 添加自定义模型并勾选图片输入" />
+          <figcaption>
+            供应商选「自定义」，接口地址填 Base URL，模型建议
+            <code>glm/glm-5.3-flash</code>，勾选「图片输入」，测试连接成功后再保存。
+          </figcaption>
+        </figure>
+      </div>
+
+      <p class="lead">Claude Code 可直接复制以下配置，把 Key 换成你的 <code>th_</code> Key：</p>
       <pre class="snippet"><code>{{ claudeSettingsSnippet }}</code></pre>
       <div class="step-actions">
         <el-button @click="copyValue('Claude Code 配置', claudeSettingsSnippet)">复制 Claude Code 配置</el-button>
       </div>
 
-      <p class="lead">Codex 自定义 provider 可参考以下配置：</p>
+      <p class="lead">Codex 自定义 provider 可参考：</p>
       <pre class="snippet"><code>{{ codexSnippet }}</code></pre>
       <div class="step-actions">
         <el-button @click="copyValue('Codex 配置', codexSnippet)">复制 Codex 配置</el-button>
       </div>
 
       <ul class="notes">
-        <li>Base URL 中如出现 <code>:3000</code> / <code>:3100</code>，属于 API 内部端口，员工电脑无法访问。</li>
-        <li>模型名称请到「模型列表」页复制。</li>
-        <li>配置后仍无法连接时，先用浏览器打开当前站点，确认证书与网络正常，再完全退出客户端后重新打开。</li>
+        <li>地址里如果出现 <code>:3000</code> / <code>:3100</code>，那是内部端口，员工电脑访问不到，删掉。</li>
+        <li>改完配置后完全退出客户端再打开。</li>
       </ul>
     </section>
 
@@ -305,26 +267,29 @@
       <div class="step-heading">
         <span class="step-index">5</span>
         <div>
-          <h3>完成首次调用</h3>
-          <p>模型 ID 请从「模型列表」复制后填入客户端，发送一条短消息，再到「我的调用」确认是否产生记录。</p>
+          <h3>复制模型并完成首次调用</h3>
+          <p>到「模型列表」复制模型名称（推荐正式名），在客户端发一条短消息，再到「我的调用」确认是否有记录。</p>
         </div>
       </div>
 
       <ol class="steps">
-        <li>打开「模型列表」，在左侧选择与 API Key 相同的上游渠道。</li>
-        <li>点击模型名旁的「复制」，粘贴到客户端。智谱渠道当前常用：<code>glm-5.3</code>（文本）、<code>glm-5.3-flash</code>（文本 / 图片 / 视频 / 文件）。</li>
-        <li>在客户端发送一句短消息，例如「ping」或「你好」。</li>
-        <li>打开「我的调用」。成功时会显示 Request ID、模型和 Tokens；失败时也可查看错误信息，复制 Request ID 后用于排查。</li>
+        <li>
+          打开「模型列表」，复制「模型名称」。智谱常用：
+          <code>glm/glm-5.3</code>（文本，别称 <code>glm-5.3</code>）、
+          <code>glm/glm-5.3-flash</code>（文本 / 图片 / 视频 / 文件，别称 <code>glm-5.3-flash</code>）。识图用 Flash。
+        </li>
+        <li>在客户端发送「ping」或「你好」。</li>
+        <li>打开「我的调用」。成功时有 Request ID、模型和 Tokens；失败时复制 Request ID 发给 Token Bot。</li>
       </ol>
 
       <div class="script-card">
         <strong>成功标准</strong>
-        <p>客户端出现完整或流式回复，且「我的调用」中可见对应记录，即表示首次调用成功。若客户端持续等待且调用页无记录，通常是 Base URL、API Key 或协议未匹配，请回到第二至第四步核对。</p>
+        <p>客户端出现回复，且「我的调用」能看到对应记录。若客户端一直等待且调用页没有记录，回到第二至第四步核对 Base URL、API Key 和模型名。</p>
       </div>
 
       <ul class="notes">
-        <li>能列出模型但生成失败时，通常是模型 ID 与上游渠道不匹配，或上游暂时不可用。请重新从「模型列表」复制。</li>
-        <li>智谱渠道不接受自行填写的旧模型名，手打 glm-4.x 会被拒绝。</li>
+        <li>不要手打旧模型名，例如 glm-4.x，智谱渠道会拒绝。</li>
+        <li>不要用 <code>glm-5.3-flashx</code>，Coding Plan 尚未开放。</li>
       </ul>
 
       <div class="step-actions">
@@ -341,7 +306,8 @@ import { ElMessage } from "element-plus";
 import { useRoute, useRouter } from "vue-router";
 import { http } from "@/api/http";
 import { copyText } from "@/lib/clipboard";
-import { RELAY_BASE_PATH, relayClientBaseUrl } from "@/views/relay-protocol";
+
+const CLIENT_BASE_URL = "https://tokenhub.haizhi.com";
 
 const route = useRoute();
 const router = useRouter();
@@ -352,51 +318,39 @@ const logsPath = computed(() => (isAdminGuide.value ? "/admin/my-logs" : "/me/lo
 const loaded = ref(false);
 const inTeam = ref(false);
 const teams = ref<Array<{ id: number; name: string }>>([]);
-const relayUrl = ref("");
 
 const teamNames = computed(() => teams.value.map((team) => team.name).filter(Boolean).join("、"));
-const clientBaseUrl = computed(() =>
-  relayClientBaseUrl(relayUrl.value || `${window.location.origin}${RELAY_BASE_PATH}`),
-);
+const clientBaseUrl = CLIENT_BASE_URL;
 const dingtalkDepartmentSrc = "/guides/dingtalk-department.png";
 const tokenBotJoinDepartmentSrc = "/guides/token-bot-join-department.png";
-const workbuddyCreateKeySrc = "/guides/workbuddy-create-key.png";
+const zcodeAddProviderSrc = "/guides/zcode-add-provider.png";
+const zcodeAddModelSrc = "/guides/zcode-add-model.png";
 const workbuddyAddModelSrc = "/guides/workbuddy-add-model.png";
-const claudeSettingsSnippet = computed(() =>
-  JSON.stringify(
-    {
-      env: {
-        ANTHROPIC_BASE_URL: clientBaseUrl.value,
-        ANTHROPIC_AUTH_TOKEN: "<你的 API Key>",
-      },
+const claudeSettingsSnippet = JSON.stringify(
+  {
+    env: {
+      ANTHROPIC_BASE_URL: CLIENT_BASE_URL,
+      ANTHROPIC_AUTH_TOKEN: "<你的 API Key>",
     },
-    null,
-    2,
-  ),
+  },
+  null,
+  2,
 );
-const codexSnippet = computed(
-  () => `model_provider = "tokenhub"
+const codexSnippet = `model_provider = "tokenhub"
 model = "<模型列表里复制的模型 ID>"
 
 [model_providers.tokenhub]
 name = "Token Hub"
-base_url = "${clientBaseUrl.value}"
+base_url = "${CLIENT_BASE_URL}"
 env_key = "OPENAI_API_KEY"
-wire_api = "responses"`,
-);
+wire_api = "responses"`;
 
 async function loadGuideContext() {
   try {
-    const [org, usage] = await Promise.all([
-      http.get("/api/me/org"),
-      http.get("/api/me/usage").catch(() => ({ data: { success: false } })),
-    ]);
+    const org = await http.get("/api/me/org");
     if (org.data.success) {
       teams.value = org.data.data.teams ?? [];
       inTeam.value = teams.value.length > 0;
-    }
-    if (usage.data.success && typeof usage.data.data?.relay?.baseUrl === "string") {
-      relayUrl.value = usage.data.data.relay.baseUrl;
     }
   } catch {
     inTeam.value = false;

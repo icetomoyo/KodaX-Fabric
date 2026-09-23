@@ -124,8 +124,13 @@ function onLogout() {
 .aside {
   height: 100%;
   overflow-y: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
   background: #111827;
   color: #fff;
+}
+.aside::-webkit-scrollbar {
+  display: none;
 }
 .brand {
   display: flex;

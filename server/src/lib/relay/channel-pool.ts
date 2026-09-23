@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { db } from "../../db/client.js";
 import { productLines, providers } from "../../db/schema/index.js";
 import { getProviderTemplate } from "../provider-templates.js";
@@ -81,6 +81,27 @@ export function resolveRelayUpstreamConfig(input: {
 }
 
 type RelayPoolDatabase = Pick<typeof db, "select">;
+
+export async function findActiveProductLineIdByProviderCode(
+  providerCode: string,
+  executor: RelayPoolDatabase = db,
+): Promise<number | null> {
+  const code = providerCode.trim().toLowerCase();
+  if (!code) return null;
+  const [row] = await executor
+    .select({ id: productLines.id })
+    .from(productLines)
+    .innerJoin(providers, eq(productLines.providerId, providers.id))
+    .where(
+      and(
+        eq(providers.code, code),
+        eq(providers.status, "active"),
+        eq(productLines.status, "active"),
+      ),
+    )
+    .limit(1);
+  return row?.id ?? null;
+}
 
 export async function loadRelayPool(
   productLineId: number,

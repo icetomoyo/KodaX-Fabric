@@ -17,7 +17,7 @@ import {
   RelayLimitError,
   type RelayQuotaLease,
 } from "../../lib/relay/quota.js";
-import { RELAY_ENDPOINTS } from "../../lib/relay/protocol.js";
+import { RELAY_PATHS } from "../../lib/relay/protocol.js";
 import type { RelayProtocol } from "../../lib/relay/protocol.js";
 import {
   resolveAccessibleRelayModels,
@@ -315,7 +315,7 @@ function noRouteError(message = "当前账户没有可用于该模型的渠道")
 }
 
 export async function chatCompletionRoutes(app: FastifyInstance) {
-  for (const path of [RELAY_ENDPOINTS.models, RELAY_ENDPOINTS.anthropicModels]) {
+  for (const path of RELAY_PATHS.models) {
     app.get(
       path,
       { onRequest: requireAnyRelayApiKey },
@@ -1025,12 +1025,14 @@ export async function chatCompletionRoutes(app: FastifyInstance) {
       }
   };
 
-  app.post(
-    RELAY_ENDPOINTS.chatCompletions,
-    { onRequest: requireRelayApiKey },
-    handleOpenAiCompatibleRelay,
-  );
-  for (const path of [RELAY_ENDPOINTS.responses, RELAY_ENDPOINTS.responsesV1]) {
+  for (const path of RELAY_PATHS.chatCompletions) {
+    app.post(
+      path,
+      { onRequest: requireRelayApiKey },
+      handleOpenAiCompatibleRelay,
+    );
+  }
+  for (const path of RELAY_PATHS.responses) {
     app.post(
       path,
       { onRequest: createRequireRelayApiKey("openai_responses") },

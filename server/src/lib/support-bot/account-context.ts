@@ -14,7 +14,6 @@ import {
 } from "../../db/schema/index.js";
 import { groupDiscoveredModelsByChannel } from "../discovered-models.js";
 import type { SessionActAs, SessionRole } from "../jwt.js";
-import { RELAY_BASE_PATH } from "../relay/protocol.js";
 import { getEmployeeUpstreamChannels } from "../upstream-channel-metadata.js";
 
 export const ACCOUNT_ERROR_MESSAGE_MAX = 400;
@@ -60,7 +59,7 @@ export function isBareSuperAdmin(session: {
 }
 
 export function buildPublicRelayBaseUrl(request: { protocol: string; host: string }): string {
-  return `${request.protocol}://${request.host}${RELAY_BASE_PATH}`;
+  return `${request.protocol}://${request.host}`;
 }
 
 export function publicSiteOrigin(relayBaseUrl: string): string {

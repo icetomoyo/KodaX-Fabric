@@ -26,11 +26,12 @@ import {
   generateApiKey,
 } from "../lib/api-key.js";
 import {
-  RELAY_BASE_PATH,
+  DEFAULT_RELAY_PROTOCOL,
   RELAY_PROTOCOLS,
   type RelayProtocol,
 } from "../lib/relay/protocol.js";
 import { catalogModelTags, groupDiscoveredModelsByChannel } from "../lib/discovered-models.js";
+import { catalogModelsForProvider } from "../lib/relay/client-model.js";
 import {
   isEmployeeSubmittedCredentialMeta,
   issueEmployeeSubmitTestProof,
@@ -75,8 +76,8 @@ const createApiKeySchema = z
     name: z.string().trim().min(1).max(100),
     departmentId: z.number().int().positive().optional(),
     teamId: z.number().int().positive().optional(),
-    productLineId: z.number().int().positive(),
-    protocol: z.enum(RELAY_PROTOCOLS),
+    productLineId: z.number().int().positive().optional(),
+    protocol: z.enum(RELAY_PROTOCOLS).optional(),
   })
   .refine((data) => data.departmentId != null || data.teamId != null);
 
@@ -96,7 +97,7 @@ const submitUpstreamCredentialCoreSchema = z.object({
 export function buildRelayBaseUrl(
   request: Pick<FastifyRequest, "protocol" | "host">,
 ): string {
-  return `${request.protocol}://${request.host}${RELAY_BASE_PATH}`;
+  return `${request.protocol}://${request.host}`;
 }
 
 function meId(req: FastifyRequest): number {
@@ -117,12 +118,7 @@ function revealEmployeeApiKey(keyEncrypted: string): string | null {
   }
 }
 
-/** 自动生成 Key 的名称：按协议命名，一个部门一个协议一把 Key。 */
-const AUTO_KEY_PROTOCOL_NAMES: Record<RelayProtocol, string> = {
-  anthropic_messages: "Anthropic Message",
-  openai_chat: "OpenAI Chat Completion",
-  openai_responses: "OpenAI Response",
-};
+const AUTO_KEY_NAME = "API Key";
 
 async function loadOwnedSeat(employeeId: number, seatId: number) {
   const [seat] = await db
@@ -732,11 +728,22 @@ export async function meRoutes(app: FastifyInstance) {
       groupDiscoveredModelsByChannel(channelRows).map((channel) => [channel.id, channel]),
     );
     const channels = accessible.map((channel) => {
-      const models = [...new Set(
-        channel.memberProductLineIds.flatMap((id) => groupedById.get(id)?.models ?? []),
-      )]
-        .sort((left, right) => left.localeCompare(right))
-        .map((model) => ({ model, tags: catalogModelTags(model) }));
+      const catalog = catalogModelsForProvider(channel.providerCode);
+      const models = catalog.length > 0
+        ? catalog.map((item) => ({
+            model: item.canonicalId,
+            alias: item.alias,
+            tags: catalogModelTags(item.upstreamModel),
+          }))
+        : [...new Set(
+            channel.memberProductLineIds.flatMap((id) => groupedById.get(id)?.models ?? []),
+          )]
+            .sort((left, right) => left.localeCompare(right))
+            .map((model) => ({
+              model: `${channel.providerCode}/${model}`,
+              alias: model,
+              tags: catalogModelTags(model),
+            }));
       return {
         id: channel.productLineId,
         name: channel.productLineName,
@@ -861,25 +868,42 @@ export async function meRoutes(app: FastifyInstance) {
         } as const;
       }
 
-      const pool = await loadRelayPool(body.data.productLineId, tx);
-      if (!pool) {
-        return { outcome: "channel_unavailable" } as const;
+      const protocol = body.data.protocol ?? DEFAULT_RELAY_PROTOCOL;
+      let channel: Awaited<ReturnType<typeof getEmployeeUpstreamChannel>> = null;
+      if (body.data.productLineId != null) {
+        const pool = await loadRelayPool(body.data.productLineId, tx);
+        if (!pool) {
+          return { outcome: "channel_unavailable" } as const;
+        }
+        await tx.execute(
+          sql`select pg_advisory_xact_lock(hashtext(${pool.key}))`,
+        );
+        channel = await getEmployeeUpstreamChannel(
+          meId(req),
+          body.data.productLineId,
+          tx,
+          { lockForCreate: true },
+        );
+      } else {
+        const preview = await getEmployeeUpstreamChannels(meId(req), tx);
+        if (preview.length === 0) {
+          return { outcome: "channel_unavailable" } as const;
+        }
+        await tx.execute(
+          sql`select pg_advisory_xact_lock(hashtext(${preview[0].relayPoolKey}))`,
+        );
+        const channels = await getEmployeeUpstreamChannels(meId(req), tx, {
+          lockForCreate: true,
+        });
+        channel = channels[0] ?? null;
       }
-      // Serialize employee Key creation with channel protocol/config edits.
-      await tx.execute(
-        sql`select pg_advisory_xact_lock(hashtext(${pool.key}))`,
-      );
-
-      const channel = await getEmployeeUpstreamChannel(
-        meId(req),
-        body.data.productLineId,
-        tx,
-        { lockForCreate: true },
-      );
       if (!channel) {
         return { outcome: "channel_unavailable" } as const;
       }
-      if (!channel.compatibleProtocols.includes(body.data.protocol)) {
+      if (
+        body.data.protocol != null &&
+        !channel.compatibleProtocols.includes(body.data.protocol)
+      ) {
         return { outcome: "protocol_incompatible" } as const;
       }
 
@@ -891,8 +915,8 @@ export async function meRoutes(app: FastifyInstance) {
           keyPrefix: prefix,
           keyHash: hash,
           keyEncrypted,
-          protocol: body.data.protocol,
-          productLineId: body.data.productLineId,
+          protocol,
+          productLineId: channel.productLineId,
           teamId: membership.teamId,
         })
         .returning({
@@ -1072,7 +1096,6 @@ export async function meRoutes(app: FastifyInstance) {
       const existingRows = await tx
         .select({
           teamId: employeeApiKeys.teamId,
-          protocol: employeeApiKeys.protocol,
         })
         .from(employeeApiKeys)
         .where(
@@ -1082,7 +1105,7 @@ export async function meRoutes(app: FastifyInstance) {
           ),
         );
       const existing = new Set(
-        existingRows.map((row) => `${row.teamId}:${row.protocol}`),
+        existingRows.map((row) => String(row.teamId)),
       );
 
       const created: {
@@ -1103,66 +1126,62 @@ export async function meRoutes(app: FastifyInstance) {
       const memberships = [...departmentTeams.values()]
         .sort((left, right) => left.departmentId - right.departmentId);
       for (const membership of memberships) {
-        for (const protocol of RELAY_PROTOCOLS) {
-          if (existing.has(`${membership.teamId}:${protocol}`)) continue;
-          const channel = channels.find((item) =>
-            item.compatibleProtocols.includes(protocol),
-          );
-          if (!channel) continue;
+        if (existing.has(String(membership.teamId))) continue;
+        const channel = channels[0];
+        if (!channel) continue;
 
-          const { raw, prefix, hash } = generateApiKey();
-          const [row] = await tx
-            .insert(employeeApiKeys)
-            .values({
-              employeeId: meId(req),
-              name: AUTO_KEY_PROTOCOL_NAMES[protocol],
-              keyPrefix: prefix,
-              keyHash: hash,
-              keyEncrypted: encryptEmployeeApiKey(raw),
-              protocol,
-              productLineId: channel.productLineId,
-              teamId: membership.teamId,
-            })
-            .returning({
-              id: employeeApiKeys.id,
-              name: employeeApiKeys.name,
-              keyPrefix: employeeApiKeys.keyPrefix,
-              protocol: employeeApiKeys.protocol,
-              productLineId: employeeApiKeys.productLineId,
-              teamId: employeeApiKeys.teamId,
-            });
-
-          await tx.insert(opsAuditLogs).values({
-            actorEmployeeId: req.employeeId,
-            action: "api_key.create",
-            targetType: "employee_api_key",
-            targetId: String(row.id),
-            detail: {
-              productLineId: row.productLineId,
-              productLineName: channel.productLineName,
-              providerCode: channel.providerCode,
-              providerName: channel.providerName,
-              protocol: row.protocol,
-              teamId: row.teamId,
-              departmentId: membership.departmentId,
-              departmentName: membership.departmentName,
-              autoProvisioned: true,
-            },
-            ip: req.ip,
+        const { raw, prefix, hash } = generateApiKey();
+        const [row] = await tx
+          .insert(employeeApiKeys)
+          .values({
+            employeeId: meId(req),
+            name: AUTO_KEY_NAME,
+            keyPrefix: prefix,
+            keyHash: hash,
+            keyEncrypted: encryptEmployeeApiKey(raw),
+            protocol: DEFAULT_RELAY_PROTOCOL,
+            productLineId: channel.productLineId,
+            teamId: membership.teamId,
+          })
+          .returning({
+            id: employeeApiKeys.id,
+            name: employeeApiKeys.name,
+            keyPrefix: employeeApiKeys.keyPrefix,
+            protocol: employeeApiKeys.protocol,
+            productLineId: employeeApiKeys.productLineId,
+            teamId: employeeApiKeys.teamId,
           });
 
-          existing.add(`${membership.teamId}:${protocol}`);
-          created.push({
-            ...row,
-            teamId: membership.teamId,
-            key: raw,
+        await tx.insert(opsAuditLogs).values({
+          actorEmployeeId: req.employeeId,
+          action: "api_key.create",
+          targetType: "employee_api_key",
+          targetId: String(row.id),
+          detail: {
+            productLineId: row.productLineId,
             productLineName: channel.productLineName,
             providerCode: channel.providerCode,
             providerName: channel.providerName,
+            protocol: row.protocol,
+            teamId: row.teamId,
             departmentId: membership.departmentId,
             departmentName: membership.departmentName,
-          });
-        }
+            autoProvisioned: true,
+          },
+          ip: req.ip,
+        });
+
+        existing.add(String(membership.teamId));
+        created.push({
+          ...row,
+          teamId: membership.teamId,
+          key: raw,
+          productLineName: channel.productLineName,
+          providerCode: channel.providerCode,
+          providerName: channel.providerName,
+          departmentId: membership.departmentId,
+          departmentName: membership.departmentName,
+        });
       }
 
       return { outcome: "provisioned", created } as const;

@@ -2,7 +2,7 @@
   <el-card shadow="never">
       <el-alert
         class="auto-alert"
-        title="系统已为你的每个部门按协议自动生成 API Key（每个协议一把），明文仅你自己可见，请妥善保管。"
+        title="系统已为每个部门自动生成一把 API Key。也可以自行新增。请妥善保管。"
         type="info"
         show-icon
         :closable="false"
@@ -15,6 +15,27 @@
         show-icon
         :closable="false"
       />
+
+      <div class="base-url-row">
+        <span class="proto-label">Base URL</span>
+        <code class="key-text" :title="CLIENT_BASE_URL">{{ CLIENT_BASE_URL }}</code>
+        <el-button class="row-action" link type="primary" @click="copyBaseUrl">复制</el-button>
+      </div>
+
+      <section class="dept-section protocol-section">
+        <h3 class="dept-title">API协议</h3>
+        <div v-for="row in apiProtocolRows" :key="row.path" class="key-row">
+          <span class="proto-label">{{ row.name }}</span>
+          <code class="path-text" :title="row.path">{{ row.path }}</code>
+          <code class="key-text" :title="row.fullUrl">{{ row.fullUrl }}</code>
+          <el-button class="row-action" link type="primary" @click="copyProtocolUrl(row)">复制</el-button>
+        </div>
+      </section>
+
+      <div class="key-toolbar">
+        <el-button type="primary" :disabled="!hasDepartment" @click="openCreate">新增 Key</el-button>
+        <el-switch v-model="showKeys" active-text="显示 Key" inactive-text="隐藏 Key" />
+      </div>
 
       <div v-loading="loading" class="key-board">
         <el-empty
@@ -31,7 +52,7 @@
           <h3 class="dept-title">{{ group.label }}</h3>
           <div v-for="row in group.rows" :key="row.id" class="key-row">
             <span class="proto-label">
-              {{ relayProtocolLabel(row.protocol, true) }}
+              {{ row.name || "API Key" }}
               <el-tag
                 v-if="row.status !== 'active'"
                 type="info"
@@ -41,7 +62,7 @@
                 {{ keyStatusLabel(row.status) }}
               </el-tag>
             </span>
-            <code class="key-text" :title="row.key || row.keyPrefix">{{ row.key ?? `${row.keyPrefix}••••` }}</code>
+            <code class="key-text" :title="displayKey(row)">{{ displayKey(row) }}</code>
             <el-button
               class="row-action"
               link
@@ -74,6 +95,38 @@
           </div>
         </section>
       </div>
+
+      <el-dialog v-model="showCreate" title="新增 Key" width="440px" @closed="resetCreate">
+        <el-form label-width="72px" @submit.prevent="createKey">
+          <el-form-item label="名称" required>
+            <el-input
+              v-model="createForm.name"
+              maxlength="100"
+              placeholder="例如 Cursor、Claude Code"
+            />
+          </el-form-item>
+          <el-form-item label="部门" required>
+            <el-select
+              v-if="departments.length > 1"
+              v-model="createForm.departmentId"
+              placeholder="选择部门"
+              style="width: 100%"
+            >
+              <el-option
+                v-for="item in departments"
+                :key="item.id"
+                :label="item.path || item.name"
+                :value="item.id"
+              />
+            </el-select>
+            <el-input v-else :model-value="departments[0]?.name ?? ''" disabled />
+          </el-form-item>
+        </el-form>
+        <template #footer>
+          <el-button @click="showCreate = false">取消</el-button>
+          <el-button type="primary" :loading="creating" @click="createKey">确定</el-button>
+        </template>
+      </el-dialog>
   </el-card>
 </template>
 
@@ -83,7 +136,6 @@ import { ElMessage, ElMessageBox } from "element-plus";
 import { http } from "@/api/http";
 import { copyText } from "@/lib/clipboard";
 import {
-  relayProtocolLabel,
   relayProtocolOptions,
   type RelayProtocol,
 } from "@/views/relay-protocol";
@@ -122,11 +174,26 @@ type DepartmentGroup = {
   rows: KeyRowView[];
 };
 
+const CLIENT_BASE_URL = "https://tokenhub.haizhi.com";
+
+const apiProtocolRows = [
+  { name: "Messages API", path: "/v1/messages" },
+  { name: "Chat Completions API", path: "/v1/chat/completions" },
+  { name: "Responses API", path: "/v1/responses" },
+].map((row) => ({
+  ...row,
+  fullUrl: `${CLIENT_BASE_URL}${row.path}`,
+}));
+
 const departments = ref<OrgDepartment[]>([]);
 const hasDepartment = computed(() => departments.value.length > 0);
 
 const keys = ref<KeyRow[]>([]);
 const loading = ref(false);
+const showKeys = ref(false);
+const showCreate = ref(false);
+const creating = ref(false);
+const createForm = ref({ name: "", departmentId: null as number | null });
 const deletingId = ref<number | null>(null);
 const copyingId = ref<number | null>(null);
 const regeneratingId = ref<number | null>(null);
@@ -135,7 +202,7 @@ function protocolOrder(protocol: RelayProtocol): number {
   return relayProtocolOptions.findIndex((option) => option.value === protocol);
 }
 
-/** 部门做分组标题，组内按协议固定顺序；同部门同协议只有一把 Key 时不允许删除。 */
+/** 部门做分组标题；同部门只剩一把 Key 时不允许删除。 */
 const groups = computed<DepartmentGroup[]>(() => {
   const grouped = new Map<string, KeyRow[]>();
   for (const row of keys.value) {
@@ -156,16 +223,12 @@ const groups = computed<DepartmentGroup[]>(() => {
     )
     .map(({ groupKey, rows }) => {
       rows.sort((left, right) => protocolOrder(left.protocol) - protocolOrder(right.protocol));
-      const protocolCounts = new Map<RelayProtocol, number>();
-      for (const row of rows) {
-        protocolCounts.set(row.protocol, (protocolCounts.get(row.protocol) ?? 0) + 1);
-      }
       return {
         key: groupKey,
         label: labelOf(rows),
         rows: rows.map((row) => ({
           ...row,
-          deletable: (protocolCounts.get(row.protocol) ?? 0) > 1,
+          deletable: rows.length > 1,
         })),
       };
     });
@@ -181,6 +244,53 @@ function getErrorMessage(error: unknown, fallback: string): string {
 
 function keyStatusLabel(status: string) {
   return status === "active" ? "正常" : status === "revoked" ? "已吊销" : status;
+}
+
+function maskedKey(row: KeyRow) {
+  return `${row.keyPrefix}••••`;
+}
+
+function displayKey(row: KeyRow) {
+  if (showKeys.value && row.key) return row.key;
+  return maskedKey(row);
+}
+
+function openCreate() {
+  createForm.value = {
+    name: "",
+    departmentId: departments.value.length === 1 ? departments.value[0].id : null,
+  };
+  showCreate.value = true;
+}
+
+function resetCreate() {
+  createForm.value = { name: "", departmentId: null };
+}
+
+async function createKey() {
+  const name = createForm.value.name.trim();
+  if (!name) {
+    ElMessage.error("请填写名称");
+    return;
+  }
+  const departmentId = departments.value.length === 1
+    ? departments.value[0].id
+    : createForm.value.departmentId;
+  if (departmentId == null) {
+    ElMessage.error("请选择部门");
+    return;
+  }
+  creating.value = true;
+  try {
+    await http.post("/api/me/api-keys", { name, departmentId });
+    ElMessage.success("已新增 Key");
+    showCreate.value = false;
+    await loadKeys();
+  } catch (error) {
+    ElMessage.error(getErrorMessage(error, "新增失败"));
+  } finally {
+    creating.value = false;
+  }
 }
 
 async function loadDepartments() {
@@ -230,6 +340,23 @@ async function load() {
   }
 }
 
+async function copyValue(label: string, value: string) {
+  const copied = await copyText(value);
+  if (copied) {
+    ElMessage.success(`${label}已复制`);
+  } else {
+    ElMessage.error(`复制失败，请手动选中 ${label} 复制`);
+  }
+}
+
+async function copyBaseUrl() {
+  await copyValue("Base URL", CLIENT_BASE_URL);
+}
+
+async function copyProtocolUrl(row: (typeof apiProtocolRows)[number]) {
+  await copyValue("完整路径", row.fullUrl);
+}
+
 async function copyKey(row: KeyRow) {
   if (!row.key) return;
   copyingId.value = row.id;
@@ -248,7 +375,7 @@ async function copyKey(row: KeyRow) {
 async function regenerateKey(row: KeyRow) {
   try {
     await ElMessageBox.confirm(
-      `确认更新「${relayProtocolLabel(row.protocol, true)}」的 API Key（${row.keyPrefix}••••）？更新后立即换发新 Key，旧 Key 马上失效，正在使用的客户端需要改用新 Key。`,
+      `确认更新「${row.name || "API Key"}」的 API Key（${row.keyPrefix}••••）？更新后立即换发新 Key，旧 Key 马上失效，正在使用的客户端需要改用新 Key。`,
       "更新 API Key",
       {
         type: "warning",
@@ -329,6 +456,43 @@ onMounted(load);
 
 .join-alert {
   margin-bottom: 16px;
+}
+
+.base-url-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.protocol-section {
+  margin-bottom: 20px;
+}
+
+.key-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.protocol-section .key-text {
+  width: auto;
+  min-width: 320px;
+  flex: 1;
+}
+
+.path-text {
+  flex-shrink: 0;
+  width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--el-font-family-mono, ui-monospace, monospace);
+  font-size: 13px;
+  color: var(--el-text-color-regular);
+  user-select: all;
 }
 
 .dept-section + .dept-section {

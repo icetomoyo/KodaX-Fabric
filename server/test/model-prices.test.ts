@@ -197,6 +197,8 @@ test("Zhipu coding-plan aliases collapse to glm-5.3 and glm-5.3-flash", () => {
 
 test("Zhipu relay whitelist accepts glm-5.3 and glm-5.3-flash", () => {
   assert.equal(isGlmClientModelAllowed("glm-5.3"), true);
+  assert.equal(isGlmClientModelAllowed("glm/glm-5.3"), true);
+  assert.equal(isGlmClientModelAllowed("glm/glm-5.3-flash"), true);
   assert.equal(isGlmClientModelAllowed("GLM-5.3-FLASH"), true);
   assert.equal(isGlmClientModelAllowed("glm-5.3-flashx"), false);
   assert.equal(isGlmClientModelAllowed(" GLM-5.3-FLASHX "), false);
