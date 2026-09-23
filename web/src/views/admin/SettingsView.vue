@@ -8,7 +8,6 @@
           :disabled="!settingsLoaded || loading || patching"
           @change="onDetectChange"
         />
-        <p class="hint">命中后写入检测记录，请求继续转发上游。</p>
       </el-form-item>
       <el-form-item label="敏感词拦截">
         <el-switch
@@ -17,7 +16,6 @@
           :disabled="!settingsLoaded || loading || patching || !sensitiveWordDetectEnabled"
           @change="onInterceptChange"
         />
-        <p class="hint">需先启用检测。开启后命中同时写入拦截记录并拦截请求。</p>
       </el-form-item>
     </el-form>
   </el-card>
@@ -121,12 +119,5 @@ onMounted(() => {
 <style scoped>
 .settings-page {
   max-width: 640px;
-}
-
-.hint {
-  margin: 6px 0 0;
-  color: var(--el-text-color-secondary);
-  font-size: 12px;
-  line-height: 1.5;
 }
 </style>

@@ -1,4 +1,5 @@
 const DATE_ONLY_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
+const DATETIME_PATTERN = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})$/;
 
 type DateParts = {
   year: number;
@@ -138,6 +139,45 @@ export function zonedDayStart(value: string, timeZone: string): Date {
   // on the opposite side of the transition.
   instant = localAsUtc - timeZoneOffsetMs(new Date(instant), timeZone);
   return new Date(instant);
+}
+
+/**
+ * Interpret a "YYYY-MM-DD"（按本地零点）或 "YYYY-MM-DD[ T]HH:mm:ss" wall-clock
+ * string in the given timezone and return the corresponding UTC instant.
+ * Returns null when the value matches neither format or has invalid parts.
+ */
+export function zonedInstant(value: string, timeZone: string): Date | null {
+  const match = DATETIME_PATTERN.exec(value);
+  if (match) {
+    const year = Number(match[1]);
+    const month = Number(match[2]);
+    const day = Number(match[3]);
+    const hour = Number(match[4]);
+    const minute = Number(match[5]);
+    const second = Number(match[6]);
+    if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+    if (hour > 23 || minute > 59 || second > 59) return null;
+    const localAsUtc = Date.UTC(year, month - 1, day, hour, minute, second);
+    const calendar = new Date(localAsUtc);
+    if (
+      calendar.getUTCFullYear() !== year
+      || calendar.getUTCMonth() !== month - 1
+      || calendar.getUTCDate() !== day
+    ) {
+      return null;
+    }
+    let instant = localAsUtc - timeZoneOffsetMs(calendar, timeZone);
+    // Second pass handles DST transitions where the first probe lands across
+    // the transition, mirroring zonedDayStart.
+    instant = localAsUtc - timeZoneOffsetMs(new Date(instant), timeZone);
+    return new Date(instant);
+  }
+  return parseDateOnly(value) ? zonedDayStart(value, timeZone) : null;
+}
+
+/** True when the boundary string carries a time-of-day part. */
+export function hasTimePart(value: string): boolean {
+  return DATETIME_PATTERN.test(value);
 }
 
 export function zonedDateRange(

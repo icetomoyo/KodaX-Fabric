@@ -18,7 +18,15 @@ import {
   upstreamCredentials,
   usageCountersDaily,
 } from "../db/schema/index.js";
-import { parseDateOnly, quotaDayAt, zonedDateRange, zonedMonthRange } from "../lib/quota-time.js";
+import {
+  addCalendarDays,
+  hasTimePart,
+  parseDateOnly,
+  quotaDayAt,
+  zonedInstant,
+  zonedMonthRange,
+  zonedDayStart,
+} from "../lib/quota-time.js";
 import { listEmployeeTeamUsageViews } from "../lib/team-quota.js";
 import {
   decryptEmployeeApiKey,
@@ -64,6 +72,7 @@ import {
   resolveProtocolUpstreamConfig,
 } from "../lib/upstream-protocol-config.js";
 import { actingEmployeeId } from "../lib/act-as.js";
+import { loadSelectedUser } from "./admin/user-analytics.js";
 import { departmentPathLabel } from "../lib/department-tree.js";
 import { resolveEmployeeApiKeyTeam } from "../lib/org.js";
 import {
@@ -137,6 +146,82 @@ async function loadOwnedSeat(employeeId: number, seatId: number) {
     )
     .limit(1);
   return seat ?? null;
+}
+
+/** 「模型列表」页的渠道+模型目录，/api/me/models 与 /api/me/log-models 共用。 */
+async function meModelChannels(employeeId: number) {
+  const accessible = await getEmployeeUpstreamChannels(employeeId);
+  if (accessible.length === 0) {
+    return [];
+  }
+
+  const productLineIds = [...new Set(accessible.flatMap((channel) => channel.memberProductLineIds))];
+  const channelRows = await db
+    .select({
+      productLineId: productLines.id,
+      productLineName: productLines.name,
+      productLineCode: productLines.code,
+      providerName: providers.name,
+      providerCode: providers.code,
+      meta: upstreamCredentials.meta,
+    })
+    .from(productLines)
+    .innerJoin(providers, eq(productLines.providerId, providers.id))
+    .leftJoin(
+      upstreamCredentials,
+      and(
+        eq(upstreamCredentials.productLineId, productLines.id),
+        inArray(upstreamCredentials.status, ["active", "cooling"]),
+        gt(upstreamCredentials.weight, 0),
+      ),
+    )
+    .where(inArray(productLines.id, productLineIds));
+
+  const groupedById = new Map(
+    groupDiscoveredModelsByChannel(channelRows).map((channel) => [channel.id, channel]),
+  );
+  return accessible.map((channel) => {
+    const catalog = catalogModelsForProvider(channel.providerCode);
+    const models = catalog.length > 0
+      ? catalog.map((item) => ({
+          model: item.canonicalId,
+          alias: item.alias,
+          tags: catalogModelTags(item.upstreamModel),
+        }))
+      : [...new Set(
+          channel.memberProductLineIds.flatMap((id) => groupedById.get(id)?.models ?? []),
+        )]
+          .sort((left, right) => left.localeCompare(right))
+          .map((model) => ({
+            model: `${channel.providerCode}/${model}`,
+            alias: model,
+            tags: catalogModelTags(model),
+          }));
+    return {
+      id: channel.productLineId,
+      name: channel.productLineName,
+      code: channel.productLineCode,
+      providerName: channel.providerName,
+      providerCode: channel.providerCode,
+      models,
+    };
+  });
+}
+
+/**
+ * 日志筛选用的模型匹配集合：正式名与别称都算命中
+ * （客户端两种写法都合法，审计里记录的是原始写法）。
+ */
+async function meLogModelVariants(employeeId: number, model: string): Promise<string[]> {
+  const variants = new Set<string>([model]);
+  for (const channel of await meModelChannels(employeeId)) {
+    for (const item of channel.models) {
+      const entry = typeof item === "string" ? { model: item, alias: null } : item;
+      if (entry.model === model && entry.alias) variants.add(entry.alias);
+      if (entry.alias === model) variants.add(entry.model);
+    }
+  }
+  return [...variants];
 }
 
 export async function meRoutes(app: FastifyInstance) {
@@ -696,66 +781,10 @@ export async function meRoutes(app: FastifyInstance) {
     return { success: true, data: { id: deleted.id } };
   });
 
-  app.get("/api/me/models", async (req) => {
-    const accessible = await getEmployeeUpstreamChannels(meId(req));
-    if (accessible.length === 0) {
-      return { success: true, data: { channels: [] } };
-    }
-
-    const productLineIds = [...new Set(accessible.flatMap((channel) => channel.memberProductLineIds))];
-    const channelRows = await db
-      .select({
-        productLineId: productLines.id,
-        productLineName: productLines.name,
-        productLineCode: productLines.code,
-        providerName: providers.name,
-        providerCode: providers.code,
-        meta: upstreamCredentials.meta,
-      })
-      .from(productLines)
-      .innerJoin(providers, eq(productLines.providerId, providers.id))
-      .leftJoin(
-        upstreamCredentials,
-        and(
-          eq(upstreamCredentials.productLineId, productLines.id),
-          inArray(upstreamCredentials.status, ["active", "cooling"]),
-          gt(upstreamCredentials.weight, 0),
-        ),
-      )
-      .where(inArray(productLines.id, productLineIds));
-
-    const groupedById = new Map(
-      groupDiscoveredModelsByChannel(channelRows).map((channel) => [channel.id, channel]),
-    );
-    const channels = accessible.map((channel) => {
-      const catalog = catalogModelsForProvider(channel.providerCode);
-      const models = catalog.length > 0
-        ? catalog.map((item) => ({
-            model: item.canonicalId,
-            alias: item.alias,
-            tags: catalogModelTags(item.upstreamModel),
-          }))
-        : [...new Set(
-            channel.memberProductLineIds.flatMap((id) => groupedById.get(id)?.models ?? []),
-          )]
-            .sort((left, right) => left.localeCompare(right))
-            .map((model) => ({
-              model: `${channel.providerCode}/${model}`,
-              alias: model,
-              tags: catalogModelTags(model),
-            }));
-      return {
-        id: channel.productLineId,
-        name: channel.productLineName,
-        code: channel.productLineCode,
-        providerName: channel.providerName,
-        providerCode: channel.providerCode,
-        models,
-      };
-    });
-
-    return { success: true, data: { channels } };
-  });
+  app.get("/api/me/models", async (req) => ({
+    success: true,
+    data: { channels: await meModelChannels(meId(req)) },
+  }));
 
   app.get("/api/me/api-keys", async (req, reply) => {
     noStore(reply);
@@ -1444,8 +1473,53 @@ export async function meRoutes(app: FastifyInstance) {
     };
   });
 
+  // 个人版用户分析：复用管理端「用户分析」的 loadSelectedUser，固定查自己
+  app.get("/api/me/analytics", async (req, reply) => {
+    const today = quotaDayAt(new Date(), env.QUOTA_TIMEZONE);
+    const query = z
+      .object({ day: z.string().optional() })
+      .safeParse(req.query);
+    if (!query.success) {
+      return reply.code(400).send({ success: false, message: "参数无效" });
+    }
+    const day = query.data.day?.trim() || today;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || !parseDateOnly(day)) {
+      return reply.code(400).send({ success: false, message: "日期无效" });
+    }
+    if (day > today) {
+      return reply.code(400).send({ success: false, message: "日期不能晚于今天" });
+    }
+
+    const selected = await loadSelectedUser(meId(req), day);
+    return {
+      success: true,
+      data: {
+        day,
+        timezone: env.QUOTA_TIMEZONE,
+        selected,
+      },
+    };
+  });
+
+  // 模型筛选项：与「模型列表」页(/api/me/models)同源，列表里有多少就显示多少
+  app.get("/api/me/log-models", async (req) => {
+    const channels = await meModelChannels(meId(req));
+    const byModel = new Map<string, { model: string; alias: string | null; variants: string[] }>();
+    for (const channel of channels) {
+      for (const item of channel.models) {
+        const model = typeof item === "string" ? item : item.model;
+        const alias = typeof item === "string" ? null : (item.alias ?? null);
+        const entry = byModel.get(model) ?? { model, alias, variants: [model] };
+        if (alias && !entry.variants.includes(alias)) entry.variants.push(alias);
+        byModel.set(model, entry);
+      }
+    }
+    const models = [...byModel.values()].sort((left, right) => left.model.localeCompare(right.model));
+    return { success: true, data: { models } };
+  });
+
   app.get("/api/me/logs", async (req, reply) => {
-    const dateOnly = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+    const dateOrDateTime = z.string().regex(/^\d{4}-\d{2}-\d{2}([ T]\d{2}:\d{2}:\d{2})?$/);
     const query = z
       .object({
         limit: z.coerce.number().min(1).max(100).default(20),
@@ -1453,8 +1527,8 @@ export async function meRoutes(app: FastifyInstance) {
         productLineId: z.coerce.number().int().positive().optional(),
         model: z.string().trim().min(1).max(128).optional(),
         status: z.enum(["success", "upstream_error", "client_error", "cancelled"]).optional(),
-        from: dateOnly.optional(),
-        to: dateOnly.optional(),
+        from: dateOrDateTime.optional(),
+        to: dateOrDateTime.optional(),
       })
       .safeParse(req.query);
     if (!query.success) {
@@ -1462,23 +1536,34 @@ export async function meRoutes(app: FastifyInstance) {
     }
 
     const filters = query.data;
-    if ((filters.from && !parseDateOnly(filters.from)) || (filters.to && !parseDateOnly(filters.to))) {
-      return reply.code(400).send({ success: false, message: "参数无效" });
-    }
-    if (filters.from && filters.to && filters.from > filters.to) {
-      return reply.code(400).send({ success: false, message: "参数无效" });
+    // from/to 支持到秒：带时间部分的边界按精确时刻，纯日期按整天（含当天）
+    let rangeStart: Date | null = null;
+    let rangeEnd: Date | null = null;
+    if (filters.from || filters.to) {
+      const fromValue = filters.from ?? filters.to!;
+      const toValue = filters.to ?? filters.from!;
+      rangeStart = zonedInstant(fromValue, env.QUOTA_TIMEZONE);
+      if (!rangeStart) {
+        return reply.code(400).send({ success: false, message: "参数无效" });
+      }
+      rangeEnd = hasTimePart(toValue)
+        ? zonedInstant(toValue, env.QUOTA_TIMEZONE)
+        : zonedDayStart(addCalendarDays(toValue, 1), env.QUOTA_TIMEZONE);
+      if (!rangeEnd || rangeStart.getTime() >= rangeEnd.getTime()) {
+        return reply.code(400).send({ success: false, message: "参数无效" });
+      }
     }
 
     const conditions: SQL[] = [eq(requestAudits.employeeId, meId(req))];
     if (filters.productLineId) conditions.push(eq(requestAudits.productLineId, filters.productLineId));
-    if (filters.model) conditions.push(eq(requestAudits.clientModel, filters.model));
+    if (filters.model) {
+      const variants = await meLogModelVariants(meId(req), filters.model);
+      conditions.push(inArray(requestAudits.clientModel, variants));
+    }
     if (filters.status) conditions.push(eq(requestAudits.status, filters.status));
-    if (filters.from || filters.to) {
-      const from = filters.from ?? filters.to!;
-      const to = filters.to ?? filters.from!;
-      const range = zonedDateRange(from, to, env.QUOTA_TIMEZONE);
-      conditions.push(gte(requestAudits.createdAt, range.start));
-      conditions.push(lt(requestAudits.createdAt, range.endExclusive));
+    if (rangeStart && rangeEnd) {
+      conditions.push(gte(requestAudits.createdAt, rangeStart));
+      conditions.push(lt(requestAudits.createdAt, rangeEnd));
     }
     const whereExpr = and(...conditions);
     const [[countRow], items] = await Promise.all([

@@ -81,3 +81,87 @@ test("log credits prefer the settled value and use the settlement interval", () 
   // 结算侧把 started_at / request_credits 写入审计行
   assert.match(audit, /startedAt,\n        requestCredits: requestCreditsText,/);
 });
+
+test("zonedInstant parses date or datetime boundaries in the quota timezone", async () => {
+  const { zonedInstant, hasTimePart } = await import("../src/lib/quota-time.js");
+  const tz = "Asia/Shanghai";
+  const datetime = zonedInstant("2026-09-23 09:30:05", tz);
+  assert.equal(datetime?.toISOString(), "2026-09-23T01:30:05.000Z");
+  const dateOnly = zonedInstant("2026-09-23", tz);
+  assert.equal(dateOnly?.toISOString(), "2026-09-22T16:00:00.000Z");
+  const withT = zonedInstant("2026-09-23T09:30:05", tz);
+  assert.equal(withT?.toISOString(), "2026-09-23T01:30:05.000Z");
+  assert.equal(zonedInstant("2026-09-23 25:00:00", tz), null);
+  assert.equal(zonedInstant("2026-02-30 10:00:00", tz), null);
+  assert.equal(zonedInstant("not-a-date", tz), null);
+  assert.equal(hasTimePart("2026-09-23 09:30:05"), true);
+  assert.equal(hasTimePart("2026-09-23"), false);
+});
+
+test("me log filters accept second-precision boundaries and expose model facets", async () => {
+  const { meRoutes } = await import("../src/routes/me.js");
+  const app = Fastify();
+  await app.register(meRoutes);
+  await app.ready();
+  try {
+    assert.equal(app.hasRoute({ method: "GET", url: "/api/me/log-models" }), true);
+    const unauth = await app.inject({ method: "GET", url: "/api/me/log-models" });
+    assert.equal(unauth.statusCode, 401);
+  } finally {
+    await app.close();
+  }
+
+  const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+  const route = readFileSync(resolve(root, "src/routes/me.ts"), "utf8");
+  assert.match(route, /from: dateOrDateTime\.optional\(\)/);
+  assert.match(route, /zonedInstant\(fromValue, env\.QUOTA_TIMEZONE\)/);
+  assert.match(route, /hasTimePart\(toValue\)/);
+});
+
+test("personal 调用记录 filters by model select and datetime range without a 渠道 column", () => {
+  const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+  const view = readFileSync(resolve(root, "web/src/views/me/LogsView.vue"), "utf8");
+  assert.match(view, /type="datetimerange"/);
+  assert.match(view, /value-format="YYYY-MM-DD HH:mm:ss"/);
+  assert.match(view, /\/api\/me\/log-models/);
+  assert.match(view, /placeholder="按模型筛选"/);
+  assert.doesNotMatch(view, /label="渠道"/);
+});
+
+test("admin log filters gain model facets and second-precision boundaries", async () => {
+  const app = Fastify();
+  await app.register(adminLogRoutes);
+  await app.ready();
+  try {
+    assert.equal(app.hasRoute({ method: "GET", url: "/api/admin/log-models" }), true);
+    const unauth = await app.inject({ method: "GET", url: "/api/admin/log-models" });
+    assert.equal(unauth.statusCode, 401);
+  } finally {
+    await app.close();
+  }
+
+  const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+  const route = readFileSync(resolve(root, "src/routes/admin/logs.ts"), "utf8");
+  assert.match(route, /zonedInstant\(fromValue, env\.QUOTA_TIMEZONE\)/);
+  assert.doesNotMatch(route, /new Date\(query\.(from|to)\)/);
+  const view = readFileSync(resolve(root, "../web/src/views/admin/LogsView.vue"), "utf8");
+  assert.match(view, /type="datetimerange"/);
+  assert.match(view, /\/api\/admin\/log-models/);
+  assert.match(view, /placeholder="按模型筛选"/);
+  assert.match(view, /placeholder="按状态筛选"/);
+});
+
+test("log-models options mirror the model list, not audit history", () => {
+  const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+  const me = readFileSync(resolve(root, "src/routes/me.ts"), "utf8");
+  assert.match(me, /meModelChannels\(meId\(req\)\)/);
+  assert.match(me, /meLogModelVariants/);
+  assert.doesNotMatch(me, /groupBy\(requestAudits\.clientModel\)/);
+  const admin = readFileSync(resolve(root, "src/routes/admin/logs.ts"), "utf8");
+  assert.match(admin, /groupDiscoveredModelsByChannel\(channelRows\)/);
+  assert.doesNotMatch(admin, /groupBy\(requestAudits\.clientModel\)/);
+  const meView = readFileSync(resolve(root, "../web/src/views/me/LogsView.vue"), "utf8");
+  const adminView = readFileSync(resolve(root, "../web/src/views/admin/LogsView.vue"), "utf8");
+  assert.doesNotMatch(meView, /option-count/);
+  assert.doesNotMatch(adminView, /option-count/);
+});

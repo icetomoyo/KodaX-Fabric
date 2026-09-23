@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import { and, desc, eq, gt, gte, inArray, lt, lte, sql, type SQL } from "drizzle-orm";
+import { and, desc, eq, gt, gte, inArray, lt, sql, type SQL } from "drizzle-orm";
 import { z } from "zod";
 import { env } from "../../config.js";
 import { db } from "../../db/client.js";
@@ -7,11 +7,21 @@ import {
   departments,
   employees,
   enterprises,
+  productLines,
+  providers,
   requestAudits,
   requestErrorLogs,
   teams,
+  upstreamCredentials,
 } from "../../db/schema/index.js";
 import { resolveLogTeamIds } from "../../lib/org.js";
+import { groupDiscoveredModelsByChannel } from "../../lib/discovered-models.js";
+import {
+  addCalendarDays,
+  hasTimePart,
+  zonedDayStart,
+  zonedInstant,
+} from "../../lib/quota-time.js";
 import {
   computeRequestCreditBreakdown,
   defaultCreditRateFor,
@@ -77,9 +87,48 @@ function consumptionFor(row: {
   };
 }
 
+/**
+ * 模型筛选项：与超管「模型列表」(/api/admin/model-prices)同源的 discovered 目录，
+ * 列表里有多少就显示多少；variants 附带渠道前缀写法供日志精确匹配。
+ */
+async function adminLogModelOptions() {
+  const channelRows = await db
+    .select({
+      productLineId: productLines.id,
+      productLineName: productLines.name,
+      productLineCode: productLines.code,
+      providerName: providers.name,
+      providerCode: providers.code,
+      meta: upstreamCredentials.meta,
+    })
+    .from(productLines)
+    .innerJoin(providers, eq(productLines.providerId, providers.id))
+    .leftJoin(upstreamCredentials, eq(upstreamCredentials.productLineId, productLines.id));
+
+  const byModel = new Map<string, Set<string>>();
+  for (const channel of groupDiscoveredModelsByChannel(channelRows)) {
+    for (const model of channel.models) {
+      const prefixes = byModel.get(model) ?? new Set<string>();
+      prefixes.add(channel.providerCode);
+      byModel.set(model, prefixes);
+    }
+  }
+  return [...byModel.entries()]
+    .map(([model, prefixes]) => ({
+      model,
+      variants: [model, ...[...prefixes].map((code) => `${code}/${model}`)],
+    }))
+    .sort((left, right) => left.model.localeCompare(right.model));
+}
+
 export async function adminLogRoutes(app: FastifyInstance) {
   app.addHook("preHandler", requireSession);
   app.addHook("preHandler", requireRoles("admin"));
+
+  // 模型筛选项：全站「模型列表」同源目录，不从调用记录里去重
+  app.get("/api/admin/log-models", async () => {
+    return { success: true, data: { models: await adminLogModelOptions() } };
+  });
 
   app.get("/api/admin/logs", async (req, reply) => {
     const parsed = z
@@ -94,8 +143,8 @@ export async function adminLogRoutes(app: FastifyInstance) {
         providerCode: z.string().optional(),
         status: z.string().optional(),
         requestId: z.string().optional(),
-        from: z.string().optional(),
-        to: z.string().optional(),
+        from: z.string().regex(/^\d{4}-\d{2}-\d{2}([ T]\d{2}:\d{2}:\d{2})?$/).optional(),
+        to: z.string().regex(/^\d{4}-\d{2}-\d{2}([ T]\d{2}:\d{2}:\d{2})?$/).optional(),
         tokensOp: compareOp.optional(),
         tokens: optionalNonNegInt,
       })
@@ -122,14 +171,35 @@ export async function adminLogRoutes(app: FastifyInstance) {
     if (query.employeeId) {
       conditions.push(eq(requestAudits.employeeId, query.employeeId));
     }
-    if (query.model) conditions.push(eq(requestAudits.clientModel, query.model));
+    if (query.model) {
+      const match = (await adminLogModelOptions()).find((row) => row.model === query.model);
+      conditions.push(
+        inArray(requestAudits.clientModel, match ? match.variants : [query.model]),
+      );
+    }
     if (query.providerCode) conditions.push(eq(requestAudits.providerCode, query.providerCode));
     if (query.status) {
       conditions.push(eq(requestAudits.status, query.status as "success"));
     }
     if (query.requestId) conditions.push(eq(requestAudits.requestId, query.requestId));
-    if (query.from) conditions.push(gte(requestAudits.createdAt, new Date(query.from)));
-    if (query.to) conditions.push(lte(requestAudits.createdAt, new Date(query.to)));
+    // from/to 支持到秒：带时间部分按精确时刻，纯日期按整天（含当天），
+    // 与 /api/me/logs 同口径（按 QUOTA_TIMEZONE 换算，不用裸 new Date 解析）
+    if (query.from || query.to) {
+      const fromValue = query.from ?? query.to!;
+      const toValue = query.to ?? query.from!;
+      const rangeStart = zonedInstant(fromValue, env.QUOTA_TIMEZONE);
+      if (!rangeStart) {
+        return reply.code(400).send({ success: false, message: "参数无效" });
+      }
+      const rangeEnd = hasTimePart(toValue)
+        ? zonedInstant(toValue, env.QUOTA_TIMEZONE)
+        : zonedDayStart(addCalendarDays(toValue, 1), env.QUOTA_TIMEZONE);
+      if (!rangeEnd || rangeStart.getTime() >= rangeEnd.getTime()) {
+        return reply.code(400).send({ success: false, message: "参数无效" });
+      }
+      conditions.push(gte(requestAudits.createdAt, rangeStart));
+      conditions.push(lt(requestAudits.createdAt, rangeEnd));
+    }
     appendCompare(conditions, requestAudits.totalTokens, query.tokensOp, query.tokens);
 
     const whereExpr = conditions.length ? and(...conditions) : undefined;

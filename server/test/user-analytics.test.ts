@@ -167,3 +167,66 @@ test("team_members has a leading-employee index for department lookups", () => {
   );
   assert.match(migration, /CREATE INDEX "team_members_employee_team_idx"/);
 });
+
+const employeeSession = {
+  sub: "17",
+  role: "employee" as never,
+  phone: "13800000017",
+  name: "Employee17",
+  mustChangePassword: false,
+};
+
+function attachEmployeeSession() {
+  return async (req: { session?: typeof employeeSession; employeeId?: number }) => {
+    req.session = employeeSession;
+    req.employeeId = Number(employeeSession.sub);
+  };
+}
+
+test("me analytics endpoint exists, requires a session and rejects future days", async () => {
+  const { meRoutes } = await import("../src/routes/me.js");
+  const app = Fastify();
+  await app.register(meRoutes);
+  await app.ready();
+  try {
+    assert.equal(app.hasRoute({ method: "GET", url: "/api/me/analytics" }), true);
+    const unauth = await app.inject({ method: "GET", url: "/api/me/analytics" });
+    assert.equal(unauth.statusCode, 401);
+  } finally {
+    await app.close();
+  }
+
+  const authed = Fastify();
+  authed.addHook("onRequest", attachEmployeeSession());
+  await authed.register(meRoutes);
+  await authed.ready();
+  try {
+    const badDay = await authed.inject({ method: "GET", url: "/api/me/analytics?day=2999-01-01" });
+    assert.equal(badDay.statusCode, 400);
+    assert.match(badDay.json().message, /不能晚于今天/);
+    const badFormat = await authed.inject({ method: "GET", url: "/api/me/analytics?day=2026-9-1" });
+    assert.equal(badFormat.statusCode, 400);
+  } finally {
+    await authed.close();
+  }
+});
+
+test("me analytics reuses loadSelectedUser for the acting employee only", () => {
+  const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+  const source = readFileSync(resolve(root, "src/routes/me.ts"), "utf8");
+  assert.match(source, /loadSelectedUser\(meId\(req\), day\)/);
+  assert.doesNotMatch(source, /employeeId.*user-analytics/);
+});
+
+test("personal 工作台 renders the analytics panel, 调用记录 stays a plain log table", () => {
+  const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+  const home = readFileSync(resolve(root, "web/src/views/me/HomeView.vue"), "utf8");
+  assert.match(home, /contribution-graph/);
+  assert.match(home, /\/api\/me\/analytics/);
+  assert.match(home, /近一年调用热力图|调用热力图|aria-label="近一年调用热力图"/);
+  assert.match(home, /近一年 Tokens/);
+  const logs = readFileSync(resolve(root, "web/src/views/me/LogsView.vue"), "utf8");
+  assert.doesNotMatch(logs, /contribution-graph/);
+  assert.doesNotMatch(logs, /\/api\/me\/analytics/);
+  assert.match(logs, /\/api\/me\/logs/);
+});

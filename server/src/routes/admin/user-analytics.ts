@@ -144,7 +144,7 @@ export async function adminUserAnalyticsRoutes(app: FastifyInstance) {
   });
 }
 
-async function loadSelectedUser(employeeId: number, day: string) {
+export async function loadSelectedUser(employeeId: number, day: string) {
   const [employee] = await db
     .select({
       id: employees.id,

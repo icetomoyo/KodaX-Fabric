@@ -22,6 +22,43 @@
         </el-select>
       </el-form-item>
       <el-form-item>
+        <el-select
+          v-model="filters.model"
+          clearable
+          filterable
+          :loading="modelsLoading"
+          placeholder="按模型筛选"
+          style="width: 220px"
+        >
+          <el-option
+            v-for="item in models"
+            :key="item.model"
+            :label="item.model"
+            :value="item.model"
+          />
+        </el-select>
+      </el-form-item>
+      <el-form-item>
+        <el-select v-model="filters.status" clearable placeholder="按状态筛选" style="width: 140px">
+          <el-option label="成功" value="success" />
+          <el-option label="上游错误" value="upstream_error" />
+          <el-option label="请求错误" value="client_error" />
+          <el-option label="已取消" value="cancelled" />
+        </el-select>
+      </el-form-item>
+      <el-form-item>
+        <el-date-picker
+          v-model="timeRange"
+          type="datetimerange"
+          value-format="YYYY-MM-DD HH:mm:ss"
+          :default-time="defaultTime"
+          range-separator="~"
+          start-placeholder="开始时间"
+          end-placeholder="结束时间"
+          style="width: 380px"
+        />
+      </el-form-item>
+      <el-form-item>
         <el-button type="primary" @click="search">查询</el-button>
       </el-form-item>
       <el-form-item v-if="hasFilters">
@@ -317,9 +354,21 @@ type EmployeeOption = {
   phone: string;
 };
 
+type ModelOption = { model: string; variants?: string[] };
+
 const filters = reactive({
   employeeId: null as number | null,
+  model: "",
+  status: null as LogStatus | null,
 });
+const timeRange = ref<[string, string] | null>(null);
+// datetimerange 面板默认时刻：起点零点、终点当天最后一秒
+const defaultTime: [Date, Date] = [
+  new Date(2000, 0, 1, 0, 0, 0),
+  new Date(2000, 0, 1, 23, 59, 59),
+];
+const models = ref<ModelOption[]>([]);
+const modelsLoading = ref(false);
 const employees = ref<EmployeeOption[]>([]);
 const selectedEmployee = ref<EmployeeOption | null>(null);
 const employeesLoading = ref(false);
@@ -333,7 +382,8 @@ const showDetail = ref(false);
 const detailLoading = ref(false);
 const detail = ref<LogDetail | null>(null);
 
-const hasFilters = computed(() => Boolean(filters.employeeId));
+const hasFilters = computed(() =>
+  Boolean(filters.employeeId || filters.model || filters.status || timeRange.value));
 
 function orgScopeLabel(row: {
   enterpriseName: string | null;
@@ -571,12 +621,31 @@ async function openDetail(row: LogRow) {
   }
 }
 
+async function loadModels() {
+  modelsLoading.value = true;
+  try {
+    const { data } = await http.get("/api/admin/log-models");
+    if (data.success) models.value = data.data.models ?? [];
+  } catch {
+    models.value = [];
+  } finally {
+    modelsLoading.value = false;
+  }
+}
+
 function listQueryParams() {
-  const params: Record<string, number> = {
+  const params: Record<string, number | string> = {
     limit,
     offset: (page.value - 1) * limit,
   };
   if (filters.employeeId) params.employeeId = filters.employeeId;
+  if (filters.model) params.model = filters.model;
+  if (filters.status) params.status = filters.status;
+  const range = timeRange.value;
+  if (range?.length === 2 && range[0] && range[1]) {
+    params.from = range[0];
+    params.to = range[1];
+  }
   return params;
 }
 
@@ -604,6 +673,9 @@ function search() {
 
 function resetFilters() {
   filters.employeeId = null;
+  filters.model = "";
+  filters.status = null;
+  timeRange.value = null;
   selectedEmployee.value = null;
   page.value = 1;
   load();
@@ -612,6 +684,7 @@ function resetFilters() {
 onMounted(() => {
   void load();
   void searchEmployees("");
+  void loadModels();
 });
 </script>
 

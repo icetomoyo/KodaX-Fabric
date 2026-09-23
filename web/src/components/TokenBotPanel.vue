@@ -68,7 +68,7 @@
       </div>
 
       <footer class="panel-foot">
-        <router-link class="guide-link" :to="guidePath">接入教程</router-link>
+        <router-link class="guide-link" :to="guidePath">教程</router-link>
         <PromptInput @submit="onPromptSubmit">
           <PromptInputTextarea
             v-model="draft"

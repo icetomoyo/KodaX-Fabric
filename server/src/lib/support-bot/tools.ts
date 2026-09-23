@@ -82,7 +82,7 @@ export function createSupportAgentTools(ctx: SupportAgentToolContext): AgentTool
     name: "lookup_request",
     label: "查调用",
     description:
-      "用用户提供的 Request ID 查询该次调用的状态、模型、错误码和错误信息。没有 ID 时先让用户到「我的调用」复制。不要编造错误原因。",
+      "用用户提供的 Request ID 查询该次调用的状态、模型、错误码和错误信息。没有 ID 时先让用户到「调用记录」复制。不要编造错误原因。",
     parameters: Type.Object({
       requestId: Type.String({ description: "用户给出的 Request ID" }),
     }),

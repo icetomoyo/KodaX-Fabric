@@ -46,25 +46,20 @@
       stripe
       empty-text="暂无报错记录"
     >
-      <el-table-column label="企业 / 部门" min-width="160" show-overflow-tooltip>
-        <template #default="{ row }">
-          {{ orgScopeLabel(row) }}
-        </template>
-      </el-table-column>
-      <el-table-column label="员工" width="100" show-overflow-tooltip>
+      <el-table-column label="员工" width="110" show-overflow-tooltip>
         <template #default="{ row }">
           {{ row.employeeName || "—" }}
         </template>
       </el-table-column>
-      <el-table-column prop="clientModel" label="模型" width="140" show-overflow-tooltip />
+      <el-table-column prop="clientModel" label="模型" width="160" show-overflow-tooltip />
       <el-table-column label="错误信息" min-width="280" show-overflow-tooltip>
         <template #default="{ row }">
           {{ row.errorMessage || "—" }}
         </template>
       </el-table-column>
-      <el-table-column label="时间" width="180">
+      <el-table-column label="时间" width="200" class-name="col-time">
         <template #default="{ row }">
-          {{ formatDateTime(row.createdAt) }}
+          <span class="time-cell">{{ formatDateTime(row.createdAt) }}</span>
         </template>
       </el-table-column>
       <el-table-column label="操作" width="72" align="right">
@@ -196,16 +191,6 @@ function departmentLabel(row: { departmentName?: string | null; teamName: string
   if (row.departmentName && row.departmentName !== "默认部门") return row.departmentName;
   if (row.teamName && row.teamName !== "默认团队") return row.teamName;
   return "—";
-}
-
-function orgScopeLabel(row: {
-  enterpriseName: string | null;
-  departmentName?: string | null;
-  teamName: string | null;
-}): string {
-  const unit = departmentLabel(row);
-  if (row.enterpriseName && unit !== "—") return `${row.enterpriseName} · ${unit}`;
-  return row.enterpriseName || (unit === "—" ? "—" : unit);
 }
 
 function statusText(status: LogStatus): string {
@@ -363,5 +348,14 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   gap: 16px;
+}
+.time-cell {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+:deep(td.col-time > .cell) {
+  overflow: hidden;
+  text-overflow: clip;
+  white-space: nowrap;
 }
 </style>

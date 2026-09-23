@@ -52,7 +52,7 @@ export const router = createRouter({
           component: () => import("@/views/me/ModelsView.vue"),
         },
         {
-          path: "guide",
+          path: "guide/:topic?",
           name: "me-guide",
           component: () => import("@/views/me/GuideView.vue"),
         },
@@ -126,7 +126,7 @@ export const router = createRouter({
           meta: { roles: ["org_admin", "dept_admin"] },
         },
         {
-          path: "guide",
+          path: "guide/:topic?",
           name: "admin-guide",
           component: () => import("@/views/me/GuideView.vue"),
           meta: { roles: ["org_admin", "dept_admin"] },

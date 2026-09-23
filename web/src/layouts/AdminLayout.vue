@@ -23,8 +23,15 @@
         <el-menu-item v-if="auth.isOrgAdmin || auth.isDeptAdmin" index="/admin/enterprises">部门管理</el-menu-item>
         <el-menu-item v-if="auth.isOrgAdmin || auth.isDeptAdmin" index="/admin/keys">API Key</el-menu-item>
         <el-menu-item v-if="auth.isOrgAdmin || auth.isDeptAdmin" index="/admin/models">模型列表</el-menu-item>
-        <el-menu-item v-if="auth.isOrgAdmin || auth.isDeptAdmin" index="/admin/guide">接入教程</el-menu-item>
-        <el-menu-item v-if="auth.isOrgAdmin || auth.isDeptAdmin" index="/admin/my-logs">我的调用</el-menu-item>
+        <el-sub-menu v-if="auth.isOrgAdmin || auth.isDeptAdmin" index="guide">
+          <template #title>教程</template>
+          <el-menu-item index="/admin/guide">接入流程</el-menu-item>
+          <el-menu-item index="/admin/guide/workbuddy">WorkBuddy 接入</el-menu-item>
+          <el-menu-item index="/admin/guide/zcode">ZCode 接入</el-menu-item>
+          <el-menu-item index="/admin/guide/claude-code">Claude Code 接入</el-menu-item>
+          <el-menu-item index="/admin/guide/codex">Codex 接入</el-menu-item>
+        </el-sub-menu>
+        <el-menu-item v-if="auth.isOrgAdmin || auth.isDeptAdmin" index="/admin/my-logs">调用记录</el-menu-item>
         <el-sub-menu v-if="auth.isSuperAdmin" index="upstream">
           <template #title>上游</template>
           <el-menu-item index="/admin/temp-channels">上游渠道</el-menu-item>

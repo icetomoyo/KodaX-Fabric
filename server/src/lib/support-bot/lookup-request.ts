@@ -26,7 +26,7 @@ export function extractSupportRequestId(raw: string): string | null {
 
 export function formatRequestLookup(snapshot: SupportRequestSnapshot | null): string {
   if (!snapshot) {
-    return "找不到这条调用，或不是当前用户的记录。请到「我的调用」复制自己的 Request ID 再问。不要编造错误原因。";
+    return "找不到这条调用，或不是当前用户的记录。请到「调用记录」复制自己的 Request ID 再问。不要编造错误原因。";
   }
   const lines = [
     `Request ID：${snapshot.requestId}`,
@@ -54,7 +54,7 @@ export async function lookupSupportRequest(input: {
 }): Promise<string> {
   const requestId = extractSupportRequestId(input.requestId);
   if (!requestId) {
-    return "Request ID 格式不对。请到「我的调用」复制完整 ID 再问，不要手打。";
+    return "Request ID 格式不对。请到「调用记录」复制完整 ID 再问，不要手打。";
   }
 
   const [row] = await db
