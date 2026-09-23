@@ -2,7 +2,7 @@
   <AuthShell>
     <p class="kicker">新账号</p>
     <h2>申请注册</h2>
-    <p class="lead">设置登录密码后即可使用。员工权限由团队邀请开通。</p>
+    <p class="lead">设置登录密码后即可使用。系统会按姓名和手机号核对钉钉通讯录并尝试加入部门。</p>
 
     <el-form class="auth-form" label-position="top" @submit.prevent="onRegister">
       <el-form-item label="姓名" required>
@@ -62,12 +62,17 @@ async function onRegister() {
 
   registering.value = true;
   try {
-    await auth.register({
+    const result = await auth.register({
       name: registerForm.name.trim(),
       phone: registerForm.phone.trim(),
       password: registerForm.password,
     });
-    ElMessage.success("注册成功，请登录");
+    const message =
+      typeof result?.message === "string" && result.message.trim()
+        ? result.message.trim()
+        : "注册成功。未能从钉钉匹配部门，登录后可在 Token Bot 说出部门名加入。";
+    if (result?.dingtalkJoined) ElMessage.success(message);
+    else ElMessage.warning(message);
     await router.replace({ path: "/login", query: { phone: registerForm.phone.trim() } });
   } catch (e: unknown) {
     const msg =

@@ -12,6 +12,10 @@ import {
 import { writeOpsAudit } from "../lib/ops-audit.js";
 import { authenticateLdapUser, matchEmployeeForLdapPerson } from "../lib/ldap-auth.js";
 import { provisionEmployeeFromLdapDingtalk } from "../lib/ldap-dingtalk-provision.js";
+import {
+  registerDingtalkJoinMessage,
+  tryJoinRegisteredEmployeeFromDingtalk,
+} from "../lib/dingtalk-register-join.js";
 import { env } from "../config.js";
 import { requireSession } from "../middleware/auth.js";
 
@@ -160,15 +164,50 @@ export async function authRoutes(app: FastifyInstance) {
           enterpriseId: employees.enterpriseId,
         });
 
+      const dingtalkJoin = await tryJoinRegisteredEmployeeFromDingtalk({
+        employeeId: employee.id,
+        name: employee.name,
+        phone: employee.phone,
+      });
+      const dingtalkJoined = dingtalkJoin.status === "matched";
+      const message = registerDingtalkJoinMessage(dingtalkJoin);
+      if (dingtalkJoin.status === "error") {
+        req.log.warn({ employeeId: employee.id }, "register dingtalk join failed");
+      }
+
       await writeOpsAudit({
         action: "auth.register_personal",
         targetType: "employee",
         targetId: String(employee.id),
-        detail: { name: employee.name, phone: employee.phone },
+        detail: {
+          name: employee.name,
+          phone: employee.phone,
+          dingtalkStatus: dingtalkJoin.status,
+          ...(dingtalkJoin.status === "matched"
+            ? {
+                userid: dingtalkJoin.userid,
+                enterpriseId: dingtalkJoin.enterpriseId,
+                departmentIds: dingtalkJoin.departments.map((row) => row.departmentId),
+              }
+            : {}),
+        },
         ip: req.ip,
       });
 
-      return { success: true, data: employee };
+      return {
+        success: true,
+        data: {
+          ...employee,
+          enterpriseId:
+            dingtalkJoin.status === "matched" ? dingtalkJoin.enterpriseId : employee.enterpriseId,
+          dept:
+            dingtalkJoin.status === "matched"
+              ? dingtalkJoin.departments[0]?.departmentName ?? employee.dept
+              : employee.dept,
+          dingtalkJoined,
+          message,
+        },
+      };
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       if (message.includes("employees_phone_uidx") || message.includes("unique")) {

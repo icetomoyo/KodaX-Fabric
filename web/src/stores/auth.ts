@@ -103,7 +103,13 @@ export const useAuthStore = defineStore("auth", () => {
   }) {
     const { data } = await http.post("/api/auth/register", payload);
     if (!data.success) throw new Error(data.message || "提交申请失败");
-    return data.data;
+    return data.data as {
+      id: number;
+      name: string;
+      phone: string;
+      dingtalkJoined?: boolean;
+      message?: string;
+    };
   }
 
   async function changePassword(oldPassword: string, newPassword: string) {
