@@ -75,10 +75,10 @@
 
         <main class="detail-pane">
           <div class="pane-label">
-            <span>{{ selectedPackage?.productType === "api" ? "KEY" : "席位" }}</span>
+            <span>{{ selectedPackageIsSeatManaged ? "席位" : "KEY" }}</span>
             <span class="pane-count">{{ rightPaneCount }}</span>
           </div>
-          <template v-if="selectedPackage?.productType === 'api'">
+          <template v-if="selectedPackage && !selectedPackageIsSeatManaged">
             <div class="detail-header">
               <h3 class="detail-title">
                 {{ selectedPackage.name }}
@@ -198,8 +198,8 @@
       </div>
     </section>
 
-    <el-dialog v-model="showCreateChannel" title="新增渠道" width="480px" destroy-on-close>
-      <p class="muted dialog-lead">先选厂商。智谱可挂套餐和充值，DeepSeek 只有充值。</p>
+    <el-dialog v-model="showCreateChannel" title="新增渠道" width="560px" destroy-on-close>
+      <p class="muted dialog-lead">先选厂商。智谱可挂套餐和充值，DeepSeek 只有充值，自建网关填自己的上游地址。</p>
       <div class="provider-grid">
         <button
           v-for="option in channelOptions"
@@ -210,16 +210,69 @@
           @click="createChannelCode = option.code"
         >
           <strong>{{ option.title }}</strong>
-          <small>{{ option.exists ? "已添加，选中即可" : option.hint }}</small>
+          <small>{{ option.exists && option.code !== 'haizhi' ? "已添加，选中即可" : option.hint }}</small>
         </button>
       </div>
+
+      <el-form
+        v-if="createChannelCode === 'haizhi'"
+        label-width="90px"
+        class="custom-channel-form"
+        @submit.prevent
+      >
+        <el-form-item label="模式名称" required>
+          <el-input
+            v-model="customChannelForm.name"
+            maxlength="100"
+            show-word-limit
+            placeholder="例如 内部网关"
+            :disabled="channelSaving"
+          />
+          <div class="form-help">一次性建出「渠道 + 第一个模式」，之后可继续新增模式</div>
+        </el-form-item>
+        <el-form-item label="上游地址" required>
+          <el-input
+            v-model="customChannelForm.baseUrl"
+            placeholder="http://host:port/v1"
+            :disabled="channelSaving"
+          />
+        </el-form-item>
+        <el-form-item label="API 协议" required>
+          <el-checkbox-group v-model="customChannelForm.protocols" :disabled="channelSaving">
+            <el-checkbox value="openai_chat" border>Chat Completions</el-checkbox>
+            <el-checkbox value="anthropic_messages" border>Messages</el-checkbox>
+            <el-checkbox value="openai_responses" border>Responses</el-checkbox>
+          </el-checkbox-group>
+        </el-form-item>
+        <el-form-item label="测试模型">
+          <el-input
+            v-model="customChannelForm.testModel"
+            maxlength="128"
+            show-word-limit
+            clearable
+            placeholder="如 glm-4.5-air，选填"
+            :disabled="channelSaving"
+          />
+          <div class="form-help">员工提交 KEY 做连通性测试时使用的模型名；留空则回退历史发现模型</div>
+        </el-form-item>
+        <el-form-item label="席位数量" required>
+          <el-input-number
+            v-model="customChannelForm.seatCount"
+            :min="0"
+            :max="100000"
+            controls-position="right"
+            :disabled="channelSaving"
+          />
+        </el-form-item>
+      </el-form>
+
       <template #footer>
         <el-button @click="showCreateChannel = false">取消</el-button>
         <el-button type="primary" :loading="channelSaving" @click="saveChannel">确定</el-button>
       </template>
     </el-dialog>
 
-    <el-dialog v-model="showCreatePackage" title="新增模式" width="520px" destroy-on-close>
+    <el-dialog v-model="showCreatePackage" title="新增模式" width="560px" destroy-on-close>
       <el-form label-width="100px">
         <el-form-item label="渠道">
           <el-input :model-value="selectedChannel?.name ?? ''" disabled />
@@ -242,7 +295,33 @@
             <el-radio-button value="international">国际</el-radio-button>
           </el-radio-group>
         </el-form-item>
-        <el-form-item v-if="packageForm.productType === 'coding_plan'" label="席位数量" required>
+        <template v-if="selectedChannel?.code === 'haizhi'">
+          <el-form-item label="上游地址" required>
+            <el-input v-model="packageForm.baseUrl" placeholder="http://host:port/v1" />
+          </el-form-item>
+          <el-form-item label="API 协议" required>
+            <el-checkbox-group v-model="packageForm.protocols">
+              <el-checkbox value="openai_chat" border>Chat Completions</el-checkbox>
+              <el-checkbox value="anthropic_messages" border>Messages</el-checkbox>
+              <el-checkbox value="openai_responses" border>Responses</el-checkbox>
+            </el-checkbox-group>
+          </el-form-item>
+          <el-form-item label="测试模型">
+            <el-input
+              v-model="packageForm.testModel"
+              maxlength="128"
+              show-word-limit
+              clearable
+              placeholder="如 glm-4.5-air，选填"
+            />
+            <div class="form-help">员工提交 KEY 做连通性测试时使用的模型名；留空则回退历史发现模型</div>
+          </el-form-item>
+        </template>
+        <el-form-item
+          v-if="packageForm.productType === 'coding_plan' || selectedChannel?.code === 'haizhi'"
+          label="席位数量"
+          required
+        >
           <el-input-number v-model="packageForm.seatCount" :min="0" :max="100000" controls-position="right" />
         </el-form-item>
       </el-form>
@@ -263,7 +342,11 @@
         <el-form-item label="标签">
           <el-input v-model="editPackageForm.tag" maxlength="32" show-word-limit placeholder="国内、国际" />
         </el-form-item>
-        <el-form-item v-if="editPackageForm.productType === 'coding_plan'" label="席位数量" required>
+        <el-form-item
+          v-if="editPackageForm.productType === 'coding_plan' || editPackageForm.providerCode === 'haizhi'"
+          label="席位数量"
+          required
+        >
           <el-input-number v-model="editPackageForm.seatCount" :min="0" :max="100000" controls-position="right" />
         </el-form-item>
         <el-form-item label="状态">
@@ -407,7 +490,8 @@ import { formatDateTime } from "@/lib/date-time";
 import { useTablePage } from "@/lib/table-page";
 
 type ProductType = "api" | "coding_plan";
-type ChannelTemplateCode = "glm" | "deepseek";
+type ChannelTemplateCode = "glm" | "deepseek" | "haizhi";
+type CustomProtocol = "openai_chat" | "anthropic_messages" | "openai_responses";
 
 const CHANNEL_OPTIONS: Array<{
   code: ChannelTemplateCode;
@@ -430,7 +514,40 @@ const CHANNEL_OPTIONS: Array<{
     hint: "仅充值",
     defaultBaseUrl: "https://api.deepseek.com",
   },
+  {
+    code: "haizhi",
+    title: "自建网关",
+    name: "海致集团",
+    hint: "填自己的上游地址",
+    defaultBaseUrl: "",
+  },
 ];
+
+function protocolAuthStyle(protocol: CustomProtocol): "bearer" | "x-api-key" {
+  return protocol === "anthropic_messages" ? "x-api-key" : "bearer";
+}
+
+/** 无 scheme 时补 http://，去掉尾部斜杠。 */
+function normalizeUpstreamBaseUrl(value: string): string | null {
+  const trimmed = value.trim().replace(/\/+$/, "");
+  if (!trimmed) return null;
+  const withScheme = /^https?:\/\//.test(trimmed) ? trimmed : `http://${trimmed}`;
+  try {
+    const url = new URL(withScheme);
+    return url.hostname ? withScheme : null;
+  } catch {
+    return null;
+  }
+}
+
+function buildProtocolConfigs(baseUrl: string, protocols: CustomProtocol[]) {
+  return Object.fromEntries(
+    protocols.map((protocol) => [
+      protocol,
+      { baseUrl, authStyle: protocolAuthStyle(protocol) },
+    ]),
+  );
+}
 
 type ChannelRow = {
   id: number;
@@ -442,6 +559,7 @@ type ChannelRow = {
 type PackageRow = {
   id: number;
   providerId: number;
+  providerCode: string;
   name: string;
   code: string;
   productType: ProductType;
@@ -500,6 +618,13 @@ const removingSeatId = ref<number | null>(null);
 const employeeLoading = ref(false);
 const editSeatCurrentEmployee = ref<EmployeeOption | null>(null);
 const createChannelCode = ref<ChannelTemplateCode>("glm");
+const customChannelForm = reactive({
+  name: "",
+  baseUrl: "",
+  protocols: ["openai_chat"] as CustomProtocol[],
+  testModel: "",
+  seatCount: 0,
+});
 const employees = ref<EmployeeOption[]>([]);
 const packageForm = reactive({
   productType: "coding_plan" as ProductType,
@@ -507,6 +632,9 @@ const packageForm = reactive({
   tag: "",
   variant: "domestic" as "domestic" | "international",
   seatCount: 0,
+  baseUrl: "",
+  protocols: ["openai_chat"] as CustomProtocol[],
+  testModel: "",
 });
 const seatForm = reactive({
   employeeId: undefined as number | undefined,
@@ -520,6 +648,7 @@ const editPackageForm = reactive({
   id: 0,
   configVersion: 1,
   productType: "coding_plan" as ProductType,
+  providerCode: "",
   name: "",
   tag: "",
   seatCount: 0,
@@ -605,8 +734,17 @@ const {
   resetPage: resetKeyPage,
 } = useTablePage(selectedKeys);
 
+/** 席位面板面向「套餐」与自建网关（员工提交 KEY）；官方充值线走管理员直贴 KEY。 */
+const selectedPackageIsSeatManaged = computed(() =>
+  Boolean(
+    selectedPackage.value
+    && (selectedPackage.value.productType === "coding_plan"
+      || selectedPackage.value.providerCode === "haizhi"),
+  ),
+);
+
 const rightPaneCount = computed(() =>
-  selectedPackage.value?.productType === "api" ? selectedKeys.value.length : selectedSeats.value.length,
+  selectedPackageIsSeatManaged.value ? selectedSeats.value.length : selectedKeys.value.length,
 );
 
 const seatEmptyText = computed(() => {
@@ -650,7 +788,7 @@ function packageMeta(pkg: PackageRow) {
   const submitted = seats.value.filter(
     (seat) => seat.productLineId === pkg.id && seat.secretSuffix,
   ).length;
-  if (pkg.productType === "api") {
+  if (pkg.productType === "api" && pkg.providerCode !== "haizhi") {
     const count = credentialCount(pkg.id);
     return count ? `${count} 把 KEY` : "未配置 KEY";
   }
@@ -710,7 +848,7 @@ async function refresh() {
     if (!credentialRes.data.success) throw new Error(credentialRes.data.message || "加载 KEY 失败");
     channels.value = Array.isArray(providerRes.data.data)
       ? providerRes.data.data
-        .filter((row: ChannelRow) => row.code !== "custom" && row.code !== "haizhi")
+        .filter((row: ChannelRow) => row.code !== "custom")
         .map((row: ChannelRow) => ({
           id: row.id,
           name: row.name,
@@ -722,6 +860,7 @@ async function refresh() {
       ? lineRes.data.data.map((row: {
         id: number;
         providerId: number;
+        providerCode?: string;
         name: string;
         code: string;
         productType?: ProductType;
@@ -732,6 +871,7 @@ async function refresh() {
       }) => ({
           id: row.id,
           providerId: row.providerId,
+          providerCode: row.providerCode ?? "",
           name: row.name,
           code: row.code,
           productType: row.productType === "api" ? "api" : "coding_plan",
@@ -774,6 +914,11 @@ async function refresh() {
 
 function openCreateChannel() {
   createChannelCode.value = "glm";
+  customChannelForm.name = "";
+  customChannelForm.baseUrl = "";
+  customChannelForm.protocols = ["openai_chat"];
+  customChannelForm.testModel = "";
+  customChannelForm.seatCount = 0;
   showCreateChannel.value = true;
 }
 
@@ -781,6 +926,10 @@ async function saveChannel() {
   const option = CHANNEL_OPTIONS.find((item) => item.code === createChannelCode.value);
   if (!option) {
     ElMessage.warning("请选择渠道");
+    return;
+  }
+  if (option.code === "haizhi") {
+    await saveCustomChannel();
     return;
   }
   const existing = channels.value.find((row) => row.code === option.code);
@@ -812,20 +961,69 @@ async function saveChannel() {
   }
 }
 
+/** 自建网关：一次调用建出「渠道（provider）+ 第一个模式（product line）」。 */
+async function saveCustomChannel() {
+  const name = customChannelForm.name.trim();
+  if (!name) {
+    ElMessage.warning("请填写模式名称");
+    return;
+  }
+  const baseUrl = normalizeUpstreamBaseUrl(customChannelForm.baseUrl);
+  if (!baseUrl) {
+    ElMessage.warning("请填写有效的上游地址");
+    return;
+  }
+  if (!customChannelForm.protocols.length) {
+    ElMessage.warning("请选择 API 协议");
+    return;
+  }
+  channelSaving.value = true;
+  try {
+    const payload: Record<string, unknown> = {
+      provider: "haizhi",
+      name,
+      tag: "",
+      seatCount: customChannelForm.seatCount,
+      status: "active",
+      supportedProtocols: [...customChannelForm.protocols],
+      protocolConfigs: buildProtocolConfigs(baseUrl, customChannelForm.protocols),
+    };
+    const testModel = customChannelForm.testModel.trim();
+    if (testModel) payload.testModel = testModel;
+    const { data } = await http.post("/api/admin/product-lines", payload);
+    if (!data.success) throw new Error(data.message || "新增渠道失败");
+    showCreateChannel.value = false;
+    await refresh();
+    const providerId = Number(data.data?.providerId);
+    if (Number.isInteger(providerId)) selectChannel(providerId);
+    const lineId = Number(data.data?.id);
+    if (Number.isInteger(lineId)) selectedPackageId.value = lineId;
+    ElMessage.success("自建渠道已添加");
+  } catch (error) {
+    ElMessage.error(requestMessage(error, "新增渠道失败"));
+  } finally {
+    channelSaving.value = false;
+  }
+}
+
 function openCreatePackage() {
   if (!selectedChannel.value) {
     ElMessage.warning("请先选择渠道");
     return;
   }
-  if (selectedChannel.value.code !== "glm" && selectedChannel.value.code !== "deepseek") {
-    ElMessage.warning("目前只支持给智谱或 DeepSeek 新增模式");
+  const code = selectedChannel.value.code;
+  if (code !== "glm" && code !== "deepseek" && code !== "haizhi") {
+    ElMessage.warning("目前只支持给智谱、DeepSeek 或自建网关新增模式");
     return;
   }
   packageForm.productType = selectedChannelAllowsCodingPlan.value ? "coding_plan" : "api";
   packageForm.name = "";
-  packageForm.tag = selectedChannel.value.code === "glm" ? "国内" : "";
+  packageForm.tag = code === "glm" ? "国内" : "";
   packageForm.variant = "domestic";
   packageForm.seatCount = 0;
+  packageForm.baseUrl = "";
+  packageForm.protocols = ["openai_chat"];
+  packageForm.testModel = "";
   showCreatePackage.value = true;
 }
 
@@ -840,22 +1038,42 @@ async function savePackage() {
     return;
   }
   const provider = selectedChannel.value?.code;
-  if (provider !== "glm" && provider !== "deepseek") {
-    ElMessage.warning("目前只支持给智谱或 DeepSeek 新增模式");
+  if (provider !== "glm" && provider !== "deepseek" && provider !== "haizhi") {
+    ElMessage.warning("目前只支持给智谱、DeepSeek 或自建网关新增模式");
     return;
+  }
+  const customBaseUrl = provider === "haizhi" ? normalizeUpstreamBaseUrl(packageForm.baseUrl) : null;
+  if (provider === "haizhi") {
+    if (!customBaseUrl) {
+      ElMessage.warning("请填写有效的上游地址");
+      return;
+    }
+    if (!packageForm.protocols.length) {
+      ElMessage.warning("请选择 API 协议");
+      return;
+    }
   }
   packageSaving.value = true;
   try {
     const payload: Record<string, unknown> = {
       name,
       tag: packageForm.tag.trim(),
-      seatCount: packageForm.productType === "api" ? 0 : packageForm.seatCount,
+      seatCount: packageForm.productType === "api" && provider !== "haizhi"
+        ? 0
+        : packageForm.seatCount,
       status: "active",
-      supportedProtocols: ["anthropic_messages", "openai_chat", "openai_responses"],
+      supportedProtocols: provider === "haizhi"
+        ? [...packageForm.protocols]
+        : ["anthropic_messages", "openai_chat", "openai_responses"],
       provider,
       productType: packageForm.productType,
     };
     if (provider === "glm") payload.variant = packageForm.variant;
+    if (provider === "haizhi" && customBaseUrl) {
+      payload.protocolConfigs = buildProtocolConfigs(customBaseUrl, packageForm.protocols);
+      const testModel = packageForm.testModel.trim();
+      if (testModel) payload.testModel = testModel;
+    }
     const { data } = await http.post("/api/admin/product-lines", payload);
     if (!data.success) throw new Error(data.message || "创建模式失败");
     showCreatePackage.value = false;
@@ -875,6 +1093,7 @@ function openEditPackage(pkg: PackageRow) {
   editPackageForm.id = pkg.id;
   editPackageForm.configVersion = pkg.configVersion;
   editPackageForm.productType = pkg.productType;
+  editPackageForm.providerCode = pkg.providerCode;
   editPackageForm.name = pkg.name;
   editPackageForm.tag = pkg.tag;
   editPackageForm.seatCount = pkg.seatCount;
@@ -907,7 +1126,7 @@ async function saveEditPackage() {
     payload.status = editPackageForm.status;
   }
   if (
-    editPackageForm.productType === "coding_plan"
+    (editPackageForm.productType === "coding_plan" || editPackageForm.providerCode === "haizhi")
     && editPackageForm.seatCount !== editPackageOriginal.seatCount
   ) {
     payload.seatCount = editPackageForm.seatCount;
@@ -1400,6 +1619,17 @@ onMounted(() => {
 
 .dialog-lead {
   margin-bottom: 12px;
+}
+
+.custom-channel-form {
+  margin-top: 12px;
+}
+
+.form-help {
+  margin-top: 4px;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  line-height: 1.4;
 }
 
 .provider-grid {
