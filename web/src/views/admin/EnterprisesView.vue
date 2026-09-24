@@ -256,46 +256,6 @@
       </template>
     </el-dialog>
 
-    <el-dialog v-model="showCreateTeam" title="新建团队" width="440px">
-      <el-form label-width="90px">
-        <el-form-item label="所属企业">
-          <el-input :model-value="selectedEnterprise?.name" disabled />
-        </el-form-item>
-        <el-form-item label="所属部门">
-          <el-input :model-value="selectedDepartment?.name" disabled />
-        </el-form-item>
-        <el-form-item label="团队名称" required>
-          <el-input v-model="createTeamName" maxlength="100" />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="showCreateTeam = false">取消</el-button>
-        <el-button type="primary" :loading="savingTeam" @click="createTeam">创建</el-button>
-      </template>
-    </el-dialog>
-
-    <el-dialog v-model="showEditTeam" :title="`编辑团队 · ${editTeam?.name || ''}`" width="440px">
-      <el-form label-width="90px">
-        <el-form-item label="所属部门" required>
-          <el-select v-model="editTeamDepartmentId" style="width: 100%" placeholder="选择部门">
-            <el-option
-              v-for="item in departments"
-              :key="item.id"
-              :label="item.name"
-              :value="item.id"
-            />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="团队名称" required>
-          <el-input v-model="editTeamName" maxlength="100" />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="showEditTeam = false">取消</el-button>
-        <el-button type="primary" :loading="updatingTeam" @click="updateTeam">保存</el-button>
-      </template>
-    </el-dialog>
-
     <el-dialog v-model="showBulkRegister" title="批量注册用户" width="560px">
       <el-form label-position="top">
         <el-form-item label="姓名和手机号" required>
@@ -555,8 +515,6 @@ const showCreateEnterprise = ref(false);
 const showEditEnterprise = ref(false);
 const showCreateDepartment = ref(false);
 const showEditDepartment = ref(false);
-const showCreateTeam = ref(false);
-const showEditTeam = ref(false);
 const showBulkRegister = ref(false);
 const showInvite = ref(false);
 const showEditUser = ref(false);
@@ -567,8 +525,6 @@ const savingEnterprise = ref(false);
 const updatingEnterprise = ref(false);
 const savingDepartment = ref(false);
 const updatingDepartment = ref(false);
-const savingTeam = ref(false);
-const updatingTeam = ref(false);
 const bulkRegistering = ref(false);
 const inviting = ref(false);
 const updatingUser = ref(false);
@@ -582,10 +538,6 @@ const createDepartmentName = ref("");
 const createDepartmentParentId = ref<number | null>(null);
 const editDepartmentName = ref("");
 const editDepartment = ref<DepartmentRow | null>(null);
-const createTeamName = ref("");
-const editTeamName = ref("");
-const editTeamDepartmentId = ref<number | undefined>();
-const editTeam = ref<TeamRow | null>(null);
 const bulkRegisterRaw = ref("");
 const invitePhone = ref("");
 const inviteTeamId = ref<number | undefined>();
@@ -1210,117 +1162,6 @@ async function deleteDepartment(department: DepartmentRow) {
     if (selectedDepartmentId.value === department.id) {
       selectedNodeKind.value = "enterprise";
       selectedDepartmentId.value = null;
-      selectedTeamId.value = null;
-    }
-    await loadEnterprises();
-    await loadTeamsAndPeople();
-    syncQuery();
-  } catch (error) {
-    ElMessage.error(requestMessage(error, "删除失败"));
-  }
-}
-
-function openCreateTeam() {
-  createTeamName.value = "";
-  showCreateTeam.value = true;
-}
-
-async function createTeam() {
-  if (!selectedEnterpriseId.value || !selectedDepartmentId.value) return;
-  const name = createTeamName.value.trim();
-  if (!name) {
-    ElMessage.warning("请填写团队名称");
-    return;
-  }
-  savingTeam.value = true;
-  try {
-    const { data } = await http.post("/api/admin/teams", {
-      name,
-      enterpriseId: selectedEnterpriseId.value,
-      departmentId: selectedDepartmentId.value,
-    });
-    if (!data.success) throw new Error(data.message);
-    ElMessage.success("已创建");
-    showCreateTeam.value = false;
-    await loadEnterprises();
-    await loadTeamsAndPeople();
-    selectedNodeKind.value = "department";
-    selectedTeamId.value = data.data.id;
-    syncQuery();
-    highlightTree();
-  } catch (error) {
-    ElMessage.error(requestMessage(error, "创建失败"));
-  } finally {
-    savingTeam.value = false;
-  }
-}
-
-function openEditTeam(team: TeamRow) {
-  editTeam.value = team;
-  editTeamName.value = team.name;
-  editTeamDepartmentId.value = team.departmentId;
-  showEditTeam.value = true;
-}
-
-async function updateTeam() {
-  if (!editTeam.value) return;
-  const name = editTeamName.value.trim();
-  if (!name) {
-    ElMessage.warning("请填写团队名称");
-    return;
-  }
-  if (!editTeamDepartmentId.value) {
-    ElMessage.warning("请选择部门");
-    return;
-  }
-  updatingTeam.value = true;
-  try {
-    const { data } = await http.patch(`/api/admin/teams/${editTeam.value.id}`, {
-      name,
-      departmentId: editTeamDepartmentId.value,
-    });
-    if (!data.success) throw new Error(data.message);
-    ElMessage.success("已更新");
-    showEditTeam.value = false;
-    selectedNodeKind.value = "department";
-    selectedDepartmentId.value = editTeamDepartmentId.value;
-    selectedTeamId.value = editTeam.value.id;
-    await loadTeamsAndPeople();
-    syncQuery();
-    highlightTree();
-  } catch (error) {
-    ElMessage.error(requestMessage(error, "更新失败"));
-  } finally {
-    updatingTeam.value = false;
-  }
-}
-
-async function setTeamStatus(team: TeamRow, status: "active" | "disabled") {
-  const action = status === "disabled" ? "停用" : "启用";
-  try {
-    await ElMessageBox.confirm(`确认${action}团队「${team.name}」？`, action, {
-      confirmButtonText: "确认",
-      cancelButtonText: "取消",
-      type: status === "disabled" ? "warning" : "info",
-    });
-  } catch {
-    return;
-  }
-  await http.patch(`/api/admin/teams/${team.id}`, { status });
-  ElMessage.success("已更新");
-  await loadTeamsAndPeople();
-}
-
-async function deleteTeam(team: TeamRow) {
-  if (team.memberCount > 0) {
-    ElMessage.warning("团队下已绑定员工，无法删除");
-    return;
-  }
-  try {
-    await http.delete(`/api/admin/teams/${team.id}`);
-    ElMessage.success("已删除");
-    if (selectedTeamId.value === team.id) {
-      selectedNodeKind.value = "department";
       selectedTeamId.value = null;
     }
     await loadEnterprises();

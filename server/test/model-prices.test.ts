@@ -25,7 +25,7 @@ const { meRoutes } = await import("../src/routes/me.js");
 const { billedCacheReadTokens, extractCacheReadTokens } = await import(
   "../src/lib/usage-cache.js"
 );
-const { adminTeamRoutes, buildTeamListQuery } = await import("../src/routes/admin/teams.js");
+const { buildTeamListQuery } = await import("../src/routes/admin/teams.js");
 const {
   buildTeamUsageByModelQuery,
   buildTeamUsageDailyQuery,
@@ -91,18 +91,6 @@ test("org_admin and team_admin cannot list the admin model catalog", async () =>
   for (const session of [orgAdminSession, teamAdminSession]) {
     const list = await injectPriceRoutes(session, { method: "GET", url: "/api/admin/model-prices" });
     assert.equal(list.statusCode, 403);
-  }
-});
-
-test("unauthenticated team usage calls return 401", async () => {
-  const app = Fastify();
-  await app.register(adminTeamRoutes);
-  await app.ready();
-  try {
-    const usage = await app.inject({ method: "GET", url: "/api/admin/teams/1/usage" });
-    assert.equal(usage.statusCode, 401);
-  } finally {
-    await app.close();
   }
 });
 

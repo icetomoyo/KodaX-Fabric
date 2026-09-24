@@ -62,16 +62,19 @@ test("unauthenticated team calls return 401", async () => {
   await app.ready();
   try {
     const list = await app.inject({ method: "GET", url: "/api/admin/teams" });
-    const create = await app.inject({
-      method: "POST",
-      url: "/api/admin/teams",
-      payload: { name: "研发" },
-    });
     const members = await app.inject({ method: "GET", url: "/api/admin/teams/1/members" });
-    const removed = await app.inject({ method: "DELETE", url: "/api/admin/teams/1" });
+    const added = await app.inject({
+      method: "POST",
+      url: "/api/admin/teams/1/members",
+      payload: { phone: "13800138000" },
+    });
+    const removed = await app.inject({
+      method: "DELETE",
+      url: "/api/admin/teams/1/members/9",
+    });
     assert.equal(list.statusCode, 401);
-    assert.equal(create.statusCode, 401);
     assert.equal(members.statusCode, 401);
+    assert.equal(added.statusCode, 401);
     assert.equal(removed.statusCode, 401);
   } finally {
     await app.close();
@@ -100,19 +103,21 @@ test("creating an API key without a team is rejected", async () => {
 });
 
 test("team_admin role is rejected by console routes entirely", async () => {
+  const { adminDepartmentRoutes } = await import("../src/routes/admin/departments.js");
   const app = Fastify();
   app.addHook("onRequest", attachSession(teamAdminSession));
   await app.register(adminTeamRoutes);
   await app.register(adminEnterpriseRoutes);
+  await app.register(adminDepartmentRoutes);
   await app.ready();
   try {
-    const create = await app.inject({
+    const createDepartment = await app.inject({
       method: "POST",
-      url: "/api/admin/teams",
-      payload: { name: "Forbidden Team", enterpriseId: 3, departmentId: 1 },
+      url: "/api/admin/departments",
+      payload: { name: "禁用部门" },
     });
     const enterprises = await app.inject({ method: "GET", url: "/api/admin/enterprises" });
-    assert.equal(create.statusCode, 403);
+    assert.equal(createDepartment.statusCode, 403);
     assert.equal(enterprises.statusCode, 403);
   } finally {
     await app.close();
