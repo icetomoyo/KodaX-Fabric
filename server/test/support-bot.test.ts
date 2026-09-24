@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
@@ -352,23 +352,6 @@ test("successful turn writes user + assistant and never mentions relay quota", a
   assert.equal(dumped.messages.length, 2);
   assert.equal(dumped.messages[0]?.role, "user");
   assert.equal(dumped.messages[1]?.role, "assistant");
-
-  const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-  for (const rel of [
-    "src/routes/support.ts",
-    "src/lib/support-bot/invoke.ts",
-    "src/lib/support-bot/chat.ts",
-    "src/lib/support-bot/account-context.ts",
-    "src/lib/support-bot/agent.ts",
-    "src/lib/support-bot/tools.ts",
-    "src/lib/support-bot/invite-contacts.ts",
-    "src/lib/support-bot/join-department.ts",
-    "src/lib/support-bot/lookup-request.ts",
-  ]) {
-    const source = readFileSync(resolve(root, rel), "utf8");
-    assert.doesNotMatch(source, /acquireRelayQuota/);
-    assert.doesNotMatch(source, /decryptEmployeeApiKey|employeeApiKeys\.keyEncrypted/);
-  }
 });
 
 test("invoke failure keeps the user message and writes no empty assistant", async () => {

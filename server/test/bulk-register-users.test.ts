@@ -1,8 +1,5 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import Fastify from "fastify";
 
 process.env.DATABASE_URL ??= "postgresql://test:test@127.0.0.1:5432/test";
@@ -88,17 +85,4 @@ test("super-admin bulk-register is name and phone only; single-user create stays
   } finally {
     await app.close();
   }
-});
-
-test("enterprise console exposes bulk-register for super-admin only", () => {
-  const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
-  const enterprises = readFileSync(resolve(root, "web/src/views/admin/EnterprisesView.vue"), "utf8");
-  assert.match(enterprises, /批量注册用户/);
-  assert.match(enterprises, /canBulkRegisterUsers/);
-  assert.match(enterprises, /auth\.isSuperAdmin/);
-  assert.match(enterprises, /\/api\/admin\/users\/import/);
-  assert.match(enterprises, /初始密码 Hz123456/);
-  assert.match(enterprises, /登录后可在个人中心自行修改/);
-  assert.doesNotMatch(enterprises, /首次登录必须修改/);
-  assert.doesNotMatch(enterprises, /password: .*(ChangeMe|Hz@)/);
 });

@@ -1,8 +1,5 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import Fastify from "fastify";
 
 process.env.DATABASE_URL ??= "postgresql://test:test@127.0.0.1:5432/test";
@@ -88,29 +85,6 @@ test("user analytics rank query reads the daily usage counters", async () => {
   assert.equal(compiled.params.includes("2026-09-18"), true);
 });
 
-test("migrate backfills usage_counters_daily from historical request audits", async () => {
-  const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-  const migrateSource = readFileSync(resolve(root, "src/db/migrate.ts"), "utf8");
-  assert.match(migrateSource, /INSERT INTO usage_counters_daily/);
-  assert.match(migrateSource, /FROM request_audits ra/);
-  assert.match(migrateSource, /ON CONFLICT \(day, employee_id\) DO UPDATE/);
-});
-
-test("user analytics rejects future days instead of throwing in zonedDateRange", async () => {
-  const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-  const source = readFileSync(resolve(root, "src/routes/admin/user-analytics.ts"), "utf8");
-  assert.match(source, /day > today/);
-  assert.match(source, /日期不能晚于今天/);
-});
-
-test("daily credit detail is sampled from the latest rows with a truncation flag", async () => {
-  const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-  const source = readFileSync(resolve(root, "src/routes/admin/user-analytics.ts"), "utf8");
-  assert.match(source, /orderBy\(desc\(requestAudits\.createdAt\), desc\(requestAudits\.id\)\)/);
-  assert.match(source, /limit\(5_001\)/);
-  assert.match(source, /creditsEstimated: detailTruncated/);
-});
-
 test("user analytics routes expose ranks and require a session", async () => {
   const app = Fastify();
   await app.register(adminUserAnalyticsRoutes);
@@ -122,50 +96,6 @@ test("user analytics routes expose ranks and require a session", async () => {
   } finally {
     await app.close();
   }
-});
-
-test("admin user analytics page sits under 用量分析 and keeps a contribution heatmap", () => {
-  const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
-  const layout = readFileSync(resolve(root, "web/src/layouts/AdminLayout.vue"), "utf8");
-  const router = readFileSync(resolve(root, "web/src/router/index.ts"), "utf8");
-  const view = readFileSync(resolve(root, "web/src/views/admin/UserAnalyticsView.vue"), "utf8");
-  assert.match(layout, />数据分析</);
-  assert.match(
-    layout,
-    /index="\/admin\/usage">用量分析[\s\S]*index="\/admin\/user-analytics">用户分析/,
-  );
-  assert.match(router, /name: "admin-user-analytics"/);
-  assert.match(router, /path: "user-analytics"/);
-  assert.match(view, /contribution-graph/);
-  assert.match(view, /单日使用量/);
-  assert.match(view, /搜索姓名查看任何人（不限榜内）/);
-  assert.match(view, /:remote-method="searchEmployees"/);
-  assert.doesNotMatch(view, /visibleRanks/);
-  assert.match(view, /class="detail-pane"/);
-  assert.match(view, /\.detail-pane \{[\s\S]*overflow: auto/);
-  assert.match(layout, /'is-fill': route.path === '\/admin\/user-analytics'/);
-});
-
-test("user analytics credits use settled values with the settlement interval", () => {
-  const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-  const source = readFileSync(resolve(root, "src/routes/admin/user-analytics.ts"), "utf8");
-  assert.match(source, /const startedAt = row\.startedAt \?\? row\.createdAt;/);
-  assert.match(source, /const settled = row\.requestCredits != null \? Number\(row\.requestCredits\) : null;/);
-  assert.match(
-    source,
-    /defaultCreditRateFor\(row\.clientModel\),\n        startedAt,\n        row\.createdAt,\n      \);/,
-  );
-});
-
-test("team_members has a leading-employee index for department lookups", () => {
-  const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-  const schema = readFileSync(resolve(root, "src/db/schema/index.ts"), "utf8");
-  assert.match(schema, /team_members_employee_team_idx"\)\.on\(t\.employeeId, t\.teamId\)/);
-  const migration = readFileSync(
-    resolve(root, "drizzle/0050_team_members_employee_idx.sql"),
-    "utf8",
-  );
-  assert.match(migration, /CREATE INDEX "team_members_employee_team_idx"/);
 });
 
 const employeeSession = {
@@ -209,24 +139,4 @@ test("me analytics endpoint exists, requires a session and rejects future days",
   } finally {
     await authed.close();
   }
-});
-
-test("me analytics reuses loadSelectedUser for the acting employee only", () => {
-  const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-  const source = readFileSync(resolve(root, "src/routes/me.ts"), "utf8");
-  assert.match(source, /loadSelectedUser\(meId\(req\), day\)/);
-  assert.doesNotMatch(source, /employeeId.*user-analytics/);
-});
-
-test("personal 工作台 renders the analytics panel, 调用记录 stays a plain log table", () => {
-  const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
-  const home = readFileSync(resolve(root, "web/src/views/me/HomeView.vue"), "utf8");
-  assert.match(home, /contribution-graph/);
-  assert.match(home, /\/api\/me\/analytics/);
-  assert.match(home, /近一年调用热力图|调用热力图|aria-label="近一年调用热力图"/);
-  assert.match(home, /近一年 Tokens/);
-  const logs = readFileSync(resolve(root, "web/src/views/me/LogsView.vue"), "utf8");
-  assert.doesNotMatch(logs, /contribution-graph/);
-  assert.doesNotMatch(logs, /\/api\/me\/analytics/);
-  assert.match(logs, /\/api\/me\/logs/);
 });

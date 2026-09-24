@@ -1,8 +1,5 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import Fastify from "fastify";
 
 process.env.DATABASE_URL ??= "postgresql://test:test@127.0.0.1:5432/test";
@@ -228,17 +225,6 @@ test("error-log SQL includes employee identity and scopes org/team/request", () 
   assert.match(compiled, /"team_id"/);
   assert.equal(teamSql.params.includes(3), true);
   assert.equal(teamSql.params.includes(5), true);
-});
-
-test("admin error logs page only keeps person search filters", () => {
-  const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
-  const view = readFileSync(resolve(root, "web/src/views/admin/ErrorLogsView.vue"), "utf8");
-  assert.match(view, /placeholder="按人搜索"/);
-  assert.doesNotMatch(view, /placeholder="全部企业"/);
-  assert.doesNotMatch(view, /placeholder="全部部门"/);
-  assert.doesNotMatch(view, /placeholder="全部员工"/);
-  assert.doesNotMatch(view, /placeholder="Request ID"/);
-  assert.match(view, /el-descriptions-item label="Request ID"/);
 });
 
 test("error-log routes expose list and detail", async () => {

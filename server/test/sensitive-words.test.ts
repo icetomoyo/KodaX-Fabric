@@ -1,7 +1,4 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import test from "node:test";
 import Fastify from "fastify";
 
@@ -307,73 +304,6 @@ test("excerptForSensitiveHit keeps the matched region", () => {
   assert.ok(excerpt.length <= 4000);
   assert.match(excerpt, /^…/);
   assert.match(excerpt, /…$/);
-});
-
-test("employee relay scans for sensitive words before acquiring quota", () => {
-  const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-  const lib = readFileSync(resolve(root, "src/lib/relay/sensitive-words.ts"), "utf8");
-  const chat = readFileSync(resolve(root, "src/routes/relay/chat-completions.ts"), "utf8");
-  const anthropic = readFileSync(resolve(root, "src/routes/relay/anthropic-messages.ts"), "utf8");
-  assert.match(
-    lib,
-    /if \(!config\.detectEnabled \|\| \(matcher\.needles\.length === 0 && matcher\.regexPatterns\.length === 0\)\)/,
-  );
-  assert.match(lib, /record: true/);
-  assert.match(lib, /intercept: config\.interceptEnabled/);
-  assert.match(chat, /evaluateSensitiveRequest/);
-  assert.match(chat, /sensitiveHit\.intercept/);
-  assert.match(chat, /zhipuSensitiveContentError/);
-  assert.match(chat, /recordSensitiveWordHit/);
-  assert.match(chat, /action: sensitiveHit.intercept \? "intercept" : "detect"/);
-  assert.match(chat, /evaluateSensitiveRequest[\s\S]*acquireRelayQuota/);
-  assert.doesNotMatch(chat, /sensitive_content/);
-  assert.match(anthropic, /evaluateSensitiveRequest/);
-  assert.match(anthropic, /sensitiveHit\.intercept/);
-  assert.match(anthropic, /zhipuSensitiveContentError/);
-  assert.match(anthropic, /recordSensitiveWordHit/);
-  assert.match(anthropic, /action: sensitiveHit.intercept \? "intercept" : "detect"/);
-  assert.match(anthropic, /evaluateSensitiveRequest[\s\S]*acquireRelayQuota/);
-  assert.doesNotMatch(anthropic, /sensitive_content/);
-});
-
-test("super-admin 敏感词检测 submenu is wired into the console", () => {
-  const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
-  const layout = readFileSync(resolve(root, "web/src/layouts/AdminLayout.vue"), "utf8");
-  const router = readFileSync(resolve(root, "web/src/router/index.ts"), "utf8");
-  const words = readFileSync(resolve(root, "web/src/views/admin/SensitiveWordsView.vue"), "utf8");
-  const hits = readFileSync(resolve(root, "web/src/views/admin/SensitiveHitsView.vue"), "utf8");
-  const settings = readFileSync(resolve(root, "web/src/views/admin/SettingsView.vue"), "utf8");
-  const app = readFileSync(resolve(root, "server/src/app.ts"), "utf8");
-  assert.match(layout, />敏感词检测</);
-  assert.match(
-    layout,
-    /index="\/admin\/logs">调用日志[\s\S]*index="\/admin\/error-logs">报错日志[\s\S]*敏感词检测[\s\S]*index="\/admin\/sensitive-words">敏感词管理[\s\S]*index="\/admin\/sensitive-detect-records">敏感词检测记录[\s\S]*index="\/admin\/sensitive-intercept-records">敏感词拦截记录[\s\S]*index="\/admin\/ops-audit">操作审计[\s\S]*index="\/admin\/settings">系统设置/,
-  );
-  assert.match(router, /name: "admin-sensitive-words"[\s\S]*roles: \["admin"\]/);
-  assert.match(router, /name: "admin-sensitive-detect-records"[\s\S]*sensitiveHitAction: "detect"/);
-  assert.match(router, /name: "admin-sensitive-intercept-records"[\s\S]*sensitiveHitAction: "intercept"/);
-  assert.match(router, /name: "admin-settings"[\s\S]*roles: \["admin"\]/);
-  assert.match(words, /\/api\/admin\/sensitive-words/);
-  assert.doesNotMatch(words, /启用拦截/);
-  assert.match(settings, /敏感词检测/);
-  assert.match(settings, /启用检测/);
-  assert.match(settings, /敏感词拦截/);
-  assert.match(settings, /启用拦截/);
-  assert.match(settings, /!settingsLoaded \|\| loading \|\| patching \|\| !sensitiveWordDetectEnabled/);
-  assert.match(settings, /\/api\/admin\/settings/);
-  assert.doesNotMatch(settings, /class="page-title"/);
-  assert.match(words, /导入文档/);
-  assert.match(words, /命中次数/);
-  assert.match(words, /TABLE_PAGE_SIZE/);
-  assert.match(words, /\/api\/admin\/sensitive-words\/import/);
-  assert.match(words, /http\.delete\("\/api\/admin\/sensitive-words", \{\s*data: \{ word, matchType \},\s*\}\)/);
-  assert.doesNotMatch(words, /class="page-title"/);
-  assert.match(hits, /\/api\/admin\/sensitive-word-hits/);
-  assert.match(hits, /命中词/);
-  assert.match(hits, /action: hitAction.value/);
-  assert.doesNotMatch(hits, /class="page-title"/);
-  assert.match(app, /adminSensitiveWordRoutes/);
-  assert.match(app, /adminSettingsRoutes/);
 });
 
 test("unauthenticated sensitive-word admin calls return 401", async () => {

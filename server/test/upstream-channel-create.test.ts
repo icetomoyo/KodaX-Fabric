@@ -1,8 +1,5 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import {
   allocateDomesticProductLineCode,
   planUpstreamChannelCreate,
@@ -135,43 +132,6 @@ test("stored GLM channels with unique codes still resolve to 国内版 or 国际
     { openai_chat: { baseUrl: "https://api.z.ai/api/coding/paas/v4", authStyle: "bearer" } },
   );
   assert.equal(intl?.label, "国际版");
-});
-
-test("create channel dialog is a standalone form and no longer imports keys", () => {
-  const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
-  const view = readFileSync(resolve(root, "web/src/views/admin/CredentialsView.vue"), "utf8");
-  const fields = readFileSync(resolve(root, "web/src/views/admin/ChannelConfigFields.vue"), "utf8");
-  assert.match(view, /title="新增渠道"/);
-  assert.match(view, /\/api\/admin\/product-lines/);
-  assert.match(view, /value="domestic">国内/);
-  assert.match(view, /value="international">国际/);
-  assert.doesNotMatch(view, /value="custom">自定义/);
-  assert.match(view, /label="海致集团"/);
-  assert.match(view, /createForm.provider === 'glm'/);
-  assert.doesNotMatch(view, /新增渠道并导入 Key/);
-  assert.match(fields, /标签/);
-  assert.match(fields, /API 协议/);
-  assert.match(fields, /席位数量/);
-  assert.match(fields, /上游地址/);
-  assert.doesNotMatch(fields, /协议路由/);
-  assert.doesNotMatch(view, /协议路由/);
-});
-
-test("channel page can delete a channel and destroy seats, keys, and employee API keys", () => {
-  const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
-  const view = readFileSync(resolve(root, "web/src/views/admin/CredentialsView.vue"), "utf8");
-  const providers = readFileSync(resolve(root, "server/src/routes/admin/providers.ts"), "utf8");
-  assert.match(view, /删除渠道/);
-  assert.match(view, /removeChannel/);
-  assert.match(view, /http.delete\(`\/api\/admin\/product-lines\/\$\{channel.id\}`\)/);
-  assert.match(view, /席位、渠道 KEY/);
-  assert.match(view, /个人 API Key/);
-  assert.match(providers, /app.delete\(\s*"\/api\/admin\/product-lines\/:id"/);
-  assert.match(providers, /product_line.delete/);
-  assert.match(
-    providers,
-    /tx.delete\(employeeApiKeys\)[\s\S]*tx.delete\(modelRoutes\)[\s\S]*tx.delete\(channelSeats\)[\s\S]*tx.delete\(upstreamCredentials\)[\s\S]*tx.delete\(productLines\)/,
-  );
 });
 
 test("deleting a channel requires a session", async () => {

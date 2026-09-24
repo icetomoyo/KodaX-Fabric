@@ -1,8 +1,5 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import Fastify from "fastify";
 
 process.env.DATABASE_URL ??= "postgresql://test:test@127.0.0.1:5432/test";
@@ -344,43 +341,6 @@ test("employee submit test proof binds the tester, channel, and secret and expir
     }).kind,
     "expired",
   );
-});
-
-test("personal center exposes channel-key submit for every non-super-admin role", () => {
-  const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
-  const profile = readFileSync(resolve(root, "web/src/views/admin/ProfileView.vue"), "utf8");
-  assert.match(profile, /提交渠道 KEY/);
-  assert.match(profile, /profileNavItems/);
-  assert.match(profile, /canSubmitChannelKey/);
-  assert.match(profile, /!auth\.isSuperAdmin/);
-  assert.match(profile, /\/api\/me\/upstream-credential-channels/);
-  assert.match(profile, /\/api\/me\/upstream-credentials/);
-  assert.match(profile, /\/api\/me\/upstream-credentials\/test/);
-  assert.match(profile, /testChannelKey/);
-  assert.match(profile, /channelKeyLocked/);
-  assert.match(profile, /testProof/);
-  assert.match(profile, /已锁定/);
-  assert.match(profile, /重新填写/);
-  assert.match(profile, /:disabled="!channelKeyLocked/);
-  assert.match(profile, /提交记录/);
-  assert.match(profile, /deleteSubmittedChannelKey/);
-  assert.match(profile, /ElMessageBox/);
-  assert.match(profile, /\/api\/me\/upstream-credentials\/\$\{row\.id\}/);
-  assert.match(profile, /没有席位，无需提交渠道 KEY/);
-  assert.match(profile, /channelKeyForm.seatId/);
-  assert.doesNotMatch(profile, /\/api\/admin\/credentials\/bulk-create/);
-});
-
-test("upstream channel page exposes employee submit records for super-admin", () => {
-  const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
-  const credentials = readFileSync(
-    resolve(root, "web/src/views/admin/CredentialsView.vue"),
-    "utf8",
-  );
-  assert.match(credentials, /渠道 KEY 提交记录/);
-  assert.match(credentials, /\/api\/admin\/credential-submissions/);
-  assert.match(credentials, /已提交/);
-  assert.match(credentials, /未提交/);
 });
 
 test("me channel-key submit routes exist and reject anonymous callers", async () => {

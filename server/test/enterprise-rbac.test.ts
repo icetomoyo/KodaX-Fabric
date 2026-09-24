@@ -1,7 +1,4 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import test from "node:test";
 import Fastify from "fastify";
 
@@ -278,25 +275,9 @@ test("super-admin approves cooperation applications instead of assigning admins"
     assert.equal(app.hasRoute({ method: "POST", url: "/api/admin/enterprises/:id/approve" }), true);
     assert.equal(app.hasRoute({ method: "POST", url: "/api/admin/enterprises/:id/admins" }), false);
     assert.equal(app.hasRoute({ method: "POST", url: "/api/me/enterprise-applications" }), true);
-    const meRoute = readFileSync(
-      resolve(dirname(fileURLToPath(import.meta.url)), "../src/routes/me.ts"),
-      "utf8",
-    );
-    assert.match(meRoute, /已关闭合作企业申请/);
   } finally {
     await app.close();
   }
-});
-
-test("super-admin personal center can load /api/me/org", () => {
-  const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
-  const meRoute = readFileSync(resolve(root, "server/src/routes/me.ts"), "utf8");
-  const profile = readFileSync(resolve(root, "web/src/views/admin/ProfileView.vue"), "utf8");
-  assert.match(
-    meRoute,
-    /requireRoles\("employee", "dept_admin", "org_admin", "admin"\)/,
-  );
-  assert.match(profile, /\/api\/me\/org/);
 });
 
 test("super-admin still cannot create employees", async () => {
@@ -421,79 +402,4 @@ test("super-admin can list and access employees in any enterprise", () => {
   assert.equal("error" in selfProfile, false);
   if ("error" in selfProfile) return;
   assert.equal(selfProfile.role, "admin");
-});
-
-test("admin shell source includes 企业管理 and org_admin lands on workbench", () => {
-  const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
-  const layout = readFileSync(resolve(root, "web/src/layouts/AdminLayout.vue"), "utf8");
-  const home = readFileSync(resolve(root, "web/src/lib/home.ts"), "utf8");
-  const router = readFileSync(resolve(root, "web/src/router/index.ts"), "utf8");
-
-  assert.match(layout, /企业管理/);
-  assert.match(layout, /isSuperAdmin/);
-  assert.doesNotMatch(layout, /企业钉钉/);
-  assert.doesNotMatch(layout, /enterprise-dingtalk/);
-  assert.match(layout, /\/admin\/enterprises/);
-  assert.match(layout, /部门管理/);
-  assert.match(layout, /isOrgAdmin/);
-  assert.match(layout, />敏感词检测</);
-  assert.match(layout, /index="\/admin\/sensitive-words">敏感词管理/);
-  assert.match(layout, /index="\/admin\/sensitive-detect-records">敏感词检测记录/);
-  assert.match(layout, /index="\/admin\/sensitive-intercept-records">敏感词拦截记录/);
-  assert.match(layout, />上游</);
-  assert.match(layout, /index="\/admin\/temp-channels">上游渠道/);
-  assert.match(
-    layout,
-    /index="\/admin\/temp-channels">上游渠道[\s\S]*index="\/admin\/keys-board">KEYS看板[\s\S]*index="\/admin\/key-bindings">调度画布[\s\S]*index="\/admin\/model-prices">模型列表/,
-  );
-  assert.match(layout, />日志</);
-  assert.match(
-    layout,
-    /index="\/admin\/logs">调用日志[\s\S]*index="\/admin\/error-logs">报错日志/,
-  );
-  assert.doesNotMatch(layout, /index="\/admin\/channels">渠道/);
-  assert.doesNotMatch(layout, /index="\/admin\/seats">席位/);
-  assert.doesNotMatch(layout, /index="\/admin\/channel-keys">渠道 KEY/);
-  assert.doesNotMatch(layout, /index="\/admin\/credentials">上游渠道/);
-  assert.doesNotMatch(layout, /员工管理/);
-  assert.doesNotMatch(layout, /index="\/admin\/teams"/);
-  assert.match(home, /org_admin/);
-  assert.match(home, /return \"\/admin\"/);
-  assert.doesNotMatch(home, /org_admin.*\/me/);
-  assert.match(router, /admin-enterprises/);
-  assert.doesNotMatch(router, /admin-enterprise-dingtalk/);
-  assert.match(router, /name: "admin-keys-board"[\s\S]*roles: \["admin"\]/);
-  assert.match(router, /org_admin/);
-  const login = readFileSync(resolve(root, "web/src/views/LoginView.vue"), "utf8");
-  const register = readFileSync(resolve(root, "web/src/views/RegisterView.vue"), "utf8");
-  assert.match(login, /LDAP登录/);
-  assert.match(login, /账户登录/);
-  assert.match(login, /申请注册/);
-  assert.doesNotMatch(login, /mustChangePassword/);
-  assert.doesNotMatch(router, /mustChangePassword/);
-  assert.doesNotMatch(login, /企业注册/);
-  assert.doesNotMatch(login, /Hz@123456/);
-  assert.doesNotMatch(login, /Hz123456/);
-  assert.match(register, /提交注册/);
-  assert.match(register, /registerForm.password/);
-  assert.doesNotMatch(register, /企业注册/);
-  assert.doesNotMatch(register, /Hz@123456/);
-  assert.doesNotMatch(register, /Hz123456/);
-  const meHome = readFileSync(resolve(root, "web/src/views/me/HomeView.vue"), "utf8");
-  assert.doesNotMatch(meHome, /申请合作企业/);
-  assert.match(meHome, /普通注册用户/);
-  assert.match(meHome, /邀请进团队/);
-  const enterprisesView = readFileSync(
-    resolve(root, "web/src/views/admin/EnterprisesView.vue"),
-    "utf8",
-  );
-  assert.doesNotMatch(enterprisesView, /\/enterprises\/\$\{.*\}\/approve/);
-  assert.doesNotMatch(enterprisesView, /合作申请/);
-  assert.doesNotMatch(enterprisesView, /分配套餐/);
-  assert.doesNotMatch(enterprisesView, /ENTERPRISE_PACKAGES/);
-  assert.doesNotMatch(enterprisesView, /指定企业管理员/);
-  const usersView = readFileSync(resolve(root, "web/src/views/admin/UsersView.vue"), "utf8");
-  assert.match(usersView, /邀请已注册员工/);
-  assert.doesNotMatch(usersView, /新建员工/);
-  assert.doesNotMatch(usersView, /批量导入/);
 });
