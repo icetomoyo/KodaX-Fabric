@@ -144,35 +144,3 @@ export function departmentUsageRows(
 ): DepartmentUsageRow[] {
   return flattenDepartmentUsageForest(buildDepartmentUsageForest(departments, ownUsage));
 }
-
-export type FirstLevelDepartmentUsageRow = {
-  departmentId: number;
-  departmentName: string;
-  enterpriseName?: string;
-  totalTokens: number;
-  requestCount: number;
-};
-
-/**
- * First-level department ranks only. Totals include every descendant.
- * Nested departments are never emitted as their own rows.
- */
-export function firstLevelDepartmentUsage(
-  departments: readonly DepartmentUsageInput[],
-  ownUsage: readonly DepartmentOwnUsage[],
-  limit = 10,
-): FirstLevelDepartmentUsageRow[] {
-  const byId = new Map(departments.map((row) => [row.id, row]));
-  return buildDepartmentUsageForest(departments, ownUsage)
-    .slice(0, limit)
-    .map((row) => {
-      const enterpriseName = byId.get(row.id)?.enterpriseName?.trim();
-      return {
-        departmentId: row.id,
-        departmentName: row.name,
-        ...(enterpriseName ? { enterpriseName } : {}),
-        totalTokens: row.totalTokens,
-        requestCount: row.requestCount,
-      };
-    });
-}

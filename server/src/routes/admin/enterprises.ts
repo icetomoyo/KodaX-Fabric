@@ -2,7 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { asc, desc, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../../db/client.js";
-import { employees, enterprises, teams } from "../../db/schema/index.js";
+import { employees, enterprises } from "../../db/schema/index.js";
 import { insertEnterprise } from "../../lib/enterprise.js";
 import { writeOpsAudit } from "../../lib/ops-audit.js";
 import {
@@ -83,19 +83,6 @@ export async function adminEnterpriseRoutes(app: FastifyInstance) {
         };
       }),
     };
-  });
-
-  app.get("/api/admin/enterprises/:id/teams", async (req, reply) => {
-    const params = z.object({ id: z.coerce.number().int().positive() }).safeParse(req.params);
-    if (!params.success) {
-      return reply.code(400).send({ success: false, message: "参数无效" });
-    }
-    const rows = await db
-      .select({ id: teams.id, name: teams.name })
-      .from(teams)
-      .where(eq(teams.enterpriseId, params.data.id))
-      .orderBy(teams.name);
-    return { success: true, data: rows };
   });
 
   app.post("/api/admin/enterprises", async (req, reply) => {

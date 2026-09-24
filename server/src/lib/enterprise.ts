@@ -7,7 +7,6 @@ import type { SessionRole } from "./jwt.js";
 export const DEFAULT_ENTERPRISE_NAME = "海致集团";
 export const DEFAULT_DEPARTMENT_NAME = "默认部门";
 export const DEFAULT_TEAM_NAME = "默认团队";
-export const ENTERPRISE_CODE_PATTERN = /^E[A-HJ-NP-Z2-9]{8}$/;
 const ENTERPRISE_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
 export const SUPER_ADMIN_ROLE = "admin" as const;
@@ -53,10 +52,6 @@ export function generateEnterpriseCode(randomDigit = randomInt): string {
   return `E${suffix}`;
 }
 
-export function normalizeEnterpriseCode(value: string): string {
-  return value.trim().toUpperCase();
-}
-
 export function resolveUserListScope(
   actor: EnterpriseActor,
   requestedEnterpriseId?: number,
@@ -92,25 +87,6 @@ export function canAccessEmployee(actor: EnterpriseActor, target: EmployeeMember
   if (actor.role === ORG_ADMIN_ROLE) return true;
   if (actor.role === "dept_admin") return target.role !== ORG_ADMIN_ROLE;
   return false;
-}
-
-export function resolveCreatedUserFields(
-  actor: EnterpriseActor,
-  input: { role?: SessionRole; enterpriseId?: number | null },
-): { role: SessionRole; enterpriseId: number } | { error: string; status: 403 } {
-  if (actor.role === ORG_ADMIN_ROLE) {
-    if (actor.enterpriseId == null) {
-      return { error: "权限不足", status: 403 };
-    }
-    if (input.role && input.role !== "employee") {
-      return { error: "权限不足", status: 403 };
-    }
-    if (input.enterpriseId != null && input.enterpriseId !== actor.enterpriseId) {
-      return { error: "权限不足", status: 403 };
-    }
-    return { role: "employee", enterpriseId: actor.enterpriseId };
-  }
-  return { error: "权限不足", status: 403 };
 }
 
 const ORG_ADMIN_ASSIGNABLE_ROLES: SessionRole[] = ["employee", "dept_admin"];

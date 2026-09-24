@@ -98,22 +98,6 @@ export const router = createRouter({
           meta: { roles: ["admin", "org_admin", "dept_admin"] },
         },
         {
-          path: "departments",
-          redirect: "/admin/enterprises",
-        },
-        {
-          path: "teams",
-          redirect: "/admin/enterprises",
-        },
-        {
-          path: "teams/:id",
-          redirect: "/admin/enterprises",
-        },
-        {
-          path: "members",
-          redirect: "/admin/enterprises",
-        },
-        {
           path: "keys",
           name: "admin-keys",
           component: () => import("@/views/me/KeysView.vue"),
@@ -146,11 +130,6 @@ export const router = createRouter({
           name: "admin-user-detail",
           component: () => import("@/views/admin/UserDetailView.vue"),
           meta: { roles: ["org_admin"] },
-        },
-        {
-          path: "providers",
-          redirect: "/admin/temp-channels",
-          meta: { roles: ["admin"] },
         },
         {
           path: "credentials",
@@ -194,11 +173,6 @@ export const router = createRouter({
           path: "model-prices",
           name: "admin-model-prices",
           component: () => import("@/views/admin/ModelPricesView.vue"),
-          meta: { roles: ["admin"] },
-        },
-        {
-          path: "model-routes",
-          redirect: "/admin/temp-channels",
           meta: { roles: ["admin"] },
         },
         {

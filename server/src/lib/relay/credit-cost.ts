@@ -69,23 +69,6 @@ function isCompleteCreditRate(row: StoredCreditRate): row is ModelCreditRate {
  * Admin / metering resolver: a complete custom DB row wins; otherwise the
  * built-in default for that model name; otherwise null.
  */
-export function resolveEffectiveCreditRate(
-  clientModel: string,
-  stored: StoredCreditRate | null,
-): EffectiveCreditRate | null {
-  if (stored && isCompleteCreditRate(stored)) {
-    return {
-      promptCreditsPer10k: stored.promptCreditsPer10k,
-      cacheHitCreditsPer10k: stored.cacheHitCreditsPer10k,
-      completionCreditsPer10k: stored.completionCreditsPer10k,
-      source: "custom",
-    };
-  }
-  const fallback = defaultCreditRateFor(clientModel);
-  if (!fallback) return null;
-  return { ...fallback, source: "default" };
-}
-
 const UTC_PLUS_8_MS = 8 * 60 * 60 * 1_000;
 const MINUTE_MS = 60_000;
 const HOUR_MS = 3_600_000;

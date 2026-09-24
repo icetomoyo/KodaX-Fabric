@@ -48,18 +48,6 @@ export function tokenComposition(input: {
   };
 }
 
-export function splitHourlyTokens(row: {
-  promptTokens: number;
-  cacheReadTokens?: number;
-  completionTokens: number;
-}): { uncachedPrompt: number; cacheRead: number; completion: number } {
-  return tokenComposition({
-    promptTokens: row.promptTokens,
-    cacheReadTokens: row.cacheReadTokens ?? 0,
-    completionTokens: row.completionTokens,
-  });
-}
-
 export function canonicalizeClientModel(name: string | null | undefined): string {
   const trimmed = (name ?? "").trim().toLowerCase();
   return trimmed || "unknown";

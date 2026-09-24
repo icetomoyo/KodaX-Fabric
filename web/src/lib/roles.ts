@@ -11,15 +11,3 @@ export function roleLabel(role: string | null | undefined): string {
   if (role && role in ROLE_LABELS) return ROLE_LABELS[role as UserRole];
   return "员工";
 }
-
-export function isSuperAdminRole(role: string | null | undefined): boolean {
-  return role === "admin";
-}
-
-export function isOrgAdminRole(role: string | null | undefined): boolean {
-  return role === "org_admin";
-}
-
-export function canUseAdminConsoleRole(role: string | null | undefined): boolean {
-  return role === "admin" || role === "org_admin" || role === "dept_admin";
-}

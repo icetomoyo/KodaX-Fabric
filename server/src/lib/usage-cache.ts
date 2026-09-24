@@ -29,15 +29,7 @@ export function billedCacheReadTokens(promptTokens: number, usageRaw: unknown): 
   return Math.min(prompt, extracted);
 }
 
-/** Null when upstream usage did not report a cache-hit field. */
-export const cacheReadTokensNullableSql = sql<number | null>`${requestAudits.cacheReadTokens}`;
-
 export const billedCacheReadTokensSql = sql<number>`least(
   coalesce(${requestAudits.promptTokens}, 0),
   coalesce(${requestAudits.cacheReadTokens}, 0)
-)`;
-
-export const billedUncachedPromptTokensSql = sql<number>`greatest(
-  0,
-  coalesce(${requestAudits.promptTokens}, 0) - ${billedCacheReadTokensSql}
 )`;

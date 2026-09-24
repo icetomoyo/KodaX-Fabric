@@ -20,7 +20,3 @@ export function canUseAdminConsole(user: Pick<User, "role"> | null | undefined):
     user?.role === "dept_admin"
   );
 }
-
-export function canUseEmployeeWorkspace(user: Pick<User, "role"> | null | undefined): boolean {
-  return user?.role === "employee";
-}

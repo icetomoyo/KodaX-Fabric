@@ -26,16 +26,6 @@ export const RELAY_PATHS = {
   ],
 } as const;
 
-export const RELAY_ENDPOINTS = {
-  models: RELAY_PATHS.models[0],
-  anthropicModels: RELAY_PATHS.models[1],
-  chatCompletions: RELAY_PATHS.chatCompletions[0],
-  responses: RELAY_PATHS.responses[0],
-  responsesV1: RELAY_PATHS.responses[1],
-  messages: RELAY_PATHS.messages[0],
-  messagesCountTokens: RELAY_PATHS.messagesCountTokens[0],
-} as const;
-
 const relayProtocolSet: ReadonlySet<string> = new Set(RELAY_PROTOCOLS);
 
 export function isRelayProtocol(value: unknown): value is RelayProtocol {

@@ -3,14 +3,6 @@ const numberFormatter = new Intl.NumberFormat("zh-CN");
 /** Quota is configured in millions of tokens. */
 export const TOKEN_MILLION = 1_000_000;
 
-export function tokensFromMillion(million: number): number {
-  return million * TOKEN_MILLION;
-}
-
-export function millionFromTokens(tokens: number): number {
-  return tokens / TOKEN_MILLION;
-}
-
 /** Quota / usage as millions, e.g. 12 M. */
 export function formatTokenMillion(value: number | null | undefined): string {
   const n = Number(value ?? 0);
@@ -55,20 +47,4 @@ export function usageProgressStatus(
 
 function trimFraction(value: number): string {
   return (Math.round(value * 100) / 100).toFixed(2);
-}
-
-/** Display CNY as ¥12.35. Accepts API decimal strings. */
-export function formatYuan(
-  value: string | number | null | undefined,
-  fractionDigits = 2,
-): string {
-  const raw = value == null ? "" : String(value).trim();
-  const n = Number(raw);
-  if (!raw || !Number.isFinite(n)) {
-    return `¥${(0).toFixed(fractionDigits)}`;
-  }
-  return `¥${n.toLocaleString("zh-CN", {
-    minimumFractionDigits: fractionDigits,
-    maximumFractionDigits: fractionDigits,
-  })}`;
 }

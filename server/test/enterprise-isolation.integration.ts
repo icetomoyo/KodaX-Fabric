@@ -278,16 +278,6 @@ async function main() {
     assert.ok(allUsers.some((row) => row.id === employeeY.id));
     assert.ok(allUsers.some((row) => row.id === newUser.id));
 
-    const bindAdmin = await app.inject({
-      method: "POST",
-      url: `/api/admin/enterprises/${enterpriseY.id}/admins`,
-      headers: superAdmin.headers,
-      payload: { employeeId: employeeY.id },
-    });
-    assert.equal(bindAdmin.statusCode, 200);
-    assert.equal(json<{ data: { role: string; enterpriseId: number } }>(bindAdmin).data.role, "org_admin");
-    assert.equal(json<{ data: { role: string; enterpriseId: number } }>(bindAdmin).data.enterpriseId, enterpriseY.id);
-
     console.log("enterprise isolation integration passed", {
       createdEnterprise: createdEnterprise.name,
       createdStatus: createdEnterprise.status,

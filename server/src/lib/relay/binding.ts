@@ -241,21 +241,6 @@ export function pickStandardShareSlot(
 /**
  * Resolve scope from the 7-day daily average (no stored-tier lookup).
  */
-export function resolveBindingScopeFromPeak(
-  input: Omit<ResolveBindingScopeInput, "usageTier"> & {
-    peakTokens?: number | null;
-    averageDailyTokens?: number | null;
-  },
-): BindingScope | null {
-  return resolveBindingScope({
-    employeeId: input.employeeId,
-    usageTier: classifyUsageTier(input.averageDailyTokens ?? input.peakTokens),
-    teamId: input.teamId,
-    departmentId: input.departmentId,
-    enterpriseId: input.enterpriseId,
-  });
-}
-
 export type BindingNeedRow = BindingScope & {
   id?: number;
   memberEmployeeIds?: readonly number[];
@@ -350,14 +335,6 @@ export async function releaseIdleCredentialBindings(now: Date = new Date()): Pro
  * Enterprise that currently owns a binding. Enterprise-scoped rows are the
  * scope itself; other scopes use the subject's `enterpriseId`.
  */
-export function enterpriseIdForBindingScope(
-  binding: BindingScope,
-  subjectEnterpriseId: number | null | undefined,
-): number | null {
-  if (binding.scopeType === "enterprise") return binding.scopeId;
-  return subjectEnterpriseId ?? null;
-}
-
 export type ReleasedCredentialBinding = {
   id: number;
   credentialId: number;
@@ -450,21 +427,6 @@ type ResolvedEmployeeBinding = {
  * Load the employee's live usage tier / org membership and resolve the binding
  * scope. Missing employees return null.
  */
-export async function resolveEmployeeBindingScope(
-  employeeId: number,
-  now: Date = new Date(),
-): Promise<BindingScope | null> {
-  const resolved = await resolveEmployeeBinding(employeeId, now);
-  if (!resolved) return null;
-  return resolveBindingScope({
-    employeeId,
-    usageTier: resolved.liveTier,
-    teamId: resolved.teamId,
-    departmentId: resolved.departmentId,
-    enterpriseId: resolved.enterpriseId,
-  });
-}
-
 async function resolveEmployeeBinding(
   employeeId: number,
   now: Date,

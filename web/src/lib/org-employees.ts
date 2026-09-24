@@ -15,28 +15,6 @@ export type OrgTeamNode = {
   isDefault?: boolean;
 };
 
-export function collectOrgEmployeeOptions(
-  rows: readonly { id: number; name: string; role?: string; teamId?: number | null }[],
-): Array<{ id: number; name: string; teamId: number | null; teamIds: number[] }> {
-  const byId = new Map<number, { id: number; name: string; teamId: number | null; teamIds: number[] }>();
-  for (const row of rows) {
-    if (row.role === "admin") continue;
-    const teamId = row.teamId ?? null;
-    const existing = byId.get(row.id);
-    if (!existing) {
-      byId.set(row.id, {
-        id: row.id,
-        name: row.name,
-        teamId,
-        teamIds: teamId != null ? [teamId] : [],
-      });
-      continue;
-    }
-    if (teamId != null && !existing.teamIds.includes(teamId)) existing.teamIds.push(teamId);
-  }
-  return [...byId.values()];
-}
-
 export function departmentSubtreeIds(
   rootId: number,
   departments: readonly OrgDepartmentNode[],
@@ -62,23 +40,6 @@ export function departmentSubtreeIds(
 function employeeTeamIds(row: { teamId: number | null; teamIds?: number[] }): number[] {
   if (row.teamIds?.length) return row.teamIds;
   return row.teamId != null ? [row.teamId] : [];
-}
-
-export function visibleOrgEmployees<T extends { teamId: number | null; teamIds?: number[] }>(input: {
-  selectedKind: OrgEmployeeScope;
-  selectedDepartmentId: number | null;
-  employees: readonly T[];
-  teams: readonly OrgTeamNode[];
-  departments: readonly OrgDepartmentNode[];
-}): T[] {
-  if (input.selectedKind === "department" && input.selectedDepartmentId != null) {
-    const subtree = new Set(departmentSubtreeIds(input.selectedDepartmentId, input.departments));
-    const teamIds = new Set(
-      input.teams.filter((team) => subtree.has(team.departmentId)).map((team) => team.id),
-    );
-    return input.employees.filter((row) => employeeTeamIds(row).some((id) => teamIds.has(id)));
-  }
-  return [...input.employees];
 }
 
 export function departmentPathNames(
@@ -109,34 +70,6 @@ export function departmentPathLabel(input: {
   const enterprise = input.enterpriseName?.trim();
   if (enterprise) parts.unshift(enterprise);
   return parts.join("/");
-}
-
-export function employeeDepartmentLabel(input: {
-  teamId: number | null;
-  teamIds?: number[];
-  fallbackName?: string | null;
-  teams: readonly OrgTeamNode[];
-  departments: readonly OrgDepartmentNode[];
-}): string | null {
-  const ids = employeeTeamIds(input);
-  if (ids.length === 0) {
-    const fallback = input.fallbackName ?? null;
-    if (!fallback || fallback === "默认团队") return null;
-    return fallback;
-  }
-  const names = ids
-    .map((teamId) =>
-      employeeSingleDepartmentLabel({
-        teamId,
-        teams: input.teams,
-        departments: input.departments,
-      }),
-    )
-    .filter((name): name is string => Boolean(name));
-  if (names.length > 0) return [...new Set(names)].join("、");
-  const fallback = input.fallbackName ?? null;
-  if (!fallback || fallback === "默认团队") return null;
-  return fallback;
 }
 
 function employeeSingleDepartmentLabel(input: {

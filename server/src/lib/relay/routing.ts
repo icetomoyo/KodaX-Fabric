@@ -453,83 +453,6 @@ function toRelayCandidate(
  * transparent fallback, candidate construction, weighting, and error
  * classification.
  */
-export function resolveRelayCandidatesFromSnapshot(
-  rawCredentials: readonly AvailableRelayCredential[],
-  rawRoutes: readonly AvailableRelayModelRoute[],
-  clientModel: string,
-  upstreamProtocol: RelayProtocol,
-  productLineId: number,
-): RelayCandidateResolution {
-  if (!isValidRelayProductLineId(productLineId)) {
-    return {
-      candidates: [],
-      unavailableReason: "bound_channel_unavailable",
-      retryAfterSeconds: null,
-    };
-  }
-  const scopedCredentials = filterRelayItemsToProductLine(rawCredentials, productLineId);
-  if (
-    scopedCredentials.some((credential) =>
-      providerBlocksClientModel(credential.providerCode, clientModel)
-    )
-  ) {
-    return {
-      candidates: [],
-      unavailableReason: "model_not_allowed",
-      retryAfterSeconds: null,
-    };
-  }
-  const credentials = scopedCredentials
-    .filter((credential) => credentialSupportsProtocol(credential, upstreamProtocol));
-  const routes = filterRelayItemsToProductLine(rawRoutes, productLineId);
-  const activeCredentials = credentials.filter(
-    (credential) =>
-      credential.credentialStatus === "active" && credential.credentialWeight > 0,
-  );
-  const candidates: RelayCandidate[] = [];
-  if (routes.length) {
-    for (const route of routes) {
-      if (route.routeWeight <= 0) continue;
-      for (const credential of activeCredentials) {
-        if (credential.productLineId !== route.productLineId) continue;
-        candidates.push(toRelayCandidate(credential, clientModel, upstreamProtocol, route));
-      }
-    }
-  } else {
-    for (const credential of activeCredentials) {
-      candidates.push(toRelayCandidate(credential, clientModel, upstreamProtocol));
-    }
-  }
-
-  const ordered = orderRelayCandidates(candidates);
-  if (ordered.length > 0) {
-    return { candidates: ordered, unavailableReason: null, retryAfterSeconds: null };
-  }
-
-  if (routes.length) {
-    const routedProductLines = new Set(routes.map((route) => route.productLineId));
-    const mappedCredentials = credentials.filter((credential) =>
-      routedProductLines.has(credential.productLineId)
-    );
-    const hasPositiveRoute = routes.some((route) => route.routeWeight > 0);
-    const eligibleCredentials = hasPositiveRoute
-      ? mappedCredentials.filter((credential) => credential.credentialWeight > 0)
-      : [];
-    return {
-      candidates: [],
-      ...unavailableResolution(eligibleCredentials),
-    };
-  }
-
-  const eligibleCredentials = credentials.filter(
-    (credential) => credential.credentialWeight > 0,
-  );
-  return {
-    candidates: [],
-    ...unavailableResolution(eligibleCredentials),
-  };
-}
-
 async function loadEnabledModelRoutes(
   productLineId: number,
   clientModel?: string,
@@ -712,16 +635,4 @@ export async function resolveAccessibleRelayModels(
       .sort((a, b) => a.id.localeCompare(b.id)),
     unavailableReason: null,
   };
-}
-
-export async function listAccessibleRelayModels(
-  employeeId: number,
-  upstreamProtocol: RelayProtocol,
-  productLineId: number,
-): Promise<Array<{ id: string; ownedBy: string }>> {
-  return (await resolveAccessibleRelayModels(
-    employeeId,
-    upstreamProtocol,
-    productLineId,
-  )).models;
 }

@@ -4,8 +4,6 @@ import { departments, teamMembers, teams } from "../db/schema/index.js";
 import { departmentAndDescendantIds } from "./department-tree.js";
 import type { SessionRole } from "./jwt.js";
 
-export const DEPT_ADMIN_ROLE = "dept_admin" as const;
-
 export type OrgActor = {
   role: SessionRole;
   enterpriseId: number | null;
@@ -19,14 +17,6 @@ export type TeamAccess = {
   departmentId: number;
   isMember: boolean;
 };
-
-export function canManageEnterpriseOrg(role: SessionRole): boolean {
-  return role === "admin" || role === "org_admin";
-}
-
-export function canUseOrgConsole(role: SessionRole): boolean {
-  return role === "admin" || role === "org_admin" || role === "dept_admin";
-}
 
 function actorDepartmentIds(actor: OrgActor): number[] {
   return actor.departmentIds ?? [];
@@ -111,20 +101,6 @@ export async function scopedDepartmentIds(input: {
 }): Promise<number[]> {
   if (input.departmentIds?.length) return input.departmentIds;
   return listAdminDepartmentIds(input.employeeId);
-}
-
-export async function loadTeamAccess(teamId: number): Promise<TeamAccess | null> {
-  const [row] = await db
-    .select({
-      teamId: teams.id,
-      enterpriseId: teams.enterpriseId,
-      departmentId: teams.departmentId,
-    })
-    .from(teams)
-    .where(eq(teams.id, teamId))
-    .limit(1);
-  if (!row) return null;
-  return { ...row, isMember: false };
 }
 
 export async function loadTeamAccessForActor(

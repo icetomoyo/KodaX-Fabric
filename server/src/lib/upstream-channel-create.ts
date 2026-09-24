@@ -11,9 +11,7 @@ import { configurableSupportedProtocolsSchema } from "./upstream-channel-update.
 import type { ProductLineProtocolConfigs } from "./upstream-protocol-config.js";
 
 export const CHANNEL_CREATE_PROVIDERS = ["glm", "deepseek", "haizhi"] as const;
-export type ChannelCreateProvider = (typeof CHANNEL_CREATE_PROVIDERS)[number];
 export const CHANNEL_CREATE_VARIANTS = ["domestic", "international"] as const;
-export type ChannelCreateVariant = (typeof CHANNEL_CREATE_VARIANTS)[number];
 export const CHANNEL_TAG_MAX_LENGTH = 32;
 
 export function normalizeChannelTag(value: unknown): string | null {

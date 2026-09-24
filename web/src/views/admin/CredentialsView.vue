@@ -1,6 +1,6 @@
 <template>
-  <div :class="pageKind === 'board' ? 'keys-board-page' : 'credentials-page'">
-    <template v-if="pageKind === 'board'">
+  <div class="keys-board-page">
+    <div>
       <div class="keys-board-toolbar">
         <span class="keys-board-toolbar-count">
           {{ boardVisibleRows.length }}{{ boardSearch.trim() ? ` / ${rows.length}` : "" }} 个 Key
@@ -93,616 +93,7 @@
           </div>
         </div>
       </div>
-    </template>
-    <section v-else class="page-card credentials-shell">
-      <div class="page-head">
-        <div class="head-actions">
-          <el-button :loading="loading" @click="refreshAll">刷新</el-button>
-          <el-button v-if="canWrite && pageKind === 'keys'" @click="openSubmitRecords">渠道 KEY 提交记录</el-button>
-          <el-button v-if="canWrite && pageKind === 'channels'" type="primary" @click="openCreateChannel">
-            新增渠道
-          </el-button>
-        </div>
-      </div>
-
-      <div v-loading="loading" class="split-layout">
-        <aside class="channel-list-pane">
-          <div class="pane-label">
-            <span>渠道列表</span>
-            <span class="pane-count">{{ channels.length }}</span>
-          </div>
-
-          <el-empty
-            v-if="!loading && !channels.length"
-            :description="pageKind === 'channels' ? '暂无上游渠道' : '暂无渠道'"
-            :image-size="72"
-          >
-            <el-button v-if="canWrite && pageKind === 'channels'" type="primary" @click="openCreateChannel">
-              新增渠道
-            </el-button>
-          </el-empty>
-
-          <div v-else class="channel-list">
-            <button
-              v-for="channel in channels"
-              :key="channel.id"
-              type="button"
-              class="channel-card"
-              :class="{ selected: selectedProductLineId === channel.id }"
-              @click="selectChannel(channel.id)"
-            >
-              <div class="channel-card-top">
-                <span class="provider-logo sm" :style="providerLogoStyle(channel.providerCode)">
-                  {{ providerShortName(channel.providerCode) }}
-                </span>
-                <div class="channel-card-copy">
-                  <strong class="channel-card-title">{{ channelDisplayName(channel) }}</strong>
-                  <el-tag v-if="channel.tag" effect="plain" class="channel-tag">{{ channel.tag }}</el-tag>
-                </div>
-              </div>
-              <div class="channel-card-bottom">
-                <span>{{ channel.totalCount }} 个 Key</span>
-                <el-tag :type="channelStatusType(channel)" effect="light">
-                  {{ channelStatusText(channel) }}
-                </el-tag>
-              </div>
-            </button>
-          </div>
-        </aside>
-
-        <main class="channel-detail-pane">
-          <template v-if="selectedChannel">
-            <div class="detail-header">
-              <div class="detail-copy">
-                <h3 class="detail-title">{{ channelDisplayName(selectedChannel) }}</h3>
-              </div>
-              <div class="detail-actions">
-                <el-tag v-if="!canWrite" type="info" effect="plain">只读查看</el-tag>
-                <template v-if="canWrite && pageKind === 'channels'">
-                  <el-button @click="openEditChannel(selectedChannel)">编辑渠道</el-button>
-                  <el-button
-                    type="danger"
-                    :loading="channelDeleting"
-                    @click="removeChannel(selectedChannel)"
-                  >
-                    删除渠道
-                  </el-button>
-                </template>
-                <template v-if="canWrite && pageKind === 'keys'">
-                  <el-button type="primary" @click="openAddKeys(selectedChannel)">
-                    添加 Key
-                  </el-button>
-                </template>
-                <el-button @click="openChannelDetails(selectedChannel)">渠道详情</el-button>
-              </div>
-            </div>
-
-            <section v-if="pageKind === 'channels'" class="channel-summary-section">
-              <el-descriptions :column="2" border>
-                <el-descriptions-item label="渠道">{{ channelDisplayName(selectedChannel) }}</el-descriptions-item>
-                <el-descriptions-item label="标签">{{ selectedChannel.tag || "—" }}</el-descriptions-item>
-                <el-descriptions-item label="状态">{{ channelStatusText(selectedChannel) }}</el-descriptions-item>
-                <el-descriptions-item label="协议">{{ selectedChannel.protocols.join("、") || "—" }}</el-descriptions-item>
-                <el-descriptions-item label="席位">{{ selectedChannel.seatCount }} 个</el-descriptions-item>
-                <el-descriptions-item label="渠道 KEY">{{ selectedChannel.totalCount }} 个</el-descriptions-item>
-              </el-descriptions>
-            </section>
-
-            <section v-else class="key-pool-section">
-              <div class="key-pool-head">
-                <div>
-                  <h4>Key 看板（{{ selectedChannel.totalCount }}）</h4>
-                  <div class="board-stats">
-                    <span class="board-stat">可用 <strong>{{ boardStats.active }}</strong></span>
-                    <span class="board-stat" :class="{ warning: boardStats.cooling > 0 }">
-                      冷却 <strong>{{ boardStats.cooling }}</strong>
-                    </span>
-                    <span class="board-stat" :class="{ danger: boardStats.autoDisabled > 0 }">
-                      自动停用 <strong>{{ boardStats.autoDisabled }}</strong>
-                    </span>
-                    <span class="board-stat">已停用 <strong>{{ boardStats.disabled }}</strong></span>
-                  </div>
-                </div>
-                <div v-if="canWrite && pageKind === 'keys'" class="batch-actions">
-                  <el-button
-                    type="primary"
-                    plain
-                    :loading="batchTesting"
-                    :disabled="!selectedChannel.keys.length"
-                    @click="batchTestCredentials"
-                  >
-                    {{ batchTesting ? `测试中 ${batchTestProgress.done}/${batchTestProgress.total}` : "测试全部" }}
-                  </el-button>
-                </div>
-              </div>
-
-              <el-empty
-                v-if="!selectedChannel.keys.length"
-                class="empty-keys"
-                description="暂无 Key"
-                :image-size="64"
-              />
-              <div v-else class="kanban-board">
-                <div
-                  v-for="column in boardColumns"
-                  :key="column.lane"
-                  class="kanban-column"
-                  :class="{
-                    droppable: canWrite && column.droppable && draggingId != null,
-                    'drag-over': selectedChannel ? isDragOver(selectedChannel.id, column.lane) : false,
-                  }"
-                  @dragover="onColumnDragOver(selectedChannel.id, column, $event)"
-                  @dragleave="onColumnDragLeave(selectedChannel.id, column)"
-                  @drop.prevent="onColumnDrop(column)"
-                >
-                  <header class="kanban-column-head" :class="`is-${column.lane}`">
-                    <span class="kanban-column-title">{{ column.title }}</span>
-                    <span class="kanban-count">{{ column.keys.length }}</span>
-                  </header>
-                  <div class="kanban-cards">
-                    <article
-                      v-for="row in column.keys"
-                      :key="row.id"
-                      class="key-card"
-                      :class="[`is-${healthChipClass(row)}`, { dragging: draggingId === row.id }]"
-                      :draggable="canWrite"
-                      @dragstart="onCardDragStart(row, $event)"
-                      @dragend="onCardDragEnd"
-                      @click="openKeyDetails(row)"
-                    >
-                      <div class="key-card-main">
-                        <div class="key-card-id">
-                          <strong class="key-card-label">{{ row.label }}</strong>
-                          <el-tag v-if="row.tag" effect="plain" class="key-note-tag">
-                            {{ row.tag }}
-                          </el-tag>
-                          <span class="key-suffix">•••• {{ row.secretSuffix }}</span>
-                          <el-tag
-                            v-if="statusPill(row)"
-                            :type="statusPill(row)?.type"
-                          >
-                            {{ statusPill(row)?.text }}
-                          </el-tag>
-                        </div>
-                        <span
-                          class="latency"
-                          :class="isTesting(row.id) ? 'testing' : healthChipClass(row)"
-                          :title="isTesting(row.id) ? '正在测试连接' : healthDetail(row)"
-                        >
-                          <span v-if="isTesting(row.id)" class="latency-spinner" aria-hidden="true" />
-                          <template v-else>{{ healthSummary(row) }}</template>
-                        </span>
-                      </div>
-                      <div class="key-card-meta">
-                        <span class="binding-badge" :class="bindingTone(row.binding)">
-                          {{ bindingLabel(row.binding) }}
-                        </span>
-                        <div class="quota-meters">
-                          <div class="quota-meter">
-                            <div class="quota-meter-head">
-                              <span>5 小时</span>
-                              <span>{{ formatQuotaPair(row.fiveHourCredits, row.fiveHourCreditLimit) }}</span>
-                            </div>
-                            <div v-if="row.fiveHourCreditLimit != null" class="quota-track">
-                              <i
-                                :style="{ width: `${usagePercent(row.fiveHourCredits, row.fiveHourCreditLimit)}%` }"
-                                :class="quotaTrackClass(row.fiveHourCredits, row.fiveHourCreditLimit)"
-                              />
-                            </div>
-                          </div>
-                          <div class="quota-meter">
-                            <div class="quota-meter-head">
-                              <span>本周</span>
-                              <span>{{ formatQuotaPair(row.weeklyCredits, row.weeklyCreditLimit) }}</span>
-                            </div>
-                            <div v-if="row.weeklyCreditLimit != null" class="quota-track">
-                              <i
-                                :style="{ width: `${usagePercent(row.weeklyCredits, row.weeklyCreditLimit)}%` }"
-                                :class="quotaTrackClass(row.weeklyCredits, row.weeklyCreditLimit)"
-                              />
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                      <div class="key-card-foot">
-                        <span
-                          class="traffic"
-                          :class="{ idle: keyTraffic(row).idle, hot: keyTraffic(row).error > 0 }"
-                        >
-                          <template v-if="keyTraffic(row).idle">近24小时无调用</template>
-                          <template v-else>
-                            近24小时
-                            <b class="ok">{{ keyTraffic(row).success }}</b> 成功
-                            <b class="bad" :class="{ on: keyTraffic(row).error > 0 }">
-                              {{ keyTraffic(row).error }}
-                            </b>
-                            失败
-                          </template>
-                        </span>
-                        <span v-if="canWrite" class="key-card-actions" @click.stop>
-                          <el-button
-                            link
-                            type="primary"
-                            :disabled="isTesting(row.id)"
-                            @click="testCredential(row)"
-                          >
-                            测试
-                          </el-button>
-                          <el-button
-                            link
-                            type="danger"
-                            :loading="isDeleting(row.id)"
-                            @click="removeCredential(row)"
-                          >
-                            删除
-                          </el-button>
-                        </span>
-                      </div>
-                    </article>
-                    <div v-if="!column.keys.length" class="kanban-empty">暂无 Key</div>
-                  </div>
-                </div>
-              </div>
-            </section>
-          </template>
-
-          <el-empty
-            v-else-if="!loading"
-            class="detail-empty"
-            :description="channels.length ? '请从左侧选择一个渠道' : '暂无上游渠道'"
-            :image-size="96"
-          >
-            <el-button v-if="!channels.length && canWrite && pageKind === 'channels'" type="primary" @click="openCreateChannel">
-              新增渠道
-            </el-button>
-          </el-empty>
-        </main>
-      </div>
-    </section>
-
-    <el-dialog
-      v-model="showChannelCreate"
-      title="新增渠道"
-      width="min(620px, 92vw)"
-      destroy-on-close
-      class="credential-dialog"
-    >
-      <el-form label-position="top" class="credential-form" @submit.prevent>
-        <div class="channel-field-grid" :class="{ single: createForm.provider !== 'glm' }">
-          <el-form-item label="供应商" required>
-            <el-select v-model="createForm.provider" style="width: 100%">
-              <el-option label="智谱" value="glm" />
-              <el-option label="DeepSeek" value="deepseek" />
-              <el-option label="海致集团" value="haizhi" />
-            </el-select>
-          </el-form-item>
-          <el-form-item v-if="createForm.provider === 'glm'" label="线路" required>
-            <el-radio-group v-model="createForm.variant">
-              <el-radio-button value="domestic">国内</el-radio-button>
-              <el-radio-button value="international">国际</el-radio-button>
-            </el-radio-group>
-          </el-form-item>
-        </div>
-        <ChannelConfigFields
-          v-model:name="createForm.name"
-          v-model:tag="createForm.tag"
-          v-model:seat-count="createForm.seatCount"
-          v-model:supported-protocols="createForm.supportedProtocols"
-          v-model:status="createForm.status"
-          v-model:protocol-configs="createFormProtocolConfigs"
-          v-model:test-model="createForm.testModel"
-          :editable="createNeedsUpstreamUrl"
-          :allow-all-protocols="createForm.provider === 'glm' || createForm.provider === 'deepseek'"
-          :show-status="false"
-          :disabled="createSaving"
-        />
-      </el-form>
-      <template #footer>
-        <el-button :disabled="createSaving" @click="showChannelCreate = false">取消</el-button>
-        <el-button type="primary" :loading="createSaving" @click="saveChannelCreate">创建</el-button>
-      </template>
-    </el-dialog>
-
-    <el-dialog
-      v-model="showChannelEdit"
-      title="编辑上游渠道"
-      width="min(620px, 92vw)"
-      destroy-on-close
-      class="credential-dialog"
-    >
-      <div v-if="channelEditTarget" class="editing-context channel-edit-context">
-        <span class="provider-logo sm" :style="providerLogoStyle(channelEditTarget.providerCode)">
-          {{ providerShortName(channelEditTarget.providerCode) }}
-        </span>
-        <div>
-          <strong>{{ channelDisplayName(channelEditTarget) }}</strong>
-          <div class="cell-secondary">供应商不可更换</div>
-        </div>
-      </div>
-
-      <el-form label-position="top" class="credential-form" @submit.prevent>
-        <ChannelConfigFields
-          v-model:name="channelEditForm.name"
-          v-model:tag="channelEditForm.tag"
-          v-model:seat-count="channelEditForm.seatCount"
-          v-model:supported-protocols="channelEditForm.supportedProtocols"
-          v-model:status="channelEditForm.status"
-          v-model:protocol-configs="channelEditProtocolConfigs"
-          v-model:test-model="channelEditForm.testModel"
-          :editable="channelEditIsCustom"
-          :allow-all-protocols="!channelEditIsCustom"
-          :protocols-touched="channelEditProtocolsTouched"
-          :routing-config-drift="channelEditRoutingConfigDrift"
-          :routing-upgrade-requested="channelEditRoutingUpgradeRequested"
-          :disabled="channelEditSaving"
-          :show-change-risk="!channelEditIsCustom"
-          @protocols-change="channelEditProtocolsTouched = true"
-          @request-routing-upgrade="channelEditRoutingUpgradeRequested = true"
-        />
-      </el-form>
-
-      <template #footer>
-        <el-button :disabled="channelEditSaving" @click="showChannelEdit = false">取消</el-button>
-        <el-button
-          type="primary"
-          :loading="channelEditSaving"
-          :disabled="channelEditSaving"
-          @click="saveChannelEdit"
-        >
-          保存
-        </el-button>
-      </template>
-    </el-dialog>
-
-    <el-dialog
-      v-model="showBulkForm"
-      title="批量添加 Key"
-      width="min(780px, 94vw)"
-      destroy-on-close
-      class="credential-dialog"
-      @closed="clearBulkSecrets"
-    >
-      <template v-if="!bulkForm.productLineId">
-        <div class="section-label">选择渠道（公司名称/模型名称）</div>
-        <div class="provider-grid">
-          <button
-            v-for="item in bulkChannelOptions"
-            :key="`${item.template.code}:${item.option.productLineCode}`"
-            type="button"
-            class="provider-card"
-            :class="{
-              selected: isBulkChannelOptionSelected(item),
-              configured: isTemplateOptionConfigured(item.template, item.option),
-            }"
-            @click="selectBulkChannelOption(item)"
-          >
-            <span class="provider-logo" :style="{ background: item.template.color }">
-              {{ item.template.shortName }}
-            </span>
-            <span class="provider-card-copy">
-              <strong>{{ channelOptionDisplayName(item) }}</strong>
-              <small>
-                {{ item.template.name }} · {{ item.option.label }}
-                <template v-if="isTemplateOptionConfigured(item.template, item.option)"> · 已添加</template>
-              </small>
-            </span>
-          </button>
-          <button
-            type="button"
-            class="provider-card"
-            :class="{ selected: bulkForm.custom }"
-            @click="selectCustomChannelOption"
-          >
-            <span class="provider-logo" style="background: #0f766e">自</span>
-            <span class="provider-card-copy">
-              <strong>自定义渠道</strong>
-              <small>任意 OpenAI / Anthropic 兼容上游</small>
-            </span>
-          </button>
-        </div>
-
-        <el-form label-position="top" class="credential-form" @submit.prevent>
-          <div v-if="selectedConfiguredProductLine" class="configured-variant-notice">
-            <el-alert
-              title="该渠道已经存在，不能重复新建；可改为向现有渠道添加 Key。"
-              type="info"
-              :closable="false"
-              show-icon
-              style="flex: 1; min-width: 0"
-            />
-            <el-button type="primary" plain @click="useConfiguredVariant">
-              向现有渠道添加 Key
-            </el-button>
-          </div>
-
-          <ChannelConfigFields
-            v-model:name="bulkForm.name"
-            v-model:seat-count="bulkForm.seatCount"
-            v-model:supported-protocols="bulkForm.supportedProtocols"
-            v-model:status="bulkForm.status"
-            v-model:protocol-configs="bulkFormProtocolConfigs"
-            :editable="bulkForm.custom"
-            :disabled="bulkSaving || Boolean(selectedConfiguredProductLine)"
-          />
-        </el-form>
-      </template>
-
-      <div v-else-if="importTargetChannel" class="editing-context">
-        <span class="provider-logo sm" :style="providerLogoStyle(importTargetChannel.providerCode)">
-          {{ providerShortName(importTargetChannel.providerCode) }}
-        </span>
-        <div>
-          <strong>{{ channelDisplayName(importTargetChannel) }}</strong>
-        </div>
-      </div>
-
-      <div v-else-if="selectedConfiguredProductLine" class="editing-context">
-        <span class="provider-logo sm" :style="providerLogoStyle(bulkForm.providerCode)">
-          {{ providerShortName(bulkForm.providerCode) }}
-        </span>
-        <div>
-          <strong>{{ selectedConfiguredProductLine.name }}</strong>
-          <div class="cell-secondary">向现有渠道添加 Key，渠道配置保持不变</div>
-        </div>
-      </div>
-
-      <el-divider />
-
-      <el-form label-position="top" class="credential-form">
-        <el-form-item label="标签">
-          <el-input
-            v-model="bulkForm.tag"
-            maxlength="32"
-            show-word-limit
-            clearable
-            placeholder="可选，例如：国际、国内、测试"
-          />
-          <div class="form-help">只作备注展示，不影响转发地址和调度。</div>
-        </el-form-item>
-        <el-form-item label="API Key" required>
-          <el-input
-            v-model="bulkForm.rawKeys"
-            type="textarea"
-            :rows="10"
-            resize="vertical"
-            placeholder="每行一个 Key&#10;也支持：名称,Key&#10;或：名称&lt;Tab&gt;Key"
-          />
-          <div class="form-help bulk-help">
-            <span>支持一次导入 1–200 个 Key；单列会自动生成名称。</span>
-            <strong v-if="bulkParseResult.keys.length">
-              已识别 {{ bulkParseResult.keys.length }} 个
-            </strong>
-          </div>
-          <div v-if="bulkParseResult.errors.length" class="parse-errors">
-            <div v-for="error in bulkParseResult.errors.slice(0, 4)" :key="error">{{ error }}</div>
-            <div v-if="bulkParseResult.errors.length > 4">
-              另有 {{ bulkParseResult.errors.length - 4 }} 项格式错误
-            </div>
-          </div>
-        </el-form-item>
-
-        <div v-if="bulkParseResult.keys.length" class="key-preview">
-          <div class="key-preview-head">导入预览</div>
-          <div
-            v-for="key in bulkParseResult.keys.slice(0, 5)"
-            :key="key.lineNo"
-            class="key-preview-row"
-          >
-            <span>{{ key.label }}</span>
-            <span class="secret-mask">•••• {{ key.secret.slice(-4) }}</span>
-          </div>
-          <div v-if="bulkParseResult.keys.length > 5" class="key-preview-more">
-            其余 {{ bulkParseResult.keys.length - 5 }} 个 Key 将一并导入
-          </div>
-        </div>
-
-        <el-form-item v-if="bulkForm.productLineId" label="渠道协议" class="protocol-form-item">
-          <div class="channel-protocol-summary">
-            <el-tag
-              v-for="protocol in bulkForm.supportedProtocols"
-              :key="protocol"
-              effect="plain"
-            >
-              {{ relayProtocolLabel(protocol, true) }}
-            </el-tag>
-          </div>
-          <div class="form-help">新 Key 自动继承当前渠道协议，无需单独配置。</div>
-        </el-form-item>
-
-        <div class="quota-fields">
-          <el-form-item label="5 小时积分额度">
-            <el-input
-              v-model="bulkForm.fiveHourCreditLimit"
-              placeholder="团队高级版 35000"
-              clearable
-            />
-          </el-form-item>
-          <el-form-item label="周积分额度">
-            <el-input
-              v-model="bulkForm.weeklyCreditLimit"
-              placeholder="团队高级版 155000"
-              clearable
-            />
-          </el-form-item>
-        </div>
-        <p class="form-help">额度按智谱积分计量，可空非负数，允许小数；留空表示该窗口不限额。导入的 Key 共用同一组额度。</p>
-
-      </el-form>
-
-      <template #footer>
-        <el-button @click="showBulkForm = false">取消</el-button>
-        <el-button
-          type="primary"
-          :loading="bulkSaving"
-          :disabled="!bulkParseResult.keys.length || Boolean(bulkParseResult.errors.length)"
-          @click="saveBulkKeys"
-        >
-          导入 {{ bulkParseResult.keys.length || "" }} 个 Key
-        </el-button>
-      </template>
-    </el-dialog>
-
-    <el-drawer
-      v-model="showChannelDetails"
-      title="渠道详情"
-      size="min(680px, 94vw)"
-      destroy-on-close
-      class="channel-detail-drawer"
-    >
-      <div v-loading="channelSummaryLoading" class="channel-summary-body">
-        <template v-if="selectedChannelSummary">
-          <div class="drawer-head channel-summary-head">
-            <div class="detail-identity">
-              <span
-                class="provider-logo"
-                :style="providerLogoStyle(selectedChannelSummary.provider.code)"
-              >
-                {{ providerShortName(selectedChannelSummary.provider.code) }}
-              </span>
-              <div>
-                <h3 class="drawer-title">
-                  {{ formatChannelName(selectedChannelSummary.provider.name, selectedChannelSummary.name) }}
-                </h3>
-                <p>{{ selectedChannelSummary.provider.name }} · ProductLine {{ selectedChannelSummary.code }}</p>
-              </div>
-            </div>
-            <el-tag
-              :type="selectedChannelSummary.status === 'active' && selectedChannelSummary.provider.status === 'active' ? 'success' : 'danger'"
-            >
-              {{ selectedChannelSummary.status === "active" && selectedChannelSummary.provider.status === "active" ? "启用" : "停用" }}
-            </el-tag>
-          </div>
-
-          <section class="detail-section">
-            <h4 class="section-heading">渠道配置</h4>
-            <dl class="info-grid">
-              <div class="info-item"><dt>供应商</dt><dd>{{ selectedChannelSummary.provider.name }}</dd></div>
-              <div class="info-item"><dt>ProductLine</dt><dd>{{ selectedChannelSummary.code }}</dd></div>
-              <div class="info-item"><dt>接入类型</dt><dd>{{ selectedChannelSummary.productType === "coding_plan" ? "Coding Plan" : "API" }}</dd></div>
-              <div class="info-item full"><dt>Base URL</dt><dd class="url-value">{{ selectedChannelSummary.baseUrl }}</dd></div>
-            </dl>
-          </section>
-
-          <section class="detail-section">
-            <h4 class="section-heading">渠道统计</h4>
-            <div class="channel-overview drawer-overview">
-              <div class="overview-card"><span>Key 总数</span><strong>{{ selectedChannelSummary.stats.totalCount }}</strong></div>
-              <div class="overview-card success"><span>可调度</span><strong>{{ selectedChannelSummary.stats.schedulableCount }}</strong></div>
-              <div class="overview-card warning"><span>冷却中</span><strong>{{ selectedChannelSummary.stats.coolingCount }}</strong></div>
-              <div class="overview-card danger"><span>不可调度</span><strong>{{ selectedChannelSummary.stats.unschedulableCount }}</strong></div>
-              <div class="overview-card wide">
-                <span>滚动 24h</span>
-                <strong>
-                  {{ selectedChannelSummary.stats.recentSuccessCount + selectedChannelSummary.stats.recentErrorCount }}
-                  <small>成功 {{ selectedChannelSummary.stats.recentSuccessCount }} / 失败 {{ selectedChannelSummary.stats.recentErrorCount }}</small>
-                </strong>
-              </div>
-            </div>
-          </section>
-        </template>
-        <el-empty v-else-if="!channelSummaryLoading" description="渠道详情加载失败" />
-      </div>
-    </el-drawer>
+    </div>
 
     <el-drawer
       v-model="showKeyDetails"
@@ -910,105 +301,32 @@
       </template>
     </el-drawer>
 
-    <el-dialog
-      v-model="showSubmitRecords"
-      title="渠道 KEY 提交记录"
-      width="min(860px, 94vw)"
-      class="credential-dialog"
-      @open="loadSubmitRecords"
-    >
-      <div class="submit-records-toolbar">
-        <el-select
-          v-model="submitRecordsProductLineId"
-          clearable
-          placeholder="全部渠道"
-          style="width: 240px"
-          @change="loadSubmitRecords"
-        >
-          <el-option
-            v-for="channel in channels"
-            :key="channel.id"
-            :label="channelDisplayName(channel)"
-            :value="channel.id"
-          />
-        </el-select>
-        <el-input
-          v-model="submitRecordsQuery"
-          clearable
-          placeholder="搜索姓名或手机号"
-          style="width: 220px"
-        />
-      </div>
-      <el-tabs v-model="submitRecordsTab">
-        <el-tab-pane :label="`已提交（${submitRecords.submittedCount}）`" name="submitted">
-          <el-table
-            v-loading="submitRecordsLoading"
-            :data="filteredSubmittedRows"
-            stripe
-            empty-text="暂无已提交员工"
-            max-height="420"
-          >
-            <el-table-column prop="name" label="姓名" width="110" />
-            <el-table-column prop="phone" label="手机号" width="130" />
-            <el-table-column label="渠道" min-width="160">
-              <template #default="{ row }">
-                {{ row.providerName }} / {{ row.productLineName }}
-              </template>
-            </el-table-column>
-            <el-table-column label="尾号" width="100">
-              <template #default="{ row }">****{{ row.secretSuffix }}</template>
-            </el-table-column>
-            <el-table-column label="状态" width="100">
-              <template #default="{ row }">
-                <el-tag :type="statusTagType(row.status)" effect="light">
-                  {{ statusText(row.status) }}
-                </el-tag>
-              </template>
-            </el-table-column>
-            <el-table-column label="提交时间" min-width="170">
-              <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
-            </el-table-column>
-          </el-table>
-        </el-tab-pane>
-        <el-tab-pane :label="`未提交（${submitRecords.unsubmittedCount}）`" name="unsubmitted">
-          <el-table
-            v-loading="submitRecordsLoading"
-            :data="filteredUnsubmittedRows"
-            stripe
-            empty-text="暂无未提交员工"
-            max-height="420"
-          >
-            <el-table-column prop="name" label="姓名" width="120" />
-            <el-table-column prop="phone" label="手机号" width="140" />
-            <el-table-column label="角色" width="120">
-              <template #default="{ row }">{{ formatRoleLabel(row.role) }}</template>
-            </el-table-column>
-            <el-table-column label="企业" min-width="180">
-              <template #default="{ row }">{{ row.enterpriseName || "—" }}</template>
-            </el-table-column>
-          </el-table>
-        </el-tab-pane>
-      </el-tabs>
-    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from "vue";
+
 import { useRoute, useRouter } from "vue-router";
+
 import { ElMessage, ElMessageBox } from "element-plus";
+
 import { http } from "@/api/http";
+
 import { channelDisplayName, formatChannelName } from "@/lib/channel-display";
+
 import { formatDateTime } from "@/lib/date-time";
+
 import {
   coolingLaneFromFailureKind,
   coolingLaneFromLastError,
   isShortRateLimitCooling,
 } from "@/lib/keys-board-cooling";
-import { roleLabel as formatRoleLabel } from "@/lib/roles";
+
 import { usagePercent, usageProgressStatus } from "@/lib/tokens";
+
 import { useAuthStore } from "@/stores/auth";
-import ChannelConfigFields from "@/views/admin/ChannelConfigFields.vue";
+
 import {
   RELAY_PROTOCOLS,
   relayProtocolLabel,
@@ -1019,7 +337,9 @@ import {
 } from "@/views/relay-protocol";
 
 type ChannelStatus = "active" | "disabled";
+
 type CredentialStatus = ChannelStatus | "auto_disabled" | "cooling";
+
 type BindingScopeType = "employee" | "team" | "enterprise";
 
 type CredentialBinding = {
@@ -1103,10 +423,6 @@ type ProviderBaseUrl = {
 };
 
 type ProviderTemplateCode = "glm" | "deepseek";
-const CUSTOM_PROVIDER_CODE = "custom";
-const HAIZHI_PROVIDER_CODE = "haizhi";
-const CUSTOM_PROVIDER_COLOR = "#0f766e";
-const HAIZHI_PROVIDER_COLOR = "#0f766e";
 
 type ConfiguredProductLine = {
   id: number;
@@ -1199,23 +515,6 @@ type ChannelSummary = {
   };
 };
 
-type ChannelEditSnapshot = {
-  name: string;
-  tag: string;
-  supportedProtocols: RelayProtocol[];
-  status: ChannelStatus;
-  protocolConfigs: RelayProtocolConfigs;
-  seatCount: number;
-  testModel: string;
-};
-
-type ParsedKey = {
-  lineNo: number;
-  label: string;
-  secret: string;
-  hasCustomLabel: boolean;
-};
-
 type BoardLane = "waiting" | "in_use" | "cooling_5h" | "cooling_weekly" | "rate_limit" | "stopped";
 
 type BoardColumn = {
@@ -1226,98 +525,39 @@ type BoardColumn = {
 };
 
 const route = useRoute();
+
 const router = useRouter();
+
 const auth = useAuthStore();
+
 const canWrite = computed(() => auth.isSuperAdmin);
-const pageKind = computed<"channels" | "keys" | "board">(() => {
-  if (route.name === "admin-channels") return "channels";
-  if (route.name === "admin-keys-board") return "board";
-  return "keys";
-});
 
 const rows = ref<CredentialRow[]>([]);
+
 const listedProductLines = ref<ListedProductLine[]>([]);
+
 const templates = ref<ProviderTemplate[]>([]);
+
 const loading = ref(false);
+
 const selectedProductLineId = ref<number | null>(null);
+
 const syncingQuery = ref(false);
+
 const boardSearch = ref("");
+
 const draggingId = ref<number | null>(null);
+
 const dragOverLane = ref<{ channelId: number; lane: BoardLane } | null>(null);
 
 const showBulkForm = ref(false);
-const bulkSaving = ref(false);
-
-const showChannelEdit = ref(false);
-const channelEditSaving = ref(false);
-const channelDeleting = ref(false);
-const channelEditProtocolConfigs = ref<RelayProtocolConfigs>({});
-const channelEditProtocolsTouched = ref(false);
-const channelEditRoutingConfigDrift = ref(false);
-const channelEditRoutingUpgradeRequested = ref(false);
-const channelEditOriginal = ref<ChannelEditSnapshot | null>(null);
 
 const showKeyDetails = ref(false);
+
 const detailCredentialId = ref<number | null>(null);
-const showSubmitRecords = ref(false);
-const submitRecordsLoading = ref(false);
-const submitRecordsTab = ref("submitted");
-const submitRecordsQuery = ref("");
-const submitRecordsProductLineId = ref<number | null>(null);
-const submitRecords = ref<{
-  submittedCount: number;
-  unsubmittedCount: number;
-  submitted: Array<{
-    id: number;
-    name: string;
-    phone: string;
-    role: string;
-    enterpriseName: string | null;
-    submissions: Array<{
-      credentialId: number;
-      productLineId: number;
-      productLineName: string;
-      providerName: string;
-      secretSuffix: string;
-      status: CredentialStatus;
-      createdAt: string;
-    }>;
-  }>;
-  unsubmitted: Array<{
-    id: number;
-    name: string;
-    phone: string;
-    role: string;
-    enterpriseName: string | null;
-  }>;
-}>({ submittedCount: 0, unsubmittedCount: 0, submitted: [], unsubmitted: [] });
 
-const filteredSubmittedRows = computed(() => {
-  const query = submitRecordsQuery.value.trim();
-  const rows = submitRecords.value.submitted.flatMap((person) =>
-    person.submissions.map((item) => ({
-      ...item,
-      name: person.name,
-      phone: person.phone,
-      role: person.role,
-      enterpriseName: person.enterpriseName,
-    })),
-  );
-  if (!query) return rows;
-  return rows.filter((row) => row.name.includes(query) || row.phone.includes(query));
-});
-
-const filteredUnsubmittedRows = computed(() => {
-  const query = submitRecordsQuery.value.trim();
-  if (!query) return submitRecords.value.unsubmitted;
-  return submitRecords.value.unsubmitted.filter(
-    (row) => row.name.includes(query) || row.phone.includes(query),
-  );
-});
-
-const showChannelCreate = ref(false);
-const createSaving = ref(false);
 const createFormProtocolConfigs = ref<RelayProtocolConfigs>({});
+
 const createForm = reactive({
   provider: "glm" as "glm" | "deepseek" | "haizhi",
   variant: "domestic" as "domestic" | "international",
@@ -1330,12 +570,13 @@ const createForm = reactive({
 });
 
 const showChannelDetails = ref(false);
-const channelSummaryLoading = ref(false);
+
 const channelSummaries = ref(new Map<number, ChannelSummary>());
 
 const testingIds = ref<Set<number>>(new Set());
-const deletingIds = ref<Set<number>>(new Set());
+
 const batchTesting = ref(false);
+
 const batchTestProgress = reactive({ done: 0, total: 0 });
 
 const bulkForm = reactive({
@@ -1352,23 +593,13 @@ const bulkForm = reactive({
   fiveHourCreditLimit: "",
   weeklyCreditLimit: "",
 });
+
 const quotaEditForm = reactive({
   fiveHourCreditLimit: "",
   weeklyCreditLimit: "",
 });
-const quotaSaving = ref(false);
-const bulkFormProtocolConfigs = ref<RelayProtocolConfigs>({});
 
-const channelEditForm = reactive({
-  id: 0,
-  configVersion: 0,
-  name: "",
-  tag: "",
-  seatCount: null as number | null,
-  supportedProtocols: [] as RelayProtocol[],
-  status: "active" as ChannelStatus,
-  testModel: "",
-});
+const quotaSaving = ref(false);
 
 const channels = computed<ChannelGroup[]>(() => {
   const grouped = new Map<number, CredentialRow[]>();
@@ -1419,15 +650,6 @@ const channels = computed<ChannelGroup[]>(() => {
   return [...fromKeys, ...emptyChannels];
 });
 
-const selectedChannel = computed(
-  () => channels.value.find((channel) => channel.id === selectedProductLineId.value) ?? null,
-);
-
-const BOARD_COLUMN_DEFS: ReadonlyArray<Pick<BoardColumn, "lane" | "title" | "droppable">> = [
-  { lane: "in_use", title: "使用中", droppable: true },
-  { lane: "stopped", title: "停用", droppable: true },
-];
-
 const STATUS_BOARD_COLUMN_DEFS: ReadonlyArray<Pick<BoardColumn, "lane" | "title" | "droppable">> = [
   { lane: "waiting", title: "等候", droppable: true },
   { lane: "in_use", title: "使用", droppable: false },
@@ -1448,9 +670,6 @@ function coolingLaneOf(row: CredentialRow): "cooling_5h" | "cooling_weekly" {
 
 function boardLaneOf(row: CredentialRow): BoardLane {
   const status = visibleStatus(row);
-  if (pageKind.value !== "board") {
-    return status === "active" || status === "cooling" ? "in_use" : "stopped";
-  }
   if (status === "disabled" || status === "auto_disabled") return "stopped";
   if (status === "cooling") {
     // 服务端写入的结构化分类优先；缺失时回退旧文本推断（迁移前/手工数据）。
@@ -1464,16 +683,11 @@ function boardLaneOf(row: CredentialRow): BoardLane {
 }
 
 function columnsForKeys(keys: CredentialRow[]): BoardColumn[] {
-  const defs = pageKind.value === "board" ? STATUS_BOARD_COLUMN_DEFS : BOARD_COLUMN_DEFS;
-  return defs.map((column) => ({
+  return STATUS_BOARD_COLUMN_DEFS.map((column) => ({
     ...column,
     keys: keys.filter((row) => boardLaneOf(row) === column.lane),
   }));
 }
-
-const boardColumns = computed<BoardColumn[]>(() =>
-  columnsForKeys(selectedChannel.value?.keys ?? []),
-);
 
 const allBoardColumns = computed<BoardColumn[]>(() => columnsForKeys(boardVisibleRows.value));
 
@@ -1555,104 +769,9 @@ function keyRingTitle(row: CredentialRow): string {
   return `${channelDisplayName(row)} · •••• ${row.secretSuffix}\n${people}\n${five}\n${fiveReset}\n${week}${weekReset ? `\n${weekReset}` : ""}`;
 }
 
-const boardStats = computed(() => {
-  const keys = selectedChannel.value?.keys ?? [];
-  const count = (status: CredentialStatus) =>
-    keys.filter((row) => visibleStatus(row) === status).length;
-  return {
-    active: count("active"),
-    cooling: count("cooling"),
-    autoDisabled: count("auto_disabled"),
-    disabled: count("disabled"),
-  };
-});
-
-const selectedChannelSummary = computed(
-  () => selectedProductLineId.value == null
-    ? null
-    : channelSummaries.value.get(selectedProductLineId.value) ?? null,
-);
-
-const channelEditTarget = computed(
-  () => channels.value.find((channel) => channel.id === channelEditForm.id) ?? null,
-);
-
-function isSelfHostedProviderCode(code: string | undefined): boolean {
-  return code === CUSTOM_PROVIDER_CODE || code === HAIZHI_PROVIDER_CODE;
-}
-
-const createNeedsUpstreamUrl = computed(
-  () => createForm.provider === "haizhi",
-);
-
-const channelEditIsCustom = computed(
-  () => isSelfHostedProviderCode(channelEditTarget.value?.providerCode),
-);
-
 const detailRow = computed(
   () => rows.value.find((row) => row.id === detailCredentialId.value) ?? null,
 );
-
-const selectedBulkTemplate = computed(
-  () => templates.value.find((template) => template.code === bulkForm.providerCode),
-);
-
-type BulkChannelOption = {
-  template: ProviderTemplate;
-  option: ProviderBaseUrl;
-};
-
-function isTemplateOptionConfigured(
-  template: ProviderTemplate,
-  option: ProviderBaseUrl,
-): boolean {
-  return Boolean(template.productLines?.some((line) => line.code === option.productLineCode));
-}
-
-const bulkChannelOptions = computed<BulkChannelOption[]>(() =>
-  templates.value.flatMap((template) =>
-    template.baseUrls.map((option) => ({ template, option })),
-  ),
-);
-
-const bulkBaseUrlOptions = computed(() => selectedBulkTemplate.value?.baseUrls ?? []);
-
-const selectedBulkBaseUrlOption = computed(
-  () => bulkBaseUrlOptions.value.find((option) => option.url === bulkForm.baseUrl) ?? null,
-);
-
-const selectedConfiguredProductLine = computed<ConfiguredProductLine | null>(() => {
-  if (bulkForm.custom) return null;
-  const option = selectedBulkBaseUrlOption.value;
-  if (!option) return null;
-  return selectedBulkTemplate.value?.productLines?.find(
-    (line) => line.code === option.productLineCode,
-  ) ?? null;
-});
-
-
-
-const importTargetChannel = computed(
-  () => channels.value.find((channel) => channel.id === bulkForm.productLineId) ?? null,
-);
-
-const importChannelLabel = computed(() => {
-  if (importTargetChannel.value) return channelDisplayName(importTargetChannel.value);
-  if (bulkForm.custom) return bulkForm.name.trim() || "自定义渠道";
-  const option = bulkBaseUrlOptions.value.find((item) => item.url === bulkForm.baseUrl);
-  if (option && selectedBulkTemplate.value) {
-    return formatChannelName(selectedBulkTemplate.value.name, option.productLineName);
-  }
-  return selectedBulkTemplate.value
-    ? templateDisplayName(selectedBulkTemplate.value)
-    : "API Key";
-});
-
-const bulkParseResult = computed(() => parseBulkKeys(
-  bulkForm.rawKeys,
-  importChannelLabel.value,
-  importTargetChannel.value?.totalCount ?? 0,
-));
 
 function parseQueryId(value: unknown): number | null {
   const raw = Array.isArray(value) ? value[0] : value;
@@ -1662,54 +781,16 @@ function parseQueryId(value: unknown): number | null {
 }
 
 function reconcileSelection() {
-  if (pageKind.value === "board") {
-    const requestedChannelId = parseQueryId(route.query.channelId);
-    selectedProductLineId.value =
-      requestedChannelId != null && channels.value.some((channel) => channel.id === requestedChannelId)
-        ? requestedChannelId
-        : null;
-    return;
-  }
-
-  if (!channels.value.length) {
-    selectedProductLineId.value = null;
-    syncSelectedToQuery(null);
-    return;
-  }
-
   const requestedChannelId = parseQueryId(route.query.channelId);
-  if (requestedChannelId != null && channels.value.some((channel) => channel.id === requestedChannelId)) {
-    selectedProductLineId.value = requestedChannelId;
-    return;
-  }
-
-  const nextId = channels.value.some((channel) => channel.id === selectedProductLineId.value)
-    ? selectedProductLineId.value
-    : channels.value[0].id;
-  selectedProductLineId.value = nextId;
-  syncSelectedToQuery(nextId);
-}
-
-function syncSelectedToQuery(id: number | null) {
-  if (syncingQuery.value) return;
-  const current = parseQueryId(route.query.channelId);
-  if (current === id) return;
-  syncingQuery.value = true;
-  const query = { ...route.query };
-  if (id == null) delete query.channelId;
-  else query.channelId = String(id);
-  router
-    .replace({ query })
-    .catch(() => undefined)
-    .finally(() => {
-      syncingQuery.value = false;
-    });
+  selectedProductLineId.value =
+    requestedChannelId != null && channels.value.some((channel) => channel.id === requestedChannelId)
+      ? requestedChannelId
+      : null;
 }
 
 watch(rows, reconcileSelection, { deep: false });
 
 watch(selectedProductLineId, (id) => {
-  if (pageKind.value !== "board") syncSelectedToQuery(id);
   if (detailRow.value && id != null && detailRow.value.productLineId !== id) {
     showKeyDetails.value = false;
   }
@@ -1736,10 +817,6 @@ watch(
 watch(showBulkForm, (visible) => {
   if (!visible) clearBulkSecrets();
 });
-
-function selectChannel(id: number) {
-  selectedProductLineId.value = id;
-}
 
 function onCardDragStart(row: CredentialRow, event: DragEvent) {
   if (!canWrite.value) return;
@@ -1793,16 +870,6 @@ function getErrorMessage(error: unknown, fallback: string): string {
   return typeof responseMessage === "string" ? responseMessage : fallback;
 }
 
-function getErrorCode(error: unknown): string | undefined {
-  const responseCode = (error as { response?: { data?: { code?: unknown } } })
-    ?.response?.data?.code;
-  return typeof responseCode === "string" ? responseCode : undefined;
-}
-
-function protocolSignature(protocols: RelayProtocol[]): string {
-  return [...protocols].sort().join(",");
-}
-
 function isValidHttpBaseUrl(value: string): boolean {
   try {
     const parsed = new URL(value);
@@ -1822,13 +889,6 @@ function normalizeHttpBaseUrl(value: string): string {
   return trimmed;
 }
 
-function configurableProtocols(protocols: readonly RelayProtocol[]): RelayProtocol[] {
-  const configured = new Set(protocols);
-  return relayProtocolOptions
-    .map((option) => option.value)
-    .filter((protocol) => configured.has(protocol));
-}
-
 function isValidProtocolConfig(
   config: RelayProtocolConfigs[RelayProtocol],
 ): config is { baseUrl: string; authStyle: RelayAuthStyle } {
@@ -1837,86 +897,6 @@ function isValidProtocolConfig(
       && isValidHttpBaseUrl(normalizeHttpBaseUrl(config.baseUrl))
       && (config.authStyle === "bearer" || config.authStyle === "x-api-key"),
   );
-}
-
-function providerOptionProtocolConfigs(
-  option: ProviderBaseUrl,
-  template: ProviderTemplate,
-): RelayProtocolConfigs {
-  const result: RelayProtocolConfigs = {};
-  for (const protocol of RELAY_PROTOCOLS) {
-    const config = option.protocolConfigs?.[protocol];
-    if (isValidProtocolConfig(config)) result[protocol] = { ...config };
-  }
-  if (Object.keys(result).length) return result;
-
-  // Compatibility for a briefly deployed template shape that had one URL and
-  // provider-level auth. New templates always send protocolConfigs.
-  const authStyle = template.authStyle ?? "bearer";
-  for (const protocol of configurableProtocols(template.defaultProtocols)) {
-    result[protocol] = { baseUrl: option.url, authStyle };
-  }
-  return result;
-}
-
-function initialOptionProtocols(
-  option: ProviderBaseUrl,
-  template: ProviderTemplate,
-): RelayProtocol[] {
-  const configs = providerOptionProtocolConfigs(option, template);
-  const available = relayProtocolOptions
-    .map((protocolOption) => protocolOption.value)
-    .filter((protocol) => isValidProtocolConfig(configs[protocol]));
-  const preferred = configurableProtocols(template.defaultProtocols)
-    .filter((protocol) => available.includes(protocol));
-  return preferred.length ? preferred : available;
-}
-
-function resolveTemplateOptionForChannel(
-  template: ProviderTemplate,
-  productLineCode: string,
-): ProviderBaseUrl | undefined {
-  return template.baseUrls.find((option) => option.productLineCode === productLineCode);
-}
-
-function protocolsHaveConfigs(
-  protocols: readonly RelayProtocol[],
-  configs: RelayProtocolConfigs,
-): boolean {
-  return protocols.every((protocol) => isValidProtocolConfig(configs[protocol]));
-}
-
-function selectedProtocolConfigs(
-  protocols: readonly RelayProtocol[],
-  configs: RelayProtocolConfigs,
-): RelayProtocolConfigs {
-  const result: RelayProtocolConfigs = {};
-  for (const protocol of protocols) {
-    const config = configs[protocol];
-    if (!isValidProtocolConfig(config)) continue;
-    result[protocol] = {
-      baseUrl: normalizeHttpBaseUrl(config.baseUrl).replace(/\/+$/, ""),
-      authStyle: config.authStyle,
-    };
-  }
-  return result;
-}
-
-function protocolConfigsMatch(
-  protocols: readonly RelayProtocol[],
-  current: RelayProtocolConfigs,
-  target: RelayProtocolConfigs,
-): boolean {
-  return protocols.every((protocol) => {
-    const currentConfig = current[protocol];
-    const targetConfig = target[protocol];
-    if (!isValidProtocolConfig(currentConfig) || !isValidProtocolConfig(targetConfig)) {
-      return false;
-    }
-    return currentConfig.baseUrl.trim().replace(/\/+$/, "")
-        === targetConfig.baseUrl.trim().replace(/\/+$/, "")
-      && currentConfig.authStyle === targetConfig.authStyle;
-  });
 }
 
 function effectiveBaseUrl(row: CredentialRow): string {
@@ -1967,14 +947,6 @@ function visibleStatus(row: CredentialRow): CredentialStatus {
   return row.status;
 }
 
-function statusPill(row: CredentialRow): { text: string; type: "warning" | "danger" | "info" } | null {
-  const status = visibleStatus(row);
-  if (status === "cooling") return { text: "冷却", type: "warning" };
-  if (status === "auto_disabled") return { text: "自动停用", type: "danger" };
-  if (status === "disabled") return { text: "已停用", type: "info" };
-  return null;
-}
-
 function bindingLabel(binding: CredentialBinding | null): string {
   if (!binding) return "待绑定";
   const prefix = binding.scopeType === "employee"
@@ -1998,13 +970,6 @@ function formatCreditAmount(value: number): string {
 function formatQuotaPair(used: number, limit: number | null): string {
   const usedText = formatCreditAmount(used);
   return limit == null ? `${usedText} / 不限` : `${usedText} / ${formatCreditAmount(limit)} 积分`;
-}
-
-function quotaTrackClass(used: number, limit: number): string {
-  const percent = usagePercent(used, limit);
-  if (percent >= 100) return "full";
-  if (percent >= 80) return "warn";
-  return "";
 }
 
 type ParsedCreditLimit =
@@ -2032,42 +997,6 @@ function syncQuotaEditForm(row: CredentialRow) {
   quotaEditForm.weeklyCreditLimit = row.weeklyCreditLimit == null ? "" : String(row.weeklyCreditLimit);
 }
 
-function providerColor(code: string): string {
-  if (code === HAIZHI_PROVIDER_CODE) return HAIZHI_PROVIDER_COLOR;
-  if (code === CUSTOM_PROVIDER_CODE) return CUSTOM_PROVIDER_COLOR;
-  return templates.value.find((item) => item.code === code)?.color ?? "#64748b";
-}
-
-function providerShortName(code: string): string {
-  if (code === HAIZHI_PROVIDER_CODE) return "海";
-  if (code === CUSTOM_PROVIDER_CODE) return "自";
-  return templates.value.find((item) => item.code === code)?.shortName
-    ?? code.slice(0, 4).toUpperCase();
-}
-
-function providerLogoStyle(code: string): Record<string, string> {
-  return { background: providerColor(code) };
-}
-
-function templateDisplayName(template: ProviderTemplate): string {
-  return formatChannelName(template.name, template.modelName || template.shortName);
-}
-
-function channelOptionDisplayName(item: BulkChannelOption): string {
-  return formatChannelName(item.template.name, item.option.productLineName);
-}
-
-function isBulkChannelOptionSelected(item: BulkChannelOption): boolean {
-  if (bulkForm.custom) return false;
-  const configured = item.template.productLines?.find(
-    (line) => line.code === item.option.productLineCode,
-  );
-  if (configured) return bulkForm.productLineId === configured.id;
-  return !bulkForm.productLineId
-    && bulkForm.providerCode === item.template.code
-    && bulkForm.baseUrl === item.option.url;
-}
-
 function statusText(status: CredentialStatus): string {
   return {
     active: "启用",
@@ -2086,57 +1015,6 @@ function statusTagType(status: CredentialStatus): "success" | "info" | "danger" 
   }[status];
 }
 
-function channelStatusText(channel: ChannelGroup): string {
-  return channel.providerStatus === "active" && channel.productLineStatus === "active"
-    ? "启用"
-    : "停用";
-}
-
-function channelStatusType(channel: ChannelGroup): "success" | "danger" {
-  return channelStatusText(channel) === "启用" ? "success" : "danger";
-}
-
-function healthSummary(row: CredentialRow): string {
-  const currentStatus = visibleStatus(row);
-  if (currentStatus === "cooling") {
-    return row.coolUntil ? `至 ${formatDateTime(row.coolUntil)}` : "冷却中";
-  }
-  if (currentStatus === "auto_disabled") {
-    const detail = row.lastError?.trim();
-    return detail ? detail.slice(0, 18) : "需重新启用";
-  }
-  if (row.lastError) return "最近异常";
-  const test = lastTest(row);
-  if (!test) return "未测试";
-  if (test.ok) return test.latencyMs != null ? `${test.latencyMs} ms` : "正常";
-  return "测试失败";
-}
-
-function healthDetail(row: CredentialRow): string {
-  const currentStatus = visibleStatus(row);
-  if (currentStatus === "cooling") {
-    return row.lastError || (row.coolUntil ? `冷却至 ${formatDateTime(row.coolUntil)}` : "Key 正在冷却");
-  }
-  if (currentStatus === "auto_disabled") return row.lastError || "Key 已因连续错误自动停用";
-  if (row.lastError) return row.lastError;
-  return lastTest(row)?.message || "尚未测试";
-}
-
-function healthChipClass(row: CredentialRow): string {
-  const currentStatus = visibleStatus(row);
-  if (currentStatus === "cooling") return "warning";
-  if (currentStatus === "auto_disabled" || row.lastError) return "bad";
-  const test = lastTest(row);
-  if (!test) return "muted";
-  return test.ok ? "ok" : "bad";
-}
-
-function keyTraffic(row: CredentialRow): { idle: boolean; success: number; error: number } {
-  const success = row.recentSuccessCount ?? 0;
-  const error = row.recentErrorCount ?? 0;
-  return { idle: success + error === 0, success, error };
-}
-
 function setTesting(id: number, testing: boolean) {
   const next = new Set(testingIds.value);
   if (testing) next.add(id);
@@ -2148,42 +1026,12 @@ function isTesting(id: number): boolean {
   return testingIds.value.has(id);
 }
 
-function setDeleting(id: number, deleting: boolean) {
-  const next = new Set(deletingIds.value);
-  if (deleting) next.add(id);
-  else next.delete(id);
-  deletingIds.value = next;
-}
-
-function isDeleting(id: number): boolean {
-  return deletingIds.value.has(id);
-}
-
 async function loadCredentials() {
   const { data } = await http.get("/api/admin/credentials");
   if (data.success) {
     rows.value = data.data;
     listedProductLines.value = data.productLines ?? [];
     channelSummaries.value = new Map();
-  }
-}
-
-async function openChannelDetails(channel: ChannelGroup) {
-  selectedProductLineId.value = channel.id;
-  showChannelDetails.value = true;
-  if (channelSummaries.value.has(channel.id)) return;
-  channelSummaryLoading.value = true;
-  try {
-    const { data } = await http.get(`/api/admin/product-lines/${channel.id}/summary`);
-    if (data.success) {
-      const next = new Map(channelSummaries.value);
-      next.set(channel.id, data.data);
-      channelSummaries.value = next;
-    }
-  } catch (error) {
-    ElMessage.error(getErrorMessage(error, "渠道详情加载失败"));
-  } finally {
-    channelSummaryLoading.value = false;
   }
 }
 
@@ -2208,34 +1056,6 @@ async function refreshAll() {
   }
 }
 
-function openSubmitRecords() {
-  submitRecordsQuery.value = "";
-  submitRecordsTab.value = "submitted";
-  showSubmitRecords.value = true;
-}
-
-async function loadSubmitRecords() {
-  submitRecordsLoading.value = true;
-  try {
-    const { data } = await http.get("/api/admin/credential-submissions", {
-      params: submitRecordsProductLineId.value
-        ? { productLineId: submitRecordsProductLineId.value }
-        : {},
-    });
-    if (!data.success) throw new Error(data.message || "加载提交记录失败");
-    submitRecords.value = {
-      submittedCount: Number(data.data?.submittedCount ?? 0),
-      unsubmittedCount: Number(data.data?.unsubmittedCount ?? 0),
-      submitted: Array.isArray(data.data?.submitted) ? data.data.submitted : [],
-      unsubmitted: Array.isArray(data.data?.unsubmitted) ? data.data.unsubmitted : [],
-    };
-  } catch (error) {
-    ElMessage.error(getErrorMessage(error, "加载提交记录失败"));
-  } finally {
-    submitRecordsLoading.value = false;
-  }
-}
-
 function defaultCustomProtocolConfigs(): RelayProtocolConfigs {
   return {
     anthropic_messages: { baseUrl: "", authStyle: "x-api-key" },
@@ -2244,311 +1064,11 @@ function defaultCustomProtocolConfigs(): RelayProtocolConfigs {
   };
 }
 
-function resetBulkForm() {
-  bulkForm.productLineId = null;
-  bulkForm.rawKeys = "";
-  bulkForm.tag = "";
-  bulkForm.seatCount = null;
-  bulkForm.status = "active";
-  bulkForm.fiveHourCreditLimit = "";
-  bulkForm.weeklyCreditLimit = "";
-  const firstNew = bulkChannelOptions.value.find(
-    (item) => !isTemplateOptionConfigured(item.template, item.option),
-  );
-  if (firstNew) {
-    bulkForm.custom = false;
-    bulkForm.providerCode = firstNew.template.code;
-    bulkForm.baseUrl = firstNew.option.url;
-    bulkForm.name = firstNew.option.productLineName;
-    bulkForm.supportedProtocols = initialOptionProtocols(firstNew.option, firstNew.template);
-    bulkFormProtocolConfigs.value = providerOptionProtocolConfigs(
-      firstNew.option,
-      firstNew.template,
-    );
-    return;
-  }
-  selectCustomChannelOption();
-}
-
 /** 各供应商新建渠道时的协议默认值：glm 官方线路三种全开，其余先只开 openai_chat。 */
 function defaultProtocolsForProvider(provider: "glm" | "deepseek" | "haizhi"): RelayProtocol[] {
   return provider === "glm"
     ? ["anthropic_messages", "openai_chat", "openai_responses"]
     : ["openai_chat"];
-}
-
-function resetCreateForm() {
-  createForm.provider = "glm";
-  createForm.variant = "domestic";
-  createForm.name = "";
-  createForm.tag = "";
-  createForm.seatCount = null;
-  createForm.supportedProtocols = defaultProtocolsForProvider("glm");
-  createForm.status = "active";
-  createForm.testModel = "";
-  createFormProtocolConfigs.value = defaultCustomProtocolConfigs();
-}
-
-async function openCreateChannel() {
-  if (!canWrite.value) return;
-  resetCreateForm();
-  showChannelCreate.value = true;
-}
-
-async function saveChannelCreate() {
-  if (!canWrite.value || createSaving.value) return;
-  const name = createForm.name.trim();
-  if (!name) {
-    ElMessage.warning("请填写渠道名称");
-    return;
-  }
-  if (createForm.seatCount == null || createForm.seatCount < 0) {
-    ElMessage.warning("请填写席位数量");
-    return;
-  }
-  if (!createForm.supportedProtocols.length) {
-    ElMessage.warning("请选择 API 协议");
-    return;
-  }
-  if (
-    createNeedsUpstreamUrl.value
-    && !protocolsHaveConfigs(createForm.supportedProtocols, createFormProtocolConfigs.value)
-  ) {
-    ElMessage.warning("请填写上游地址");
-    return;
-  }
-
-  createSaving.value = true;
-  try {
-    const payload: Record<string, unknown> = {
-      name,
-      tag: createForm.tag.trim(),
-      seatCount: createForm.seatCount,
-      status: createForm.status,
-      supportedProtocols: [...createForm.supportedProtocols],
-      provider: createForm.provider,
-    };
-    if (createForm.provider === "glm") payload.variant = createForm.variant;
-    if (createNeedsUpstreamUrl.value) {
-      payload.protocolConfigs = selectedProtocolConfigs(
-        createForm.supportedProtocols,
-        createFormProtocolConfigs.value,
-      );
-      const testModel = createForm.testModel.trim();
-      if (testModel) payload.testModel = testModel;
-    }
-    const { data } = await http.post("/api/admin/product-lines", payload);
-    if (!data.success) throw new Error(data.message || "创建渠道失败");
-    showChannelCreate.value = false;
-    await Promise.all([loadCredentials(), loadMeta()]);
-    const createdId = Number(data.data?.id);
-    if (Number.isInteger(createdId) && channels.value.some((channel) => channel.id === createdId)) {
-      selectedProductLineId.value = createdId;
-      syncSelectedToQuery(createdId);
-    }
-    ElMessage.success("渠道已创建");
-  } catch (error) {
-    ElMessage.error(getErrorMessage(error, "创建渠道失败"));
-  } finally {
-    createSaving.value = false;
-  }
-}
-
-async function removeChannel(channel: ChannelGroup) {
-  if (!canWrite.value || channelDeleting.value) return;
-  try {
-    await ElMessageBox.confirm(
-      `删除「${channelDisplayName(channel)}」会同时销毁该渠道下的席位、渠道 KEY，以及绑定该渠道的个人 API Key。删除后不可恢复，历史调用日志仍会保留。`,
-      "删除渠道",
-      {
-        type: "warning",
-        confirmButtonText: "删除",
-        cancelButtonText: "取消",
-        confirmButtonClass: "el-button--danger",
-      },
-    );
-  } catch {
-    return;
-  }
-
-  channelDeleting.value = true;
-  try {
-    await http.delete(`/api/admin/product-lines/${channel.id}`);
-    showChannelEdit.value = false;
-    showChannelDetails.value = false;
-    await loadCredentials();
-    reconcileSelection();
-    ElMessage.success("渠道已删除");
-  } catch (error) {
-    ElMessage.error(getErrorMessage(error, "删除渠道失败"));
-  } finally {
-    channelDeleting.value = false;
-  }
-}
-
-function openEditChannel(channel: ChannelGroup) {
-  if (!canWrite.value || channelEditSaving.value) return;
-  const template = templates.value.find((item) => item.code === channel.providerCode);
-  const option = template
-    ? resolveTemplateOptionForChannel(template, channel.productLineCode)
-    : undefined;
-  const templateConfigs = template && option
-    ? providerOptionProtocolConfigs(option, template)
-    : {};
-  const selectedConfigurableProtocols = configurableProtocols(channel.protocols);
-
-  channelEditForm.id = channel.id;
-  channelEditForm.configVersion = channel.configVersion;
-  channelEditForm.name = channel.productLineName;
-  channelEditForm.tag = channel.tag ?? "";
-  channelEditForm.seatCount = channel.seatCount;
-  channelEditForm.supportedProtocols = selectedConfigurableProtocols;
-  channelEditForm.status = channel.productLineStatus;
-  channelEditForm.testModel = channel.testModel ?? "";
-  channelEditProtocolConfigs.value = Object.keys(templateConfigs).length
-    ? templateConfigs
-    : { ...channel.protocolConfigs };
-  channelEditProtocolsTouched.value = false;
-  channelEditRoutingUpgradeRequested.value = false;
-  channelEditRoutingConfigDrift.value = Boolean(
-    selectedConfigurableProtocols.length
-      && template
-      && option
-      && protocolsHaveConfigs(selectedConfigurableProtocols, templateConfigs)
-      && !protocolConfigsMatch(
-        selectedConfigurableProtocols,
-        channel.protocolConfigs,
-        templateConfigs,
-      ),
-  );
-  channelEditOriginal.value = {
-    name: channel.productLineName,
-    tag: channel.tag ?? "",
-    supportedProtocols: [...channel.protocols],
-    status: channel.productLineStatus,
-    protocolConfigs: { ...channel.protocolConfigs },
-    seatCount: channel.seatCount,
-    testModel: channel.testModel ?? "",
-  };
-  showChannelEdit.value = true;
-}
-
-async function saveChannelEdit() {
-  if (!canWrite.value || channelEditSaving.value) return;
-
-  const productLineId = channelEditForm.id;
-  const name = channelEditForm.name.trim();
-  const original = channelEditOriginal.value;
-  if (!productLineId) {
-    ElMessage.error("未找到要编辑的渠道");
-    return;
-  }
-  if (!original) {
-    ElMessage.error("渠道原始配置已失效，请重新打开编辑窗口");
-    return;
-  }
-  if (!name) {
-    ElMessage.warning("请输入渠道名称");
-    return;
-  }
-  if (channelEditForm.seatCount == null || channelEditForm.seatCount < 0) {
-    ElMessage.warning("请填写席位数量");
-    return;
-  }
-  if (name.length > 100) {
-    ElMessage.warning("渠道名称不能超过 100 个字符");
-    return;
-  }
-
-  const originalSelectableProtocols = configurableProtocols(original.supportedProtocols);
-  const selectableProtocolsChanged = protocolSignature(channelEditForm.supportedProtocols)
-    !== protocolSignature(originalSelectableProtocols);
-  const explicitlyUpgradingDrift = channelEditRoutingConfigDrift.value
-    && (channelEditProtocolsTouched.value || channelEditRoutingUpgradeRequested.value);
-  const customChannel = channelEditTarget.value?.providerCode === CUSTOM_PROVIDER_CODE;
-  const protocolConfigsChanged = customChannel
-    && !protocolConfigsMatch(
-      channelEditForm.supportedProtocols,
-      original.protocolConfigs,
-      channelEditProtocolConfigs.value,
-    );
-  const shouldSendProtocols = selectableProtocolsChanged
-    || explicitlyUpgradingDrift
-    || protocolConfigsChanged;
-  if (shouldSendProtocols && !channelEditForm.supportedProtocols.length) {
-    ElMessage.warning("请至少选择一种支持协议");
-    return;
-  }
-  if (
-    shouldSendProtocols
-    && !protocolsHaveConfigs(channelEditForm.supportedProtocols, channelEditProtocolConfigs.value)
-  ) {
-    ElMessage.warning("所选协议缺少有效的 URL 或鉴权配置");
-    return;
-  }
-
-  const payload: Record<string, unknown> = {
-    expectedConfigVersion: channelEditForm.configVersion,
-  };
-  if (name !== original.name) payload.name = name;
-  if (channelEditForm.tag.trim() !== original.tag) payload.tag = channelEditForm.tag.trim();
-  if (channelEditForm.status !== original.status) payload.status = channelEditForm.status;
-  if (channelEditForm.seatCount !== original.seatCount) payload.seatCount = channelEditForm.seatCount;
-  if (channelEditForm.testModel.trim() !== original.testModel) {
-    payload.testModel = channelEditForm.testModel.trim() || null;
-  }
-  if (shouldSendProtocols) {
-    payload.supportedProtocols = [...channelEditForm.supportedProtocols];
-    if (customChannel) {
-      payload.protocolConfigs = selectedProtocolConfigs(
-        channelEditForm.supportedProtocols,
-        channelEditProtocolConfigs.value,
-      );
-    }
-  }
-  if (Object.keys(payload).length === 1) {
-    ElMessage.info("未检测到需要保存的修改");
-    return;
-  }
-
-  channelEditSaving.value = true;
-  try {
-    await http.patch(`/api/admin/product-lines/${productLineId}`, payload);
-    await loadCredentials();
-    if (channels.value.some((channel) => channel.id === productLineId)) {
-      selectedProductLineId.value = productLineId;
-      syncSelectedToQuery(productLineId);
-    }
-    showChannelEdit.value = false;
-    ElMessage.success("渠道已更新");
-  } catch (error) {
-    if (getErrorCode(error) === "CHANNEL_CONFIG_STALE") {
-      showChannelEdit.value = false;
-      await Promise.all([loadCredentials(), loadMeta()]).catch(() => undefined);
-      if (channels.value.some((channel) => channel.id === productLineId)) {
-        selectedProductLineId.value = productLineId;
-        syncSelectedToQuery(productLineId);
-      }
-      ElMessage.warning("渠道已被其他管理员更新，请刷新后重试");
-    } else {
-      ElMessage.error(getErrorMessage(error, "渠道更新失败"));
-    }
-  } finally {
-    channelEditSaving.value = false;
-  }
-}
-
-function openAddKeys(channel: ChannelGroup) {
-  resetBulkForm();
-  bulkForm.productLineId = channel.id;
-  bulkForm.custom = false;
-  bulkForm.providerCode = channel.providerCode;
-  bulkForm.baseUrl = channel.baseUrl;
-  bulkForm.name = channel.productLineName;
-  bulkForm.supportedProtocols = [...channel.protocols];
-  bulkForm.status = channel.productLineStatus;
-  bulkFormProtocolConfigs.value = { ...channel.protocolConfigs };
-  showBulkForm.value = true;
 }
 
 function emptyChannelFromProductLine(line: ListedProductLine): ChannelGroup {
@@ -2580,245 +1100,8 @@ function emptyChannelFromProductLine(line: ListedProductLine): ChannelGroup {
   };
 }
 
-function selectBulkChannelOption(item: BulkChannelOption) {
-  const configured = item.template.productLines?.find(
-    (line) => line.code === item.option.productLineCode,
-  );
-  const channel = configured
-    ? channels.value.find((entry) => entry.id === configured.id)
-    : undefined;
-
-  bulkForm.custom = false;
-  bulkForm.providerCode = item.template.code;
-  bulkForm.baseUrl = channel?.baseUrl ?? item.option.url;
-  bulkForm.name = channel?.productLineName ?? item.option.productLineName;
-  bulkForm.seatCount = channel?.seatCount ?? null;
-  bulkForm.supportedProtocols = channel
-    ? [...channel.protocols]
-    : initialOptionProtocols(item.option, item.template);
-  bulkForm.status = channel?.productLineStatus ?? "active";
-  bulkFormProtocolConfigs.value = channel
-    ? { ...channel.protocolConfigs }
-    : providerOptionProtocolConfigs(item.option, item.template);
-  bulkForm.productLineId = configured?.id ?? null;
-}
-
-function selectCustomChannelOption() {
-  bulkForm.custom = true;
-  bulkForm.providerCode = CUSTOM_PROVIDER_CODE;
-  bulkForm.baseUrl = "";
-  bulkForm.name = "";
-  bulkForm.seatCount = null;
-  bulkForm.supportedProtocols = ["openai_chat", "anthropic_messages"];
-  bulkFormProtocolConfigs.value = defaultCustomProtocolConfigs();
-}
-
-function useConfiguredVariant() {
-  const configured = selectedConfiguredProductLine.value;
-  const option = selectedBulkBaseUrlOption.value;
-  const template = selectedBulkTemplate.value;
-  if (!configured || !option || !template) return;
-
-  const channel = channels.value.find((item) => item.id === configured.id);
-  bulkForm.productLineId = configured.id;
-  bulkForm.name = channel?.productLineName ?? configured.name;
-  bulkForm.supportedProtocols = channel
-    ? [...channel.protocols]
-    : initialOptionProtocols(option, template);
-  if (channel) {
-    bulkForm.status = channel.productLineStatus;
-  }
-}
-
 function clearBulkSecrets() {
   bulkForm.rawKeys = "";
-}
-
-function parseBulkKeys(
-  raw: string,
-  labelBase: string,
-  existingCount: number,
-): { keys: ParsedKey[]; errors: string[] } {
-  const keys: ParsedKey[] = [];
-  const errors: string[] = [];
-  const seen = new Map<string, number>();
-  const nonEmptyLines = raw
-    .split(/\r?\n/)
-    .map((line, index) => ({ value: line.trim(), lineNo: index + 1 }))
-    .filter((line) => line.value.length > 0);
-
-  for (const line of nonEmptyLines) {
-    const tabIndex = line.value.indexOf("\t");
-    const commaIndex = line.value.indexOf(",");
-    const separatorIndex = tabIndex >= 0 ? tabIndex : commaIndex;
-    let label = "";
-    let secret = line.value;
-
-    if (separatorIndex >= 0) {
-      label = line.value.slice(0, separatorIndex).trim();
-      secret = line.value.slice(separatorIndex + 1).trim();
-      if (!label) errors.push(`第 ${line.lineNo} 行：名称不能为空`);
-    }
-
-    if (secret.length < 8) {
-      errors.push(`第 ${line.lineNo} 行：Key 至少需要 8 个字符`);
-      continue;
-    }
-    if (secret.length > 4096) {
-      errors.push(`第 ${line.lineNo} 行：Key 不能超过 4096 个字符`);
-      continue;
-    }
-    if (seen.has(secret)) {
-      errors.push(`第 ${line.lineNo} 行：与第 ${seen.get(secret)} 行的 Key 重复`);
-      continue;
-    }
-
-    seen.set(secret, line.lineNo);
-    const generatedLabel = `${labelBase} Key ${String(existingCount + keys.length + 1).padStart(2, "0")}`;
-    const hasCustomLabel = Boolean(label);
-    const finalLabel = label || generatedLabel;
-    if (finalLabel.length > 200) {
-      errors.push(`第 ${line.lineNo} 行：名称不能超过 200 个字符`);
-      continue;
-    }
-    keys.push({ lineNo: line.lineNo, label: finalLabel, secret, hasCustomLabel });
-  }
-
-  if (keys.length > 200) errors.push("单次最多导入 200 个 Key");
-  return { keys, errors };
-}
-
-async function saveBulkKeys() {
-  const parsed = bulkParseResult.value;
-  const creatingChannel = !bulkForm.productLineId;
-  const selectedOption = selectedBulkBaseUrlOption.value;
-  if (!parsed.keys.length) {
-    ElMessage.warning("请粘贴至少一个 API Key");
-    return;
-  }
-  if (parsed.errors.length) {
-    ElMessage.warning("请先修正 Key 格式错误");
-    return;
-  }
-  const quotas = parseQuotaFields(bulkForm.fiveHourCreditLimit, bulkForm.weeklyCreditLimit);
-  if (!quotas.ok) {
-    ElMessage.warning("额度须为非负数，允许小数，留空表示不限");
-    return;
-  }
-  if (creatingChannel && !bulkForm.supportedProtocols.length) {
-    ElMessage.warning("请至少选择一种支持协议");
-    return;
-  }
-  if (creatingChannel) {
-    const name = bulkForm.name.trim();
-    if (selectedConfiguredProductLine.value) {
-      ElMessage.warning("该渠道已经存在，请改为向现有渠道添加 Key");
-      return;
-    }
-    if (!name) {
-      ElMessage.warning("请输入渠道名称");
-      return;
-    }
-    if (bulkForm.seatCount == null || bulkForm.seatCount < 0) {
-      ElMessage.warning("请填写席位数量");
-      return;
-    }
-    if (name.length > 100) {
-      ElMessage.warning("渠道名称不能超过 100 个字符");
-      return;
-    }
-    if (!bulkForm.custom && !selectedOption) {
-      ElMessage.warning("请选择渠道");
-      return;
-    }
-    if (!protocolsHaveConfigs(bulkForm.supportedProtocols, bulkFormProtocolConfigs.value)) {
-      ElMessage.warning(
-        bulkForm.custom
-          ? "请为每个所选协议填写有效的上游地址和鉴权方式"
-          : "所选协议缺少有效的 URL 或鉴权配置",
-      );
-      return;
-    }
-  }
-
-  bulkSaving.value = true;
-  try {
-    const payload = {
-      ...(bulkForm.productLineId
-        ? { productLineId: bulkForm.productLineId }
-        : bulkForm.custom
-          ? {
-            custom: true,
-            name: bulkForm.name.trim(),
-            seatCount: bulkForm.seatCount,
-            status: bulkForm.status,
-            protocolConfigs: selectedProtocolConfigs(
-              bulkForm.supportedProtocols,
-              bulkFormProtocolConfigs.value,
-            ),
-          }
-          : {
-            providerCode: bulkForm.providerCode,
-            // Legacy locator only; protocolConfigs determine actual upstream URLs.
-            baseUrl: selectedOption!.url,
-            name: bulkForm.name.trim(),
-            seatCount: bulkForm.seatCount,
-            status: bulkForm.status,
-          }),
-      tag: bulkForm.tag.trim() || undefined,
-      keys: parsed.keys.map(({ label, secret, hasCustomLabel }) => (
-        hasCustomLabel ? { label, secret } : { secret }
-      )),
-      ...(!bulkForm.productLineId
-        ? { supportedProtocols: [...bulkForm.supportedProtocols] }
-        : {}),
-    };
-    const { data } = await http.post("/api/admin/credentials/bulk-create", payload);
-    const createdIds = createdCredentialIds(data.data?.credentials);
-    if (quotas.fiveHourCreditLimit != null || quotas.weeklyCreditLimit != null) {
-      await Promise.all(
-        createdIds.map((id) =>
-          http.patch(`/api/admin/credentials/${id}`, {
-            fiveHourCreditLimit: quotas.fiveHourCreditLimit,
-            weeklyCreditLimit: quotas.weeklyCreditLimit,
-          }),
-        ),
-      );
-    }
-    const targetId = Number(
-      data.data?.productLineId
-      ?? data.data?.productLine?.id
-      ?? bulkForm.productLineId,
-    );
-    const createdCount = Number(data.data?.createdCount ?? data.data?.credentials?.length ?? parsed.keys.length);
-    clearBulkSecrets();
-    showBulkForm.value = false;
-    if (creatingChannel) {
-      await Promise.all([loadCredentials(), loadMeta()]);
-    } else {
-      await loadCredentials();
-    }
-    if (Number.isInteger(targetId) && channels.value.some((channel) => channel.id === targetId)) {
-      selectedProductLineId.value = targetId;
-    } else if (!bulkForm.productLineId) {
-      const createdChannel = bulkForm.custom
-        ? channels.value.find((channel) => channel.id === targetId)
-        : channels.value.find(
-          (channel) => channel.providerCode === bulkForm.providerCode
-            && channel.productLineCode === selectedOption?.productLineCode,
-        );
-      if (createdChannel) selectedProductLineId.value = createdChannel.id;
-    }
-    ElMessage.success({
-      message: `已导入 ${createdCount} 个 Key。请点击“测试全部”确认上游连接可用。`,
-      duration: 7000,
-      showClose: true,
-    });
-  } catch (error) {
-    ElMessage.error(getErrorMessage(error, "批量导入失败"));
-  } finally {
-    bulkSaving.value = false;
-  }
 }
 
 function preferredProtocol(row: CredentialRow): RelayProtocol {
@@ -2868,9 +1151,7 @@ async function runWithConcurrency<T>(
 }
 
 async function batchTestCredentials() {
-  const targets = pageKind.value === "board"
-    ? [...boardVisibleRows.value]
-    : [...(selectedChannel.value?.keys ?? [])];
+  const targets = [...boardVisibleRows.value];
   if (!canWrite.value || !targets.length || batchTesting.value) return;
   batchTesting.value = true;
   batchTestProgress.done = 0;
@@ -2914,46 +1195,6 @@ async function setStatus(row: CredentialRow, status: "active" | "disabled") {
   } catch (error) {
     ElMessage.error(getErrorMessage(error, "状态更新失败"));
   }
-}
-
-async function removeCredential(row: CredentialRow) {
-  try {
-    await ElMessageBox.confirm(
-      `确认删除 Key「${row.label}」（末四位 ${row.secretSuffix}）？删除后不可恢复，历史调用日志仍会保留。`,
-      "删除 API Key",
-      {
-        type: "warning",
-        confirmButtonText: "删除",
-        cancelButtonText: "取消",
-        confirmButtonClass: "el-button--danger",
-      },
-    );
-  } catch {
-    return;
-  }
-
-  setDeleting(row.id, true);
-  try {
-    await http.delete(`/api/admin/credentials/${row.id}`);
-    ElMessage.success("Key 已删除");
-    if (detailCredentialId.value === row.id) showKeyDetails.value = false;
-    await loadCredentials();
-  } catch (error) {
-    ElMessage.error(getErrorMessage(error, "删除失败"));
-  } finally {
-    setDeleting(row.id, false);
-  }
-}
-
-function createdCredentialIds(value: unknown): number[] {
-  if (!Array.isArray(value)) return [];
-  const ids: number[] = [];
-  for (const item of value) {
-    if (typeof item !== "object" || item == null || !("id" in item)) continue;
-    const id = item.id;
-    if (typeof id === "number" && Number.isInteger(id) && id > 0) ids.push(id);
-  }
-  return ids;
 }
 
 async function saveQuotaLimits() {
@@ -3003,7 +1244,6 @@ onMounted(refreshAll);
   overflow: hidden;
   background: #f1f5f9;
 }
-
 .keys-board-toolbar {
   display: flex;
   flex-shrink: 0;
@@ -3014,17 +1254,14 @@ onMounted(refreshAll);
   background: #fff;
   border-bottom: 1px solid #e5e7eb;
 }
-
 .keys-board-toolbar-count {
   margin-right: auto;
   color: #64748b;
   font-size: 12px;
 }
-
 .keys-board-search {
   width: 200px;
 }
-
 .keys-board-stack {
   display: flex;
   flex: 1;
@@ -3033,7 +1270,6 @@ onMounted(refreshAll);
   overflow: hidden;
   background: #fff;
 }
-
 .keys-lane-grid {
   display: grid;
   flex: 1;
@@ -3046,7 +1282,6 @@ onMounted(refreshAll);
   padding: 8px;
   background: #fff;
 }
-
 .keys-lane-grid > .kanban-column {
   display: flex;
   flex-direction: column;
@@ -3055,11 +1290,9 @@ onMounted(refreshAll);
   height: auto;
   overflow: hidden;
 }
-
 .keys-lane-grid .kanban-column-head {
   flex-shrink: 0;
 }
-
 .keys-lane-grid .kanban-cards.is-rings {
   display: grid;
   flex: 1;
@@ -3072,24 +1305,20 @@ onMounted(refreshAll);
   overflow-x: hidden;
   overflow-y: auto;
 }
-
 .keys-lane-grid .kanban-empty {
   grid-column: 1 / -1;
 }
-
 .keys-lane-grid .key-ring {
   width: auto;
   min-width: 0;
   max-width: 100%;
 }
-
 .keys-lane-grid .key-ring-svg {
   width: 100%;
   max-width: 56px;
   height: auto;
   aspect-ratio: 1;
 }
-
 .key-ring {
   display: flex;
   flex-direction: column;
@@ -3105,28 +1334,23 @@ onMounted(refreshAll);
   cursor: pointer;
   appearance: none;
 }
-
 .key-ring.dragging,
 .key-ring.is-testing {
   opacity: 0.55;
 }
-
 .key-ring-svg {
   display: block;
   width: 56px;
   height: 56px;
 }
-
 .key-ring-track {
   fill: none;
   stroke: #1e293b;
   stroke-width: 7;
 }
-
 .key-ring-track.inner {
   stroke-width: 5.5;
 }
-
 .key-ring-progress {
   fill: none;
   stroke-width: 7;
@@ -3134,11 +1358,9 @@ onMounted(refreshAll);
   transform: rotate(-90deg);
   transform-origin: 36px 36px;
 }
-
 .key-ring-progress.inner {
   stroke-width: 5.5;
 }
-
 .key-ring-pct {
   display: inline-flex;
   align-items: center;
@@ -3150,430 +1372,12 @@ onMounted(refreshAll);
   font-variant-numeric: tabular-nums;
   line-height: 1;
 }
-
-.credentials-page {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  min-width: 0;
-  min-height: 0;
-  height: 100%;
-  overflow: hidden;
-}
-
-.credentials-shell {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  min-height: 0;
-  height: 100%;
-  overflow: hidden;
-}
-
-.page-head {
-  display: flex;
-  flex-shrink: 0;
-  align-items: center;
-  justify-content: flex-end;
-  margin-bottom: 12px;
-}
-
-.head-actions,
-.detail-actions,
-.drawer-actions {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.split-layout {
-  display: grid;
-  grid-template-columns: minmax(260px, 340px) minmax(0, 1fr);
-  gap: 16px;
-  flex: 1;
-  min-height: 0;
-  overflow: hidden;
-}
-
-.channel-list-pane,
-.channel-detail-pane {
-  min-width: 0;
-  min-height: 0;
-  height: 100%;
-  border: 1px solid #e5e7eb;
-  border-radius: 12px;
-}
-
-.channel-summary-body {
-  min-height: 280px;
-}
-
-.channel-summary-head {
-  margin-bottom: 16px;
-}
-
-.url-value {
-  overflow-wrap: anywhere;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 12px;
-}
-
-.drawer-overview {
-  margin: 0;
-}
-
-.channel-list-pane {
-  display: flex;
-  flex-direction: column;
-  padding: 12px;
-  overflow: hidden;
-  background: #f8fafc;
-}
-
-.pane-label {
-  display: flex;
-  flex-shrink: 0;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 10px;
-  padding: 0 4px;
-  color: #64748b;
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.pane-count {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 22px;
-  height: 20px;
-  padding: 0 6px;
-  border-radius: 999px;
-  background: #e2e8f0;
-}
-
-.channel-list {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  gap: 8px;
-  min-height: 0;
-  padding-right: 2px;
-  overflow-x: hidden;
-  overflow-y: auto;
-}
-
-.channel-card {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  width: 100%;
-  padding: 12px;
-  border: 1px solid #e2e8f0;
-  border-radius: 10px;
-  background: #fff;
-  color: inherit;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
-}
-
-.channel-card:hover {
-  border-color: #93c5fd;
-  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.06);
-}
-
-.channel-card.selected {
-  border-color: #3b82f6;
-  background: #eff6ff;
-  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.12);
-}
-
-.channel-card-top {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-}
-
-.channel-card-copy {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  min-width: 0;
-  gap: 2px;
-}
-
-.channel-tag {
-  width: fit-content;
-  max-width: 100%;
-}
-
-.channel-card-title {
-  display: -webkit-box;
-  overflow: hidden;
-  color: #0f172a;
-  font-size: 14px;
-  font-weight: 650;
-  line-height: 1.35;
-  white-space: normal;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-}
-
-.channel-card-meta {
-  color: #94a3b8;
-  font-size: 12px;
-}
-
-.channel-card-bottom {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  color: #94a3b8;
-  font-size: 12px;
-}
-
-.channel-code {
-  max-width: 150px;
-  overflow: hidden;
-  color: #64748b;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.channel-detail-pane {
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  padding: 18px 20px;
-  background: #fff;
-  overflow: hidden;
-}
-
-.detail-header,
-.drawer-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-}
-
-.detail-header {
-  flex-shrink: 0;
-  margin-bottom: 14px;
-}
-
-.channel-summary-section {
-  min-width: 0;
-}
-
-.detail-identity {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  min-width: 0;
-}
-
-.detail-copy {
-  min-width: 0;
-}
-
 .detail-title-row {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 8px;
 }
-
-.detail-title,
-.drawer-title {
-  margin: 0;
-  color: #0f172a;
-  font-size: 20px;
-  font-weight: 650;
-}
-
-.channel-protocols {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 5px;
-  margin-top: 7px;
-}
-
-.channel-protocols > span {
-  margin-right: 2px;
-  color: #94a3b8;
-  font-size: 12px;
-}
-
-.provider-logo {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 46px;
-  height: 46px;
-  flex: 0 0 auto;
-  border-radius: 12px;
-  color: #fff;
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.provider-logo.sm {
-  width: 36px;
-  height: 36px;
-  border-radius: 10px;
-  font-size: 11px;
-}
-
-.channel-overview {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-bottom: 10px;
-}
-
-.overview-card {
-  display: inline-flex;
-  align-items: center;
-  flex: 0 0 auto;
-  gap: 6px;
-  min-height: 30px;
-  padding: 5px 9px;
-  border: 1px solid #e5e7eb;
-  border-radius: 7px;
-  background: #f8fafc;
-}
-
-.overview-card span {
-  color: #94a3b8;
-  font-size: 11px;
-  line-height: 1;
-  white-space: nowrap;
-}
-
-.overview-card strong {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 6px;
-  color: #0f172a;
-  font-size: 14px;
-  line-height: 1;
-  font-variant-numeric: tabular-nums;
-}
-
-.overview-card strong small {
-  padding-left: 6px;
-  border-left: 1px solid #dbe3ed;
-  color: #64748b;
-  font-size: 10px;
-  font-weight: 500;
-  line-height: 1;
-  white-space: nowrap;
-}
-
-.overview-card.success {
-  border-color: #bbf7d0;
-  background: #f0fdf4;
-}
-
-.overview-card.warning {
-  border-color: #fde68a;
-  background: #fffbeb;
-}
-
-.overview-card.danger {
-  border-color: #fecaca;
-  background: #fef2f2;
-}
-
-.overview-card.success strong { color: #15803d; }
-.overview-card.warning strong { color: #d97706; }
-.overview-card.danger strong { color: #b91c1c; }
-
-.key-pool-section {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  min-width: 0;
-  min-height: 0;
-  border: 1px solid #e5e7eb;
-  border-radius: 10px;
-  overflow: hidden;
-}
-
-.key-pool-head {
-  display: flex;
-  flex-shrink: 0;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 12px 14px;
-  border-bottom: 1px solid #e5e7eb;
-  background: #f8fafc;
-}
-
-.key-pool-head h4 {
-  margin: 0;
-  color: #334155;
-  font-size: 14px;
-}
-
-.key-pool-head p {
-  margin: 4px 0 0;
-  color: #94a3b8;
-  font-size: 12px;
-}
-
-.batch-actions {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.board-stats {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px 14px;
-  margin-top: 8px;
-}
-
-.board-stat {
-  color: #64748b;
-  font-size: 12px;
-}
-
-.board-stat strong {
-  margin-left: 4px;
-  color: #0f172a;
-  font-variant-numeric: tabular-nums;
-}
-
-.board-stat.warning,
-.board-stat.warning strong { color: #d97706; }
-
-.board-stat.danger,
-.board-stat.danger strong { color: #b91c1c; }
-
-.kanban-board {
-  display: grid;
-  flex: 1;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
-  min-height: 0;
-  padding: 12px;
-  background: #fff;
-}
-
 .kanban-column {
   display: flex;
   flex-direction: column;
@@ -3586,16 +1390,13 @@ onMounted(refreshAll);
   overflow: hidden;
   transition: border-color 0.15s ease, background 0.15s ease;
 }
-
 .kanban-column.droppable {
   border-color: #cbd5e1;
 }
-
 .kanban-column.drag-over {
   border-color: #3b82f6;
   background: #eff6ff;
 }
-
 .kanban-column-head {
   display: flex;
   align-items: center;
@@ -3606,15 +1407,7 @@ onMounted(refreshAll);
   font-size: 12px;
   font-weight: 650;
 }
-
-.kanban-column-head.is-waiting { color: #64748b; }
-.kanban-column-head.is-in_use { color: #15803d; }
-.kanban-column-head.is-cooling_5h { color: #d97706; }
 .estimate-mark { color: #94a3b8; font-size: 12px; }
-.kanban-column-head.is-cooling_weekly { color: #b45309; }
-.kanban-column-head.is-rate_limit { color: #2563eb; }
-.kanban-column-head.is-stopped { color: #94a3b8; }
-
 .kanban-count {
   display: inline-flex;
   align-items: center;
@@ -3627,7 +1420,6 @@ onMounted(refreshAll);
   color: #475467;
   font-size: 11px;
 }
-
 .kanban-cards {
   display: flex;
   flex: 1;
@@ -3638,118 +1430,11 @@ onMounted(refreshAll);
   overflow-x: hidden;
   overflow-y: auto;
 }
-
 .kanban-empty {
   margin: auto;
   color: #cbd5e1;
   font-size: 12px;
 }
-
-.key-card {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 12px 14px 10px;
-  border: 1px solid #e8eef5;
-  border-left: 3px solid #dbe4ee;
-  border-radius: 12px;
-  background: #fff;
-  cursor: grab;
-  transition: border-color 0.16s ease, box-shadow 0.16s ease, transform 0.16s ease, opacity 0.16s ease;
-}
-
-.key-card.is-ok { border-left-color: #34d399; }
-.key-card.is-warning { border-left-color: #f59e0b; }
-.key-card.is-bad { border-left-color: #f43f5e; }
-.key-card.is-muted { border-left-color: #cbd5e1; }
-
-.key-card:hover {
-  border-color: #bfd2ea;
-  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.07);
-  transform: translateY(-1px);
-}
-
-.key-card.dragging {
-  border-color: #3b82f6;
-  opacity: 0.5;
-  transform: none;
-}
-
-.key-card-main {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 10px;
-  min-width: 0;
-}
-
-.key-card-id {
-  display: flex;
-  flex: 1;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px 8px;
-  min-width: 0;
-}
-
-.key-card-label {
-  overflow: hidden;
-  min-width: 0;
-  color: #0f172a;
-  font-size: 13.5px;
-  font-weight: 650;
-  letter-spacing: -0.01em;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.key-note-tag {
-  flex: 0 0 auto;
-  max-width: 8em;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.key-suffix {
-  flex: 0 0 auto;
-  padding: 1px 7px;
-  border-radius: 6px;
-  background: #f1f5f9;
-  color: #64748b;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 11px;
-  letter-spacing: 0.04em;
-}
-
-.latency {
-  display: inline-flex;
-  flex: 0 0 auto;
-  align-items: center;
-  justify-content: center;
-  min-width: 58px;
-  max-width: 42%;
-  overflow: hidden;
-  padding: 3px 8px;
-  border-radius: 999px;
-  font-size: 11px;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-  letter-spacing: 0.01em;
-  line-height: 1.35;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.latency.ok { background: #ecfdf3; color: #15803d; }
-.latency.warning { background: #fffbeb; color: #b45309; }
-.latency.bad { background: #fff1f2; color: #be123c; }
-.latency.muted { background: #f8fafc; color: #94a3b8; }
-.latency.testing {
-  min-height: 22px;
-  background: #eff6ff;
-  color: #2563eb;
-}
-
 .latency-spinner {
   width: 12px;
   height: 12px;
@@ -3758,18 +1443,8 @@ onMounted(refreshAll);
   border-radius: 50%;
   animation: latency-spin 0.7s linear infinite;
 }
-
-@keyframes latency-spin {
-  to { transform: rotate(360deg); }
+@keyframes latency-spin {to { transform: rotate(360deg); }
 }
-
-.key-card-meta {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  min-width: 0;
-}
-
 .binding-badge {
   align-self: flex-start;
   padding: 1px 7px;
@@ -3779,85 +1454,30 @@ onMounted(refreshAll);
   line-height: 1.4;
   white-space: nowrap;
 }
-
 .binding-badge.pending {
   background: #fffbeb;
   color: #a16207;
 }
-
 .binding-badge.employee {
   background: #fee2e2;
   color: #b91c1c;
 }
-
 .binding-badge.team {
   background: #cffafe;
   color: #0e7490;
 }
-
 .binding-badge.enterprise {
   background: #e0e7ff;
   color: #4338ca;
 }
-
-.quota-meters {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-}
-
-.quota-meter {
-  min-width: 0;
-}
-
-.quota-meter-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
-  color: #64748b;
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-}
-
-.quota-meter-head span:last-child {
-  color: #334155;
-  font-weight: 600;
-}
-
-.quota-track {
-  height: 4px;
-  margin-top: 4px;
-  overflow: hidden;
-  border-radius: 999px;
-  background: #e2e8f0;
-}
-
-.quota-track i {
-  display: block;
-  height: 100%;
-  border-radius: inherit;
-  background: #2563eb;
-}
-
-.quota-track i.warn {
-  background: #d97706;
-}
-
-.quota-track i.full {
-  background: #dc2626;
-}
-
 .quota-fields {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0 16px;
 }
-
 .quota-edit-form {
   margin-top: 12px;
 }
-
 .quota-progress {
   display: grid;
   grid-template-columns: 52px minmax(0, 1fr);
@@ -3867,49 +1487,6 @@ onMounted(refreshAll);
   color: #64748b;
   font-size: 12px;
 }
-
-.key-card-foot {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  padding-top: 8px;
-  border-top: 1px solid #f1f5f9;
-}
-
-.traffic {
-  flex: 1;
-  min-width: 0;
-  color: #64748b;
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-}
-
-.traffic.idle { color: #94a3b8; }
-
-.traffic b {
-  margin: 0 2px 0 6px;
-  font-weight: 650;
-}
-
-.traffic .ok { color: #94a3b8; }
-.traffic:not(.idle) .ok { color: #15803d; }
-.traffic .bad { color: #94a3b8; }
-.traffic .bad.on { color: #be123c; }
-
-.key-card-actions {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  opacity: 0.55;
-  transition: opacity 0.15s ease;
-}
-
-.key-card:hover .key-card-actions,
-.key-card:focus-within .key-card-actions {
-  opacity: 1;
-}
-
 .secret-mask {
   flex: 0 0 auto;
   color: #94a3b8;
@@ -3917,281 +1494,52 @@ onMounted(refreshAll);
   font-size: 12px;
   letter-spacing: 0.03em;
 }
-
 .secret-mask.inline {
   color: #64748b;
 }
-
 .model-tags {
   display: flex;
   flex-wrap: wrap;
   gap: 5px;
 }
-
-.request-counts {
-  font-size: 13px;
-  font-variant-numeric: tabular-nums;
-}
-
-.request-counts .ok,
-.ok-text { color: #15803d; }
-.request-counts .bad,
-.bad-text { color: #b91c1c; }
-.request-counts .slash { margin: 0 5px; color: #cbd5e1; }
-
-.health-chip {
-  overflow: hidden;
-  max-width: 58%;
-  color: #64748b;
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.health-chip.ok { color: #15803d; }
-.health-chip.bad { color: #b91c1c; }
-.health-chip.warning { color: #d97706; }
-.health-chip.muted { color: #94a3b8; }
-
-.time-text {
-  color: #64748b;
-  font-size: 12px;
-}
-
-.submit-records-toolbar {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-bottom: 12px;
-}
-
-.detail-empty {
-  margin: auto;
-}
-
-.section-label {
-  margin-bottom: 10px;
-  color: #334155;
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.provider-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
-  margin-bottom: 18px;
-}
-
-.provider-card {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  min-height: 70px;
-  padding: 12px;
-  border: 1px solid #e2e8f0;
-  border-radius: 11px;
-  background: #fff;
-  color: inherit;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
-}
-
-.provider-card:hover {
-  border-color: #93c5fd;
-  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.07);
-}
-
-.provider-card.selected {
-  border-color: #3b82f6;
-  background: #eff6ff;
-  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.12);
-}
-
-.provider-card.configured:not(.selected) {
-  background: #f8fafc;
-}
-
-.empty-keys {
-  padding: 32px 0;
-}
-
-.provider-card-copy {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  gap: 3px;
-}
-
-.provider-card-copy strong {
-  color: #0f172a;
-  font-size: 14px;
-}
-
-.provider-card-copy small {
-  color: #94a3b8;
-  font-size: 11px;
-  line-height: 1.35;
-}
-
-.editing-context {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 12px 14px;
-  border-radius: 9px;
-  background: #f8fafc;
-}
-
-.editing-context > div {
-  flex: 1;
-  min-width: 0;
-}
-
-.channel-edit-context {
-  margin-bottom: 18px;
-}
-
-.configured-variant-notice {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin: -2px 0 18px;
-}
-
-.cell-secondary {
-  margin-top: 3px;
-  color: #94a3b8;
-  font-size: 12px;
-}
-
 .credential-form {
   margin-top: 4px;
 }
-
-.credential-form .channel-field-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 0 16px;
-}
-
-.credential-form .channel-field-grid.single {
-  grid-template-columns: 1fr;
-}
-
 @media (max-width: 560px) {
-  .credential-form .channel-field-grid {
-    grid-template-columns: 1fr;
-  }
 }
-
-.credential-dialog :deep(.el-dialog__body) {
-  max-height: calc(100vh - 180px);
-  overflow-y: auto;
-}
-
-.channel-protocol-summary {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
 .form-help {
   margin-top: 6px;
   color: #64748b;
   font-size: 12px;
   line-height: 1.5;
 }
-
-.bulk-help {
-  display: flex;
-  justify-content: space-between;
-  width: 100%;
-  gap: 10px;
-}
-
-.bulk-help strong {
-  flex: 0 0 auto;
-  color: #2563eb;
-}
-
-.parse-errors {
-  width: 100%;
-  margin-top: 7px;
-  padding: 8px 10px;
-  border-radius: 7px;
-  background: #fef2f2;
-  color: #b91c1c;
-  font-size: 12px;
-  line-height: 1.55;
-}
-
-.key-preview {
-  margin: -2px 0 16px;
-  padding: 10px 12px;
-  border: 1px solid #e5e7eb;
-  border-radius: 8px;
-  background: #f8fafc;
-}
-
-.key-preview-head {
-  margin-bottom: 6px;
-  color: #64748b;
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.key-preview-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 4px 0;
-  color: #334155;
-  font-size: 12px;
-}
-
-.key-preview-more {
-  margin-top: 5px;
-  color: #94a3b8;
-  font-size: 12px;
-}
-
 .drawer-head {
   padding-bottom: 16px;
   border-bottom: 1px solid #e5e7eb;
 }
-
 .drawer-head p {
   margin: 5px 0 0;
   color: #64748b;
   font-size: 12px;
 }
-
 .drawer-sections {
   display: flex;
   flex-direction: column;
   gap: 14px;
   padding-top: 16px;
 }
-
 .detail-section {
   padding: 14px 16px;
   border: 1px solid #eef2f7;
   border-radius: 10px;
   background: #f8fafc;
 }
-
 .section-heading {
   margin: 0 0 12px;
   color: #334155;
   font-size: 13px;
   font-weight: 650;
 }
-
 .section-heading-row {
   display: flex;
   align-items: center;
@@ -4199,38 +1547,31 @@ onMounted(refreshAll);
   gap: 12px;
   margin-bottom: 12px;
 }
-
 .section-heading-row .section-heading {
   margin: 0;
 }
-
 .test-controls {
   display: flex;
   align-items: center;
   gap: 8px;
 }
-
 .info-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px 16px;
   margin: 0;
 }
-
 .info-item {
   min-width: 0;
 }
-
 .info-item.full {
   grid-column: 1 / -1;
 }
-
 .info-item dt {
   margin-bottom: 4px;
   color: #94a3b8;
   font-size: 12px;
 }
-
 .info-item dd {
   margin: 0;
   color: #0f172a;
@@ -4238,13 +1579,11 @@ onMounted(refreshAll);
   line-height: 1.5;
   word-break: break-word;
 }
-
 .models-block {
   margin-top: 14px;
   padding-top: 12px;
   border-top: 1px solid #e2e8f0;
 }
-
 .current-error-block {
   margin-bottom: 14px;
   padding: 10px 12px;
@@ -4252,24 +1591,20 @@ onMounted(refreshAll);
   border-radius: 8px;
   background: #fef2f2;
 }
-
 .current-error-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
 }
-
 .current-error-head strong {
   color: #b91c1c;
   font-size: 12px;
 }
-
 .current-error-head span {
   color: #ef4444;
   font-size: 11px;
 }
-
 .current-error-block p {
   margin: 6px 0 0;
   color: #991b1b;
@@ -4278,92 +1613,31 @@ onMounted(refreshAll);
   white-space: pre-wrap;
   word-break: break-word;
 }
-
 .models-heading {
   margin-bottom: 10px;
   color: #334155;
   font-size: 12px;
   font-weight: 600;
 }
-
 .model-tags {
   max-height: 180px;
   overflow: auto;
 }
-
 .empty-hint {
   margin: 0;
   color: #64748b;
   font-size: 13px;
   line-height: 1.55;
 }
-
 .error-text {
   color: #b91c1c !important;
 }
-
-.mono {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-}
-
-.wrap {
-  white-space: normal;
-  word-break: break-all;
-}
-
 @media (max-width: 1200px) {
-  .key-pool-head {
-    align-items: flex-start;
-    flex-direction: column;
-  }
-
-  .batch-actions {
-    justify-content: flex-start;
-  }
-
 }
-
 @media (max-width: 900px) {
-  .split-layout {
-    grid-template-columns: 1fr;
-    grid-template-rows: minmax(0, 35%) minmax(0, 1fr);
-  }
-
-  .detail-header,
-  .drawer-head {
-    flex-direction: column;
-  }
 }
-
-@media (max-width: 720px) {
-  .quota-fields,
-  .quota-meters {
-    grid-template-columns: 1fr;
-  }
-
-  .page-head {
-    display: flex;
-    flex-direction: column;
-  }
-
-  .head-actions {
-    width: 100%;
-  }
-
-  .configured-variant-notice {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  .provider-grid,
-  .info-grid,
-  .kanban-board {
-    grid-template-columns: 1fr;
-  }
-
-  .keys-lane-grid {
+@media (max-width: 720px) {.keys-lane-grid {
     grid-template-columns: repeat(6, minmax(0, 1fr));
   }
-
 }
 </style>

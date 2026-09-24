@@ -139,13 +139,6 @@ export type LoadSupportAccountContextInput = {
   relayBaseUrl: string;
 };
 
-export async function loadSupportAccountContext(
-  input: LoadSupportAccountContextInput,
-): Promise<string> {
-  const snapshot = await loadSupportAccountSnapshot(input);
-  return formatAccountContext(snapshot);
-}
-
 export async function loadSupportAccountSnapshot(
   input: LoadSupportAccountContextInput,
 ): Promise<SupportAccountSnapshot> {

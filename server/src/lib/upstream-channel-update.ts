@@ -51,8 +51,6 @@ export const upstreamChannelUpdateSchema = z
     message: "至少提供一个要修改的字段",
   });
 
-export type UpstreamChannelUpdate = z.infer<typeof upstreamChannelUpdateSchema>;
-
 export type ChannelCredentialProtocolState = {
   supportedProtocols: readonly RelayProtocol[] | null;
 };

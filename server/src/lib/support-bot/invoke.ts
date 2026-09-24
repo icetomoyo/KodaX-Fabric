@@ -413,14 +413,3 @@ export async function invokeSupportBotCompletion(
   }
   return invokeChannelCompletion(resolved.candidate, messages, tools, signal);
 }
-
-export async function invokeSupportBot(
-  messages: SupportLlmMessage[],
-  transport?: SupportBotTransport,
-): Promise<string> {
-  const completion = await invokeSupportBotCompletion(messages, transport);
-  if (!completion.content) {
-    throw supportBotUpstreamError();
-  }
-  return completion.content;
-}

@@ -223,12 +223,6 @@ export function normalizeBaseUrl(value: string): string {
   return value.trim().replace(/\/+$/, "");
 }
 
-export function resolveTemplateBaseUrl(template: ProviderTemplate, value?: string): string | null {
-  const normalized = normalizeBaseUrl(value || template.baseUrls[0].url);
-  const allowed = Boolean(resolveTemplateBaseUrlOption(template, normalized));
-  return allowed ? normalized : null;
-}
-
 export function resolveTemplateBaseUrlOption(
   template: ProviderTemplate,
   value?: string,
@@ -249,10 +243,6 @@ export function isAllowedTemplateHost(template: ProviderTemplate, value: string)
   } catch {
     return false;
   }
-}
-
-export function isCustomProvider(code: string): boolean {
-  return code === CUSTOM_PROVIDER_CODE;
 }
 
 export function isSelfHostedProvider(code: string): boolean {

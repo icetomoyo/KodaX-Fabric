@@ -27,9 +27,3 @@ export function supportBotUpstreamError(
 export function supportBotConversationNotFound(): SupportBotError {
   return new SupportBotError(404, "SUPPORT_BOT_CONVERSATION_NOT_FOUND", "会话不存在");
 }
-
-export function supportBotInvalidMessage(
-  message = "消息长度须为 1–2000 个字符",
-): SupportBotError {
-  return new SupportBotError(400, "INVALID_MESSAGE", message);
-}

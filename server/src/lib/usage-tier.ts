@@ -80,8 +80,3 @@ export function usageTierForRequest(tier: UsageTier): UsageTier {
  * Classify a user from recent daily totals. Missing days in the 7-day window
  * count as 0. An empty window (no counted day) is 闲置.
  */
-export function classifyUsageTierFromDays(dailyTotals: readonly number[]): UsageTier {
-  if (dailyTotals.length === 0) return classifyUsageTier(null);
-  const total = dailyTotals.reduce((sum, value) => sum + asNonNegative(value), 0);
-  return classifyUsageTier(averageDailyTokensFromWindow(total));
-}

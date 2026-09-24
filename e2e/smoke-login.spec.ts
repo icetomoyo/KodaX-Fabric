@@ -15,3 +15,18 @@ test("账户登录：管理员进入后台工作台", async ({ page }) => {
   await expect(page).toHaveURL(/\/admin/, { timeout: 15_000 });
   await expect(page.getByText("企业管理").first()).toBeVisible();
 });
+
+test("KEYS看板渲染六条状态泳道", async ({ page }) => {
+  await page.goto("/");
+  await page.getByText("账户登录", { exact: true }).click();
+  await page.getByPlaceholder("11 位手机号").fill(E2E.admin.phone);
+  await page.getByPlaceholder("请输入密码").fill(E2E.admin.password);
+  await page.getByRole("button", { name: "登录" }).click();
+  await expect(page).toHaveURL(/\/admin/, { timeout: 15_000 });
+
+  await page.goto("/admin/keys-board");
+  for (const lane of ["等候", "使用", "5 小时冷却", "7 天冷却", "限流", "停用"]) {
+    await expect(page.locator(".kanban-column-title", { hasText: lane })).toBeVisible();
+  }
+  await expect(page.getByText("个 Key").first()).toBeVisible();
+});

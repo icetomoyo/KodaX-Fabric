@@ -947,12 +947,3 @@ export async function sendRelayUpstream(
 }
 
 /** Preserve the original Chat Completions API for existing routes and callers. */
-export function sendRelayUpstreamChat(
-  input: SendRelayUpstreamChatInput,
-): Promise<RelayUpstreamAttemptResult> {
-  return sendRelayUpstream({
-    ...input,
-    protocol: DEFAULT_RELAY_PROTOCOL,
-    operation: "chat_completions",
-  });
-}

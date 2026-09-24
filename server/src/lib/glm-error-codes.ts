@@ -172,10 +172,6 @@ export function extractUpstreamUsageCap(payload: unknown): UpstreamUsageCap | nu
 }
 
 /** True when an upstream JSON envelope reports quota/balance exhaustion. */
-export function isQuotaExhaustedError(payload: unknown): boolean {
-  return extractUpstreamUsageCap(payload) !== null;
-}
-
 /** 从上游响应信封取出原文业务码和错误信息，不改写。 */
 export function extractUpstreamBusinessError(payload: unknown): { code: string | null; message: string | null } | null {
   let value = payload;

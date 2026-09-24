@@ -9,16 +9,8 @@ export const SEAT_MISSING_MESSAGE = "席位不存在";
 export const SEAT_TAG_INVALID_MESSAGE = "席位标签最多 32 个字符";
 export const SEAT_CHANNEL_FULL_MESSAGE = "该渠道席位已满";
 export const SEAT_COUNT_BELOW_REGISTERED_MESSAGE = "渠道席位不能少于已登记数";
-export const SEAT_COUNT_REQUIRED_MESSAGE = "请填写席位数量";
 export const SEAT_TAG_MAX_LENGTH = 32;
 export const SEAT_COUNT_MAX = 100_000;
-
-export function normalizeSeatCount(value: unknown): number | null {
-  if (typeof value !== "number" || !Number.isInteger(value) || value < 0 || value > SEAT_COUNT_MAX) {
-    return null;
-  }
-  return value;
-}
 
 export function planSeatCapacity(input: {
   seatCount: number;

@@ -64,50 +64,6 @@ export function parseUpstreamBusinessFailure(
   };
 }
 
-export function formatUpstreamBusinessFailure(
-  failure: UpstreamBusinessFailure,
-): string {
-  const code = failure.code ? `（${failure.code}）` : "";
-  const detail = failure.message ? `：${failure.message.slice(0, 500)}` : "";
-  return `上游返回业务错误${code}${detail}`;
-}
-
-export function parseUpstreamModels(payload: unknown): string[] {
-  if (!payload || typeof payload !== "object") return [];
-  const data = (payload as { data?: unknown }).data;
-  if (!Array.isArray(data)) return [];
-
-  return data
-    .map((item) => {
-      if (typeof item === "string") return item;
-      if (item && typeof item === "object" && typeof (item as { id?: unknown }).id === "string") {
-        return (item as { id: string }).id;
-      }
-      return null;
-    })
-    .filter((item): item is string => Boolean(item))
-    .slice(0, 200);
-}
-
-export function summarizeUpstreamHttpError(status: number, raw: string): string {
-  let detail = raw.trim();
-  try {
-    const parsed = JSON.parse(raw) as {
-      error?: { message?: unknown } | string;
-      message?: unknown;
-    };
-    if (typeof parsed.error === "string") detail = parsed.error;
-    if (parsed.error && typeof parsed.error === "object" && typeof parsed.error.message === "string") {
-      detail = parsed.error.message;
-    }
-    if (typeof parsed.message === "string") detail = parsed.message;
-  } catch {
-    // Keep the text response when the upstream does not return JSON.
-  }
-  const suffix = detail ? `：${detail.slice(0, 500)}` : "";
-  return `上游返回 HTTP ${status}${suffix}`;
-}
-
 export function resolveUpstreamTestProtocol(
   supportedProtocols: RelayProtocol[] | null | undefined,
   preferred?: RelayProtocol,
