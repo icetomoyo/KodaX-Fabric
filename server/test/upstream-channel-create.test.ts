@@ -103,6 +103,52 @@ test("haizhi self-hosted create plan requires an upstream URL and has no GLM lin
   assert.match(plan.allocateCode(), /^hz_[0-9a-f]{16}$/);
 });
 
+// testModel 失败方式（先于实现编写）：
+// 1. 缺省 / 空串 / 纯空白 → 接受，testModel 落为 null（走 discoveredModels/内置默认兜底）。
+// 2. 带前后空白的合法值 → trim 后进 plan。
+// 3. 超过 128 字符 → 拒绝（test_model_invalid）。
+// 4. 非字符串（数字、对象）→ 拒绝。
+// 5. glm / deepseek 传 testModel 同样接受（解析链统一，前端只在自建渠道暴露输入）。
+test("create plan accepts an optional per-channel test model for self-hosted lines", () => {
+  const base = {
+    ...domesticConfigs,
+    provider: "haizhi" as const,
+    supportedProtocols: ["openai_chat" as const],
+    protocolConfigs: {
+      openai_chat: { baseUrl: "http://10.10.20.10:8080/v1", authStyle: "bearer" },
+    },
+  };
+
+  const omitted = planUpstreamChannelCreate(base);
+  assert.equal(omitted.kind, "accepted");
+  if (omitted.kind !== "accepted") return;
+  assert.equal(omitted.testModel, null);
+
+  const blank = planUpstreamChannelCreate({ ...base, testModel: "   " });
+  assert.equal(blank.kind, "accepted");
+  if (blank.kind !== "accepted") return;
+  assert.equal(blank.testModel, null);
+
+  const trimmed = planUpstreamChannelCreate({ ...base, testModel: "  glm-4.5-air  " });
+  assert.equal(trimmed.kind, "accepted");
+  if (trimmed.kind !== "accepted") return;
+  assert.equal(trimmed.testModel, "glm-4.5-air");
+
+  const oversized = planUpstreamChannelCreate({ ...base, testModel: "m".repeat(129) });
+  assert.equal(oversized.kind, "test_model_invalid");
+
+  const wrongType = planUpstreamChannelCreate({ ...base, testModel: 42 });
+  assert.equal(wrongType.kind, "test_model_invalid");
+
+  const glmWithModel = planUpstreamChannelCreate({
+    ...domesticConfigs,
+    testModel: "glm-4.5-air",
+  });
+  assert.equal(glmWithModel.kind, "accepted");
+  if (glmWithModel.kind !== "accepted") return;
+  assert.equal(glmWithModel.testModel, "glm-4.5-air");
+});
+
 test("GLM create plan rejects the old custom line", () => {
   const plan = planUpstreamChannelCreate({
     ...domesticConfigs,

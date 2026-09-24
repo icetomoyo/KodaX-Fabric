@@ -490,6 +490,9 @@ export async function meRoutes(app: FastifyInstance) {
         baseUrl: upstreamConfig.baseUrl,
         authStyle: upstreamConfig.authStyle,
         secret: body.data.secret,
+        // 渠道配置的测试模型优先，自建渠道靠它完成连通性测试；
+        // 未配置时回退 discoveredModels / 供应商内置默认。
+        model: located.productLine.testModel ?? undefined,
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : "测试失败";

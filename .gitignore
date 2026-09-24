@@ -18,3 +18,8 @@ web/dist
 .vscode/*
 !.vscode/extensions.json
 .agent/
+
+# E2E 产物（HTML 报告 / 失败现场 / 机器可读结果）
+playwright-report/
+test-results/
+e2e-results.json

@@ -505,6 +505,7 @@ async function testCredentialConnection(
       baseUrlOverride: productLines.baseUrlOverride,
       protocolConfigs: productLines.protocolConfigs,
       configVersion: productLines.configVersion,
+      testModel: productLines.testModel,
     })
     .from(upstreamCredentials)
     .innerJoin(productLines, eq(upstreamCredentials.productLineId, productLines.id))
@@ -544,6 +545,8 @@ async function testCredentialConnection(
       baseUrl: upstreamConfig.baseUrl,
       authStyle: upstreamConfig.authStyle,
       secret,
+      // 渠道显式配置的测试模型优先于历史发现的模型。
+      model: credential.testModel ?? undefined,
       discoveredModels,
     });
   } catch (error) {
@@ -1877,6 +1880,7 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
         configVersion: productLines.configVersion,
         seatCount: productLines.seatCount,
         productLineTag: productLines.tag,
+        testModel: productLines.testModel,
       })
       .from(upstreamCredentials)
       .innerJoin(productLines, eq(upstreamCredentials.productLineId, productLines.id))

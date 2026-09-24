@@ -379,6 +379,13 @@
       "when": 1790121600001,
       "tag": "0053_static_files",
       "breakpoints": true
+    },
+    {
+      "idx": 54,
+      "version": "7",
+      "when": 1790121600002,
+      "tag": "0054_product_line_test_model",
+      "breakpoints": true
     }
   ]
 }

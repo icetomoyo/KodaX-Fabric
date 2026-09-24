@@ -2,6 +2,7 @@
   "name": "kodax-fabric",
   "private": true,
   "version": "0.0.1",
+  "type": "module",
   "description": "KodaX Fabric — enterprise token access platform; Token Hub module provides shared official LLM keys, relay, and audit",
   "workspaces": [
     "server",
@@ -13,6 +14,8 @@
     "dev:web": "npm run dev --workspace=@kodax-fabric/web",
     "build": "npm run build --workspace=@kodax-fabric/server && npm run build --workspace=@kodax-fabric/web",
     "test:server": "npm test --workspace=@kodax-fabric/server",
+    "test:e2e": "playwright test",
+    "test:e2e:report": "playwright show-report playwright-report",
     "db:generate": "npm run db:generate --workspace=@kodax-fabric/server",
     "db:migrate": "npm run db:migrate --workspace=@kodax-fabric/server",
     "db:seed": "npm run db:seed --workspace=@kodax-fabric/server",
@@ -25,5 +28,8 @@
   "packageManager": "npm@11.16.0",
   "dependencies": {
     "pptxgenjs": "^4.0.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.63.0"
   }
 }

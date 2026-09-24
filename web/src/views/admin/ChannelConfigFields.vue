@@ -36,7 +36,7 @@
         <div class="form-help">登记席位不能超过这个数</div>
       </el-form-item>
 
-      <el-form-item label="渠道状态">
+      <el-form-item v-if="showStatus" label="渠道状态">
         <el-radio-group v-model="status" :disabled="disabled">
           <el-radio-button value="active">启用</el-radio-button>
           <el-radio-button value="disabled">停用</el-radio-button>
@@ -73,6 +73,18 @@
       />
     </el-form-item>
 
+    <el-form-item v-if="editable" label="测试模型">
+      <el-input
+        v-model="testModel"
+        maxlength="128"
+        show-word-limit
+        clearable
+        placeholder="如 glm-4.5-air"
+        :disabled="disabled"
+      />
+      <div class="form-help">员工提交 KEY 做连通性测试时使用的模型名；留空则回退历史发现模型</div>
+    </el-form-item>
+
     <el-alert
       v-if="showChangeRisk && protocolsTouched"
       class="change-risk-alert"
@@ -102,6 +114,7 @@ const props = withDefaults(defineProps<{
   routingUpgradeRequested?: boolean;
   disabled?: boolean;
   showChangeRisk?: boolean;
+  showStatus?: boolean;
   editable?: boolean;
   allowAllProtocols?: boolean;
 }>(), {
@@ -110,6 +123,7 @@ const props = withDefaults(defineProps<{
   routingUpgradeRequested: false,
   disabled: false,
   showChangeRisk: false,
+  showStatus: true,
   editable: false,
   allowAllProtocols: false,
 });
@@ -124,6 +138,7 @@ const tag = defineModel<string>("tag", { default: "" });
 const seatCount = defineModel<number | null>("seatCount", { required: true });
 const supportedProtocols = defineModel<RelayProtocol[]>("supportedProtocols", { required: true });
 const status = defineModel<ChannelStatus>("status", { required: true });
+const testModel = defineModel<string>("testModel", { default: "" });
 const protocolConfigs = defineModel<RelayProtocolConfigs>("protocolConfigs", { required: true });
 
 const sharedBaseUrl = computed({

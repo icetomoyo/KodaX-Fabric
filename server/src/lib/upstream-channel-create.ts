@@ -52,15 +52,29 @@ export type UpstreamChannelCreatePlan =
     productType: "api" | "coding_plan";
     providerCode: string;
     providerName: string;
+    testModel: string | null;
     allocateCode: () => string;
   }
   | { kind: "name_required" }
   | { kind: "protocols_required" }
   | { kind: "seat_count_invalid" }
   | { kind: "tag_invalid" }
+  | { kind: "test_model_invalid" }
   | { kind: "provider_unsupported" }
   | { kind: "custom_configs_required" }
   | { kind: "protocol_unsupported"; unsupportedProtocols: RelayProtocol[] };
+
+export const CHANNEL_TEST_MODEL_MAX_LENGTH = 128;
+
+/** 解析可选的渠道测试模型：空/缺省 → null（走 discoveredModels / 内置默认兜底）。 */
+export function normalizeChannelTestModel(value: unknown): string | null | "invalid" {
+  if (value == null) return null;
+  if (typeof value !== "string") return "invalid";
+  const model = value.trim();
+  if (!model) return null;
+  if (model.length > CHANNEL_TEST_MODEL_MAX_LENGTH) return "invalid";
+  return model;
+}
 
 export function planUpstreamChannelCreate(input: unknown): UpstreamChannelCreatePlan {
   const body = input && typeof input === "object" ? input as Record<string, unknown> : {};
@@ -78,6 +92,8 @@ export function planUpstreamChannelCreate(input: unknown): UpstreamChannelCreate
     return { kind: "seat_count_invalid" };
   }
   const status = body.status === "disabled" ? "disabled" : "active";
+  const testModel = normalizeChannelTestModel(body.testModel);
+  if (testModel === "invalid") return { kind: "test_model_invalid" };
   const protocolsParsed = configurableSupportedProtocolsSchema.safeParse(body.supportedProtocols);
   if (!protocolsParsed.success) return { kind: "protocols_required" };
   const protocols = RELAY_PROTOCOLS.filter((protocol) => protocolsParsed.data.includes(protocol));
@@ -96,6 +112,7 @@ export function planUpstreamChannelCreate(input: unknown): UpstreamChannelCreate
       productType: "api",
       providerCode: HAIZHI_PROVIDER_CODE,
       providerName: HAIZHI_PROVIDER_NAME,
+      testModel,
       allocateCode: allocateHaizhiProductLineCode,
     };
   }
@@ -122,6 +139,7 @@ export function planUpstreamChannelCreate(input: unknown): UpstreamChannelCreate
       productType: "api",
       providerCode: template.code,
       providerName: template.name,
+      testModel,
       allocateCode: allocateDeepseekProductLineCode,
     };
   }
@@ -154,6 +172,7 @@ export function planUpstreamChannelCreate(input: unknown): UpstreamChannelCreate
     productType: body.productType === "api" ? "api" : line.productType,
     providerCode: template.code,
     providerName: template.name,
+    testModel,
     allocateCode: body.variant === "international"
       ? allocateInternationalProductLineCode
       : allocateDomesticProductLineCode,
@@ -173,6 +192,8 @@ export function channelCreateError(kind: Exclude<UpstreamChannelCreatePlan["kind
       return { status: 400, message: "请填写席位数量" };
     case "tag_invalid":
       return { status: 400, message: "渠道标签最多 32 个字符" };
+    case "test_model_invalid":
+      return { status: 400, message: "测试模型最多 128 个字符" };
     case "provider_unsupported":
       return { status: 400, message: "目前只支持智谱、DeepSeek 或海致集团" };
     case "custom_configs_required":

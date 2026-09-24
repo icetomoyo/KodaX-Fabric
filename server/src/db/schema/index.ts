@@ -239,6 +239,7 @@ export const productLines = pgTable(
     status: varchar("status", { length: 32 }).notNull().default("active"),
     seatCount: integer("seat_count").notNull().default(0),
     tag: varchar("tag", { length: 32 }).notNull().default(""),
+    testModel: varchar("test_model", { length: 128 }),
     relayPoolKey: varchar("relay_pool_key", { length: 64 }).notNull().default(""),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),

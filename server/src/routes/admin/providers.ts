@@ -91,6 +91,7 @@ export async function adminProviderRoutes(app: FastifyInstance) {
         status: productLines.status,
         seatCount: productLines.seatCount,
         tag: productLines.tag,
+        testModel: productLines.testModel,
         providerCode: providers.code,
         providerName: providers.name,
         defaultBaseUrl: providers.defaultBaseUrl,
@@ -221,6 +222,7 @@ export async function adminProviderRoutes(app: FastifyInstance) {
                 configVersion: 1,
                 seatCount: plan.seatCount,
                 status: plan.status,
+                testModel: plan.testModel,
               })
               .onConflictDoNothing({
                 target: [productLines.providerId, productLines.code],
@@ -444,6 +446,9 @@ export async function adminProviderRoutes(app: FastifyInstance) {
             ...(body.data.status !== undefined ? { status: body.data.status } : {}),
             ...(body.data.seatCount !== undefined ? { seatCount: body.data.seatCount } : {}),
             ...(body.data.tag !== undefined ? { tag: body.data.tag } : {}),
+            // 测试模型只影响连通性测试的模型选择，不影响转发语义：
+            // 不参与 configVersion、不触发凭证健康重置。
+            ...(body.data.testModel !== undefined ? { testModel: body.data.testModel } : {}),
             ...(updatingProtocolSurface
               ? { protocolConfigs: nextProtocolConfigs }
               : {}),
@@ -486,6 +491,7 @@ export async function adminProviderRoutes(app: FastifyInstance) {
               ...(body.data.status !== undefined ? { status: existing.status } : {}),
               ...(body.data.seatCount !== undefined ? { seatCount: existing.seatCount } : {}),
               ...(body.data.tag !== undefined ? { tag: existing.tag } : {}),
+              ...(body.data.testModel !== undefined ? { testModel: existing.testModel } : {}),
               ...(updatingProtocolSurface
                 ? {
                   supportedProtocols: protocolPlan.currentProtocols,
@@ -499,6 +505,7 @@ export async function adminProviderRoutes(app: FastifyInstance) {
               ...(body.data.status !== undefined ? { status: row.status } : {}),
               ...(body.data.seatCount !== undefined ? { seatCount: row.seatCount } : {}),
               ...(body.data.tag !== undefined ? { tag: row.tag } : {}),
+              ...(body.data.testModel !== undefined ? { testModel: row.testModel } : {}),
               ...(updatingProtocolSurface
                 ? {
                   supportedProtocols: protocolPlan.nextProtocols,

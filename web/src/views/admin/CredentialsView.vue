@@ -390,8 +390,10 @@
           v-model:supported-protocols="createForm.supportedProtocols"
           v-model:status="createForm.status"
           v-model:protocol-configs="createFormProtocolConfigs"
+          v-model:test-model="createForm.testModel"
           :editable="createNeedsUpstreamUrl"
           :allow-all-protocols="createForm.provider === 'glm' || createForm.provider === 'deepseek'"
+          :show-status="false"
           :disabled="createSaving"
         />
       </el-form>
@@ -426,6 +428,7 @@
           v-model:supported-protocols="channelEditForm.supportedProtocols"
           v-model:status="channelEditForm.status"
           v-model:protocol-configs="channelEditProtocolConfigs"
+          v-model:test-model="channelEditForm.testModel"
           :editable="channelEditIsCustom"
           :allow-all-protocols="!channelEditIsCustom"
           :protocols-touched="channelEditProtocolsTouched"
@@ -1065,6 +1068,7 @@ type CredentialRow = {
   configVersion: number;
   seatCount?: number;
   productLineTag?: string;
+  testModel?: string | null;
   defaultBaseUrl: string;
   baseUrlOverride: string | null;
   fiveHourCreditLimit: number | null;
@@ -1128,6 +1132,7 @@ type ListedProductLine = {
   baseUrl: string;
   seatCount: number;
   tag: string;
+  testModel?: string | null;
 };
 
 type ProviderTemplate = {
@@ -1168,6 +1173,7 @@ type ChannelGroup = {
   recentErrorCount: number;
   seatCount: number;
   tag: string;
+  testModel: string | null;
 };
 
 type ChannelSummary = {
@@ -1200,6 +1206,7 @@ type ChannelEditSnapshot = {
   status: ChannelStatus;
   protocolConfigs: RelayProtocolConfigs;
   seatCount: number;
+  testModel: string;
 };
 
 type ParsedKey = {
@@ -1319,6 +1326,7 @@ const createForm = reactive({
   seatCount: null as number | null,
   supportedProtocols: ["anthropic_messages", "openai_chat", "openai_responses"] as RelayProtocol[],
   status: "active" as ChannelStatus,
+  testModel: "",
 });
 
 const showChannelDetails = ref(false);
@@ -1359,6 +1367,7 @@ const channelEditForm = reactive({
   seatCount: null as number | null,
   supportedProtocols: [] as RelayProtocol[],
   status: "active" as ChannelStatus,
+  testModel: "",
 });
 
 const channels = computed<ChannelGroup[]>(() => {
@@ -1399,6 +1408,7 @@ const channels = computed<ChannelGroup[]>(() => {
       recentErrorCount: keys.reduce((sum, key) => sum + (key.recentErrorCount ?? 0), 0),
       seatCount: Number(first.seatCount) || 0,
       tag: first.productLineTag ?? "",
+      testModel: first.testModel ?? null,
     };
   });
 
@@ -1713,8 +1723,13 @@ watch(() => route.query.channelId, () => {
 
 watch(
   () => [createForm.provider, createForm.variant] as const,
-  () => {
+  ([provider], [previousProvider]) => {
     createFormProtocolConfigs.value = defaultCustomProtocolConfigs();
+    // 供应商切换后协议默认值与测试模型都应回到该供应商的初始形态。
+    if (provider !== previousProvider) {
+      createForm.supportedProtocols = defaultProtocolsForProvider(provider);
+      createForm.testModel = "";
+    }
   },
 );
 
@@ -2255,14 +2270,22 @@ function resetBulkForm() {
   selectCustomChannelOption();
 }
 
+/** 各供应商新建渠道时的协议默认值：glm 官方线路三种全开，其余先只开 openai_chat。 */
+function defaultProtocolsForProvider(provider: "glm" | "deepseek" | "haizhi"): RelayProtocol[] {
+  return provider === "glm"
+    ? ["anthropic_messages", "openai_chat", "openai_responses"]
+    : ["openai_chat"];
+}
+
 function resetCreateForm() {
   createForm.provider = "glm";
   createForm.variant = "domestic";
   createForm.name = "";
   createForm.tag = "";
   createForm.seatCount = null;
-  createForm.supportedProtocols = ["anthropic_messages", "openai_chat", "openai_responses"];
+  createForm.supportedProtocols = defaultProtocolsForProvider("glm");
   createForm.status = "active";
+  createForm.testModel = "";
   createFormProtocolConfigs.value = defaultCustomProtocolConfigs();
 }
 
@@ -2311,6 +2334,8 @@ async function saveChannelCreate() {
         createForm.supportedProtocols,
         createFormProtocolConfigs.value,
       );
+      const testModel = createForm.testModel.trim();
+      if (testModel) payload.testModel = testModel;
     }
     const { data } = await http.post("/api/admin/product-lines", payload);
     if (!data.success) throw new Error(data.message || "创建渠道失败");
@@ -2379,6 +2404,7 @@ function openEditChannel(channel: ChannelGroup) {
   channelEditForm.seatCount = channel.seatCount;
   channelEditForm.supportedProtocols = selectedConfigurableProtocols;
   channelEditForm.status = channel.productLineStatus;
+  channelEditForm.testModel = channel.testModel ?? "";
   channelEditProtocolConfigs.value = Object.keys(templateConfigs).length
     ? templateConfigs
     : { ...channel.protocolConfigs };
@@ -2402,6 +2428,7 @@ function openEditChannel(channel: ChannelGroup) {
     status: channel.productLineStatus,
     protocolConfigs: { ...channel.protocolConfigs },
     seatCount: channel.seatCount,
+    testModel: channel.testModel ?? "",
   };
   showChannelEdit.value = true;
 }
@@ -2467,6 +2494,9 @@ async function saveChannelEdit() {
   if (channelEditForm.tag.trim() !== original.tag) payload.tag = channelEditForm.tag.trim();
   if (channelEditForm.status !== original.status) payload.status = channelEditForm.status;
   if (channelEditForm.seatCount !== original.seatCount) payload.seatCount = channelEditForm.seatCount;
+  if (channelEditForm.testModel.trim() !== original.testModel) {
+    payload.testModel = channelEditForm.testModel.trim() || null;
+  }
   if (shouldSendProtocols) {
     payload.supportedProtocols = [...channelEditForm.supportedProtocols];
     if (customChannel) {
@@ -2546,6 +2576,7 @@ function emptyChannelFromProductLine(line: ListedProductLine): ChannelGroup {
     recentErrorCount: 0,
     seatCount: line.seatCount ?? 0,
     tag: line.tag ?? "",
+    testModel: line.testModel ?? null,
   };
 }
 
