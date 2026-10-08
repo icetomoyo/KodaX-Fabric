@@ -1,9 +1,11 @@
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
 import { E2E } from "./env.ts";
+import { E2E_ORG } from "./org-fixture.ts";
 
 /**
  * 核心业务闭环 E2E：
- * 管理员建企业/部门 → 批量注册员工并加入部门（部门默认团队自动承载）→
+ * 使用 seed 组织（海致集团 → E2E子企业甲 → E2E部门）→
+ * 批量注册员工并加入部门（部门默认团队自动承载）→
  * 建 haizhi 自建渠道（配置测试模型）→ 员工测试+提交渠道 KEY → 员工创建 API Key →
  * 通过 relay 调用 mock 上游 → 员工与管理员在页面上都能看到这次调用的 tokens 与积分。
  * 全程走真实 HTTP（经 vite 代理进真实 server），上游为本机 mock，可离线重复执行。
@@ -62,12 +64,20 @@ test.describe.serial("核心闭环：渠道 → 席位 → 员工 Key → relay 
   test("管理员搭建组织与渠道，员工提交 Key 并完成 relay 调用", async ({ request }) => {
     const admin = await loginToken(request, E2E.admin.phone, E2E.admin.password);
 
-    // 1. 组织：企业 → 部门（部门自动带系统默认团队，团队不再是产品层级）
-    const enterprise = await postJson(request, "/api/admin/enterprises", admin, { name: "E2E企业" });
-    const department = await postJson(request, "/api/admin/departments", admin, {
-      name: "E2E部门",
-      enterpriseId: enterprise.id,
-    });
+    // 1. 组织：seed-org 夹具（子公司/部门不可手工 POST 创建）
+    const enterprises = (await getJson(request, "/api/admin/enterprises", admin)) as Array<{
+      id: number;
+      name: string;
+    }>;
+    const enterprise = enterprises.find((row) => row.name === E2E_ORG.childA.name);
+    expect(enterprise, `应有夹具企业 ${E2E_ORG.childA.name}: ${JSON.stringify(enterprises)}`).toBeTruthy();
+    const departments = (await getJson(
+      request,
+      `/api/admin/departments?enterpriseId=${enterprise!.id}`,
+      admin,
+    )) as Array<{ id: number; name: string }>;
+    const department = departments.find((row) => row.name === E2E_ORG.department.name);
+    expect(department, `应有夹具部门 ${E2E_ORG.department.name}: ${JSON.stringify(departments)}`).toBeTruthy();
 
     // 2. 员工：批量注册 → 加入部门（落到该部门的默认团队，自动归属企业）
     const imported = await postJson(request, "/api/admin/users/import", admin, {
@@ -77,7 +87,7 @@ test.describe.serial("核心闭环：渠道 → 席位 → 员工 Key → relay 
     expect(created, `员工应被创建: ${JSON.stringify(imported)}`).toHaveLength(1);
     const teamRows = (await getJson(
       request,
-      `/api/admin/teams?departmentId=${department.id}`,
+      `/api/admin/teams?departmentId=${department!.id}`,
       admin,
     )) as Array<{ id: number; isDefault: boolean }>;
     const defaultTeam = teamRows.find((row) => row.isDefault);

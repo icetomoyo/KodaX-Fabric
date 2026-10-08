@@ -11,14 +11,14 @@ import Fastify, { type LightMyRequestResponse } from "fastify";
 
 const [
   { db, sql },
-  { employees, enterprises, opsAuditLogs },
+  { departments, employees, enterprises, opsAuditLogs, teamMembers, teams },
   { authRoutes },
   { adminUserRoutes },
   { adminEnterpriseRoutes },
   { adminCredentialRoutes },
   { hashPassword },
   { signSession },
-  { insertEnterprise },
+  { insertEnterprise, ORG_UNITS_SYNC_ONLY_MESSAGE },
 ] = await Promise.all([
   import("../src/db/client.js"),
   import("../src/db/schema/index.js"),
@@ -34,7 +34,6 @@ const [
 const marker = randomUUID().replaceAll("-", "").slice(0, 10);
 const enterpriseXName = `企业X-${marker}`;
 const enterpriseYName = `企业Y-${marker}`;
-const createdName = `企业Z-${marker}`;
 const employeeIds: number[] = [];
 const enterpriseIds: number[] = [];
 const app = Fastify({ logger: false });
@@ -106,6 +105,23 @@ async function cleanup() {
           inArray(opsAuditLogs.targetId, enterpriseIds.map(String)),
         ),
       );
+    const deptRows = await db
+      .select({ id: departments.id })
+      .from(departments)
+      .where(inArray(departments.enterpriseId, enterpriseIds));
+    const deptIds = deptRows.map((row) => row.id);
+    if (deptIds.length) {
+      const teamRows = await db
+        .select({ id: teams.id })
+        .from(teams)
+        .where(inArray(teams.departmentId, deptIds));
+      const teamIds = teamRows.map((row) => row.id);
+      if (teamIds.length) {
+        await db.delete(teamMembers).where(inArray(teamMembers.teamId, teamIds));
+        await db.delete(teams).where(inArray(teams.id, teamIds));
+      }
+      await db.delete(departments).where(inArray(departments.id, deptIds));
+    }
     await db.delete(enterprises).where(inArray(enterprises.id, enterpriseIds));
   }
 }
@@ -130,16 +146,10 @@ async function main() {
       method: "POST",
       url: "/api/admin/enterprises",
       headers: superAdmin.headers,
-      payload: { name: createdName },
+      payload: { name: `企业Z-${marker}` },
     });
-    assert.equal(created.statusCode, 200);
-    const createdEnterprise = json<{
-      success: true;
-      data: { id: number; name: string; status: string };
-    }>(created).data;
-    enterpriseIds.push(createdEnterprise.id);
-    assert.equal(createdEnterprise.name, createdName);
-    assert.equal(createdEnterprise.status, "active");
+    assert.equal(created.statusCode, 403);
+    assert.equal(json<{ message: string }>(created).message, ORG_UNITS_SYNC_ONLY_MESSAGE);
 
     const listed = await app.inject({
       method: "GET",
@@ -151,10 +161,6 @@ async function main() {
       success: true;
       data: Array<{ id: number; name: string; status: string }>;
     }>(listed).data;
-    const listedCreated = enterprisesList.find((row) => row.id === createdEnterprise.id);
-    assert.ok(listedCreated);
-    assert.equal(listedCreated?.name, createdName);
-    assert.equal(listedCreated?.status, "active");
     assert.ok(enterprisesList.some((row) => row.name === enterpriseXName));
     assert.ok(enterprisesList.some((row) => row.name === enterpriseYName));
 
@@ -193,7 +199,7 @@ async function main() {
     }>(orgAdminUsers).data;
     assert.equal(orgAdminUserRows.every((row) => row.enterpriseId === enterpriseX.id), true);
     assert.ok(orgAdminUserRows.some((row) => row.id === employeeX.id));
-    assert.ok(orgAdminUserRows.some((row) => row.id === orgAdminX.id));
+    assert.equal(orgAdminUserRows.some((row) => row.id === orgAdminX.id), false);
     assert.equal(orgAdminUserRows.some((row) => row.id === employeeY.id), false);
     assert.equal(orgAdminUserRows.some((row) => row.id === superAdmin.id), false);
 

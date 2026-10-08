@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import {
+  type AnyPgColumn,
   bigint,
   boolean,
   date,
@@ -62,12 +63,19 @@ export const enterprises = pgTable(
     name: varchar("name", { length: 100 }).notNull(),
     code: varchar("code", { length: 16 }).notNull(),
     status: enterpriseStatusEnum("status").notNull().default("active"),
+    parentId: bigint("parent_id", { mode: "number" }).references((): AnyPgColumn => enterprises.id, {
+      onDelete: "restrict",
+      onUpdate: "no action",
+    }),
+    dingtalkDeptId: bigint("dingtalk_dept_id", { mode: "number" }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
     uniqueIndex("enterprises_name_uidx").on(t.name),
     uniqueIndex("enterprises_code_uidx").on(t.code),
+    uniqueIndex("enterprises_dingtalk_dept_id_uidx").on(t.dingtalkDeptId).where(sql`${t.dingtalkDeptId} is not null`),
+    index("enterprises_parent_idx").on(t.parentId),
   ],
 );
 

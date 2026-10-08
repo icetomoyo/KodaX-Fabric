@@ -1,5 +1,5 @@
 /**
- * Super-admin create-then-list launch against the real buildApp entry.
+ * Super-admin cannot create enterprises via API; GET still lists seed/insert rows.
  */
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
@@ -9,15 +9,17 @@ import type { LightMyRequestResponse } from "fastify";
 const [
   { buildApp },
   { db, sql },
-  { employees, enterprises, opsAuditLogs },
+  { departments, employees, enterprises, opsAuditLogs, teamMembers, teams },
   { hashPassword },
   { signSession },
+  { insertEnterprise, ORG_UNITS_SYNC_ONLY_MESSAGE },
 ] = await Promise.all([
   import("../src/app.js"),
   import("../src/db/client.js"),
   import("../src/db/schema/index.js"),
   import("../src/lib/password.js"),
   import("../src/lib/jwt.js"),
+  import("../src/lib/enterprise.js"),
 ]);
 
 const marker = randomUUID().replaceAll("-", "").slice(0, 10);
@@ -39,6 +41,23 @@ async function cleanup() {
     await db.delete(employees).where(inArray(employees.id, employeeIds));
   }
   if (enterpriseIds.length) {
+    const deptRows = await db
+      .select({ id: departments.id })
+      .from(departments)
+      .where(inArray(departments.enterpriseId, enterpriseIds));
+    const deptIds = deptRows.map((row) => row.id);
+    if (deptIds.length) {
+      const teamRows = await db
+        .select({ id: teams.id })
+        .from(teams)
+        .where(inArray(teams.departmentId, deptIds));
+      const teamIds = teamRows.map((row) => row.id);
+      if (teamIds.length) {
+        await db.delete(teamMembers).where(inArray(teamMembers.teamId, teamIds));
+        await db.delete(teams).where(inArray(teams.id, teamIds));
+      }
+      await db.delete(departments).where(inArray(departments.id, deptIds));
+    }
     await db.delete(enterprises).where(inArray(enterprises.id, enterpriseIds));
   }
 }
@@ -86,14 +105,11 @@ async function main() {
       headers,
       payload: { name: enterpriseName },
     });
-    assert.equal(created.statusCode, 200);
-    const createdEnterprise = json<{
-      success: true;
-      data: { id: number; name: string; status: string };
-    }>(created).data;
-    enterpriseIds.push(createdEnterprise.id);
-    assert.equal(createdEnterprise.name, enterpriseName);
-    assert.equal(createdEnterprise.status, "active");
+    assert.equal(created.statusCode, 403);
+    assert.equal(json<{ message: string }>(created).message, ORG_UNITS_SYNC_ONLY_MESSAGE);
+
+    const seeded = await insertEnterprise({ name: enterpriseName, status: "active" });
+    enterpriseIds.push(seeded.id);
 
     const listed = await app.inject({
       method: "GET",
@@ -105,7 +121,7 @@ async function main() {
       success: true;
       data: Array<{ id: number; name: string; status: string }>;
     }>(listed).data;
-    const found = rows.find((row) => row.id === createdEnterprise.id);
+    const found = rows.find((row) => row.id === seeded.id);
     assert.ok(found);
     assert.equal(found?.name, enterpriseName);
     assert.equal(found?.status, "active");

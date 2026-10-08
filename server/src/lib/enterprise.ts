@@ -7,6 +7,7 @@ import type { SessionRole } from "./jwt.js";
 export const DEFAULT_ENTERPRISE_NAME = "海致集团";
 export const DEFAULT_DEPARTMENT_NAME = "默认部门";
 export const DEFAULT_TEAM_NAME = "默认团队";
+export const ORG_UNITS_SYNC_ONLY_MESSAGE = "子公司和部门只能通过同步钉钉创建";
 const ENTERPRISE_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
 export const SUPER_ADMIN_ROLE = "admin" as const;
@@ -52,6 +53,30 @@ export function generateEnterpriseCode(randomDigit = randomInt): string {
   return `E${suffix}`;
 }
 
+export async function listEnterpriseIdsInSubtree(rootId: number): Promise<number[]> {
+  const rows = await db
+    .select({ id: enterprises.id, parentId: enterprises.parentId })
+    .from(enterprises);
+  const children = new Map<number, number[]>();
+  for (const row of rows) {
+    if (row.parentId == null) continue;
+    const list = children.get(row.parentId) ?? [];
+    list.push(row.id);
+    children.set(row.parentId, list);
+  }
+  const ids: number[] = [];
+  const seen = new Set<number>();
+  const queue = [rootId];
+  while (queue.length > 0 && ids.length < 256) {
+    const id = queue.shift()!;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    ids.push(id);
+    for (const childId of children.get(id) ?? []) queue.push(childId);
+  }
+  return ids;
+}
+
 export function resolveUserListScope(
   actor: EnterpriseActor,
   requestedEnterpriseId?: number,
@@ -59,7 +84,7 @@ export function resolveUserListScope(
   if (actor.role === SUPER_ADMIN_ROLE) {
     return {
       enterpriseId: requestedEnterpriseId,
-      ...(requestedEnterpriseId == null ? { excludeRoles: [SUPER_ADMIN_ROLE] } : {}),
+      excludeRoles: [SUPER_ADMIN_ROLE],
     };
   }
   if (actor.role === ORG_ADMIN_ROLE) {
@@ -140,10 +165,25 @@ export function resolveUpdatedUserFields(
   return { role: input.role, enterpriseId: actor.enterpriseId };
 }
 
+export const enterpriseColumns = {
+  id: enterprises.id,
+  name: enterprises.name,
+  code: enterprises.code,
+  status: enterprises.status,
+  parentId: enterprises.parentId,
+  dingtalkDeptId: enterprises.dingtalkDeptId,
+  createdAt: enterprises.createdAt,
+  updatedAt: enterprises.updatedAt,
+} as const;
+
 export async function insertEnterprise(input: {
   name: string;
   status?: "pending" | "active" | "disabled";
+  parentId?: number | null;
+  dingtalkDeptId?: number | null;
 }) {
+  const dingtalkDeptId =
+    input.dingtalkDeptId ?? (input.name === DEFAULT_ENTERPRISE_NAME ? 1 : null);
   for (let attempt = 0; attempt < 8; attempt += 1) {
     try {
       const [row] = await db
@@ -152,15 +192,10 @@ export async function insertEnterprise(input: {
           name: input.name,
           code: generateEnterpriseCode(),
           status: input.status ?? "active",
+          parentId: input.parentId ?? null,
+          dingtalkDeptId,
         })
-        .returning({
-          id: enterprises.id,
-          name: enterprises.name,
-          code: enterprises.code,
-          status: enterprises.status,
-          createdAt: enterprises.createdAt,
-          updatedAt: enterprises.updatedAt,
-        });
+        .returning(enterpriseColumns);
       await ensureDefaultDepartment(row.id);
       return row;
     } catch (error) {

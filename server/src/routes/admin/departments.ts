@@ -4,8 +4,12 @@ import { z } from "zod";
 import { db } from "../../db/client.js";
 import { count, and, desc, eq, inArray, sql } from "drizzle-orm";
 import { credentialBindings, departments, enterprises, teamMembers, teams } from "../../db/schema/index.js";
+import {
+  dingtalkDeptIdConflictMessage,
+  findDingtalkDeptIdOwner,
+} from "../../lib/dingtalk-dept-id.js";
 import { writeOpsAudit } from "../../lib/ops-audit.js";
-import { ensureDefaultTeam } from "../../lib/enterprise.js";
+import { ORG_UNITS_SYNC_ONLY_MESSAGE } from "../../lib/enterprise.js";
 import {
   canCreateTeam,
   loadOrgActor,
@@ -113,88 +117,8 @@ export async function adminDepartmentRoutes(app: FastifyInstance) {
     };
   });
 
-  app.post("/api/admin/departments", async (req, reply) => {
-    const body = z
-      .object({
-        name: z.string().trim().min(1).max(100),
-        enterpriseId: z.number().int().positive().optional(),
-        parentId: z.number().int().positive().optional(),
-      })
-      .safeParse(req.body);
-    if (!body.success) return reply.code(400).send({ success: false, message: "参数无效" });
-    const actor = await actorFrom(req);
-    const parentId = body.data.parentId ?? null;
-    const enterpriseId =
-      actor.role === "org_admin"
-        ? actor.enterpriseId
-        : body.data.enterpriseId ?? (actor.role === "admin" ? null : actor.enterpriseId);
-    if (enterpriseId == null) {
-      return reply.code(403).send({ success: false, message: "权限不足" });
-    }
-    if (parentId == null) {
-      if (actor.role !== "admin" && actor.role !== "org_admin") {
-        return reply.code(403).send({ success: false, message: "权限不足" });
-      }
-      if (!canCreateTeam(actor, enterpriseId)) {
-        return reply.code(403).send({ success: false, message: "权限不足" });
-      }
-    } else if (!canCreateTeam(actor, enterpriseId, parentId)) {
-      return reply.code(403).send({ success: false, message: "权限不足" });
-    }
-    const [enterprise] = await db
-      .select({ id: enterprises.id, status: enterprises.status })
-      .from(enterprises)
-      .where(eq(enterprises.id, enterpriseId))
-      .limit(1);
-    if (!enterprise || enterprise.status !== "active") {
-      return reply.code(404).send({ success: false, message: "企业不存在或未启用" });
-    }
-    if (parentId != null) {
-      const [parent] = await db
-        .select({ id: departments.id, enterpriseId: departments.enterpriseId })
-        .from(departments)
-        .where(eq(departments.id, parentId))
-        .limit(1);
-      if (!parent || parent.enterpriseId !== enterpriseId) {
-        return reply.code(400).send({ success: false, message: "上级部门无效" });
-      }
-    }
-    try {
-      const [row] = await db
-        .insert(departments)
-        .values({
-          enterpriseId,
-          parentId,
-          name: body.data.name,
-          status: "active",
-        })
-        .returning({
-          id: departments.id,
-          name: departments.name,
-          status: departments.status,
-          isDefault: departments.isDefault,
-          parentId: departments.parentId,
-          dingtalkDeptId: departments.dingtalkDeptId,
-          enterpriseId: departments.enterpriseId,
-          createdAt: departments.createdAt,
-        });
-      const defaultTeamId = await ensureDefaultTeam(row.id, enterpriseId);
-      await writeOpsAudit({
-        actorEmployeeId: actor.employeeId,
-        action: "department.create",
-        targetType: "department",
-        targetId: String(row.id),
-        detail: { name: row.name, enterpriseId, defaultTeamId },
-        ip: req.ip,
-      });
-      return { success: true, data: { ...row, defaultTeamId, teamCount: 0 } };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      if (message.includes("departments_enterprise_name_uidx") || message.includes("unique")) {
-        return reply.code(409).send({ success: false, message: "部门名称已存在" });
-      }
-      throw error;
-    }
+  app.post("/api/admin/departments", async (_req, reply) => {
+    return reply.code(403).send({ success: false, message: ORG_UNITS_SYNC_ONLY_MESSAGE });
   });
 
   app.patch("/api/admin/departments/:id", async (req, reply) => {
@@ -203,6 +127,7 @@ export async function adminDepartmentRoutes(app: FastifyInstance) {
       .object({
         name: z.string().trim().min(1).max(100).optional(),
         status: z.enum(["active", "disabled"]).optional(),
+        dingtalkDeptId: z.number().int().positive().nullable().optional(),
       })
       .refine((data) => Object.keys(data).length > 0)
       .safeParse(req.body);
@@ -222,12 +147,21 @@ export async function adminDepartmentRoutes(app: FastifyInstance) {
     if (!canCreateTeam(actor, department.enterpriseId)) {
       return reply.code(403).send({ success: false, message: "权限不足" });
     }
+    if (body.data.dingtalkDeptId != null) {
+      const owner = await findDingtalkDeptIdOwner(body.data.dingtalkDeptId, {
+        departmentId: department.id,
+      });
+      if (owner) {
+        return reply.code(409).send({ success: false, message: dingtalkDeptIdConflictMessage(owner) });
+      }
+    }
     try {
       const [row] = await db
         .update(departments)
         .set({
           ...(body.data.name != null ? { name: body.data.name } : {}),
           ...(body.data.status != null ? { status: body.data.status } : {}),
+          ...(body.data.dingtalkDeptId !== undefined ? { dingtalkDeptId: body.data.dingtalkDeptId } : {}),
           updatedAt: new Date(),
         })
         .where(eq(departments.id, department.id))
@@ -235,6 +169,8 @@ export async function adminDepartmentRoutes(app: FastifyInstance) {
           id: departments.id,
           name: departments.name,
           status: departments.status,
+          parentId: departments.parentId,
+          dingtalkDeptId: departments.dingtalkDeptId,
           enterpriseId: departments.enterpriseId,
         });
       await writeOpsAudit({
@@ -248,6 +184,9 @@ export async function adminDepartmentRoutes(app: FastifyInstance) {
       return { success: true, data: row };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      if (message.includes("departments_dingtalk_dept_id_uidx")) {
+        return reply.code(409).send({ success: false, message: "钉钉部门 ID 已存在" });
+      }
       if (message.includes("departments_enterprise_name_uidx") || message.includes("unique")) {
         return reply.code(409).send({ success: false, message: "部门名称已存在" });
       }

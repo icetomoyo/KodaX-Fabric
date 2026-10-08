@@ -358,7 +358,7 @@ test("super-admin can list and access employees in any enterprise", () => {
   assert.equal("forbidden" in scoped, false);
   if ("forbidden" in scoped) return;
   assert.equal(scoped.enterpriseId, 3);
-  assert.equal(scoped.excludeRoles, undefined);
+  assert.deepEqual(scoped.excludeRoles, ["admin"]);
   assert.equal(
     canAccessEmployee(
       { role: "admin", enterpriseId: 1 },

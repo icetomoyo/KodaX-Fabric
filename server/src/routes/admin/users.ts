@@ -21,8 +21,10 @@ import {
 } from "../../lib/bulk-register-users.js";
 import {
   canAccessEmployee,
+  listEnterpriseIdsInSubtree,
   resolveUpdatedUserFields,
   resolveUserListScope,
+  SUPER_ADMIN_ROLE,
 } from "../../lib/enterprise.js";
 import {
   scopedDepartmentIds,
@@ -75,6 +77,7 @@ type AdminUserListQuery = {
   q?: string;
   status?: "pending" | "active" | "disabled";
   enterpriseId?: number;
+  enterpriseIds?: number[];
   teamIds?: number[];
   employeeIds?: number[];
   excludeRoles?: SessionRole[];
@@ -93,9 +96,28 @@ export type AdminUserListRow = {
   teamId: number | null;
   teamName: string | null;
   departmentId: number | null;
+  departmentIds?: number[];
   departmentName: string | null;
   departmentIsDefault: boolean | null;
 };
+
+const optionalFlagSchema = z
+  .union([
+    z.literal("true"),
+    z.literal("false"),
+    z.literal("1"),
+    z.literal("0"),
+    z.boolean(),
+    z.literal(1),
+    z.literal(0),
+  ])
+  .optional();
+
+function parseOptionalFlag(value: unknown): boolean | undefined {
+  if (value === true || value === "true" || value === "1" || value === 1) return true;
+  if (value === false || value === "false" || value === "0" || value === 0) return false;
+  return undefined;
+}
 
 function adminUserListWhere(query: AdminUserListQuery) {
   // ilike 通配符转义：把用户输入里的 % _ \ 当普通字符，避免构造出意料之外的模式
@@ -105,7 +127,11 @@ function adminUserListWhere(query: AdminUserListQuery) {
       ? sql`(${employees.name} ilike ${"%" + q + "%"} or ${employees.phone} ilike ${"%" + q + "%"})`
       : sql`true`,
     query.status ? eq(employees.status, query.status) : sql`true`,
-    query.enterpriseId != null ? eq(employees.enterpriseId, query.enterpriseId) : sql`true`,
+    query.enterpriseIds?.length
+      ? inArray(employees.enterpriseId, query.enterpriseIds)
+      : query.enterpriseId != null
+        ? eq(employees.enterpriseId, query.enterpriseId)
+        : sql`true`,
     query.employeeIds?.length ? inArray(employees.id, query.employeeIds) : sql`true`,
     query.teamIds?.length ? inArray(teamMembers.teamId, query.teamIds) : sql`true`,
     query.excludeRoles?.length ? notInArray(employees.role, query.excludeRoles) : sql`true`,
@@ -169,17 +195,25 @@ export function aggregateAdminUserListRows(rows: readonly AdminUserListRow[]) {
   const grouped = new Map<number, {
     row: AdminUserListRow;
     teamIds: number[];
+    departmentIds: number[];
     departmentNames: string[];
   }>();
   for (const row of rows) {
     let group = grouped.get(row.id);
     if (!group) {
       order.push(row.id);
-      group = { row, teamIds: [], departmentNames: [] };
+      group = { row, teamIds: [], departmentIds: [], departmentNames: [] };
       grouped.set(row.id, group);
     }
     if (row.teamId != null && !group.teamIds.includes(row.teamId)) {
       group.teamIds.push(row.teamId);
+    }
+    if (
+      row.departmentId != null
+      && row.departmentIsDefault === false
+      && !group.departmentIds.includes(row.departmentId)
+    ) {
+      group.departmentIds.push(row.departmentId);
     }
     if (
       row.departmentName
@@ -197,6 +231,8 @@ export function aggregateAdminUserListRows(rows: readonly AdminUserListRow[]) {
       ...row,
       teamId: group.teamIds[0] ?? row.teamId,
       teamIds: group.teamIds,
+      departmentId: group.departmentIds[0] ?? row.departmentId,
+      departmentIds: group.departmentIds,
       departmentName,
       teamName: departmentName,
     };
@@ -288,12 +324,14 @@ export async function adminUserRoutes(app: FastifyInstance) {
         status: z.enum(["pending", "active", "disabled"]).optional(),
         enterpriseId: z.coerce.number().int().positive().optional(),
         departmentId: z.coerce.number().int().positive().optional(),
+        includeDescendants: optionalFlagSchema,
       })
       .safeParse(req.query);
     if (!parsed.success) {
       return reply.code(400).send({ success: false, message: "参数无效" });
     }
     const query = parsed.data;
+    const includeDescendants = parseOptionalFlag(query.includeDescendants) === true;
 
     const scope = resolveUserListScope(
       { role: req.session!.role, enterpriseId: req.session!.enterpriseId },
@@ -309,12 +347,25 @@ export async function adminUserRoutes(app: FastifyInstance) {
         employeeId: req.employeeId!,
       }));
     }
+    const enterpriseIds =
+      scope.enterpriseId != null
+        ? includeDescendants && req.session!.role === SUPER_ADMIN_ROLE
+          ? await listEnterpriseIdsInSubtree(scope.enterpriseId)
+          : [scope.enterpriseId]
+        : undefined;
     if (query.departmentId != null) {
-      if (
-        scope.enterpriseId != null
-        && !(await departmentBelongsToEnterprise(query.departmentId, scope.enterpriseId))
-      ) {
-        return { success: true, data: [], total: 0 };
+      if (enterpriseIds != null) {
+        const belongs =
+          enterpriseIds.length === 1
+            ? await departmentBelongsToEnterprise(query.departmentId, enterpriseIds[0]!)
+            : (await db
+                .select({ enterpriseId: departments.enterpriseId })
+                .from(departments)
+                .where(eq(departments.id, query.departmentId))
+                .limit(1)).some((row) => enterpriseIds.includes(row.enterpriseId));
+        if (!belongs) {
+          return { success: true, data: [], total: 0 };
+        }
       }
       const departmentTeamIds = await listTeamIdsInDepartmentSubtree(query.departmentId);
       teamIds = teamIds
@@ -328,7 +379,8 @@ export async function adminUserRoutes(app: FastifyInstance) {
       offset: query.offset,
       q: query.q,
       status: query.status,
-      enterpriseId: scope.enterpriseId,
+      enterpriseId: enterpriseIds?.length === 1 ? enterpriseIds[0] : undefined,
+      enterpriseIds: enterpriseIds != null && enterpriseIds.length > 1 ? enterpriseIds : undefined,
       teamIds,
       excludeRoles: scope.excludeRoles,
     };

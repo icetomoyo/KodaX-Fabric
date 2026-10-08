@@ -7,10 +7,12 @@ export function orgConsoleUserListParams(input: {
   departmentId: number | null;
   page: number;
   q?: string;
+  includeDescendants?: boolean;
 }): {
   enterpriseId: number;
   departmentId?: number;
   q?: string;
+  includeDescendants?: boolean;
   limit: number;
   offset: number;
 } {
@@ -23,6 +25,7 @@ export function orgConsoleUserListParams(input: {
       : input.departmentId != null
         ? { departmentId: input.departmentId }
         : {}),
+    ...(input.includeDescendants && input.departmentId == null ? { includeDescendants: true } : {}),
     limit: ORG_CONSOLE_PAGE_SIZE,
     offset: (page - 1) * ORG_CONSOLE_PAGE_SIZE,
   };

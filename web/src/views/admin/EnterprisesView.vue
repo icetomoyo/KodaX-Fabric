@@ -3,14 +3,11 @@
     <div class="page-head">
       <div class="page-head-text">
         <h2 class="page-title">组织架构</h2>
-        <span class="muted">管理企业、部门与员工</span>
+        <span class="muted">管理企业、部门与员工。子公司和部门由钉钉通讯录同步，不可手工新建</span>
       </div>
       <div class="head-actions">
         <el-button :icon="Refresh" :loading="loading" @click="refreshAll">刷新</el-button>
         <el-button v-if="canBulkRegisterUsers" :icon="Upload" @click="openBulkRegister">批量注册用户</el-button>
-        <el-button v-if="canCreateEnterprise" type="primary" :icon="Plus" @click="openCreateEnterprise">
-          新建企业
-        </el-button>
       </div>
     </div>
 
@@ -18,34 +15,6 @@
       <aside v-if="showOrgTree" class="pane tree-pane">
         <div class="pane-header">
           <span class="pane-title">编制</span>
-          <el-dropdown
-            v-if="canCreateRootDepartment || canCreateChildDepartment"
-            trigger="click"
-            @command="onCreateDepartmentCommand"
-          >
-            <el-button type="primary" size="small" :icon="Plus" plain>
-              新建
-              <el-icon class="el-icon--right"><ArrowDown /></el-icon>
-            </el-button>
-            <template #dropdown>
-              <el-dropdown-menu>
-                <el-dropdown-item
-                  v-if="canCreateRootDepartment"
-                  command="root"
-                  :disabled="!selectedEnterprise"
-                >
-                  新建部门
-                </el-dropdown-item>
-                <el-dropdown-item
-                  v-if="canCreateChildDepartment"
-                  command="child"
-                  :disabled="!selectedDepartment"
-                >
-                  新建子部门
-                </el-dropdown-item>
-              </el-dropdown-menu>
-            </template>
-          </el-dropdown>
         </div>
 
         <el-input
@@ -53,23 +22,21 @@
           v-model="orgTreeQuery"
           class="tree-search"
           clearable
-          placeholder="搜索部门"
+          placeholder="搜索部门或钉钉 ID"
           :prefix-icon="Search"
         />
-        <el-empty v-if="!loading && !orgTree.length" description="暂无编制" :image-size="64">
-          <el-button v-if="canCreateEnterprise" type="primary" @click="openCreateEnterprise">
-            新建企业
-          </el-button>
-        </el-empty>
-        <el-scrollbar v-else class="tree-scroll">
+        <el-empty v-if="!loading && !orgTree.length" description="暂无编制，请同步钉钉通讯录" :image-size="64" />
+        <el-scrollbar v-else-if="orgTree.length" class="tree-scroll">
           <el-tree
             ref="orgTreeRef"
             class="org-tree"
+            :key="orgTreeKey"
             :data="orgTree"
             node-key="key"
             highlight-current
             :expand-on-click-node="false"
             :current-node-key="currentTreeKey"
+            :default-expanded-keys="defaultExpandedKeys"
             :filter-node-method="filterOrgNode"
             @node-click="onOrgNodeClick"
           >
@@ -79,7 +46,12 @@
                   <OfficeBuilding v-if="data.kind === 'enterprise'" />
                   <Folder v-else />
                 </el-icon>
-                <span class="tree-label">{{ data.label }}</span>
+                <span class="tree-main">
+                  <span class="tree-label">{{ data.label }}</span>
+                  <span class="tree-people" :title="`${data.count ?? 0} 人`">
+                    （<el-icon class="tree-people-icon"><User /></el-icon>{{ data.count ?? 0 }}）
+                  </span>
+                </span>
                 <el-tag
                   v-if="data.status && data.status !== 'active'"
                   size="small"
@@ -87,7 +59,6 @@
                 >
                   {{ statusLabel(data.status) }}
                 </el-tag>
-                <span v-if="data.count != null" class="tree-count">{{ data.count }}</span>
                 <span v-if="nodeActions(data).length" class="tree-more" @click.stop>
                   <el-dropdown trigger="click" @command="(action: string) => onNodeAction(action, data)">
                     <el-button link :icon="MoreFilled" class="tree-more-btn" />
@@ -133,15 +104,17 @@
           :image-size="64"
         />
         <template v-else>
-          <el-input
-            v-model="employeeQuery"
-            class="people-search"
-            clearable
-            placeholder="搜索姓名或手机号"
-            :prefix-icon="Search"
-            @keyup.enter="searchPeopleNow"
-            @clear="searchPeopleNow"
-          />
+          <div class="people-toolbar">
+            <el-input
+              v-model="employeeQuery"
+              class="people-search"
+              clearable
+              placeholder="搜索姓名或手机号"
+              :prefix-icon="Search"
+              @keyup.enter="searchPeopleNow"
+              @clear="searchPeopleNow"
+            />
+          </div>
           <div class="people-table-wrap">
             <el-table
               class="people-table"
@@ -157,7 +130,7 @@
                   <span :class="{ muted: !row.teamName }">{{ row.teamName || "未分配" }}</span>
                 </template>
               </el-table-column>
-              <el-table-column label="角色" width="120">
+              <el-table-column label="角色" min-width="88" width="100">
                 <template #default="{ row }">{{ employeeRoleLabel(row.role) }}</template>
               </el-table-column>
               <el-table-column label="状态" width="90" align="center">
@@ -167,7 +140,7 @@
                   </el-tag>
                 </template>
               </el-table-column>
-              <el-table-column label="操作" width="160" fixed="right" align="center">
+              <el-table-column label="操作" width="120" align="center">
                 <template #default="{ row }">
                   <el-button
                     v-if="row.status === 'pending'"
@@ -198,22 +171,24 @@
       </section>
     </div>
 
-    <el-dialog v-model="showCreateEnterprise" title="新建企业" width="440px">
-      <el-form label-width="90px">
-        <el-form-item label="企业名称" required>
-          <el-input v-model="createEnterpriseName" maxlength="100" />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="showCreateEnterprise = false">取消</el-button>
-        <el-button type="primary" :loading="savingEnterprise" @click="createEnterprise">创建</el-button>
-      </template>
-    </el-dialog>
-
-    <el-dialog v-model="showEditEnterprise" :title="`编辑企业 · ${editEnterprise?.name || ''}`" width="440px">
-      <el-form label-width="90px">
+    <el-dialog v-model="showEditEnterprise" :title="`编辑企业 · ${editEnterprise?.name || ''}`" width="480px">
+      <el-form label-width="110px">
         <el-form-item label="企业名称" required>
           <el-input v-model="editEnterpriseName" maxlength="100" />
+        </el-form-item>
+        <el-form-item label="上级企业">
+          <el-select v-model="editEnterpriseParentId" clearable placeholder="无（顶级企业）" style="width: 100%">
+            <el-option
+              v-for="item in editEnterpriseParentOptions"
+              :key="item.id"
+              :label="item.name"
+              :value="item.id"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="钉钉部门 ID">
+          <el-input v-model="editEnterpriseDingtalkId" placeholder="对应钉钉 dept_id，可空" />
+          <el-text class="form-help" type="info" size="small">与钉钉通讯录 dept_id 对应，企业和部门之间不可重复</el-text>
         </el-form-item>
       </el-form>
       <template #footer>
@@ -222,32 +197,14 @@
       </template>
     </el-dialog>
 
-    <el-dialog
-      v-model="showCreateDepartment"
-      :title="createDepartmentParentId ? '新建子部门' : '新建部门'"
-      width="440px"
-    >
-      <el-form label-width="90px">
-        <el-form-item label="所属企业">
-          <el-input :model-value="selectedEnterprise?.name" disabled />
-        </el-form-item>
-        <el-form-item v-if="createDepartmentParent" label="上级部门">
-          <el-input :model-value="createDepartmentParent.name" disabled />
-        </el-form-item>
-        <el-form-item :label="createDepartmentParentId ? '子部门名称' : '部门名称'" required>
-          <el-input v-model="createDepartmentName" maxlength="100" />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="showCreateDepartment = false">取消</el-button>
-        <el-button type="primary" :loading="savingDepartment" @click="createDepartment">创建</el-button>
-      </template>
-    </el-dialog>
-
-    <el-dialog v-model="showEditDepartment" :title="`编辑部门 · ${editDepartment?.name || ''}`" width="440px">
-      <el-form label-width="90px">
+    <el-dialog v-model="showEditDepartment" :title="`编辑部门 · ${editDepartment?.name || ''}`" width="480px">
+      <el-form label-width="110px">
         <el-form-item label="部门名称" required>
           <el-input v-model="editDepartmentName" maxlength="100" />
+        </el-form-item>
+        <el-form-item label="钉钉部门 ID">
+          <el-input v-model="editDepartmentDingtalkId" placeholder="对应钉钉 dept_id，可空" />
+          <el-text class="form-help" type="info" size="small">与钉钉通讯录 dept_id 对应，企业和部门之间不可重复</el-text>
         </el-form-item>
       </el-form>
       <template #footer>
@@ -397,7 +354,6 @@ import { computed, nextTick, onMounted, reactive, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { ElMessage, ElMessageBox } from "element-plus";
 import {
-  ArrowDown,
   Folder,
   MoreFilled,
   OfficeBuilding,
@@ -405,6 +361,7 @@ import {
   Refresh,
   Search,
   Upload,
+  User,
 } from "@element-plus/icons-vue";
 import { http } from "@/api/http";
 import { parseBulkRegisterText } from "@/lib/bulk-register-users";
@@ -425,7 +382,10 @@ type EnterpriseRow = {
   name: string;
   code: string;
   status: EnterpriseStatus;
+  parentId?: number | null;
+  dingtalkDeptId?: number | null;
   createdAt: string;
+  employeeCount?: number;
   contact: { employeeId: number; name: string; phone: string; role: string } | null;
 };
 
@@ -435,6 +395,7 @@ type DepartmentRow = {
   status: "active" | "disabled";
   isDefault?: boolean;
   parentId?: number | null;
+  dingtalkDeptId?: number | null;
   enterpriseId: number;
   teamCount: number;
   memberCount?: number;
@@ -465,6 +426,7 @@ type OrgTreeNode = {
   label: string;
   status?: string;
   count?: number;
+  dingtalkDeptId?: number | null;
   children?: OrgTreeNode[];
 };
 
@@ -485,12 +447,8 @@ const route = useRoute();
 const router = useRouter();
 const auth = useAuthStore();
 const showOrgTree = computed(() => true);
-const canCreateEnterprise = computed(() => auth.isSuperAdmin);
 const canBulkRegisterUsers = computed(() => auth.isSuperAdmin);
 const canManageDepartments = computed(() => auth.isSuperAdmin || auth.isOrgAdmin || auth.isDeptAdmin);
-const canCreateRootDepartment = computed(() => auth.isSuperAdmin || auth.isOrgAdmin);
-const canCreateChildDepartment = computed(() => auth.isSuperAdmin || auth.isOrgAdmin || auth.isDeptAdmin);
-const canManageTeams = computed(() => auth.isSuperAdmin || auth.isOrgAdmin || auth.isDeptAdmin);
 const canAppointOrgAdmin = computed(() => auth.isSuperAdmin);
 const canAppointDeptAdmin = computed(() => auth.isSuperAdmin || auth.isOrgAdmin);
 const layoutClass = computed(() => "layout-tree");
@@ -511,9 +469,7 @@ const orgTreeQuery = ref("");
 const employeeQuery = ref("");
 let employeeSearchTimer: ReturnType<typeof setTimeout> | null = null;
 
-const showCreateEnterprise = ref(false);
 const showEditEnterprise = ref(false);
-const showCreateDepartment = ref(false);
 const showEditDepartment = ref(false);
 const showBulkRegister = ref(false);
 const showInvite = ref(false);
@@ -521,9 +477,7 @@ const showEditUser = ref(false);
 const showResetPassword = ref(false);
 const showUserDetail = ref(false);
 
-const savingEnterprise = ref(false);
 const updatingEnterprise = ref(false);
-const savingDepartment = ref(false);
 const updatingDepartment = ref(false);
 const bulkRegistering = ref(false);
 const inviting = ref(false);
@@ -531,12 +485,12 @@ const updatingUser = ref(false);
 const resetting = ref(false);
 const approvingUserId = ref<number | null>(null);
 
-const createEnterpriseName = ref("");
 const editEnterpriseName = ref("");
+const editEnterpriseParentId = ref<number | undefined>();
+const editEnterpriseDingtalkId = ref("");
 const editEnterprise = ref<EnterpriseRow | null>(null);
-const createDepartmentName = ref("");
-const createDepartmentParentId = ref<number | null>(null);
 const editDepartmentName = ref("");
+const editDepartmentDingtalkId = ref("");
 const editDepartment = ref<DepartmentRow | null>(null);
 const bulkRegisterRaw = ref("");
 const invitePhone = ref("");
@@ -562,9 +516,6 @@ const selectedEnterprise = computed(
 const selectedDepartment = computed(
   () => departments.value.find((row) => row.id === selectedDepartmentId.value) ?? null,
 );
-const createDepartmentParent = computed(
-  () => namedDepartments.value.find((row) => row.id === createDepartmentParentId.value) ?? null,
-);
 const namedTeams = computed(() => teams.value.filter((row) => !row.isDefault));
 const namedDepartments = computed(() => departments.value.filter((row) => !row.isDefault));
 
@@ -585,8 +536,59 @@ function buildDepartmentNodes(enterpriseId: number, parentId: number | null): Or
     label: department.name,
     status: department.status,
     count: department.memberCount,
+    dingtalkDeptId: department.dingtalkDeptId ?? null,
     children: buildDepartmentNodes(enterpriseId, department.id),
   }));
+}
+
+function visibleEnterpriseRoots(): EnterpriseRow[] {
+  const ids = new Set(enterprises.value.map((row) => row.id));
+  return enterprises.value
+    .filter((row) => row.parentId == null || !ids.has(row.parentId))
+    .slice()
+    .sort((a, b) => a.id - b.id);
+}
+
+function childEnterprises(parentId: number): EnterpriseRow[] {
+  return enterprises.value
+    .filter((row) => row.parentId === parentId)
+    .slice()
+    .sort((a, b) => a.id - b.id);
+}
+
+function ownEmployeeCount(enterpriseId: number): number {
+  const row = enterprises.value.find((item) => item.id === enterpriseId);
+  if (row?.employeeCount != null) return row.employeeCount;
+  return namedDepartments.value
+    .filter((department) => department.enterpriseId === enterpriseId)
+    .reduce((sum, department) => sum + (department.memberCount ?? 0), 0);
+}
+
+function subtreeEmployeeCount(enterpriseId: number, seen = new Set<number>()): number {
+  if (seen.has(enterpriseId)) return 0;
+  seen.add(enterpriseId);
+  return ownEmployeeCount(enterpriseId)
+    + childEnterprises(enterpriseId).reduce(
+      (sum, child) => sum + subtreeEmployeeCount(child.id, seen),
+      0,
+    );
+}
+
+function buildEnterpriseNode(enterprise: EnterpriseRow): OrgTreeNode {
+  return {
+    key: `enterprise:${enterprise.id}`,
+    kind: "enterprise",
+    id: enterprise.id,
+    enterpriseId: enterprise.id,
+    label: enterprise.name,
+    status: enterprise.status,
+    count: subtreeEmployeeCount(enterprise.id),
+    dingtalkDeptId: enterprise.dingtalkDeptId ?? null,
+    children: [
+      ...childEnterprises(enterprise.id).map(buildEnterpriseNode),
+      ...buildDepartmentNodes(enterprise.id, null),
+    ],
+  };
 }
 
 const orgTree = computed((): OrgTreeNode[] => {
@@ -607,19 +609,40 @@ const orgTree = computed((): OrgTreeNode[] => {
       label: department.name,
       status: department.status,
       count: department.memberCount,
+      dingtalkDeptId: department.dingtalkDeptId ?? null,
       children: buildDepartmentNodes(enterpriseId, department.id),
     }));
   }
 
-  return enterprises.value.map((enterprise) => ({
-    key: `enterprise:${enterprise.id}`,
-    kind: "enterprise" as const,
-    id: enterprise.id,
-    enterpriseId: enterprise.id,
-    label: enterprise.name,
-    status: enterprise.status,
-    children: buildDepartmentNodes(enterprise.id, null),
-  }));
+  return visibleEnterpriseRoots().map(buildEnterpriseNode);
+});
+
+const orgTreeKey = computed(() =>
+  enterprises.value.map((row) => `${row.id}:${row.parentId ?? 0}:${row.dingtalkDeptId ?? ""}`).join(","),
+);
+
+const defaultExpandedKeys = computed(() =>
+  enterprises.value
+    .filter((row) => enterprises.value.some((child) => child.parentId === row.id))
+    .map((row) => `enterprise:${row.id}`),
+);
+
+const editEnterpriseParentOptions = computed(() => {
+  const currentId = editEnterprise.value?.id;
+  if (currentId == null) return enterprises.value;
+  const blocked = new Set<number>([currentId]);
+  const queue = [currentId];
+  while (queue.length) {
+    const id = queue.shift();
+    if (id == null) break;
+    for (const child of enterprises.value) {
+      if (child.parentId === id && !blocked.has(child.id)) {
+        blocked.add(child.id);
+        queue.push(child.id);
+      }
+    }
+  }
+  return enterprises.value.filter((row) => !blocked.has(row.id));
 });
 
 const currentTreeKey = computed(() => {
@@ -734,10 +757,20 @@ function syncQuery() {
   void router.replace({ query });
 }
 
+function parseDingtalkDeptId(raw: string): number | null | false {
+  const value = raw.trim();
+  if (!value) return null;
+  if (!/^\d+$/.test(value)) return false;
+  const id = Number(value);
+  if (!Number.isSafeInteger(id) || id <= 0) return false;
+  return id;
+}
+
 function filterOrgNode(query: string, data: OrgTreeNode) {
   const needle = query.trim().toLowerCase();
   if (!needle) return true;
-  return data.label.toLowerCase().includes(needle);
+  if (data.label.toLowerCase().includes(needle)) return true;
+  return data.dingtalkDeptId != null && String(data.dingtalkDeptId).includes(needle);
 }
 
 watch([orgTreeQuery, orgTree], () => {
@@ -836,6 +869,8 @@ async function loadEnterprises() {
         name: auth.user.enterprise.name,
         code: auth.user.enterprise.code,
         status: auth.user.enterprise.status as EnterpriseStatus,
+        parentId: null,
+        dingtalkDeptId: null,
         createdAt: "",
         contact: null,
       },
@@ -863,6 +898,7 @@ async function loadPeople() {
         departmentId: selectedNodeKind.value === "department" ? selectedDepartmentId.value : null,
         page: page.value,
         q: employeeQuery.value,
+        includeDescendants: selectedNodeKind.value === "enterprise",
       })
     : {
         limit: pageSize,
@@ -890,7 +926,9 @@ async function loadPeople() {
     departmentName?: string | null;
     lastLoginAt: string | null;
   }>;
-  const uniqueUsers = [...new Map(users.map((row) => [row.id, row])).values()];
+  const uniqueUsers = [...new Map(users.map((row) => [row.id, row])).values()].filter(
+    (row) => row.role !== "admin",
+  );
   employeeTotal.value = typeof userRes.data.total === "number" ? userRes.data.total : uniqueUsers.length;
   employees.value = uniqueUsers
     .map((row) => {
@@ -970,41 +1008,11 @@ async function refreshAll() {
   }
 }
 
-function openCreateEnterprise() {
-  createEnterpriseName.value = "";
-  showCreateEnterprise.value = true;
-}
-
-async function createEnterprise() {
-  const name = createEnterpriseName.value.trim();
-  if (!name) {
-    ElMessage.warning("请填写企业名称");
-    return;
-  }
-  savingEnterprise.value = true;
-  try {
-    const { data } = await http.post("/api/admin/enterprises", { name });
-    if (!data.success) throw new Error(data.message);
-    ElMessage.success("已创建");
-    showCreateEnterprise.value = false;
-    await refreshAll();
-    selectedEnterpriseId.value = data.data.id;
-    selectedNodeKind.value = "enterprise";
-    selectedDepartmentId.value = null;
-    selectedTeamId.value = null;
-    syncQuery();
-    await loadTeamsAndPeople();
-    highlightTree();
-  } catch (error) {
-    ElMessage.error(requestMessage(error, "创建失败"));
-  } finally {
-    savingEnterprise.value = false;
-  }
-}
-
 function openEditEnterprise(row: EnterpriseRow) {
   editEnterprise.value = row;
   editEnterpriseName.value = row.name;
+  editEnterpriseParentId.value = row.parentId ?? undefined;
+  editEnterpriseDingtalkId.value = row.dingtalkDeptId != null ? String(row.dingtalkDeptId) : "";
   showEditEnterprise.value = true;
 }
 
@@ -1015,9 +1023,18 @@ async function updateEnterprise() {
     ElMessage.warning("请填写企业名称");
     return;
   }
+  const dingtalkDeptId = parseDingtalkDeptId(editEnterpriseDingtalkId.value);
+  if (dingtalkDeptId === false) {
+    ElMessage.warning("钉钉部门 ID 必须是正整数");
+    return;
+  }
   updatingEnterprise.value = true;
   try {
-    const { data } = await http.patch(`/api/admin/enterprises/${editEnterprise.value.id}`, { name });
+    const { data } = await http.patch(`/api/admin/enterprises/${editEnterprise.value.id}`, {
+      name,
+      parentId: editEnterpriseParentId.value ?? null,
+      dingtalkDeptId,
+    });
     if (!data.success) throw new Error(data.message);
     ElMessage.success("已更新");
     showEditEnterprise.value = false;
@@ -1045,58 +1062,10 @@ async function setEnterpriseStatus(row: EnterpriseRow, status: "active" | "disab
   await loadEnterprises();
 }
 
-function openCreateRootDepartment() {
-  createDepartmentName.value = "";
-  createDepartmentParentId.value = null;
-  showCreateDepartment.value = true;
-}
-
-function openCreateChildDepartment() {
-  if (selectedDepartmentId.value == null) return;
-  createDepartmentName.value = "";
-  createDepartmentParentId.value = selectedDepartmentId.value;
-  showCreateDepartment.value = true;
-}
-
-function onCreateDepartmentCommand(command: string | number | object) {
-  if (command === "root") openCreateRootDepartment();
-  if (command === "child") openCreateChildDepartment();
-}
-
-async function createDepartment() {
-  if (!selectedEnterpriseId.value) return;
-  const name = createDepartmentName.value.trim();
-  if (!name) {
-    ElMessage.warning(createDepartmentParentId.value ? "请填写子部门名称" : "请填写部门名称");
-    return;
-  }
-  savingDepartment.value = true;
-  try {
-    const { data } = await http.post("/api/admin/departments", {
-      name,
-      enterpriseId: selectedEnterpriseId.value,
-      parentId: createDepartmentParentId.value ?? undefined,
-    });
-    if (!data.success) throw new Error(data.message);
-    ElMessage.success("已创建");
-    showCreateDepartment.value = false;
-    await loadEnterprises();
-    await loadTeamsAndPeople();
-    selectedNodeKind.value = "department";
-    selectedDepartmentId.value = data.data.id;
-    selectedTeamId.value = null;
-    syncQuery();
-    highlightTree();
-  } catch (error) {
-    ElMessage.error(requestMessage(error, "创建失败"));
-  } finally {
-    savingDepartment.value = false;
-  }
-}
-
 function openEditDepartment(department: DepartmentRow) {
   editDepartment.value = department;
   editDepartmentName.value = department.name;
+  editDepartmentDingtalkId.value = department.dingtalkDeptId != null ? String(department.dingtalkDeptId) : "";
   showEditDepartment.value = true;
 }
 
@@ -1107,9 +1076,17 @@ async function updateDepartment() {
     ElMessage.warning("请填写部门名称");
     return;
   }
+  const dingtalkDeptId = parseDingtalkDeptId(editDepartmentDingtalkId.value);
+  if (dingtalkDeptId === false) {
+    ElMessage.warning("钉钉部门 ID 必须是正整数");
+    return;
+  }
   updatingDepartment.value = true;
   try {
-    const { data } = await http.patch(`/api/admin/departments/${editDepartment.value.id}`, { name });
+    const { data } = await http.patch(`/api/admin/departments/${editDepartment.value.id}`, {
+      name,
+      dingtalkDeptId,
+    });
     if (!data.success) throw new Error(data.message);
     ElMessage.success("已更新");
     showEditDepartment.value = false;
@@ -1226,7 +1203,7 @@ async function inviteMember() {
     return;
   }
   if (!inviteTeamId.value) {
-    ElMessage.warning(teamOptions.value.length ? "请选择要加入的部门" : "请先创建部门，再邀请员工");
+    ElMessage.warning(teamOptions.value.length ? "请选择要加入的部门" : "该企业暂无部门，请先同步钉钉通讯录");
     return;
   }
   inviting.value = true;
@@ -1546,9 +1523,20 @@ onMounted(() => {
 }
 
 .tree-search,
-.people-search {
+.people-toolbar {
   flex-shrink: 0;
   margin-bottom: 8px;
+}
+
+.people-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.people-search {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .tree-scroll {
@@ -1579,8 +1567,14 @@ onMounted(() => {
   color: var(--el-text-color-secondary);
 }
 
+.tree-main {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
 .tree-label {
-  flex: 1;
   min-width: 0;
   overflow: hidden;
   font-size: 14px;
@@ -1588,8 +1582,20 @@ onMounted(() => {
   white-space: nowrap;
 }
 
-.tree-count {
-  color: var(--el-text-color-placeholder);
+.tree-people {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  margin-left: 2px;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.tree-people-icon {
+  margin-right: 2px;
   font-size: 12px;
 }
 
@@ -1620,6 +1626,11 @@ onMounted(() => {
 
 .people-table {
   height: 100%;
+}
+
+.hired-cell {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 
 .people-pane .pager {

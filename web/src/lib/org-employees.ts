@@ -5,6 +5,7 @@ export type OrgDepartmentNode = {
   parentId?: number | null;
   name?: string;
   isDefault?: boolean;
+  dingtalkDeptId?: number | null;
 };
 
 export type OrgTeamNode = {

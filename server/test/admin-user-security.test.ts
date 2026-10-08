@@ -110,6 +110,7 @@ test("admin user list aggregation keeps one row and joins department names", () 
   ]);
   assert.equal(rows.length, 1);
   assert.deepEqual(rows[0]?.teamIds, [101, 102]);
+  assert.deepEqual(rows[0]?.departmentIds, [8, 18]);
   assert.equal(rows[0]?.departmentName, "产品技术部、平台组");
   assert.equal(rows[0]?.teamName, "产品技术部、平台组");
 });
