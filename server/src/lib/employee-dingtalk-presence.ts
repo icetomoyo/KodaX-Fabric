@@ -4,13 +4,17 @@ import { db } from "../db/client.js";
 import { employees, enterprises } from "../db/schema/index.js";
 import {
   collectDingtalkDeptIds,
+  dingtalkOrgEmployeePatch,
+  enrichDingtalkUsersWithGet,
   fetchDingtalkAccessToken,
   fetchDingtalkDepartmentTree,
   fetchDingtalkDeptUsers,
   findDingtalkNode,
+  mergeDingtalkUserDetails,
   readDingtalkCredentials,
   DingtalkNotConfiguredError,
   type DingtalkCredentials,
+  type DingtalkUserDetail,
 } from "./dingtalk-department-tree.js";
 import { normalizeDingtalkMobile } from "./dingtalk-user-import.js";
 
@@ -21,6 +25,7 @@ export type DingtalkPresenceEnterpriseResult = {
   rosterPhones: number;
   markedIn: number;
   markedOut: number;
+  profilesUpdated: number;
 };
 
 type FetchImpl = typeof fetch;
@@ -54,6 +59,7 @@ export async function refreshEmployeeDingtalkPresence(options?: {
   });
 
   const phonesByDept = new Map<number, string[]>();
+  const listedByUserid = new Map<string, DingtalkUserDetail>();
   for (const deptId of collectDingtalkDeptIds(tree)) {
     const users = await fetchDingtalkDeptUsers({
       token,
@@ -62,11 +68,23 @@ export async function refreshEmployeeDingtalkPresence(options?: {
     });
     const phones: string[] = [];
     for (const user of users) {
+      const existing = listedByUserid.get(user.userid);
+      listedByUserid.set(user.userid, existing ? mergeDingtalkUserDetails(existing, user) : user);
       const phone = normalizeDingtalkMobile(user.mobile);
       if (!phone) continue;
       phones.push(phone);
     }
     phonesByDept.set(deptId, phones);
+  }
+  const enriched = await enrichDingtalkUsersWithGet({
+    token,
+    users: [...listedByUserid.values()],
+    fetchImpl: options?.fetchImpl,
+  });
+  const profilesByPhone = new Map<string, DingtalkUserDetail>();
+  for (const user of enriched) {
+    const phone = normalizeDingtalkMobile(user.mobile);
+    if (phone) profilesByPhone.set(phone, user);
   }
 
   const results: DingtalkPresenceEnterpriseResult[] = [];
@@ -92,6 +110,12 @@ export async function refreshEmployeeDingtalkPresence(options?: {
       .map((row) => row.id);
     const markedIn = inIds.length;
     const markedOut = current.length - markedIn;
+    const profileUpdates = current.flatMap((row) => {
+      const normalized = normalizeDingtalkMobile(row.phone) ?? row.phone;
+      const profile = profilesByPhone.get(row.phone) ?? profilesByPhone.get(normalized);
+      if (!profile) return [];
+      return [{ id: row.id, profile }];
+    });
 
     if (!options?.dryRun) {
       await db.transaction(async (tx) => {
@@ -105,6 +129,15 @@ export async function refreshEmployeeDingtalkPresence(options?: {
             .set({ isDingtalk: true })
             .where(and(eq(employees.enterpriseId, enterprise.id), inArray(employees.id, inIds)));
         }
+        for (const row of profileUpdates) {
+          await tx
+            .update(employees)
+            .set({
+              ...dingtalkOrgEmployeePatch(row.profile),
+              updatedAt: new Date(),
+            })
+            .where(eq(employees.id, row.id));
+        }
       });
     }
 
@@ -115,6 +148,7 @@ export async function refreshEmployeeDingtalkPresence(options?: {
       rosterPhones: roster.size,
       markedIn,
       markedOut,
+      profilesUpdated: profileUpdates.length,
     });
   }
   return results;

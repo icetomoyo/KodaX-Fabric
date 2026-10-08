@@ -51,6 +51,9 @@ test("admin user list selects employee data without API-key joins", () => {
   assert.match(compiledSql, /"is_dingtalk"/);
   assert.match(compiledSql, /"job_title"/);
   assert.match(compiledSql, /"hired_at"/);
+  assert.match(compiledSql, /"job_number"/);
+  assert.match(compiledSql, /"leader_in_dept"/);
+  assert.match(compiledSql, /"role_list"/);
   assert.doesNotMatch(compiledSql, /employee_api_keys/);
   assert.doesNotMatch(compiledSql, /active_api_key_count/);
 });
@@ -89,6 +92,15 @@ test("admin user list aggregation keeps one row and joins department names", () 
       isDingtalk: true,
       jobTitle: "产品经理",
       hiredAt: "2024-03-01",
+      dingtalkUserid: "ding-9",
+      jobNumber: "HE00009",
+      workPlace: null,
+      dingtalkRemark: null,
+      managerUserid: null,
+      dingtalkDeptIds: [8],
+      deptOrderList: [],
+      leaderInDept: [{ deptId: 8, leader: true }],
+      roleList: [{ id: 1, name: "主管", groupName: "默认" }],
       teamId: 101,
       teamName: "默认团队",
       teamRole: "member",
@@ -109,6 +121,15 @@ test("admin user list aggregation keeps one row and joins department names", () 
       isDingtalk: true,
       jobTitle: "产品经理",
       hiredAt: "2024-03-01",
+      dingtalkUserid: "ding-9",
+      jobNumber: "HE00009",
+      workPlace: null,
+      dingtalkRemark: null,
+      managerUserid: null,
+      dingtalkDeptIds: [8],
+      deptOrderList: [],
+      leaderInDept: [{ deptId: 8, leader: true }],
+      roleList: [{ id: 1, name: "主管", groupName: "默认" }],
       teamId: 102,
       teamName: "默认团队",
       teamRole: "member",

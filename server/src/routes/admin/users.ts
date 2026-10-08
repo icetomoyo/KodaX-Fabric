@@ -97,6 +97,15 @@ export type AdminUserListRow = {
   isDingtalk: boolean;
   jobTitle: string | null;
   hiredAt: string | null;
+  dingtalkUserid: string | null;
+  jobNumber: string | null;
+  workPlace: string | null;
+  dingtalkRemark: string | null;
+  managerUserid: string | null;
+  dingtalkDeptIds: number[] | null;
+  deptOrderList: Array<{ deptId: number; order: number }> | null;
+  leaderInDept: Array<{ deptId: number; leader: boolean }> | null;
+  roleList: Array<{ id: number; name: string; groupName: string }> | null;
   teamId: number | null;
   teamName: string | null;
   departmentId: number | null;
@@ -182,6 +191,15 @@ export function buildAdminUserListQuery(query: AdminUserListQuery) {
       isDingtalk: employees.isDingtalk,
       jobTitle: employees.jobTitle,
       hiredAt: employees.hiredAt,
+      dingtalkUserid: employees.dingtalkUserid,
+      jobNumber: employees.jobNumber,
+      workPlace: employees.workPlace,
+      dingtalkRemark: employees.dingtalkRemark,
+      managerUserid: employees.managerUserid,
+      dingtalkDeptIds: employees.dingtalkDeptIds,
+      deptOrderList: employees.deptOrderList,
+      leaderInDept: employees.leaderInDept,
+      roleList: employees.roleList,
       teamId: teams.id,
       teamName: teams.name,
       departmentId: departments.id,
