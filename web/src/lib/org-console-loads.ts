@@ -8,11 +8,13 @@ export function orgConsoleUserListParams(input: {
   page: number;
   q?: string;
   includeDescendants?: boolean;
+  isDingtalk?: boolean | null;
 }): {
   enterpriseId: number;
   departmentId?: number;
   q?: string;
   includeDescendants?: boolean;
+  isDingtalk?: boolean;
   limit: number;
   offset: number;
 } {
@@ -26,6 +28,7 @@ export function orgConsoleUserListParams(input: {
         ? { departmentId: input.departmentId }
         : {}),
     ...(input.includeDescendants && input.departmentId == null ? { includeDescendants: true } : {}),
+    ...(input.isDingtalk == null ? {} : { isDingtalk: input.isDingtalk }),
     limit: ORG_CONSOLE_PAGE_SIZE,
     offset: (page - 1) * ORG_CONSOLE_PAGE_SIZE,
   };

@@ -84,6 +84,7 @@ async function ensureEmployee(input: {
   phone: string;
   enterpriseId: number;
   departmentId: number;
+  isDingtalk?: boolean;
 }) {
   const [existing] = await db
     .select({ id: employees.id, enterpriseId: employees.enterpriseId })
@@ -91,6 +92,7 @@ async function ensureEmployee(input: {
     .where(eq(employees.phone, input.phone))
     .limit(1);
   let employeeId = existing?.id;
+  const isDingtalk = input.isDingtalk === true;
   if (!existing) {
     const [row] = await db
       .insert(employees)
@@ -102,6 +104,7 @@ async function ensureEmployee(input: {
         status: "active",
         enterpriseId: input.enterpriseId,
         mustChangePassword: false,
+        isDingtalk,
       })
       .returning({ id: employees.id });
     employeeId = row.id;
@@ -111,6 +114,7 @@ async function ensureEmployee(input: {
       .set({
         name: input.name,
         enterpriseId: input.enterpriseId,
+        isDingtalk,
         updatedAt: new Date(),
       })
       .where(eq(employees.id, existing.id));
@@ -176,6 +180,7 @@ async function main() {
       phone: E2E_ORG.employees.childA.phone,
       enterpriseId: childA.id,
       departmentId: department.id,
+      isDingtalk: true,
     });
     const teamB = await ensureDefaultTeam(departmentB.id, childA.id);
     await db.insert(teamMembers).values({ teamId: teamB, employeeId: employeeA.id }).onConflictDoNothing();
@@ -184,6 +189,7 @@ async function main() {
       phone: E2E_ORG.employees.childB.phone,
       enterpriseId: childB.id,
       departmentId: await defaultDepartmentId(childB.id),
+      isDingtalk: false,
     });
     console.log("[e2e] org fixtures ready", {
       groupId: group.id,

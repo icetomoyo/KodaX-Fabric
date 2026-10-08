@@ -138,6 +138,7 @@ export async function provisionEmployeeFromLdapDingtalk(
         status: "active",
         enterpriseId: plan.enterpriseId,
         mustChangePassword: false,
+        isDingtalk: true,
       })
       .returning({
         id: employees.id,

@@ -60,6 +60,7 @@ async function main() {
           status: "active",
           enterpriseId: create.enterpriseId,
           mustChangePassword: false,
+          isDingtalk: true,
         })
         .returning({ id: employees.id });
       const teamId = await ensureDefaultTeam(create.departmentId, create.enterpriseId);

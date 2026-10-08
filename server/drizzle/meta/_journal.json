@@ -393,6 +393,13 @@
       "when": 1790210000000,
       "tag": "0055_enterprise_parent_dingtalk",
       "breakpoints": true
+    },
+    {
+      "idx": 56,
+      "version": "7",
+      "when": 1790211000000,
+      "tag": "0056_employee_is_dingtalk",
+      "breakpoints": true
     }
   ]
 }

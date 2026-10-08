@@ -81,6 +81,7 @@ type AdminUserListQuery = {
   teamIds?: number[];
   employeeIds?: number[];
   excludeRoles?: SessionRole[];
+  isDingtalk?: boolean;
 };
 
 export type AdminUserListRow = {
@@ -93,6 +94,7 @@ export type AdminUserListRow = {
   enterpriseId: number | null;
   lastLoginAt: Date | null;
   createdAt: Date;
+  isDingtalk: boolean;
   teamId: number | null;
   teamName: string | null;
   departmentId: number | null;
@@ -135,6 +137,7 @@ function adminUserListWhere(query: AdminUserListQuery) {
     query.employeeIds?.length ? inArray(employees.id, query.employeeIds) : sql`true`,
     query.teamIds?.length ? inArray(teamMembers.teamId, query.teamIds) : sql`true`,
     query.excludeRoles?.length ? notInArray(employees.role, query.excludeRoles) : sql`true`,
+    query.isDingtalk == null ? sql`true` : eq(employees.isDingtalk, query.isDingtalk),
   );
 }
 
@@ -174,6 +177,7 @@ export function buildAdminUserListQuery(query: AdminUserListQuery) {
       enterpriseId: employees.enterpriseId,
       lastLoginAt: employees.lastLoginAt,
       createdAt: employees.createdAt,
+      isDingtalk: employees.isDingtalk,
       teamId: teams.id,
       teamName: teams.name,
       departmentId: departments.id,
@@ -325,6 +329,7 @@ export async function adminUserRoutes(app: FastifyInstance) {
         enterpriseId: z.coerce.number().int().positive().optional(),
         departmentId: z.coerce.number().int().positive().optional(),
         includeDescendants: optionalFlagSchema,
+        isDingtalk: optionalFlagSchema,
       })
       .safeParse(req.query);
     if (!parsed.success) {
@@ -332,6 +337,7 @@ export async function adminUserRoutes(app: FastifyInstance) {
     }
     const query = parsed.data;
     const includeDescendants = parseOptionalFlag(query.includeDescendants) === true;
+    const isDingtalk = parseOptionalFlag(query.isDingtalk);
 
     const scope = resolveUserListScope(
       { role: req.session!.role, enterpriseId: req.session!.enterpriseId },
@@ -379,6 +385,7 @@ export async function adminUserRoutes(app: FastifyInstance) {
       offset: query.offset,
       q: query.q,
       status: query.status,
+      isDingtalk,
       enterpriseId: enterpriseIds?.length === 1 ? enterpriseIds[0] : undefined,
       enterpriseIds: enterpriseIds != null && enterpriseIds.length > 1 ? enterpriseIds : undefined,
       teamIds,

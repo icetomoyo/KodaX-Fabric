@@ -97,6 +97,7 @@ export const employees = pgTable(
     passwordChangedAt: timestamp("password_changed_at", { withTimezone: true }),
     lastLoginAt: timestamp("last_login_at", { withTimezone: true }),
     usageTier: usageTierEnum("usage_tier").notNull().default("heavy"),
+    isDingtalk: boolean("is_dingtalk").notNull().default(false),
     createdBy: bigint("created_by", { mode: "number" }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),

@@ -114,6 +114,16 @@
               @keyup.enter="searchPeopleNow"
               @clear="searchPeopleNow"
             />
+            <el-select
+              v-model="dingtalkFilter"
+              class="people-dingtalk-filter"
+              clearable
+              placeholder="钉钉通讯录"
+              @change="searchPeopleNow"
+            >
+              <el-option label="在通讯录" value="in" />
+              <el-option label="未在通讯录" value="out" />
+            </el-select>
           </div>
           <div class="people-table-wrap">
             <el-table
@@ -128,6 +138,13 @@
               <el-table-column label="部门" min-width="140" show-overflow-tooltip>
                 <template #default="{ row }">
                   <span :class="{ muted: !row.teamName }">{{ row.teamName || "未分配" }}</span>
+                </template>
+              </el-table-column>
+              <el-table-column label="钉钉" width="88" align="center">
+                <template #default="{ row }">
+                  <el-tag :type="row.isDingtalk ? 'success' : 'info'" size="small">
+                    {{ row.isDingtalk ? "在册" : "未在册" }}
+                  </el-tag>
                 </template>
               </el-table-column>
               <el-table-column label="角色" min-width="88" width="100">
@@ -441,6 +458,7 @@ type EmployeeRow = {
   teamIds: number[];
   teamName: string | null;
   lastLoginAt: string | null;
+  isDingtalk: boolean;
 };
 
 const route = useRoute();
@@ -467,6 +485,7 @@ const orgTreeRef = ref<{
 } | null>(null);
 const orgTreeQuery = ref("");
 const employeeQuery = ref("");
+const dingtalkFilter = ref<"" | "in" | "out">("");
 let employeeSearchTimer: ReturnType<typeof setTimeout> | null = null;
 
 const showEditEnterprise = ref(false);
@@ -713,7 +732,7 @@ const employeeSectionTitle = computed(() => {
 });
 
 const employeeEmptyText = computed(() => {
-  if (employeeQuery.value.trim()) return "未找到匹配的员工";
+  if (employeeQuery.value.trim() || dingtalkFilter.value) return "未找到匹配的员工";
   if (selectedNodeKind.value === "department") return "该部门暂无员工";
   return "该企业暂无员工";
 });
@@ -899,6 +918,7 @@ async function loadPeople() {
         page: page.value,
         q: employeeQuery.value,
         includeDescendants: selectedNodeKind.value === "enterprise",
+        isDingtalk: dingtalkFilter.value === "in" ? true : dingtalkFilter.value === "out" ? false : null,
       })
     : {
         limit: pageSize,
@@ -925,6 +945,7 @@ async function loadPeople() {
     teamRole?: string | null;
     departmentName?: string | null;
     lastLoginAt: string | null;
+    isDingtalk?: boolean;
   }>;
   const uniqueUsers = [...new Map(users.map((row) => [row.id, row])).values()].filter(
     (row) => row.role !== "admin",
@@ -947,6 +968,7 @@ async function loadPeople() {
         teamName: row.departmentName || row.teamName || null,
         teamRole: row.teamRole ?? (row.teamId ? "member" : null),
         lastLoginAt: row.lastLoginAt,
+        isDingtalk: row.isDingtalk === true,
       };
     });
 }
@@ -1537,6 +1559,11 @@ onMounted(() => {
 .people-search {
   flex: 1 1 auto;
   min-width: 0;
+}
+
+.people-dingtalk-filter {
+  flex: 0 0 148px;
+  width: 148px;
 }
 
 .tree-scroll {

@@ -280,4 +280,61 @@ test.describe.serial("企业层级与钉钉部门 ID", () => {
     );
   });
 
+  test("员工列表可按是否在企业钉钉通讯录筛选", async ({ page, request }) => {
+    const token = await loginToken(request);
+    const headers = { Authorization: `Bearer ${token}` };
+    expect(state.group).toBeTruthy();
+
+    type UserList = {
+      success: boolean;
+      data: Array<{ name: string; isDingtalk?: boolean }>;
+      total: number;
+    };
+    const names = (body: UserList) => body.data.map((row) => row.name);
+    const base = `/api/admin/users?enterpriseId=${state.group!.id}&includeDescendants=true&limit=50`;
+
+    const inRoster = (await (await request.get(`${base}&isDingtalk=true`, { headers })).json()) as UserList;
+    expect(inRoster.success).toBeTruthy();
+    expect(names(inRoster)).toContain(E2E_ORG.employees.childA.name);
+    expect(names(inRoster)).not.toContain(E2E_ORG.employees.childB.name);
+    expect(inRoster.data.every((row) => row.isDingtalk === true)).toBeTruthy();
+
+    const outRoster = (await (await request.get(`${base}&isDingtalk=false`, { headers })).json()) as UserList;
+    expect(outRoster.success).toBeTruthy();
+    expect(names(outRoster)).toContain(E2E_ORG.employees.childB.name);
+    expect(names(outRoster)).not.toContain(E2E_ORG.employees.childA.name);
+    expect(outRoster.data.every((row) => row.isDingtalk === false)).toBeTruthy();
+
+    await loginViaUi(page);
+    await page.goto(`/admin/enterprises?enterpriseId=${state.group!.id}`);
+    await expect(page.getByRole("heading", { name: "组织架构" })).toBeVisible();
+    const peopleTable = page.locator(".people-table");
+    await expect(peopleTable.getByText(E2E_ORG.employees.childA.name, { exact: true })).toBeVisible();
+    await expect(peopleTable.getByText(E2E_ORG.employees.childB.name, { exact: true })).toBeVisible();
+    await expect(peopleTable.getByText("在册", { exact: true }).first()).toBeVisible();
+    await expect(peopleTable.getByText("未在册", { exact: true }).first()).toBeVisible();
+
+    const filter = page.locator(".people-dingtalk-filter");
+    await filter.click();
+    await page.getByRole("option", { name: "未在通讯录", exact: true }).click();
+    await expect(peopleTable.getByText(E2E_ORG.employees.childB.name, { exact: true })).toBeVisible();
+    await expect(peopleTable.getByText(E2E_ORG.employees.childA.name, { exact: true })).toHaveCount(0);
+
+    await filter.click();
+    await page.getByRole("option", { name: "在通讯录", exact: true }).click();
+    await expect(peopleTable.getByText(E2E_ORG.employees.childA.name, { exact: true })).toBeVisible();
+    await expect(peopleTable.getByText(E2E_ORG.employees.childB.name, { exact: true })).toHaveCount(0);
+
+    mkdirSync(ARTIFACT_DIR, { recursive: true });
+    const screenshotPath = resolve(ARTIFACT_DIR, "employee-dingtalk-filter.png");
+    await page.locator(".people-pane").screenshot({ path: screenshotPath });
+    writeFileSync(
+      resolve(ARTIFACT_DIR, "employee-dingtalk-filter.json"),
+      `${JSON.stringify({
+        screenshot: screenshotPath,
+        inRoster: names(inRoster),
+        outRoster: names(outRoster),
+      }, null, 2)}\n`,
+    );
+  });
 });

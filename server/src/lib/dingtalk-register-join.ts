@@ -216,6 +216,7 @@ async function applyRegisterDingtalkJoin(
     .set({
       enterpriseId: plan.enterpriseId,
       dept: primary.departmentName,
+      isDingtalk: true,
       updatedAt: new Date(),
     })
     .where(eq(employees.id, employeeId));
