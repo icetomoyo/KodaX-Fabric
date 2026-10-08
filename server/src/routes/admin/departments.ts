@@ -17,6 +17,7 @@ import {
   type OrgActor,
 } from "../../lib/org.js";
 import { detachAndDeleteTeam } from "./teams.js";
+import { departmentAndDescendantIds } from "../../lib/department-tree.js";
 import type { SessionRole } from "../../lib/jwt.js";
 import {
   requireRoles,
@@ -71,11 +72,6 @@ export async function adminDepartmentRoutes(app: FastifyInstance) {
       select count(*)::int from ${teams}
       where ${teams.departmentId} = ${departments.id} and ${teams.isDefault} = false
     )`;
-    const memberCount = sql<number>`(
-      select count(*)::int from ${teamMembers}
-      inner join ${teams} on ${teams.id} = ${teamMembers.teamId}
-      where ${teams.departmentId} = ${departments.id}
-    )`;
     const defaultTeamId = sql<number | null>`(
       select ${teams.id} from ${teams}
       where ${teams.departmentId} = ${departments.id} and ${teams.isDefault} = true
@@ -92,7 +88,6 @@ export async function adminDepartmentRoutes(app: FastifyInstance) {
         enterpriseId: departments.enterpriseId,
         enterpriseName: enterprises.name,
         teamCount,
-        memberCount,
         defaultTeamId,
         createdAt: departments.createdAt,
         updatedAt: departments.updatedAt,
@@ -106,12 +101,37 @@ export async function adminDepartmentRoutes(app: FastifyInstance) {
         ),
       )
       .orderBy(desc(departments.id));
+    const tree = await db
+      .select({ id: departments.id, parentId: departments.parentId })
+      .from(departments);
+    const memberships = await db
+      .select({
+        departmentId: teams.departmentId,
+        employeeId: teamMembers.employeeId,
+      })
+      .from(teamMembers)
+      .innerJoin(teams, eq(teams.id, teamMembers.teamId));
+    const employeesByDept = new Map<number, Set<number>>();
+    for (const row of memberships) {
+      const set = employeesByDept.get(row.departmentId) ?? new Set<number>();
+      set.add(row.employeeId);
+      employeesByDept.set(row.departmentId, set);
+    }
+    const subtreeMemberCount = (departmentId: number) => {
+      const people = new Set<number>();
+      for (const id of departmentAndDescendantIds(departmentId, tree)) {
+        const set = employeesByDept.get(id);
+        if (!set) continue;
+        for (const employeeId of set) people.add(employeeId);
+      }
+      return people.size;
+    };
     return {
       success: true,
       data: rows.map((row) => ({
         ...row,
         teamCount: Number(row.teamCount) || 0,
-        memberCount: Number(row.memberCount) || 0,
+        memberCount: subtreeMemberCount(row.id),
         defaultTeamId: row.defaultTeamId == null ? null : Number(row.defaultTeamId),
       })),
     };

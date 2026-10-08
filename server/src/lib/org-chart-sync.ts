@@ -3,6 +3,11 @@ import { db } from "../db/client.js";
 import { departments, employeeApiKeys, employees, enterprises, teamMembers, teams } from "../db/schema/index.js";
 import { ensureDefaultTeam } from "./enterprise.js";
 import { departmentAndDescendantIds } from "./department-tree.js";
+import {
+  DINGTALK_ALIGNED_UNITS,
+  DINGTALK_GROUP_ENTERPRISE_NAME,
+  resolveDingtalkAlignedEnterprise,
+} from "./dingtalk-dept-id-map.js";
 
 export type OrgChartMember = { name: string };
 export type OrgChartNode = {
@@ -57,8 +62,7 @@ export type OrgChartSyncPlan = {
   unmatchedEmployees: Array<{ id: number; name: string }>;
 };
 
-const COMPANY_ENTERPRISE_NAMES = ["海致科技", "海致星图"] as const;
-const LEGAL_DEPT_ENTERPRISE = "海致集团";
+const LEGAL_DEPT_ENTERPRISE = DINGTALK_GROUP_ENTERPRISE_NAME;
 const SKIP_ROLES = new Set(["admin", "org_admin"]);
 
 export function normalizeDepartmentName(name: string): string {
@@ -88,7 +92,10 @@ type ChartPlacement = {
   path: string[];
 };
 
-function collectNamePlacements(chart: OrgChartNode): Map<string, ChartPlacement[]> {
+function collectNamePlacements(
+  chart: OrgChartNode,
+  enterprisesByName: ReadonlyMap<string, ExistingEnterprise>,
+): Map<string, ChartPlacement[]> {
   const byName = new Map<string, ChartPlacement[]>();
   const add = (name: string, placement: ChartPlacement) => {
     const list = byName.get(name) ?? [];
@@ -114,8 +121,10 @@ function collectNamePlacements(chart: OrgChartNode): Map<string, ChartPlacement[
   };
 
   for (const child of chart.children ?? []) {
-    if (COMPANY_ENTERPRISE_NAMES.includes(child.deptName as (typeof COMPANY_ENTERPRISE_NAMES)[number])) {
-      visit(child, child.deptName, []);
+    if (DINGTALK_ALIGNED_UNITS.includes(child.deptName as (typeof DINGTALK_ALIGNED_UNITS)[number])) {
+      const resolved = resolveDingtalkAlignedEnterprise(enterprisesByName, child.deptName);
+      if (!resolved) continue;
+      visit(child, resolved.enterprise.name, resolved.pathPrefix);
     } else if (child.deptName === "法务顾问") {
       visit(child, LEGAL_DEPT_ENTERPRISE, ["法务顾问"]);
     }
@@ -154,7 +163,9 @@ export function planOrgChartSync(input: {
   const root = "orgStructure" in input.chart ? input.chart.orgStructure : input.chart;
   const enterprisesByName = new Map(input.enterprises.map((row) => [row.name, row]));
   const index = departmentIndex(input.departments);
-  const placements = collectNamePlacements(root);
+  const placements = collectNamePlacements(root, enterprisesByName);
+  const splitCompanyEnterprises = DINGTALK_ALIGNED_UNITS.some((name) => enterprisesByName.has(name));
+  const groupEnterprise = enterprisesByName.get(DINGTALK_GROUP_ENTERPRISE_NAME);
 
   const createDepartments: PlannedDepartmentCreate[] = [];
   const renameDepartments: Array<{ id: number; from: string; to: string }> = [];
@@ -210,10 +221,10 @@ export function planOrgChartSync(input: {
   };
 
   for (const child of root.children ?? []) {
-    if (COMPANY_ENTERPRISE_NAMES.includes(child.deptName as (typeof COMPANY_ENTERPRISE_NAMES)[number])) {
-      const enterprise = enterprisesByName.get(child.deptName);
-      if (!enterprise) continue;
-      visitTree(child, enterprise.id, []);
+    if (DINGTALK_ALIGNED_UNITS.includes(child.deptName as (typeof DINGTALK_ALIGNED_UNITS)[number])) {
+      const resolved = resolveDingtalkAlignedEnterprise(enterprisesByName, child.deptName);
+      if (!resolved) continue;
+      visitTree(child, resolved.enterprise.id, resolved.pathPrefix);
     } else if (child.deptName === "法务顾问") {
       const enterprise = enterprisesByName.get(LEGAL_DEPT_ENTERPRISE);
       if (!enterprise) continue;
@@ -234,12 +245,15 @@ export function planOrgChartSync(input: {
     }
     const companyNames = [...new Set(hits.map((row) => row.enterpriseName))];
     const currentName = input.enterprises.find((row) => row.id === employee.enterpriseId)?.name;
-    const targetName = currentName && companyNames.includes(currentName)
-      ? currentName
-      : companyNames.includes("海致科技")
-        ? "海致科技"
-        : companyNames[0]!;
-    const targetEnterprise = enterprisesByName.get(targetName);
+    const targetEnterprise = !splitCompanyEnterprises && groupEnterprise
+      ? groupEnterprise
+      : enterprisesByName.get(
+          currentName && companyNames.includes(currentName)
+            ? currentName
+            : companyNames.includes("海致科技")
+              ? "海致科技"
+              : companyNames[0]!,
+        );
     if (!targetEnterprise) continue;
     if (employee.enterpriseId !== targetEnterprise.id) {
       enterpriseMoves.push({
@@ -249,7 +263,7 @@ export function planOrgChartSync(input: {
       });
     }
     const desiredPaths = hits
-      .filter((row) => row.enterpriseName === targetName)
+      .filter((row) => row.enterpriseName === targetEnterprise.name)
       .map((row) => row.path)
       .filter((path) => path.length > 0);
     const uniquePaths = [...new Map(desiredPaths.map((path) => [path.join("/"), path])).values()];

@@ -11,6 +11,7 @@
     "db:sync-dingtalk-dept-ids": "tsx src/db/sync-dingtalk-dept-ids.ts",
     "db:sync-dingtalk-users": "tsx src/db/sync-dingtalk-users.ts",
     "db:sync-dingtalk-presence": "tsx src/db/sync-dingtalk-presence.ts",
+    "db:align-haizhi-org": "tsx src/db/align-haizhi-dingtalk-org.ts",
     "test:enterprise:isolation": "tsx test/enterprise-isolation.integration.ts",
     "test:enterprise:launch": "tsx test/enterprise-launch.ts",
     "test:relay:live": "tsx test/live-relay-smoke.ts",

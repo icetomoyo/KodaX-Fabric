@@ -1,12 +1,31 @@
 import type { DingtalkDepartmentNode } from "./dingtalk-department-tree.js";
 
-export const DINGTALK_ALIGNED_ENTERPRISES = ["海致星图", "海致科技"] as const;
+export const DINGTALK_ALIGNED_UNITS = [
+  "海致星图",
+  "海致科技",
+  "外部人员组",
+  "法务顾问",
+  "钉钉部署",
+  "分贝通测试",
+] as const;
+export const DINGTALK_ALIGNED_ENTERPRISES = DINGTALK_ALIGNED_UNITS;
+export const DINGTALK_GROUP_ENTERPRISE_NAME = "海致集团";
 
 const SKIPPED_DINGTALK_PATHS = new Set([
   "海致星图/残疾人安置（星图）",
-  "海致科技/外包团队",
   "海致科技/残疾人安置（科技）",
 ]);
+
+export function resolveDingtalkAlignedEnterprise(
+  enterprisesByName: ReadonlyMap<string, { id: number; name: string }>,
+  unitName: string,
+): { enterprise: { id: number; name: string }; pathPrefix: string[] } | null {
+  const named = enterprisesByName.get(unitName);
+  if (named) return { enterprise: named, pathPrefix: [] };
+  const group = enterprisesByName.get(DINGTALK_GROUP_ENTERPRISE_NAME);
+  if (group) return { enterprise: group, pathPrefix: [unitName] };
+  return null;
+}
 
 export type MappedDepartment = {
   id: number;
@@ -68,16 +87,16 @@ export function planDingtalkDeptIdWrites(input: {
   const seenDepartments = new Set<number>();
 
   for (const company of input.tree.children ?? []) {
-    if (!DINGTALK_ALIGNED_ENTERPRISES.includes(company.name as (typeof DINGTALK_ALIGNED_ENTERPRISES)[number])) {
+    if (!DINGTALK_ALIGNED_UNITS.includes(company.name as (typeof DINGTALK_ALIGNED_UNITS)[number])) {
       continue;
     }
-    const enterprise = enterprisesByName.get(company.name);
-    if (!enterprise) continue;
-    const localByPath = collectLocalPaths(enterprise.id, input.departments);
+    const resolved = resolveDingtalkAlignedEnterprise(enterprisesByName, company.name);
+    if (!resolved) continue;
+    const localByPath = collectLocalPaths(resolved.enterprise.id, input.departments);
 
     const visit = (node: DingtalkDepartmentNode, path: string[]) => {
       if (path.length > 0) {
-        const full = pathKey([company.name, ...path]);
+        const full = pathKey(path[0] === company.name ? path : [company.name, ...path]);
         if (SKIPPED_DINGTALK_PATHS.has(full)) {
           skipped.push({ enterpriseName: company.name, path, dingtalkDeptId: node.deptId });
         } else {
@@ -87,7 +106,7 @@ export function planDingtalkDeptIdWrites(input: {
             writes.push({
               departmentId: local.id,
               dingtalkDeptId: node.deptId,
-              enterpriseName: company.name,
+              enterpriseName: resolved.enterprise.name,
               path,
             });
           } else if (!local) {
@@ -103,7 +122,7 @@ export function planDingtalkDeptIdWrites(input: {
         visit(child, [...path, child.name]);
       }
     };
-    visit(company, []);
+    visit(company, resolved.pathPrefix);
   }
 
   return { writes, skipped, unmatchedDingtalk };

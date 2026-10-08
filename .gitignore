@@ -19,6 +19,9 @@ web/dist
 !.vscode/extensions.json
 .agent/
 
+# 本地导出的上游 KEY（明文，不入库）
+key/
+
 # E2E 产物（HTML 报告 / 失败现场 / 机器可读结果）
 playwright-report/
 test-results/
