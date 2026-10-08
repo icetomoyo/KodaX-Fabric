@@ -88,7 +88,7 @@ const envSchema = z.object({
       return trimmed ? trimmed : undefined;
     }),
   SEED_ADMIN_NAME: z.string().default("管理员"),
-  SEED_ADMIN_PHONE: z.string().default("18612243416"),
+  SEED_ADMIN_PHONE: z.string().default("18620260213"),
   SEED_ADMIN_PASSWORD: z.string().min(8).default("Pwd@2026"),
   SUPPORT_BOT_ENABLED: envBoolean(true),
   SUPPORT_BOT_MODEL: z.string().trim().min(1).default("glm-5.3-flash"),
