@@ -1,14 +1,72 @@
 <template>
   <el-drawer
     :model-value="modelValue"
-    :title="employee ? `${employee.name} 的用量` : '员工用量'"
+    :title="employee ? employee.name : '员工详情'"
     size="min(880px, 96vw)"
     destroy-on-close
     @update:model-value="emit('update:modelValue', $event)"
     @opened="onOpened"
     @closed="onClosed"
   >
-    <div v-loading="usageLoading" class="drawer-body">
+    <div class="drawer-body">
+      <section v-if="employee" class="employee-profile">
+        <div class="profile-row">
+          <span class="profile-label">企业/组织</span>
+          <span class="profile-value" :class="{ muted: !enterpriseName }">{{ enterpriseName || "—" }}</span>
+        </div>
+        <div class="profile-row">
+          <span class="profile-label">姓名</span>
+          <span class="profile-value">{{ employee.name }}</span>
+        </div>
+        <div class="profile-row">
+          <span class="profile-label">职位</span>
+          <span class="profile-value" :class="{ muted: !employee.jobTitle }">{{ employee.jobTitle || "—" }}</span>
+        </div>
+        <div v-if="employee.jobNumber" class="profile-row">
+          <span class="profile-label">工号</span>
+          <span class="profile-value">{{ employee.jobNumber }}</span>
+        </div>
+        <div class="profile-row">
+          <span class="profile-label">手机号</span>
+          <span class="profile-value">{{ formatPhone(employee.phone) }}</span>
+        </div>
+        <div class="profile-row">
+          <span class="profile-label">邮箱</span>
+          <a
+            v-if="employee.email"
+            class="profile-value is-link"
+            :href="`mailto:${employee.email}`"
+          >{{ employee.email }}</a>
+          <span v-else class="profile-value muted">—</span>
+        </div>
+        <div class="profile-row">
+          <span class="profile-label">入职时间</span>
+          <span class="profile-value" :class="{ muted: !employee.hiredAt }">{{ formatDate(employee.hiredAt) }}</span>
+        </div>
+        <div v-if="employee.workPlace" class="profile-row">
+          <span class="profile-label">办公地点</span>
+          <span class="profile-value">{{ employee.workPlace }}</span>
+        </div>
+        <template v-if="departmentRows.length">
+          <div v-for="row in departmentRows" :key="row.departmentId" class="profile-row">
+            <span class="profile-label">部门</span>
+            <span class="profile-value is-link">
+              <span>{{ row.path }}</span>
+              <el-tag v-if="row.isLeader" size="small" type="warning" class="leader-tag">主管</el-tag>
+            </span>
+          </div>
+        </template>
+        <div v-else class="profile-row">
+          <span class="profile-label">部门</span>
+          <span class="profile-value muted">—</span>
+        </div>
+        <div v-if="dingtalkRoleNames.length" class="profile-row">
+          <span class="profile-label">钉钉角色</span>
+          <span class="profile-value">{{ dingtalkRoleNames.join("、") }}</span>
+        </div>
+      </section>
+
+      <div v-loading="usageLoading" class="usage-body">
       <el-alert
         v-if="errorMessage"
         :title="errorMessage"
@@ -18,12 +76,6 @@
       />
 
       <template v-if="employee">
-        <p class="meta">
-          {{ employee.phone }}
-          <template v-if="employee.teamName"> · {{ employee.teamName }}</template>
-          · {{ formatRoleLabel(employee.role) }}
-        </p>
-
         <div class="today">
           <span>今日已用 Tokens</span>
           <strong>{{ formatTokenCount(usage?.quota.usedToday ?? 0) }}</strong>
@@ -98,6 +150,7 @@
           @current-change="loadLogs"
         />
       </div>
+      </div>
     </div>
   </el-drawer>
 </template>
@@ -107,8 +160,8 @@ import { computed, ref, watch } from "vue";
 import type { EChartsCoreOption } from "echarts/core";
 import { http } from "@/api/http";
 import UsageChart from "@/components/UsageChart.vue";
-import { formatDateTime } from "@/lib/date-time";
-import { roleLabel as formatRoleLabel } from "@/lib/roles";
+import { formatDate, formatDateTime } from "@/lib/date-time";
+import { employeeDepartmentPaths, type OrgDepartmentNode } from "@/lib/org-employees";
 import { TABLE_PAGE_SIZE } from "@/lib/table-page";
 import { formatTokenCount } from "@/lib/tokens";
 
@@ -116,8 +169,23 @@ type Employee = {
   id: number;
   name: string;
   phone: string;
+  email?: string | null;
   role: "employee" | "admin" | "org_admin" | "dept_admin";
+  enterpriseId?: number | null;
   teamName?: string | null;
+  jobTitle?: string | null;
+  hiredAt?: string | null;
+  jobNumber?: string | null;
+  workPlace?: string | null;
+  departmentIds?: number[];
+  dingtalkDeptIds?: number[] | null;
+  leaderInDept?: Array<{ deptId: number; leader: boolean }> | null;
+  roleList?: Array<{ id: number; name: string; groupName: string }> | null;
+};
+
+type EnterpriseOption = {
+  id: number;
+  name: string;
 };
 
 type UsageCounts = {
@@ -149,8 +217,41 @@ type LogRow = {
 const props = defineProps<{
   modelValue: boolean;
   employee: Employee | null;
+  enterprises?: EnterpriseOption[];
+  departments?: OrgDepartmentNode[];
 }>();
 const emit = defineEmits<{ "update:modelValue": [boolean] }>();
+
+const enterpriseName = computed(() => {
+  const id = props.employee?.enterpriseId;
+  if (id == null) return null;
+  return props.enterprises?.find((row) => row.id === id)?.name?.trim() || null;
+});
+
+const departmentRows = computed(() => {
+  if (!props.employee) return [];
+  return employeeDepartmentPaths({
+    departmentIds: props.employee.departmentIds,
+    dingtalkDeptIds: props.employee.dingtalkDeptIds,
+    leaderInDept: props.employee.leaderInDept,
+    departments: props.departments ?? [],
+    enterpriseName: enterpriseName.value,
+    separator: "-",
+  });
+});
+
+const dingtalkRoleNames = computed(() =>
+  (props.employee?.roleList ?? [])
+    .map((role) => role.name?.trim())
+    .filter((name): name is string => Boolean(name)),
+);
+
+function formatPhone(phone: string): string {
+  const digits = phone.replace(/\D/g, "");
+  if (digits.length === 11 && digits.startsWith("1")) return `+86-${digits}`;
+  if (digits.length === 13 && digits.startsWith("86")) return `+86-${digits.slice(2)}`;
+  return phone;
+}
 
 type RangePreset = "today" | "7d" | "30d";
 
@@ -327,10 +428,49 @@ watch(
   gap: 14px;
   min-height: 240px;
 }
-.meta {
-  margin: 0;
-  color: #64748b;
+.usage-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-height: 160px;
+}
+.employee-profile {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 4px 0 16px;
+  border-bottom: 1px solid #e5e7eb;
+}
+.profile-row {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr);
+  gap: 12px 16px;
+  align-items: start;
+}
+.profile-label {
+  color: #909399;
   font-size: 13px;
+  line-height: 22px;
+}
+.profile-value {
+  color: #303133;
+  font-size: 14px;
+  line-height: 22px;
+  word-break: break-all;
+}
+.profile-value.is-link {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  color: #1677ff;
+  text-decoration: none;
+}
+.profile-value.muted {
+  color: #c0c4cc;
+}
+.leader-tag {
+  flex: none;
 }
 .today {
   display: flex;
@@ -393,5 +533,6 @@ watch(
 @media (max-width: 760px) {
   .range-head { flex-direction: column; }
   .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .profile-row { grid-template-columns: 72px minmax(0, 1fr); gap: 8px 12px; }
 }
 </style>

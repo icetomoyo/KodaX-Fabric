@@ -51,6 +51,7 @@ test("admin user list selects employee data without API-key joins", () => {
   assert.match(compiledSql, /"is_dingtalk"/);
   assert.match(compiledSql, /"job_title"/);
   assert.match(compiledSql, /"hired_at"/);
+  assert.match(compiledSql, /"email"/);
   assert.match(compiledSql, /"job_number"/);
   assert.match(compiledSql, /"leader_in_dept"/);
   assert.match(compiledSql, /"role_list"/);
@@ -83,6 +84,7 @@ test("admin user list aggregation keeps one row and joins department names", () 
       id: 9,
       name: "邓华亮",
       phone: "13800000009",
+      email: "deng@haizhi.com",
       dept: null,
       role: "employee",
       status: "active",
@@ -112,6 +114,7 @@ test("admin user list aggregation keeps one row and joins department names", () 
       id: 9,
       name: "邓华亮",
       phone: "13800000009",
+      email: "deng@haizhi.com",
       dept: null,
       role: "employee",
       status: "active",
@@ -141,6 +144,7 @@ test("admin user list aggregation keeps one row and joins department names", () 
   assert.equal(rows.length, 1);
   assert.deepEqual(rows[0]?.teamIds, [101, 102]);
   assert.deepEqual(rows[0]?.departmentIds, [8, 18]);
+  assert.equal(rows[0]?.email, "deng@haizhi.com");
   assert.equal(rows[0]?.departmentName, "产品技术部、平台组");
   assert.equal(rows[0]?.teamName, "产品技术部、平台组");
 });

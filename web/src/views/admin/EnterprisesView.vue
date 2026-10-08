@@ -367,7 +367,12 @@
       </template>
     </el-dialog>
 
-    <EmployeeUsageDrawer v-model="showUserDetail" :employee="detailEmployee" />
+    <EmployeeUsageDrawer
+      v-model="showUserDetail"
+      :employee="detailEmployee"
+      :enterprises="enterprises"
+      :departments="departments"
+    />
   </div>
 </template>
 
@@ -457,6 +462,7 @@ type EmployeeRow = {
   id: number;
   name: string;
   phone: string;
+  email: string | null;
   role: UserRole;
   status: UserStatus;
   enterpriseId: number | null;
@@ -467,6 +473,12 @@ type EmployeeRow = {
   isDingtalk: boolean;
   jobTitle: string | null;
   hiredAt: string | null;
+  jobNumber: string | null;
+  workPlace: string | null;
+  departmentIds: number[];
+  dingtalkDeptIds: number[] | null;
+  leaderInDept: Array<{ deptId: number; leader: boolean }> | null;
+  roleList: Array<{ id: number; name: string; groupName: string }> | null;
 };
 
 const route = useRoute();
@@ -944,6 +956,7 @@ async function loadPeople() {
     id: number;
     name: string;
     phone: string;
+    email?: string | null;
     role: UserRole;
     status: UserStatus;
     enterpriseId: number | null;
@@ -952,10 +965,16 @@ async function loadPeople() {
     teamName?: string | null;
     teamRole?: string | null;
     departmentName?: string | null;
+    departmentIds?: number[];
     lastLoginAt: string | null;
     isDingtalk?: boolean;
     jobTitle?: string | null;
     hiredAt?: string | null;
+    jobNumber?: string | null;
+    workPlace?: string | null;
+    dingtalkDeptIds?: number[] | null;
+    leaderInDept?: Array<{ deptId: number; leader: boolean }> | null;
+    roleList?: Array<{ id: number; name: string; groupName: string }> | null;
   }>;
   const uniqueUsers = [...new Map(users.map((row) => [row.id, row])).values()].filter(
     (row) => row.role !== "admin",
@@ -970,6 +989,7 @@ async function loadPeople() {
         id: row.id,
         name: row.name,
         phone: row.phone,
+        email: row.email?.trim() || null,
         role: row.role,
         status: row.status,
         enterpriseId: row.enterpriseId,
@@ -981,6 +1001,12 @@ async function loadPeople() {
         isDingtalk: row.isDingtalk === true,
         jobTitle: row.jobTitle?.trim() || null,
         hiredAt: row.hiredAt ?? null,
+        jobNumber: row.jobNumber?.trim() || null,
+        workPlace: row.workPlace?.trim() || null,
+        departmentIds: row.departmentIds ?? [],
+        dingtalkDeptIds: row.dingtalkDeptIds ?? null,
+        leaderInDept: row.leaderInDept ?? null,
+        roleList: row.roleList ?? null,
       };
     });
 }

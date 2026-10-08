@@ -88,6 +88,7 @@ export type AdminUserListRow = {
   id: number;
   name: string;
   phone: string;
+  email: string | null;
   dept: string | null;
   role: SessionRole;
   status: "pending" | "active" | "disabled";
@@ -182,6 +183,7 @@ export function buildAdminUserListQuery(query: AdminUserListQuery) {
       id: employees.id,
       name: employees.name,
       phone: employees.phone,
+      email: employees.email,
       dept: employees.dept,
       role: employees.role,
       status: employees.status,

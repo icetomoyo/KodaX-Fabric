@@ -421,6 +421,13 @@
       "when": 1790214000000,
       "tag": "0059_employee_dingtalk_userid_idx",
       "breakpoints": true
+    },
+    {
+      "idx": 60,
+      "version": "7",
+      "when": 1790215000000,
+      "tag": "0060_employee_email",
+      "breakpoints": true
     }
   ]
 }

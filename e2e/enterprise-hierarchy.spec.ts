@@ -267,6 +267,38 @@ test.describe.serial("企业层级与钉钉部门 ID", () => {
     await expect(peopleTable.getByText(E2E_ORG.employees.childA.jobTitle, { exact: true })).toBeVisible();
     await expect(peopleTable.getByText(E2E_ORG.employees.childA.hiredAt, { exact: true })).toBeVisible();
 
+    const childARow = peopleTable.locator(".el-table__row", {
+      has: page.getByText(E2E_ORG.employees.childA.name, { exact: true }),
+    }).first();
+    await childARow.getByRole("button", { name: "详情" }).click();
+    const profile = page.locator(".employee-profile");
+    await expect(profile).toBeVisible();
+    await expect(profile.getByText("企业/组织")).toBeVisible();
+    await expect(profile.getByText(E2E_ORG.childA.name, { exact: true })).toBeVisible();
+    await expect(profile.getByText("姓名")).toBeVisible();
+    await expect(profile.getByText(E2E_ORG.employees.childA.jobTitle, { exact: true })).toBeVisible();
+    await expect(profile.getByText(`+86-${E2E_ORG.employees.childA.phone}`)).toBeVisible();
+    await expect(profile.getByText(E2E_ORG.employees.childA.email, { exact: true })).toBeVisible();
+    await expect(profile.getByText(E2E_ORG.employees.childA.hiredAt, { exact: true })).toBeVisible();
+    await expect(profile.getByText(`${E2E_ORG.childA.name}-${E2E_ORG.department.name}`, { exact: true })).toBeVisible();
+    await expect(profile.getByText(`${E2E_ORG.childA.name}-${E2E_ORG.departmentB.name}`, { exact: true })).toBeVisible();
+    mkdirSync(ARTIFACT_DIR, { recursive: true });
+    const detailScreenshotPath = resolve(ARTIFACT_DIR, "employee-detail-profile.png");
+    await profile.screenshot({ path: detailScreenshotPath });
+    writeFileSync(
+      resolve(ARTIFACT_DIR, "employee-detail-profile.json"),
+      `${JSON.stringify({
+        screenshot: detailScreenshotPath,
+        name: E2E_ORG.employees.childA.name,
+        departments: [
+          `${E2E_ORG.childA.name}-${E2E_ORG.department.name}`,
+          `${E2E_ORG.childA.name}-${E2E_ORG.departmentB.name}`,
+        ],
+      }, null, 2)}\n`,
+    );
+    await page.keyboard.press("Escape");
+    await expect(profile).toHaveCount(0);
+
     const childAContent = page.locator(".el-tree-node__content", {
       has: page.locator(".tree-label", { hasText: E2E_ORG.childA.name }),
     }).first();

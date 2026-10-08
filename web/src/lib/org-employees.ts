@@ -8,6 +8,12 @@ export type OrgDepartmentNode = {
   dingtalkDeptId?: number | null;
 };
 
+export type EmployeeDepartmentPath = {
+  departmentId: number;
+  path: string;
+  isLeader: boolean;
+};
+
 export type OrgTeamNode = {
   id: number;
   departmentId: number;
@@ -66,11 +72,57 @@ export function departmentPathLabel(input: {
   departmentId: number;
   departments: readonly OrgDepartmentNode[];
   enterpriseName?: string | null;
+  separator?: string;
 }): string {
   const parts = departmentPathNames(input.departmentId, input.departments);
   const enterprise = input.enterpriseName?.trim();
   if (enterprise) parts.unshift(enterprise);
-  return parts.join("/");
+  return parts.join(input.separator ?? "/");
+}
+
+export function employeeDepartmentPaths(input: {
+  departmentIds?: readonly number[] | null;
+  dingtalkDeptIds?: readonly number[] | null;
+  leaderInDept?: readonly { deptId: number; leader: boolean }[] | null;
+  departments: readonly OrgDepartmentNode[];
+  enterpriseName?: string | null;
+  separator?: string;
+}): EmployeeDepartmentPath[] {
+  const byId = new Map(input.departments.map((department) => [department.id, department]));
+  const byDingId = new Map<number, number>();
+  for (const department of input.departments) {
+    if (department.dingtalkDeptId != null) byDingId.set(department.dingtalkDeptId, department.id);
+  }
+  const ids: number[] = [];
+  const push = (id: number) => {
+    const department = byId.get(id);
+    if (!department || department.isDefault) return;
+    if (!ids.includes(id)) ids.push(id);
+  };
+  for (const id of input.departmentIds ?? []) push(id);
+  for (const dingId of input.dingtalkDeptIds ?? []) {
+    const id = byDingId.get(dingId);
+    if (id != null) push(id);
+  }
+  const leaderDingIds = new Set(
+    (input.leaderInDept ?? []).filter((item) => item.leader).map((item) => item.deptId),
+  );
+  const separator = input.separator ?? "-";
+  return ids.flatMap((departmentId) => {
+    const path = departmentPathLabel({
+      departmentId,
+      departments: input.departments,
+      enterpriseName: input.enterpriseName,
+      separator,
+    });
+    if (!path) return [];
+    const dingId = byId.get(departmentId)?.dingtalkDeptId ?? null;
+    return [{
+      departmentId,
+      path,
+      isLeader: dingId != null && leaderDingIds.has(dingId),
+    }];
+  });
 }
 
 function employeeSingleDepartmentLabel(input: {

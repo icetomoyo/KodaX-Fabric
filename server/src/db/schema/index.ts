@@ -85,6 +85,7 @@ export const employees = pgTable(
     id: bigint("id", { mode: "number" }).generatedAlwaysAsIdentity().primaryKey(),
     name: varchar("name", { length: 100 }).notNull(),
     phone: varchar("phone", { length: 20 }).notNull(),
+    email: varchar("email", { length: 200 }),
     passwordHash: text("password_hash").notNull(),
     dept: varchar("dept", { length: 100 }),
     role: employeeRoleEnum("role").notNull().default("employee"),

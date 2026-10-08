@@ -167,6 +167,7 @@ export type DingtalkDeptUser = DingtalkUserDetail;
 export function dingtalkOrgEmployeePatch(profile: DingtalkUserDetail) {
   return {
     dingtalkUserid: profile.userid,
+    email: profile.email,
     jobTitle: profile.title,
     hiredAt: profile.hiredAt,
     jobNumber: profile.jobNumber,

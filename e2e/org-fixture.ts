@@ -17,6 +17,7 @@ export const E2E_ORG = {
       phone: "13800000011",
       jobTitle: "E2E工程师",
       hiredAt: "2024-03-01",
+      email: "e2e-a@example.com",
     },
     childB: { name: "E2E员工乙", phone: "13800000012" },
   },
