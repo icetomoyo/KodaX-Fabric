@@ -4,6 +4,7 @@ import { db } from "../db/client.js";
 import { departments, employees, teamMembers } from "../db/schema/index.js";
 import { ensureDefaultTeam } from "./enterprise.js";
 import {
+  dingtalkOrgEmployeePatch,
   fetchDingtalkAccessToken,
   fetchDingtalkContactUseridsByName,
   fetchDingtalkUser,
@@ -29,6 +30,8 @@ export type LdapDingtalkProvisionPlan = {
   enterpriseId: number;
   departmentName: string;
   userid: string;
+  jobTitle: string | null;
+  hiredAt: string | null;
 };
 
 type FetchImpl = typeof fetch;
@@ -50,6 +53,8 @@ export function planLdapDingtalkProvision(
     enterpriseId: department.enterpriseId,
     departmentName: department.departmentName,
     userid: profile.userid,
+    jobTitle: profile.title,
+    hiredAt: profile.hiredAt,
   };
 }
 
@@ -139,6 +144,7 @@ export async function provisionEmployeeFromLdapDingtalk(
         enterpriseId: plan.enterpriseId,
         mustChangePassword: false,
         isDingtalk: true,
+        ...dingtalkOrgEmployeePatch(profile),
       })
       .returning({
         id: employees.id,

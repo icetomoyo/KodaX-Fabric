@@ -27,6 +27,28 @@ export type DingtalkDepartmentNode = {
   children: DingtalkDepartmentNode[];
 };
 
+export function collectDingtalkDeptIds(node: DingtalkDepartmentNode): number[] {
+  const ids: number[] = [];
+  const walk = (current: DingtalkDepartmentNode) => {
+    ids.push(current.deptId);
+    for (const child of current.children) walk(child);
+  };
+  walk(node);
+  return ids;
+}
+
+export function findDingtalkNode(
+  node: DingtalkDepartmentNode,
+  deptId: number,
+): DingtalkDepartmentNode | null {
+  if (node.deptId === deptId) return node;
+  for (const child of node.children) {
+    const found = findDingtalkNode(child, deptId);
+    if (found) return found;
+  }
+  return null;
+}
+
 export type DingtalkCredentials = {
   appKey: string;
   appSecret: string;
@@ -107,18 +129,77 @@ export async function fetchDingtalkAccessToken(args: {
   return token;
 }
 
-export type DingtalkDeptUser = {
-  userid: string;
+export type DingtalkDeptOrder = {
+  deptId: number;
+  order: number;
+};
+
+export type DingtalkLeaderInDept = {
+  deptId: number;
+  leader: boolean;
+};
+
+export type DingtalkRole = {
+  id: number;
   name: string;
-  mobile: string | null;
+  groupName: string;
 };
 
 export type DingtalkUserDetail = {
   userid: string;
   name: string;
   mobile: string | null;
+  email: string | null;
   deptIds: number[];
+  title: string | null;
+  hiredAt: string | null;
+  jobNumber: string | null;
+  workPlace: string | null;
+  remark: string | null;
+  managerUserid: string | null;
+  deptOrderList: DingtalkDeptOrder[];
+  leaderInDept: DingtalkLeaderInDept[];
+  roleList: DingtalkRole[];
 };
+
+export type DingtalkDeptUser = DingtalkUserDetail;
+
+export function dingtalkOrgEmployeePatch(profile: DingtalkUserDetail) {
+  return {
+    jobTitle: profile.title,
+    hiredAt: profile.hiredAt,
+  };
+}
+
+export function mergeDingtalkUserDetails(
+  base: DingtalkUserDetail,
+  extra: DingtalkUserDetail,
+  mode: "union" | "overlay" = "union",
+): DingtalkUserDetail {
+  const overlay = mode === "overlay";
+  return {
+    userid: extra.userid || base.userid,
+    name: extra.name || base.name,
+    mobile: extra.mobile ?? base.mobile,
+    email: extra.email ?? base.email,
+    title: extra.title ?? base.title,
+    hiredAt: extra.hiredAt ?? base.hiredAt,
+    jobNumber: extra.jobNumber ?? base.jobNumber,
+    workPlace: extra.workPlace ?? base.workPlace,
+    remark: extra.remark ?? base.remark,
+    managerUserid: extra.managerUserid ?? base.managerUserid,
+    deptIds: unionPositiveInts(base.deptIds, extra.deptIds),
+    deptOrderList:
+      overlay && extra.deptOrderList.length > 0
+        ? extra.deptOrderList
+        : mergeByDeptId(base.deptOrderList, extra.deptOrderList),
+    leaderInDept:
+      overlay && extra.leaderInDept.length > 0
+        ? extra.leaderInDept
+        : mergeByDeptId(base.leaderInDept, extra.leaderInDept),
+    roleList: extra.roleList.length > 0 ? extra.roleList : base.roleList,
+  };
+}
 
 const ABSENT_DINGTALK_USER_CODES = new Set([60121, 40104]);
 
@@ -144,11 +225,9 @@ export async function fetchDingtalkDeptUsers(options: {
     for (const item of list) {
       const row = asRecord(item);
       if (!row) continue;
-      const userid = typeof row.userid === "string" ? row.userid.trim() : "";
-      const name = typeof row.name === "string" ? row.name.trim() : "";
-      if (!userid || !name) continue;
-      const mobile = typeof row.mobile === "string" && row.mobile.trim() ? row.mobile.trim() : null;
-      users.push({ userid, name, mobile });
+      const parsed = parseDingtalkUserDetail(row, options.deptId);
+      if (!parsed) continue;
+      users.push(parsed);
     }
     if (!truthy(result?.has_more)) break;
     const next = Number(result?.next_cursor);
@@ -263,19 +342,107 @@ export async function fetchDingtalkUseridByMobile(options: {
   }
 }
 
-export function parseDingtalkUserDetail(value: unknown): DingtalkUserDetail | null {
+export function parseDingtalkTitle(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const title = value.trim().slice(0, 100);
+  return title || null;
+}
+
+export function parseDingtalkEmail(value: unknown): string | null {
+  return parseOptionalString(value, 200);
+}
+
+/** DingTalk `hired_date` is a Unix timestamp in milliseconds. Store as YYYY-MM-DD in Asia/Shanghai. */
+export function parseDingtalkHiredAt(value: unknown): string | null {
+  if (value == null || value === "" || value === 0 || value === "0") return null;
+  const numeric =
+    typeof value === "number"
+      ? value
+      : typeof value === "string" && /^\d+$/.test(value.trim())
+        ? Number(value.trim())
+        : NaN;
+  if (Number.isFinite(numeric) && numeric > 0) {
+    const ms = numeric < 1e12 ? numeric * 1000 : numeric;
+    const date = new Date(ms);
+    if (Number.isNaN(date.getTime())) return null;
+    try {
+      return new Intl.DateTimeFormat("en-CA", {
+        timeZone: "Asia/Shanghai",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      }).format(date);
+    } catch {
+      return null;
+    }
+  }
+  if (typeof value === "string") {
+    const match = value.trim().match(/^(\d{4}-\d{2}-\d{2})/);
+    return match?.[1] ?? null;
+  }
+  return null;
+}
+
+export function parseDingtalkUserDetail(value: unknown, listedDeptId?: number): DingtalkUserDetail | null {
   const row = asRecord(value);
   if (!row) return null;
   const userid = typeof row.userid === "string" ? row.userid.trim() : "";
   const name = typeof row.name === "string" ? row.name.trim() : "";
   if (!userid || !name) return null;
   const mobile = typeof row.mobile === "string" && row.mobile.trim() ? row.mobile.trim() : null;
-  const deptIds = Array.isArray(row.dept_id_list)
-    ? row.dept_id_list
-        .map((item) => Number(item))
-        .filter((id) => Number.isSafeInteger(id) && id > 0)
-    : [];
-  return { userid, name, mobile, deptIds };
+  const deptIds = parsePositiveIntList(row.dept_id_list);
+  const deptOrderList = parseDeptOrderList(row.dept_order_list);
+  const leaderInDept = parseLeaderInDept(row.leader_in_dept);
+  if (listedDeptId != null && listedDeptId > 0) {
+    if (!deptIds.includes(listedDeptId)) deptIds.push(listedDeptId);
+    if (row.leader !== undefined && row.leader !== null && !leaderInDept.some((item) => item.deptId === listedDeptId)) {
+      leaderInDept.push({ deptId: listedDeptId, leader: truthy(row.leader) });
+    }
+    const listedOrder = parseFiniteNumber(row.dept_order);
+    if (listedOrder != null && !deptOrderList.some((item) => item.deptId === listedDeptId)) {
+      deptOrderList.push({ deptId: listedDeptId, order: listedOrder });
+    }
+  }
+  return {
+    userid,
+    name,
+    mobile,
+    email: parseDingtalkEmail(row.org_email) ?? parseDingtalkEmail(row.email),
+    deptIds,
+    title: parseDingtalkTitle(row.title),
+    hiredAt: parseDingtalkHiredAt(row.hired_date),
+    jobNumber: parseOptionalString(row.job_number, 64),
+    workPlace: parseOptionalString(row.work_place, 100),
+    remark: parseOptionalString(row.remark, 500),
+    managerUserid: parseOptionalString(row.manager_userid, 64),
+    deptOrderList,
+    leaderInDept,
+    roleList: parseRoleList(row.role_list),
+  };
+}
+
+export async function enrichDingtalkUsersWithGet(options: {
+  token: string;
+  users: readonly DingtalkUserDetail[];
+  fetchImpl?: FetchImpl;
+  baseUrl?: string;
+}): Promise<DingtalkUserDetail[]> {
+  const byUserid = new Map<string, DingtalkUserDetail>();
+  for (const user of options.users) {
+    const existing = byUserid.get(user.userid);
+    byUserid.set(user.userid, existing ? mergeDingtalkUserDetails(existing, user) : user);
+  }
+  const enriched: DingtalkUserDetail[] = [];
+  for (const user of byUserid.values()) {
+    const detail = await fetchDingtalkUser({
+      token: options.token,
+      userid: user.userid,
+      fetchImpl: options.fetchImpl,
+      baseUrl: options.baseUrl,
+    });
+    enriched.push(detail ? mergeDingtalkUserDetails(user, detail, "overlay") : user);
+  }
+  return enriched;
 }
 
 function isAbsentDingtalkUser(error: unknown): boolean {
@@ -376,19 +543,38 @@ async function dingtalkGet(fetchImpl: FetchImpl, url: URL): Promise<DingtalkJson
   );
 }
 
+const DINGTALK_RATE_LIMIT_ERRCODE = 90018;
+
 async function dingtalkPost(
   fetchImpl: FetchImpl,
   url: URL,
   payload: Record<string, unknown>,
 ): Promise<DingtalkJson> {
-  return parseDingtalkResponse(
-    await fetchImpl(url, {
-      method: "POST",
-      headers: { "content-type": "application/json;charset=utf-8" },
-      body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(20_000),
-    }),
-  );
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    try {
+      return await parseDingtalkResponse(
+        await fetchImpl(url, {
+          method: "POST",
+          headers: { "content-type": "application/json;charset=utf-8" },
+          body: JSON.stringify(payload),
+          signal: AbortSignal.timeout(20_000),
+        }),
+      );
+    } catch (error) {
+      lastError = error;
+      if (
+        error instanceof DingtalkApiError
+        && error.errcode === DINGTALK_RATE_LIMIT_ERRCODE
+        && attempt < 5
+      ) {
+        await new Promise((resolve) => setTimeout(resolve, 300 * 2 ** attempt));
+        continue;
+      }
+      throw error;
+    }
+  }
+  throw lastError;
 }
 
 async function parseDingtalkResponse(response: Response): Promise<DingtalkJson> {
@@ -410,4 +596,85 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : null;
+}
+
+function parseOptionalString(value: unknown, maxLength: number): string | null {
+  if (typeof value !== "string") return null;
+  const text = value.trim().slice(0, maxLength);
+  return text || null;
+}
+
+function parseFiniteNumber(value: unknown): number | null {
+  const n = typeof value === "number" ? value : typeof value === "string" && value.trim() ? Number(value) : NaN;
+  return Number.isFinite(n) ? n : null;
+}
+
+function parsePositiveIntList(value: unknown): number[] {
+  if (!Array.isArray(value)) return [];
+  const ids: number[] = [];
+  for (const item of value) {
+    const id = Number(item);
+    if (Number.isSafeInteger(id) && id > 0 && !ids.includes(id)) ids.push(id);
+  }
+  return ids;
+}
+
+function parseDeptOrderList(value: unknown): DingtalkDeptOrder[] {
+  if (!Array.isArray(value)) return [];
+  const rows: DingtalkDeptOrder[] = [];
+  for (const item of value) {
+    const row = asRecord(item);
+    if (!row) continue;
+    const deptId = Number(row.dept_id);
+    const order = parseFiniteNumber(row.order);
+    if (!Number.isSafeInteger(deptId) || deptId <= 0 || order == null) continue;
+    rows.push({ deptId, order });
+  }
+  return rows;
+}
+
+function parseLeaderInDept(value: unknown): DingtalkLeaderInDept[] {
+  if (!Array.isArray(value)) return [];
+  const rows: DingtalkLeaderInDept[] = [];
+  for (const item of value) {
+    const row = asRecord(item);
+    if (!row) continue;
+    const deptId = Number(row.dept_id);
+    if (!Number.isSafeInteger(deptId) || deptId <= 0) continue;
+    rows.push({ deptId, leader: truthy(row.leader) });
+  }
+  return rows;
+}
+
+function parseRoleList(value: unknown): DingtalkRole[] {
+  if (!Array.isArray(value)) return [];
+  const rows: DingtalkRole[] = [];
+  for (const item of value) {
+    const row = asRecord(item);
+    if (!row) continue;
+    const id = Number(row.id);
+    const name = parseOptionalString(row.name, 100);
+    if (!Number.isSafeInteger(id) || !name) continue;
+    rows.push({
+      id,
+      name,
+      groupName: parseOptionalString(row.group_name, 100) ?? "",
+    });
+  }
+  return rows;
+}
+
+function unionPositiveInts(left: readonly number[], right: readonly number[]): number[] {
+  const ids: number[] = [];
+  for (const id of [...left, ...right]) {
+    if (Number.isSafeInteger(id) && id > 0 && !ids.includes(id)) ids.push(id);
+  }
+  return ids;
+}
+
+function mergeByDeptId<T extends { deptId: number }>(base: readonly T[], extra: readonly T[]): T[] {
+  const map = new Map<number, T>();
+  for (const row of base) map.set(row.deptId, row);
+  for (const row of extra) map.set(row.deptId, row);
+  return [...map.values()].sort((left, right) => left.deptId - right.deptId);
 }

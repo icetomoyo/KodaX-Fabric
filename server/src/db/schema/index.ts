@@ -98,6 +98,8 @@ export const employees = pgTable(
     lastLoginAt: timestamp("last_login_at", { withTimezone: true }),
     usageTier: usageTierEnum("usage_tier").notNull().default("heavy"),
     isDingtalk: boolean("is_dingtalk").notNull().default(false),
+    jobTitle: varchar("job_title", { length: 100 }),
+    hiredAt: date("hired_at", { mode: "string" }),
     createdBy: bigint("created_by", { mode: "number" }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),

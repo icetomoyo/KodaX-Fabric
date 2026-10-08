@@ -1,7 +1,7 @@
+import type { DingtalkUserDetail } from "./dingtalk-department-tree.js";
+
 export type DingtalkImportCandidate = {
-  userid: string;
-  name: string;
-  mobile: string | null;
+  profile: DingtalkUserDetail;
   departmentId: number;
   enterpriseId: number;
   departmentName: string;
@@ -13,7 +13,7 @@ export type DingtalkUserCreate = {
   departmentId: number;
   enterpriseId: number;
   departmentName: string;
-  userid: string;
+  profile: DingtalkUserDetail;
 };
 
 export type DingtalkUserImportPlan = {
@@ -42,7 +42,7 @@ export function planDingtalkUserImport(input: {
   const skippedBadPhone: DingtalkImportCandidate[] = [];
 
   for (const candidate of input.candidates) {
-    const phone = normalizeDingtalkMobile(candidate.mobile);
+    const phone = normalizeDingtalkMobile(candidate.profile.mobile);
     if (!phone) {
       skippedNoPhone.push(candidate);
       continue;
@@ -57,12 +57,12 @@ export function planDingtalkUserImport(input: {
     }
     seen.add(phone);
     creates.push({
-      name: candidate.name.slice(0, 100),
+      name: candidate.profile.name.slice(0, 100),
       phone,
       departmentId: candidate.departmentId,
       enterpriseId: candidate.enterpriseId,
       departmentName: candidate.departmentName,
-      userid: candidate.userid,
+      profile: candidate.profile,
     });
   }
 

@@ -1,3 +1,13 @@
+/** Format a calendar date (YYYY-MM-DD) without applying a timezone shift. */
+export function formatDate(value: unknown): string {
+  if (value === null || value === undefined || value === "") return "—";
+  if (typeof value === "string") {
+    const match = value.trim().match(/^(\d{4}-\d{2}-\d{2})/);
+    if (match) return match[1];
+  }
+  return "—";
+}
+
 /** Format an API timestamp in the browser's local time zone for display. */
 export function formatDateTime(value: unknown): string {
   if (value === null || value === undefined || value === "") return "—";

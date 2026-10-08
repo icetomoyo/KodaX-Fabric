@@ -3,6 +3,7 @@ import { env } from "../config.js";
 import { db } from "../db/client.js";
 import { departments, employees, teamMembers } from "../db/schema/index.js";
 import {
+  dingtalkOrgEmployeePatch,
   fetchDingtalkAccessToken,
   fetchDingtalkContactUseridsByName,
   fetchDingtalkUser,
@@ -29,6 +30,9 @@ export type RegisterDingtalkJoinPlan =
       userid: string;
       enterpriseId: number;
       departments: MappedDingtalkDepartment[];
+      jobTitle: string | null;
+      hiredAt: string | null;
+      profile: DingtalkUserDetail;
     }
   | { status: "not_found" }
   | { status: "name_mismatch"; dingtalkName: string }
@@ -90,6 +94,9 @@ export function planRegisterDingtalkJoin(
     userid: lookup.profile.userid,
     enterpriseId,
     departments: departmentsForJoin,
+    jobTitle: lookup.profile.title,
+    hiredAt: lookup.profile.hiredAt,
+    profile: lookup.profile,
   };
 }
 
@@ -217,6 +224,7 @@ async function applyRegisterDingtalkJoin(
       enterpriseId: plan.enterpriseId,
       dept: primary.departmentName,
       isDingtalk: true,
+      ...dingtalkOrgEmployeePatch(plan.profile),
       updatedAt: new Date(),
     })
     .where(eq(employees.id, employeeId));

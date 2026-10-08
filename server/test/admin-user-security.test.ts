@@ -49,6 +49,8 @@ test("admin user list selects employee data without API-key joins", () => {
   assert.match(compiledSql, /left join "teams"/);
   assert.match(compiledSql, /left join "departments"/);
   assert.match(compiledSql, /"is_dingtalk"/);
+  assert.match(compiledSql, /"job_title"/);
+  assert.match(compiledSql, /"hired_at"/);
   assert.doesNotMatch(compiledSql, /employee_api_keys/);
   assert.doesNotMatch(compiledSql, /active_api_key_count/);
 });
@@ -85,6 +87,8 @@ test("admin user list aggregation keeps one row and joins department names", () 
       lastLoginAt: null,
       createdAt: new Date("2026-09-01T00:00:00.000Z"),
       isDingtalk: true,
+      jobTitle: "产品经理",
+      hiredAt: "2024-03-01",
       teamId: 101,
       teamName: "默认团队",
       teamRole: "member",
@@ -103,6 +107,8 @@ test("admin user list aggregation keeps one row and joins department names", () 
       lastLoginAt: null,
       createdAt: new Date("2026-09-01T00:00:00.000Z"),
       isDingtalk: true,
+      jobTitle: "产品经理",
+      hiredAt: "2024-03-01",
       teamId: 102,
       teamName: "默认团队",
       teamRole: "member",

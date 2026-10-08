@@ -135,9 +135,14 @@
             >
               <el-table-column prop="name" label="姓名" min-width="120" show-overflow-tooltip />
               <el-table-column prop="phone" label="手机号" min-width="130" />
-              <el-table-column label="部门" min-width="140" show-overflow-tooltip>
+              <el-table-column label="职位" min-width="140" show-overflow-tooltip>
                 <template #default="{ row }">
-                  <span :class="{ muted: !row.teamName }">{{ row.teamName || "未分配" }}</span>
+                  <span :class="{ muted: !row.jobTitle }">{{ row.jobTitle || "—" }}</span>
+                </template>
+              </el-table-column>
+              <el-table-column label="入职时间" width="120">
+                <template #default="{ row }">
+                  <span class="hired-cell" :class="{ muted: !row.hiredAt }">{{ formatDate(row.hiredAt) }}</span>
                 </template>
               </el-table-column>
               <el-table-column label="钉钉" width="88" align="center">
@@ -385,6 +390,7 @@ import { parseBulkRegisterText } from "@/lib/bulk-register-users";
 import { departmentPathLabel } from "@/lib/org-employees";
 import { orgConsoleUserListParams } from "@/lib/org-console-loads";
 import { roleLabel } from "@/lib/roles";
+import { formatDate } from "@/lib/date-time";
 import { TABLE_PAGE_SIZE } from "@/lib/table-page";
 
 import { useAuthStore } from "@/stores/auth";
@@ -459,6 +465,8 @@ type EmployeeRow = {
   teamName: string | null;
   lastLoginAt: string | null;
   isDingtalk: boolean;
+  jobTitle: string | null;
+  hiredAt: string | null;
 };
 
 const route = useRoute();
@@ -946,6 +954,8 @@ async function loadPeople() {
     departmentName?: string | null;
     lastLoginAt: string | null;
     isDingtalk?: boolean;
+    jobTitle?: string | null;
+    hiredAt?: string | null;
   }>;
   const uniqueUsers = [...new Map(users.map((row) => [row.id, row])).values()].filter(
     (row) => row.role !== "admin",
@@ -969,6 +979,8 @@ async function loadPeople() {
         teamRole: row.teamRole ?? (row.teamId ? "member" : null),
         lastLoginAt: row.lastLoginAt,
         isDingtalk: row.isDingtalk === true,
+        jobTitle: row.jobTitle?.trim() || null,
+        hiredAt: row.hiredAt ?? null,
       };
     });
 }

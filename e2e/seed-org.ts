@@ -85,6 +85,8 @@ async function ensureEmployee(input: {
   enterpriseId: number;
   departmentId: number;
   isDingtalk?: boolean;
+  jobTitle?: string | null;
+  hiredAt?: string | null;
 }) {
   const [existing] = await db
     .select({ id: employees.id, enterpriseId: employees.enterpriseId })
@@ -105,6 +107,8 @@ async function ensureEmployee(input: {
         enterpriseId: input.enterpriseId,
         mustChangePassword: false,
         isDingtalk,
+        jobTitle: input.jobTitle ?? null,
+        hiredAt: input.hiredAt ?? null,
       })
       .returning({ id: employees.id });
     employeeId = row.id;
@@ -115,6 +119,8 @@ async function ensureEmployee(input: {
         name: input.name,
         enterpriseId: input.enterpriseId,
         isDingtalk,
+        jobTitle: input.jobTitle ?? null,
+        hiredAt: input.hiredAt ?? null,
         updatedAt: new Date(),
       })
       .where(eq(employees.id, existing.id));
@@ -181,6 +187,8 @@ async function main() {
       enterpriseId: childA.id,
       departmentId: department.id,
       isDingtalk: true,
+      jobTitle: E2E_ORG.employees.childA.jobTitle,
+      hiredAt: E2E_ORG.employees.childA.hiredAt,
     });
     const teamB = await ensureDefaultTeam(departmentB.id, childA.id);
     await db.insert(teamMembers).values({ teamId: teamB, employeeId: employeeA.id }).onConflictDoNothing();

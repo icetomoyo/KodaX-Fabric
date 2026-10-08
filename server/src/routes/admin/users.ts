@@ -95,6 +95,8 @@ export type AdminUserListRow = {
   lastLoginAt: Date | null;
   createdAt: Date;
   isDingtalk: boolean;
+  jobTitle: string | null;
+  hiredAt: string | null;
   teamId: number | null;
   teamName: string | null;
   departmentId: number | null;
@@ -178,6 +180,8 @@ export function buildAdminUserListQuery(query: AdminUserListQuery) {
       lastLoginAt: employees.lastLoginAt,
       createdAt: employees.createdAt,
       isDingtalk: employees.isDingtalk,
+      jobTitle: employees.jobTitle,
+      hiredAt: employees.hiredAt,
       teamId: teams.id,
       teamName: teams.name,
       departmentId: departments.id,

@@ -1,15 +1,23 @@
-import { isNotNull } from "drizzle-orm";
+import { eq, inArray, isNotNull } from "drizzle-orm";
 import "../config.js";
 import { env } from "../config.js";
 import { db } from "./client.js";
 import { departments, employees, teamMembers } from "./schema/index.js";
 import { ensureDefaultTeam } from "../lib/enterprise.js";
 import {
+  dingtalkOrgEmployeePatch,
+  enrichDingtalkUsersWithGet,
   fetchDingtalkAccessToken,
   fetchDingtalkDeptUsers,
+  mergeDingtalkUserDetails,
   readDingtalkCredentials,
+  type DingtalkUserDetail,
 } from "../lib/dingtalk-department-tree.js";
-import { planDingtalkUserImport, type DingtalkImportCandidate } from "../lib/dingtalk-user-import.js";
+import {
+  normalizeDingtalkMobile,
+  planDingtalkUserImport,
+  type DingtalkImportCandidate,
+} from "../lib/dingtalk-user-import.js";
 import { hashPassword, REGISTRATION_INITIAL_PASSWORD } from "../lib/password.js";
 
 async function main() {
@@ -30,21 +38,28 @@ async function main() {
   const existingPhones = new Set(existing.map((row) => row.phone));
 
   const token = await fetchDingtalkAccessToken(credentials);
-  const candidates: DingtalkImportCandidate[] = [];
+  const listed: DingtalkImportCandidate[] = [];
+  const byUserid = new Map<string, DingtalkUserDetail>();
   for (const department of mapped) {
     if (department.dingtalkDeptId == null) continue;
     const users = await fetchDingtalkDeptUsers({ token, deptId: department.dingtalkDeptId });
     for (const user of users) {
-      candidates.push({
-        userid: user.userid,
-        name: user.name,
-        mobile: user.mobile,
+      const existing = byUserid.get(user.userid);
+      byUserid.set(user.userid, existing ? mergeDingtalkUserDetails(existing, user) : user);
+      listed.push({
+        profile: user,
         departmentId: department.id,
         enterpriseId: department.enterpriseId,
         departmentName: department.name,
       });
     }
   }
+  const enriched = await enrichDingtalkUsersWithGet({ token, users: [...byUserid.values()] });
+  const profileByUserid = new Map(enriched.map((row) => [row.userid, row]));
+  const candidates: DingtalkImportCandidate[] = listed.map((row) => ({
+    ...row,
+    profile: profileByUserid.get(row.profile.userid) ?? row.profile,
+  }));
 
   const plan = planDingtalkUserImport({ candidates, existingPhones });
   if (!dryRun) {
@@ -61,6 +76,7 @@ async function main() {
           enterpriseId: create.enterpriseId,
           mustChangePassword: false,
           isDingtalk: true,
+          ...dingtalkOrgEmployeePatch(create.profile),
         })
         .returning({ id: employees.id });
       const teamId = await ensureDefaultTeam(create.departmentId, create.enterpriseId);
@@ -68,6 +84,28 @@ async function main() {
         teamId,
         employeeId: employee.id,
       });
+    }
+    const existingByPhone = new Map<string, DingtalkUserDetail>();
+    for (const row of plan.skippedExisting) {
+      const phone = normalizeDingtalkMobile(row.profile.mobile);
+      if (!phone) continue;
+      existingByPhone.set(phone, row.profile);
+    }
+    const existingPhonesInDing = [...existingByPhone.keys()];
+    if (existingPhonesInDing.length) {
+      await db
+        .update(employees)
+        .set({ isDingtalk: true })
+        .where(inArray(employees.phone, existingPhonesInDing));
+      for (const [phone, profile] of existingByPhone) {
+        await db
+          .update(employees)
+          .set({
+            ...dingtalkOrgEmployeePatch(profile),
+            updatedAt: new Date(),
+          })
+          .where(eq(employees.phone, phone));
+      }
     }
   }
 
@@ -87,8 +125,8 @@ async function main() {
           department: row.departmentName,
         })),
         noPhoneSample: plan.skippedNoPhone.slice(0, 20).map((row) => ({
-          name: row.name,
-          userid: row.userid,
+          name: row.profile.name,
+          userid: row.profile.userid,
           department: row.departmentName,
         })),
       },

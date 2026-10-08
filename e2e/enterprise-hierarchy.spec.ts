@@ -261,6 +261,12 @@ test.describe.serial("企业层级与钉钉部门 ID", () => {
     await expect(peopleTable.getByText(E2E_ORG.employees.childB.name, { exact: true })).toBeVisible();
     await expect(peopleTable.getByText(E2E.admin.name, { exact: true })).toHaveCount(0);
     await expect(peopleTable.getByText("超级管理员")).toHaveCount(0);
+    await expect(peopleTable.getByRole("columnheader", { name: "部门", exact: true })).toHaveCount(0);
+    await expect(peopleTable.getByRole("columnheader", { name: "职位", exact: true })).toBeVisible();
+    await expect(peopleTable.getByRole("columnheader", { name: "入职时间", exact: true })).toBeVisible();
+    await expect(peopleTable.getByText(E2E_ORG.employees.childA.jobTitle, { exact: true })).toBeVisible();
+    await expect(peopleTable.getByText(E2E_ORG.employees.childA.hiredAt, { exact: true })).toBeVisible();
+
     const childAContent = page.locator(".el-tree-node__content", {
       has: page.locator(".tree-label", { hasText: E2E_ORG.childA.name }),
     }).first();
