@@ -3,25 +3,26 @@
 | 项 | 内容 |
 |---|---|
 | 仓库 | `vueadmin/KodaX-Fabric`（GitHub 私有仓库） |
-| 分支 / 提交 | `dev` @ `9f96611`（2026-09-24）；共 235 个提交，最早 2026-08-03 |
-| 审查日期 | 2026-10-08 |
-| 审查方式 | 只读。没有修改、提交任何被跟踪文件，也没有开 PR；结束时 `git status --porcelain` 为空 |
-| 规模 | 跟踪文件 363 个；`server/src`、`web/src`、`scripts`、`e2e`、`deploy` 合计约 5.6 万行；55 个 SQL 迁移；25 张表 |
+| 原审查提交 | `dev` @ `9f96611`（2026-09-24） |
+| 正文对齐 | `dev` @ `869240d`（2026-10-09）；已删除 `9f96611..869240d` 12 个提交之后不再成立的描述 |
+| 审查日期 | 2026-10-08（原审查）；过时条目清理 2026-10-09 |
+| 审查方式 | 原审查只读。第 6 节命令与结果仍是对 `9f96611` 的实测 |
+| 规模 | 25 张表；journal 到 `0060`（61 个 SQL 迁移）；snapshot 仍只有 0000–0023 |
 | 方法 | 主审统筹，7 路只读子审查并行（鉴权与租户、Relay 网关、数据库与迁移、管理端与 Token Bot、前端、构建测试部署、文档一致性）。所有高、中风险结论都由主审回到源码逐条复核；关键命令由主审亲自复跑 |
 
 **证据标注说明**
 
 - 【已核实】：主审逐行读过引用的代码路径，或亲自运行命令看到了结果。
 - 【推断】：代码层面成立，但实际影响取决于生产数据、部署暴露面或外部系统行为，需要在运行环境中确认。
-- 文中 `路径:行号` 均对应提交 `9f96611`。
+- 未改动处的 `路径:行号` 仍对应 `9f96611`。
 
 ---
 
 ## 结论速览
 
-1. **产品形态已经完整**：Token Hub 是一个面向集团内部的大模型"统一接入网关 + 渠道 KEY 资源池调度 + 计量审计"平台，后端 Fastify/Drizzle/PostgreSQL/Redis，前端 Vue 3。核心闭环（建渠道 → 登记席位 → 员工提交 KEY → 签发员工 Key → 转发 → 审计）有 Playwright E2E 覆盖，本次实测 5/5 通过。
-2. **最紧迫的是账号安全**：共享初始密码 `Hz123456` 硬编码在代码、前端和 Token Bot 系统提示词里，批量注册、LDAP 自动开户、钉钉同步建出的账号都不强制改密，知道手机号就能登录他人账号（H1）。
-3. **权限模型有企业内提权**：部门管理员的管理范围由"所在部门"推导，而 Token Bot 允许部门管理员自助加入同企业任意部门，等于可以自行扩大管理范围，进而重置员工密码（H2）。
+1. **产品形态已经完整**：Token Hub 是一个面向集团内部的大模型"统一接入网关 + 渠道 KEY 资源池调度 + 计量审计"平台，后端 Fastify/Drizzle/PostgreSQL/Redis，前端 Vue 3。核心闭环（建渠道 → 登记席位 → 员工提交 KEY → 签发员工 Key → 转发 → 审计）有 Playwright E2E 覆盖。
+2. **最紧迫的是账号安全**：共享初始密码 `Hz123456` 硬编码在代码和前端，批量注册、LDAP 自动开户、钉钉同步建出的账号都不强制改密，知道手机号就能登录他人账号（H1）。
+3. **权限模型有企业内提权**：部门管理员的管理范围由"所在部门"推导，被邀请进另一个部门后会自动管那个部门及其子树，进而可以重置员工密码（H2）。
 4. **租户生命周期不一致**：停用企业或部门后，员工 API Key 仍能继续调用转发接口、消耗上游额度（H3）。
 5. **身份绑定过弱**：注册不验证手机号归属；钉钉"姓名 + 手机号"即可自动入部；LDAP 登录会按"同名"把人映射到已有账号（H4、H5）。
 6. **数据保留与个人信息**：员工调用全文无期限落盘、查看与下载不留审计；987 名员工的真实花名册提交在仓库里并打进生产镜像（H6、H7）。
@@ -33,7 +34,7 @@
 
 ### 1.1 定位
 
-KodaX Fabric 是"企业级 Token 统一接入与效能管理"平台，当前唯一落地模块是 **Token Hub**（`README.md`、`CONTEXT.md`）。它把平台采购的、或员工个人席位对应的上游"渠道 KEY"集中成资源池，主要是智谱 GLM Coding Plan（国内 / 国际），另外支持 DeepSeek 充值线和自建 / 海致自部署的 OpenAI 兼容网关（`server/src/lib/provider-templates.ts:11-13、58、115`）。平台给员工签发统一的 `th_` 前缀 API Key，员工在 Claude Code、Codex、Cursor、WorkBuddy、ZCode 等客户端里把 Base URL 指向本站即可使用；平台负责转发、Key 调度、计量、审计和敏感词合规。生产入口为 `https://tokenhub.haizhi.com`，服务对象是海致集团下的多家企业（海致科技、海致星图、海致甲辰等）。
+KodaX Fabric 是"企业级 Token 统一接入与效能管理"平台，当前唯一落地模块是 **Token Hub**（`README.md`、`CONTEXT.md`）。它把平台采购的、或员工个人席位对应的上游"渠道 KEY"集中成资源池，主要是智谱 GLM Coding Plan（国内 / 国际），另外支持 DeepSeek 充值线和自建 / 海致自部署的 OpenAI 兼容网关（`server/src/lib/provider-templates.ts:11-13、58、115`）。平台给员工签发统一的 `th_` 前缀 API Key，员工在 Claude Code、Codex、Cursor、WorkBuddy、ZCode 等客户端里把 Base URL 指向本站即可使用；平台负责转发、Key 调度、计量、审计和敏感词合规。生产入口为 `https://tokenhub.haizhi.com`。本环境企业是海致集团；海致科技、海致星图是一级部门。
 
 ### 1.2 核心功能（以代码为准）
 
@@ -44,29 +45,28 @@ KodaX Fabric 是"企业级 Token 统一接入与效能管理"平台，当前唯�
 - **计量与看板**：Token、积分（官方每万 Token 系数，工作日 14:00–18:00 高峰 ×1、其余 ×0.5，`server/src/lib/relay/credit-cost.ts`）、日聚合、工作台、用量分析、用户分析、调度画布。
 - **合规与审计**：调用日志（请求全文按内容寻址落盘，可下载）、报错日志、敏感词检测 / 拦截（AC 自动机 + 正则）、操作审计。
 - **身份集成**：手机号 + 密码登录、公司 LDAP 登录、钉钉通讯录核对与部门同步。
-- **Token Bot**：站内 LLM 助手，工具包括查本人账号、查 Request ID、查邀请人、帮用户加入部门。
+- **Token Bot**：站内 LLM 助手，工具包括查本人账号、查 Request ID、查邀请人。不能加入部门。
 
 ### 1.3 目标用户与角色
 
 | 角色 | 代码值 | 主要职责 |
 |---|---|---|
-| 超级管理员（平台运营） | `admin` | 开通企业；维护上游渠道、模式、渠道 KEY、席位；看调度画布、全站调用 / 报错日志、敏感词、操作审计；批量注册用户 |
+| 超级管理员（平台运营） | `admin` | 维护上游渠道、模式、渠道 KEY、席位；看调度画布、全站调用 / 报错日志、敏感词、操作审计；批量注册用户；编辑企业 / 部门状态。子公司和部门只能通过同步钉钉创建 |
 | 企业管理员 | `org_admin` | 管理本企业部门树，指定部门管理员，邀请成员；有席位时可提交渠道 KEY |
-| 部门管理员 | `dept_admin` | 管理本部门及子部门：建子部门、邀请成员 |
+| 部门管理员 | `dept_admin` | 管理本部门及子部门：邀请成员 |
 | 员工 | `employee` | 加入部门后签发 API Key、配置客户端、查看自己的用量与调用记录 |
 | 注册用户 | `employee` 且无企业 / 部门 | 已注册但未入部，不能调用模型 |
 
 ### 1.4 主要业务流程
 
-1. **开通企业**：超管 `POST /api/admin/enterprises`（`server/src/routes/admin/enterprises.ts:88`）。员工自助申请企业的入口已关闭，固定返回 403（`server/src/routes/me.ts:231、238`）。
-2. **建部门**：`POST /api/admin/departments`（`server/src/routes/admin/departments.ts:116`）。一级部门只能由超管或企业管理员创建；每个部门自动配一个隐藏的"默认团队"作为成员挂载点（`server/src/lib/enterprise.ts:175-193`）。
-3. **人员入部（三条路）**：管理员邀请 `POST /api/admin/teams/:id/members`；注册时按姓名 + 手机号核对钉钉通讯录自动入部（`server/src/routes/auth.ts:167-176`）；对 Token Bot 说出部门名自助加入（`server/src/lib/support-bot/join-department.ts:250-336`）。
-4. **签发员工 Key**：`POST /api/me/api-keys` 或 `POST /api/me/api-keys/provision`，Key 绑定部门 × 渠道（产品线）× 协议（`server/src/routes/me.ts:83-91`）；加入多个部门时必须选择记账部门。
-5. **客户端接入**：员工端"接入教程"（`web/src/views/me/GuideView.vue`）给出各客户端的 Base URL 与配置方法。
-6. **一次 Relay 请求**：API Key 鉴权（`server/src/middleware/api-key.ts`）→ 参数校验 → 敏感词检测，命中拦截时伪装成智谱 1301（`server/src/routes/relay/chat-completions.ts:458-495`）→ Redis RPM / 并发租约（`server/src/lib/relay/quota.ts:123-143`）→ 模型解析与路由（`client-model.ts`、`routing.ts`、`model_routes` 表）→ 绑定调度取 Key（`binding.ts:593-665`）→ 上游调用（`upstream.ts`：默认超时 300 秒、最多 5 次尝试，生产配置 3 次；401/403 自动停用 Key，429 按报文冷却）→ 流式在首包确认后才交给客户端，之后不再换 Key → 审计计量（`server/src/lib/relay/audit.ts`：`request_audits`、日聚合、小时积分账本；`requestId` 唯一防重）→ 请求全文按内容寻址落盘（`server/src/lib/relay/request-context.ts`）。
-7. **上游运营**：超管建渠道与模式（`POST /api/admin/providers`、`/api/admin/product-lines`）、登记席位（`POST /api/admin/channel-seats`）、批量导入渠道 KEY（`POST /api/admin/credentials/bulk-create`）。有席位的员工先 `POST /api/me/upstream-credentials/test` 拿到测试凭证，再 `POST /api/me/upstream-credentials` 锁定提交。删除渠道会在一个事务内一并销毁席位、渠道 KEY 和绑定该渠道的个人 API Key，历史调用日志保留（`server/src/routes/admin/providers.ts:602-679`）。
-8. **后台任务**（在 API 进程内运行，`server/src/index.ts:13-16`）：闲置 Key 释放每 60 秒（`server/src/lib/idle-binding-release.ts:8`）；分档重算与重绑每天一次且进程启动时立即执行（`server/src/lib/tier-rebind.ts:127-137`）；渠道冷却占比告警每 60 秒。
-9. **看板与合规**：超管看全站用量、调度画布、调用 / 报错日志、敏感词记录、操作审计；企业 / 部门管理员看本范围工作台与成员用量；员工看自己的用量与调用记录。
+1. **编制**：`POST /api/admin/enterprises` 与 `POST /api/admin/departments` 固定返回 403（`ORG_UNITS_SYNC_ONLY_MESSAGE`）。员工自助申请企业的入口同样 403（`server/src/routes/me.ts`）。每个部门自动配一个隐藏的"默认团队"作为成员挂载点（`server/src/lib/enterprise.ts`）。
+2. **人员入部（两条路）**：管理员邀请 `POST /api/admin/teams/:id/members`；注册或登录时按姓名 + 手机号核对钉钉通讯录自动入部（`server/src/routes/auth.ts`、`server/src/lib/dingtalk-register-join.ts`）。Token Bot 不能加入部门。
+3. **签发员工 Key**：`POST /api/me/api-keys` 或 `POST /api/me/api-keys/provision`，Key 绑定部门 × 渠道（产品线）× 协议（`server/src/routes/me.ts:83-91`）；加入多个部门时必须选择记账部门。
+4. **客户端接入**：员工端"接入教程"（`web/src/views/me/GuideView.vue`）给出各客户端的 Base URL 与配置方法。
+5. **一次 Relay 请求**：API Key 鉴权（`server/src/middleware/api-key.ts`）→ 参数校验 → 敏感词检测，命中拦截时伪装成智谱 1301（`server/src/routes/relay/chat-completions.ts:458-495`）→ Redis RPM / 并发租约（`server/src/lib/relay/quota.ts:123-143`）→ 模型解析与路由（`client-model.ts`、`routing.ts`、`model_routes` 表）→ 绑定调度取 Key（`binding.ts:593-665`）→ 上游调用（`upstream.ts`：默认超时 300 秒、最多 5 次尝试，生产配置 3 次；401/403 自动停用 Key，429 按报文冷却）→ 流式在首包确认后才交给客户端，之后不再换 Key → 审计计量（`server/src/lib/relay/audit.ts`：`request_audits`、日聚合、小时积分账本；`requestId` 唯一防重）→ 请求全文按内容寻址落盘（`server/src/lib/relay/request-context.ts`）。
+6. **上游运营**：超管建渠道与模式（`POST /api/admin/providers`、`/api/admin/product-lines`）、登记席位（`POST /api/admin/channel-seats`）、批量导入渠道 KEY（`POST /api/admin/credentials/bulk-create`）。有席位的员工先 `POST /api/me/upstream-credentials/test` 拿到测试凭证，再 `POST /api/me/upstream-credentials` 锁定提交。删除渠道会在一个事务内一并销毁席位、渠道 KEY 和绑定该渠道的个人 API Key，历史调用日志保留（`server/src/routes/admin/providers.ts:602-679`）。同一员工同一模式可登记多个席位，第二条起必填标签。
+7. **后台任务**（在 API 进程内运行，`server/src/index.ts:13-16`）：闲置 Key 释放每 60 秒（`server/src/lib/idle-binding-release.ts:8`）；分档重算与重绑每天一次且进程启动时立即执行（`server/src/lib/tier-rebind.ts:127-137`）；渠道冷却占比告警每 60 秒。
+8. **看板与合规**：超管看全站用量、调度画布、调用 / 报错日志、敏感词记录、操作审计；企业 / 部门管理员看本范围工作台与成员用量；员工看自己的用量与调用记录。
 
 ---
 
@@ -76,12 +76,12 @@ KodaX Fabric 是"企业级 Token 统一接入与效能管理"平台，当前唯�
 
 | 目录 | 职责 |
 |---|---|
-| `server/` | `@kodax-fabric/server`：Fastify API 与 Relay 网关。`src/routes`（认证、个人中心、Token Bot、18 个 admin 路由文件、2 个 relay 路由文件），`src/lib`（`relay/` 网关核心、`support-bot/` 智能助手、编制 / 钉钉 / LDAP / 渠道 / 分档 / 告警等领域逻辑），`src/db`（schema、自研迁移器、seed、组织与钉钉同步脚本），`drizzle/`（55 个 SQL 迁移、journal、24 个 snapshot），`test/`（15 个单测文件、10 个集成脚本），`data/`（组织架构 JSON） |
+| `server/` | `@kodax-fabric/server`：Fastify API 与 Relay 网关。`src/routes`（认证、个人中心、Token Bot、18 个 admin 路由文件、2 个 relay 路由文件），`src/lib`（`relay/` 网关核心、`support-bot/` 智能助手、编制 / 钉钉 / LDAP / 渠道 / 分档 / 告警等领域逻辑），`src/db`（schema、自研迁移器、seed、组织与钉钉同步脚本），`drizzle/`（61 个 SQL 迁移、journal、24 个 snapshot），`test/`（15 个单测文件、10 个集成脚本），`data/`（组织架构 JSON） |
 | `web/` | `@kodax-fabric/web`：Vue 3 单页应用，包含超管 / 管理员后台（`views/admin`）和员工端（`views/me`）、调度画布、Token Bot 面板 |
-| `e2e/` | Playwright E2E：建库 / 重置脚本、mock 上游、2 个 spec 共 5 个用例 |
+| `e2e/` | Playwright E2E：建库 / 重置脚本、mock 上游、3 个 spec（原审查 2 个 spec 共 5 个用例；其后增加编制层级 spec） |
 | `deploy/` | 多阶段 Dockerfile（api 与 web 两个目标）、生产 `compose.yaml`、开发用 `compose.local.yaml`、`Caddyfile`、备份与首个管理员初始化脚本 |
 | `scripts/` | `dev.mjs`（先起 API、等 `/health` 就绪再起 Vite）；`envelope-anatomy.mjs`、`simulate-v2-sizing.mjs`、`smoke-v2-roundtrip.mjs` 是请求上下文 v2 格式的离线分析与往返校验工具 |
-| `docs/` | PRD、HLD、UI 线框、早期产品稿、FEATURE_LIST、4 篇 ADR（多数已与代码不一致，见第 3.6 节） |
+| `docs/` | PRD、HLD、UI 线框、早期产品稿、FEATURE_LIST、5 篇 ADR（多数已与代码不一致，见第 3.6 节） |
 
 ### 2.2 技术栈与关键依赖（版本为本次 `npm ci` 实际安装版本）
 
@@ -121,7 +121,7 @@ api（Fastify，单副本，容器启动先跑迁移）
 
 | 分组 | 表 | 说明 |
 |---|---|---|
-| 编制 | `enterprises`、`departments`、`teams`、`team_members`、`employees` | 部门树用 `parent_id`；`teams` 现在是每个部门一个隐藏的"默认团队"，`team_members` 实际承载"部门成员关系"（`enterprise.ts:175-193`；迁移 0030、0037、0042） |
+| 编制 | `enterprises`、`departments`、`teams`、`team_members`、`employees` | 企业有 `parent_id`、`dingtalk_dept_id`；部门树用 `parent_id`；`teams` 是每个部门一个隐藏的"默认团队"，`team_members` 实际承载"部门成员关系"。员工有钉钉在册标记、职位、入职时间和钉钉档案字段（迁移 0055–0060） |
 | 上游 | `providers`、`product_lines`、`upstream_credentials`、`channel_seats`、`model_routes` | `providers` 是厂商（glm / deepseek / custom / haizhi）；`product_lines` 是渠道下的模式，含按协议的 `protocol_configs`、席位数、标签、`relay_pool_key`；`upstream_credentials` 是渠道 KEY（加密存储，状态、优先级、权重、5 小时与每周额度窗口） |
 | 调度 | `credential_bindings`、`credential_binding_members`、`credential_usage_hourly` | 绑定范围是多态的 `scope_type + scope_id`（员工 / 企业；`team` 与 `department` 为遗留值）；企业共享的成员表；小时积分账本 |
 | 访问 | `employee_api_keys` | `th_` Key 的 SHA-256 哈希 + 可逆密文，绑定产品线、默认团队（即部门）与协议 |
@@ -132,8 +132,8 @@ api（Fastify，单副本，容器启动先跑迁移）
 
 - 迁移器是自研的 `server/src/db/migrate.ts`，没有用 drizzle 官方 migrator。它按 `meta/_journal.json` 的顺序执行，每个 SQL 文件一个事务，用 `created_at = journal.when` 判断是否已执行（`migrate.ts:16-52`）。每个文件单独开事务，是为了绕开"同一事务里不能使用刚 `ADD VALUE` 的枚举值"的限制，这个设计是合理的。
 - 迁移完成后还会无条件执行几段数据回填，包括从 `request_audits` 全量重算 `usage_counters_daily`（`migrate.ts:59-126`）。
-- 文件覆盖：55 个 SQL 文件，journal 55 条，tag 与文件名一一对应；但 snapshot 只有 0000–0023 共 24 个，0024–0054 缺失。
-- 本次实测（见第 6 节）：用仓库迁移建出的库与"直接从 schema 生成"的库相比，25 张表、241 列、13 个枚举、83 个索引完全一致；差异只有 3 处：`departments.parent_id` 外键只存在于 SQL、0044 的 3 个函数与触发器只存在于 SQL、0054 的一条列注释。
+- 文件覆盖：61 个 SQL 文件，journal 61 条（到 `0060`），tag 与文件名一一对应；但 snapshot 只有 0000–0023 共 24 个，0024–0060 缺失。
+- 原审查实测（见第 6 节，当时迁移到 0054）：用仓库迁移建出的库与"直接从 schema 生成"的库相比，25 张表、241 列、13 个枚举、83 个索引完全一致；差异只有 3 处：`departments.parent_id` 外键只存在于 SQL、0044 的 3 个函数与触发器只存在于 SQL、0054 的一条列注释。`departments.parent_id` 在 schema 中仍无 `.references()`。
 
 ### 2.5 鉴权与权限
 
@@ -154,7 +154,7 @@ api（Fastify，单副本，容器启动先跑迁移）
 | 模式 | `product_lines` | 例如 GLM Coding Plan 套餐、充值 API、某个自建入口。`product_type` 取值为 `api` 或 `coding_plan`；按协议配置 baseUrl 与鉴权方式；智谱各套餐通过 `relay_pool_key = glm:coding_plan` 共享一个调度池（由 0044 的触发器填充） |
 | 协议 | `relay_protocol` 枚举 | `openai_chat`、`anthropic_messages`、`openai_responses` |
 | 渠道 KEY | `upstream_credentials` | 状态有 active / disabled / auto_disabled / cooling；带优先级、权重、5 小时与每周积分上限及窗口锚点 |
-| 席位 | `channel_seats` | 员工 × 产品线 × 标签，对应员工可提交的那一把渠道 KEY |
+| 席位 | `channel_seats` | 员工 × 产品线 × 标签；同一员工同一模式可有多条，第二条起必填标签 |
 | 绑定 | `credential_bindings`、`credential_binding_members` | 重度员工独占，标准档按企业共享（每把 Key 最多 5 人） |
 | 分档 | `employees.usage_tier` | 新账号 7×24 小时保护期内固定为重度；之后按近 7 日日均 Token 分为闲置、标准（<3000 万）、重度（≥3000 万） |
 
@@ -194,7 +194,7 @@ api（Fastify，单副本，容器启动先跑迁移）
 |---|---|---|
 | 单元 / 组件测试 | `npm test` 运行 15 个 `*.test.ts`（node:test + Fastify inject + mock），不依赖真实数据库 | 184 通过 / 0 失败（主审复跑） |
 | 集成脚本 | 10 个 `test:*` 脚本，需要真实 Postgres / Redis，不在 `npm test` 中 | 1 个通过、2 个断言通过但进程不退出、2 个清理阶段失败、4 个期望过时失败、1 个跳过 |
-| E2E | Playwright，2 个 spec 共 5 个用例；输出 HTML 报告与 `e2e-results.json` | 5/5 通过，耗时 13.2 秒 |
+| E2E | Playwright；原审查 2 个 spec 共 5 个用例，5/5 通过，耗时 13.2 秒。其后增加 `enterprise-hierarchy.spec.ts` | 见第 6 节 |
 | 静态检查 | 服务端源码与前端类型检查通过；测试代码 30 个类型错误；没有 ESLint / Prettier 配置；没有 CI（无 `.github/workflows`） | 见第 6 节 |
 
 ---
@@ -203,7 +203,7 @@ api（Fastify，单副本，容器启动先跑迁移）
 
 ### 3.1 结构清晰度
 
-- **优点**：服务端分层清晰。路由只做参数解析与编排，领域规则多写成纯函数（如 `planChannelSeatCreate`、`planDepartmentJoin`、`resolveBindingScope`、`classifyUsageTier`），并有对应单测。Relay 核心按职责拆分为鉴权、路由、绑定、上游、SSE、审计、上下文、敏感词、配额等模块。注释质量高，很多地方写明了设计约束（例如迁移器为什么每个文件单独开事务）。
+- **优点**：服务端分层清晰。路由只做参数解析与编排，领域规则多写成纯函数（如 `planChannelSeatCreate`、`resolveBindingScope`、`classifyUsageTier`），并有对应单测。Relay 核心按职责拆分为鉴权、路由、绑定、上游、SSE、审计、上下文、敏感词、配额等模块。注释质量高，很多地方写明了设计约束（例如迁移器为什么每个文件单独开事务）。
 - **问题**：存在多个超大文件，路由、领域规划和 SQL 混在一起：`server/src/routes/admin/credentials.ts`（2147 行）、`server/src/routes/me.ts`（1603 行）、`server/src/lib/relay/binding.ts`（1411 行）、`server/src/routes/relay/anthropic-messages.ts`（1085 行）与 `chat-completions.ts`（1042 行）、`server/src/routes/admin/users.ts`（1050 行）。前端有 5 个超过 1000 行的单文件组件（`EnterprisesView.vue` 1664 行、`TempChannelsView.vue` 1661 行、`CredentialsView.vue` 1643 行、`KeyBindingsView.vue` 1531 行、`DashboardView.vue` 1076 行）。
 
 ### 3.2 重复与遗留代码
@@ -229,8 +229,8 @@ api（Fastify，单副本，容器启动先跑迁移）
 
 ### 3.5 测试覆盖缺口
 
-- E2E 只覆盖登录冒烟、KEYS 看板和一条使用自建渠道 + OpenAI Chat 的闭环。
-- 以下关键路径没有任何 E2E：越权与租户隔离、停用企业或部门、钉钉 / LDAP / Token Bot 入部、敏感词拦截、Anthropic 与 Responses 协议、流式中断、闲置释放与分档重绑、删除渠道或部门。
+- E2E 覆盖登录冒烟、KEYS 看板、一条使用自建渠道 + OpenAI Chat 的闭环，以及编制层级（子公司/部门只能钉钉同步创建）。
+- 以下关键路径没有任何 E2E：越权与租户隔离、停用企业或部门、钉钉 / LDAP 入部、敏感词拦截、Anthropic 与 Responses 协议、流式中断、闲置释放与分档重绑、删除渠道或部门。
 - 10 个集成脚本大多已经失修，也没有在任何流水线中运行。
 
 ### 3.6 文档与代码一致性
@@ -257,19 +257,16 @@ api（Fastify，单副本，容器启动先跑迁移）
 
 - 常量定义在 `server/src/lib/password.ts:7`。
 - 以下入口都用这个密码建号或重置，且全部 `mustChangePassword: false`：超管批量注册（`server/src/routes/admin/users.ts:719-733`，响应还回传 `initialPassword`：`users.ts:714、770`）；审核通过（`users.ts:609-617`）；LDAP 首次登录自动开户（`server/src/lib/ldap-dingtalk-provision.ts:128-141`）；钉钉通讯录批量建号脚本（`server/src/db/sync-dingtalk-users.ts:50-63`）。
-- 外泄途径：一是写进 Token Bot 知识库（`server/src/lib/support-bot/knowledge.md:121`），该文件整段注入系统提示词（`knowledge.ts:10-14、20-23`），任何已登录用户都能问出来，而且每次对话都会发给外部 GLM；二是前端文案（`web/src/views/admin/EnterprisesView.vue:270、1330、1341`）打包进可公开下载的静态 JS；三是仓库本身。
+- 外泄途径：前端文案（`web/src/views/admin/EnterprisesView.vue`）打包进可公开下载的静态 JS；以及仓库本身。
 - 强制改密机制已失效：登录时无条件签发 `mustChangePassword: false`（`server/src/routes/auth.ts:96-103、117-119`）；服务端没有拦截，前端路由守卫也不检查（`web/src/router/index.ts:236-261`）；迁移 `0046` 还把存量的 `must_change_password = true` 全部改成了 false（`server/drizzle/0046_optional_password_change.sql:3`）。
 - 最危险的是 LDAP 与钉钉开户的账号：这些用户平时走 LDAP 登录，不会去改本地密码，因此"手机号 + Hz123456"在 `POST /api/auth/login`（`auth.ts:220-262`）上长期有效。登录后，`GET /api/me/api-keys` 会返回该账号全部明文 Key（`server/src/routes/me.ts:792-833`），Key 不随改密失效，攻击者可以长期使用。
 
-#### H2 部门管理员可通过 Token Bot 自助加入同企业任意部门，从而扩大管理范围（企业内提权）
+#### H2 部门管理员范围由所在部门推导，被邀请进另一部门即扩大管理范围（企业内提权）
 
 状态：【已核实】（静态代码路径完整）。
 
 - 部门管理员的管理范围不是"被任命管理的部门"，而是"本人所在的全部部门及其子树"：非扮演场景下，`scopedDepartmentIds` 回落到 `listAdminDepartmentIds(employeeId)`（`server/src/lib/org.ts:98-104`），后者直接取该员工所有 `team_members` 所在部门再展开子树（`org.ts:25-37`）。迁移 0051 删掉 `team_members.role` 之后，成员关系里已经没有"是否为管理员"这一信息。
-- Token Bot 的 `join_department` 工具对四种角色都开放（`server/src/routes/support.ts:46`，`server/src/lib/support-bot/tools.ts:63-70`）。`planDepartmentJoin` 只拒绝 `admin` 与 `org_admin`（`server/src/lib/support-bot/join-department.ts:180-185`），同企业的任意启用部门都可以加入（`join-department.ts:192-209、302-313`），没有审批。
-- 触发方式：部门管理员对 Token Bot 说"帮我加入某某部门"，目标可以是一级部门。
-- 影响：之后用户列表、成员用量与调用明细、修改用户、重置密码（`server/src/routes/admin/users.ts:249-276` 的 `canManageScopedUser`）以及部门成员管理，都会覆盖新加入的部门和它的所有子部门。重置密码时管理员可以直接指定新密码且不强制改密（`users.ts:1022-1030`），因此可以登录该部门任意员工的账号并拿到其明文 Key。整个过程只留下一条 `department.self_join` 审计（`join-department.ts:322-333`）。
-- 同一机制带来的副作用：企业管理员把某位部门管理员以普通成员身份邀请进另一个部门时，他也会自动成为该部门的管理员。
+- 企业管理员把某位部门管理员以普通成员身份邀请进另一个部门时，他会自动成为该部门及其子树的管理员。之后用户列表、成员用量与调用明细、修改用户、重置密码（`canManageScopedUser`）以及部门成员管理都会覆盖新范围。重置密码时管理员可以直接指定新密码且不强制改密（`users.ts`），因此可以登录该部门任意员工的账号并拿到其明文 Key。
 
 #### H3 停用企业或停用部门后，员工 API Key 仍可继续调用 Relay
 
@@ -280,13 +277,12 @@ api（Fastify，单副本，容器启动先跑迁移）
 - 对比：控制台会话会拦截停用企业的员工（`server/src/middleware/auth.ts:60-73`），两条链路口径不一致。
 - 影响：被停用的企业或部门仍在消耗平台渠道 KEY 与上游额度，并继续产生用量记账，"停用"不能用作应急止损手段。
 
-#### H4 开放注册不验证手机号归属；钉钉"姓名 + 手机号"即可自动入部；未入企业的用户能经 Token Bot 加入任意企业的任意部门
+#### H4 开放注册不验证手机号归属；钉钉"姓名 + 手机号"即可自动入部
 
 状态：【已核实】（代码）；暴露面【推断】。
 
 - `POST /api/auth/register` 匿名可用，直接创建 `status: "active"` 的账号，没有短信或钉钉免登校验（`server/src/routes/auth.ts:125-156`）。手机号已存在时返回 409"该手机号已提交申请或已注册"（`auth.ts:212-215`），可用于枚举手机号。
-- 注册后立即按用户填写的姓名和手机号查询钉钉通讯录，匹配上就写入企业并加入对应部门（`auth.ts:167-176` → `server/src/lib/dingtalk-register-join.ts:96-149、209-237`）。知道同事姓名和手机号的人可以抢先注册，进入同事的真实部门。同事本人之后注册会被 409 拒绝；如果同事走 LDAP 登录，还会因为手机号匹配登进这个被抢注的账号（`server/src/lib/ldap-auth.ts:60-63`），双方共用同一个账号。
-- 未入企业的账号使用 Token Bot `join_department` 时，目录覆盖所有启用企业的所有启用部门（`join-department.ts:224-248`）。说出部门名就能加入，加入后即可签发 API Key（`join-department.ts:192-209、302-313`）。CONTEXT.md 第 49 行把"在 Token Bot 说出部门名后加入"写成了产品规则，但没有设计任何审批或身份核验。
+- 注册后立即按用户填写的姓名和手机号查询钉钉通讯录，匹配上就写入企业并加入对应部门（`auth.ts` → `server/src/lib/dingtalk-register-join.ts`）。知道同事姓名和手机号的人可以抢先注册，进入同事的真实部门。同事本人之后注册会被 409 拒绝；如果同事走 LDAP 登录，还会因为手机号匹配登进这个被抢注的账号（`server/src/lib/ldap-auth.ts:60-63`），双方共用同一个账号。对不上钉钉时账号仍注册成功，须由部门管理员邀请。
 - 暴露面：生产 compose 把 Web 绑定在内网地址 `10.10.0.144`（`deploy/compose.yaml:118-120`），推断只有内网或 VPN 可达；但 `deploy/README.md:14` 提到"Public pilot policy"，需要确认外网是否可达。
 
 #### H5 LDAP 登录按"姓名"把公司账号映射到系统内已有账号，存在错绑与接管
@@ -367,7 +363,7 @@ api（Fastify，单副本，容器启动先跑迁移）
 
 #### M9 迁移体系脆弱【已核实】（含实测）
 
-- snapshot 断档：`server/drizzle/meta` 只有 0000–0023 共 24 个 snapshot，journal 却有 55 条。`npm run db:generate` 会用 0023 时的状态与当前 schema 做 diff；实测会进入交互式的"是否重命名"确认，无法非交互运行；即使硬跑，也会生成重复建表、删表的错误迁移。
+- snapshot 断档：`server/drizzle/meta` 只有 0000–0023 共 24 个 snapshot，journal 却有 61 条（到 `0060`）。`npm run db:generate` 会用 0023 时的状态与当前 schema 做 diff；原审查实测会进入交互式的"是否重命名"确认，无法非交互运行；即使硬跑，也会生成重复建表、删表的错误迁移。
 - 迁移器（`server/src/db/migrate.ts:16-52`）没有 `pg_advisory_lock`；`drizzle.__drizzle_migrations` 没有唯一约束；记录的 hash 从不校验，已经上线的 SQL 被改动也不会被发现。
 - 每次迁移都会从 `request_audits` 全量重算 `usage_counters_daily` 并覆盖写入（`migrate.ts:106-126`）。审计表越大，每次发版越慢；如果与线上写入并发，`DO UPDATE SET ... = excluded` 会覆盖并发期间的累加【推断】。
 - schema 与 SQL 漂移（实测）：`departments.parent_id` 的自引用外键只在 SQL 中（`server/drizzle/0037_nested_departments.sql:2`），schema 没有声明（`server/src/db/schema/index.ts:109`）；0044 的 3 个函数和触发器只在 SQL 中（`server/drizzle/0044_glm_coding_plan_pool.sql:58-123`），基于 schema 建出的库不会自动填充 `relay_pool_key`。
@@ -429,7 +425,7 @@ api（Fastify，单副本，容器启动先跑迁移）
 | L3 | 管理员录入的敏感词正则直接用 `new RegExp` 在热路径上匹配用户输入，只限制了长度 128 和数量 200，没有灾难性回溯防护（ReDoS） | `server/src/lib/relay/sensitive-words.ts:300-311、348-368` | 【已核实】 |
 | L4 | 非流式响应默认最多缓冲 100MB（生产 compose 已改为 20MB） | `server/src/config.ts:58-62`；`chat-completions.ts:103-119`；`deploy/compose.yaml:74` | 【已核实】 |
 | L5 | 硬编码：员工端 Base URL 写死为生产域名，预发和本地教程会引导用户连生产；首个超管有默认手机号和密码（`bootstrap-admin.sh` 会要求显式传入，但直接 `db:seed` 会用默认值） | `web/src/views/me/KeysView.vue:177`；`GuideView.vue:535`；`server/src/config.ts:90-92` | 【已核实】 |
-| L6 | 部门管理员审核 `pending` 用户时只校验同企业，不校验部门；部门管理员无法编辑任何部门（`canCreateTeam` 调用时没有传部门 ID，属于功能缺口，不是越权） | `server/src/routes/admin/users.ts:605-607`；`server/src/lib/enterprise.ts:82-90`；`departments.ts:222`；`org.ts:159-171` | 【已核实】 |
+| L6 | 部门管理员审核 `pending` 用户时只校验同企业，不校验部门 | `server/src/routes/admin/users.ts` | 【已核实】 |
 | L7 | `db:cleanup-demo` 没有环境护栏，第一句删除的表早已不存在，所以当前一定失败；如果有人把它"修好"，会清空生产审计数据 | `server/src/db/cleanup-demo-data.ts:13-25`；`server/drizzle/0017_consumption_only_audits.sql:25` | 【已核实】 |
 | L8 | 前端健壮性：HTTP 层不处理 403，4 个页面静默吞掉 403；Element Plus 全量注册，主包 1.1MB（gzip 后 369KB）；Vite 开发服务器监听 `0.0.0.0` | `web/src/api/http.ts:20-42`；`web/src/main.ts:3-4、13`；`web/vite.config.ts:30` | 【已核实】 |
 | L9 | 非 GLM 渠道（DeepSeek、自建网关）的积分恒为 0，5 小时 / 每周额度避让对它们基本失效，只能依赖上游 429 | `server/src/lib/relay/credit-cost.ts:285-288` | 【已核实】 |
@@ -447,17 +443,17 @@ api（Fastify，单副本，容器启动先跑迁移）
 
 1. **收口初始密码与强制改密**（对应 H1、M1）
    - 理由：这是当前最容易被利用、影响面最广的问题。
-   - 改动：删除 `REGISTRATION_INITIAL_PASSWORD`。批量注册和审核通过改为生成一次性随机密码并强制改密；LDAP 与钉钉开户的账号设置不可用的随机本地密码（这些用户本来就不需要本地密码）。登录时签发真实的 `mustChangePassword`；服务端增加全局 preHandler，`mustChangePassword` 为真时只放行改密与 `/api/auth/me`。JWT 增加签发时间与 `password_changed_at`（或 token 版本号）的比较；管理员重置后也强制改密。从 `knowledge.md` 和前端文案中删除密码。写一个一次性修复脚本：对全部账号做 `bcrypt.compare('Hz123456')`，命中的账号强制改密或改为随机密码（约 1000 个账号，cost 10，一两分钟可以跑完）。
-   - 范围：`server/src/lib/password.ts`、`routes/auth.ts`、`middleware/auth.ts`、`lib/jwt.ts`、`routes/admin/users.ts`、`lib/ldap-dingtalk-provision.ts`、`db/sync-dingtalk-users.ts`、`lib/support-bot/knowledge.md`，以及 `web/src/router/index.ts`、`EnterprisesView.vue`。中等改动；如果加 token 版本号，需要 1 个迁移。
+   - 改动：删除 `REGISTRATION_INITIAL_PASSWORD`。批量注册和审核通过改为生成一次性随机密码并强制改密；LDAP 与钉钉开户的账号设置不可用的随机本地密码（这些用户本来就不需要本地密码）。登录时签发真实的 `mustChangePassword`；服务端增加全局 preHandler，`mustChangePassword` 为真时只放行改密与 `/api/auth/me`。JWT 增加签发时间与 `password_changed_at`（或 token 版本号）的比较；管理员重置后也强制改密。从前端文案中删除密码。写一个一次性修复脚本：对全部账号做 `bcrypt.compare('Hz123456')`，命中的账号强制改密或改为随机密码（约 1000 个账号，cost 10，一两分钟可以跑完）。
+   - 范围：`server/src/lib/password.ts`、`routes/auth.ts`、`middleware/auth.ts`、`lib/jwt.ts`、`routes/admin/users.ts`、`lib/ldap-dingtalk-provision.ts`、`db/sync-dingtalk-users.ts`，以及 `web/src/router/index.ts`、`EnterprisesView.vue`。中等改动；如果加 token 版本号，需要 1 个迁移。
 
-2. **部门管理员的范围改为"任命制"，自助入部需要审批**（对应 H2、H4）
-   - 理由：目前范围由成员关系推导，可以自行扩大。
-   - 改动：新增"部门管理员任命"关系（独立表，或在成员关系上恢复管理员标记），`listAdminDepartmentIds` 只读取任命关系；Token Bot 的 `join_department` 只对普通员工开放，或者统一改为待审批；未入企业的用户加入企业需要邀请、审批或钉钉免登校验。
-   - 范围：schema 加 1 个迁移；`server/src/lib/org.ts`、`routes/admin/users.ts`、`teams.ts`、`departments.ts`、`overview.ts` 中的范围计算；`lib/support-bot/join-department.ts`。中到大改动，需要补 E2E。
+2. **部门管理员的范围改为"任命制"**（对应 H2）
+   - 理由：目前范围由成员关系推导，被邀请进另一部门即扩大管理范围。
+   - 改动：新增"部门管理员任命"关系（独立表，或在成员关系上恢复管理员标记），`listAdminDepartmentIds` 只读取任命关系。
+   - 范围：schema 加 1 个迁移；`server/src/lib/org.ts`、`routes/admin/users.ts`、`teams.ts`、`departments.ts`、`overview.ts` 中的范围计算。中到大改动，需要补 E2E。
 
 3. **身份绑定改为强校验**（对应 H4、H5）
    - 理由：手机号和姓名都不是可信的身份凭据。
-   - 改动：注册时验证手机号归属（短信验证码，或钉钉扫码 / 免登取得 userid）。`employees` 增加 `dingtalk_user_id`、`ldap_uid` 唯一列，LDAP 登录只按已绑定的 uid 或 LDAP 手机号精确匹配；删除姓名匹配和"钉钉同名后按手机号返回已有账号"的逻辑；不再把整张员工表读进内存。
+   - 改动：注册时验证手机号归属（短信验证码，或钉钉扫码 / 免登取得 userid）。`employees` 已有 `dingtalk_userid`，补唯一约束并增加 `ldap_uid` 唯一列；LDAP 登录只按已绑定的 uid 或 LDAP 手机号精确匹配；删除姓名匹配和"钉钉同名后按手机号返回已有账号"的逻辑；不再把整张员工表读进内存。
    - 范围：`server/src/routes/auth.ts`、`lib/ldap-auth.ts`、`lib/ldap-dingtalk-provision.ts`、`lib/dingtalk-register-join.ts`，schema 加 1 个迁移。中等改动。
 
 4. **统一租户生命周期**（对应 H3）
@@ -483,7 +479,7 @@ api（Fastify，单副本，容器启动先跑迁移）
 10. **删除部门改为停用，或至少做成事务并检查子部门**（对应 M10）。范围：`routes/admin/departments.ts`、`teams.ts`。小改动。
 11. **Relay 正确性**（对应 M11、M12、M17、L4）：OpenAI 流式请求补 `stream_options.include_usage`；Anthropic 路径对上游 401、403、429、5xx 统一映射；自建网关地址拒绝回环、链路本地和元数据网段，内网地址按需白名单；调低 `RELAY_RESPONSE_MAX_BYTES` 的默认值。范围：`routes/relay/*.ts`、`lib/upstream-protocol-config.ts`、`config.ts`。小到中改动。
 12. **升级依赖**（对应 M14）：fastify 升到 5.12.5 以上，axios 升到 1.20 以上，vue 升到 3.5.42 以上；drizzle-orm 升到 0.45.x 需要回归测试；删除未使用的 `pptxgenjs`、`marked`、`sanitize-html`；把 Node 运行时与依赖的 engines 对齐到 22.22 以上，并固定 Docker 基础镜像的 digest。
-13. **重建测试体系与 CI**（对应 M15）：修复测试代码的 30 个类型错误，并把测试纳入类型检查；修复或淘汰 10 个集成脚本，优先迁移为 Playwright E2E，符合 AGENTS.md 的要求；`e2e/env.ts` 支持从环境变量读取配置；新增 CI，依次运行类型检查、单测和 E2E（使用 Postgres 与 Redis service），并上传 HTML 和 JSON 报告作为产物。补充的 E2E 场景：越权、停用企业、Token Bot 入部、敏感词拦截、Anthropic 与 Responses 协议、闲置释放。
+13. **重建测试体系与 CI**（对应 M15）：修复测试代码的 30 个类型错误，并把测试纳入类型检查；修复或淘汰 10 个集成脚本，优先迁移为 Playwright E2E，符合 AGENTS.md 的要求；`e2e/env.ts` 支持从环境变量读取配置；新增 CI，依次运行类型检查、单测和 E2E（使用 Postgres 与 Redis service），并上传 HTML 和 JSON 报告作为产物。补充的 E2E 场景：越权、停用企业、敏感词拦截、Anthropic 与 Responses 协议、闲置释放。
 14. **运维加固**（对应 M16、L13）：Caddy 加上 HSTS、`X-Content-Type-Options`、`Referrer-Policy`、`frame-ancestors`；备份加密并异地存放，定期做恢复演练；补回 runbook；删除 compose 中的死配置；开发 compose 的端口绑定到 127.0.0.1。
 15. **查询性能**（对应 M13）：日志列表设置默认时间窗口和最大跨度，计数改为估算或加超时；渠道 KEY、席位、提交记录、调度画布接口加分页，或要求按渠道过滤；用户热力图改为读取预聚合表。
 
@@ -497,6 +493,8 @@ api（Fastify，单副本，容器启动先跑迁移）
 ---
 
 ## 6. 本次验证执行记录
+
+以下命令与结果是原审查对 `9f96611` 的实测（迁移当时到 0054）。其后 journal 已到 `0060`，E2E 增加了编制层级 spec。
 
 环境：Ubuntu 24.04，Node v22.14.0，npm 10.9.9，没有 Docker。PostgreSQL 16.15 与 Redis 7.0.15 用 apt 安装在审查用的虚拟机内，连接信息只写在 `/tmp` 下的环境文件中，没有在仓库里创建 `.env`。"执行者"一列中，"主审"表示主审亲自运行，"子审查"表示由子代理运行、主审抽查过原因或产物。
 
