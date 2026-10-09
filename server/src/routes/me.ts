@@ -572,7 +572,12 @@ export async function meRoutes(app: FastifyInstance) {
       });
     }
 
-    const employeeName = req.session?.name ?? "员工";
+    const [submitter] = await db
+      .select({ name: employees.name })
+      .from(employees)
+      .where(eq(employees.id, employeeId))
+      .limit(1);
+    const employeeName = submitter?.name?.trim() || "员工";
     const result = await db.transaction(async (tx) => {
       await tx.execute(sql`select pg_advisory_xact_lock(${ownedSeat.productLineId})`);
       const [seat] = await tx
