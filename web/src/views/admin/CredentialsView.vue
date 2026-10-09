@@ -1,7 +1,6 @@
 <template>
   <div class="keys-board-page">
-    <div>
-      <div class="keys-board-toolbar">
+    <div class="keys-board-toolbar">
         <span class="keys-board-toolbar-count">
           {{ boardVisibleRows.length }}{{ boardSearch.trim() ? ` / ${rows.length}` : "" }} 个 Key
         </span>
@@ -93,7 +92,6 @@
           </div>
         </div>
       </div>
-    </div>
 
     <el-drawer
       v-model="showKeyDetails"
