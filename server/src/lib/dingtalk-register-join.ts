@@ -45,17 +45,17 @@ export const REGISTER_DINGTALK_JOIN_MESSAGES = {
   matched: (names: readonly string[]) =>
     `已根据钉钉通讯录加入「${names.join("、")}」。请登录。`,
   not_found:
-    "未在钉钉通讯录中找到该姓名和手机号，未能自动加入部门。账号已注册，登录后可在 Token Bot 说出部门名加入。",
+    "未在钉钉通讯录中找到该姓名和手机号，未能自动加入部门。账号已注册，请联系部门管理员用你的注册手机号邀请进部门。",
   name_mismatch: (dingtalkName: string) =>
-    `钉钉中该手机号对应的是「${dingtalkName}」，与填写姓名不一致，未能自动加入部门。账号已注册，登录后可在 Token Bot 说出部门名加入。`,
+    `钉钉中该手机号对应的是「${dingtalkName}」，与填写姓名不一致，未能自动加入部门。账号已注册，请联系部门管理员用你的注册手机号邀请进部门。`,
   phone_mismatch:
-    "钉钉中有同名员工，但手机号不一致，未能自动加入部门。账号已注册，登录后可在 Token Bot 说出部门名加入。",
+    "钉钉中有同名员工，但手机号不一致，未能自动加入部门。账号已注册，请联系部门管理员用你的注册手机号邀请进部门。",
   unmapped:
-    "钉钉通讯录中找到了你，但部门尚未同步到本系统，未能自动加入部门。账号已注册，登录后可在 Token Bot 说出部门名加入。",
+    "钉钉通讯录中找到了你，但部门尚未同步到本系统，未能自动加入部门。账号已注册，请联系部门管理员用你的注册手机号邀请进部门。",
   not_configured:
-    "暂时无法核对钉钉通讯录，账号已注册。登录后可在 Token Bot 说出部门名加入。",
+    "暂时无法核对钉钉通讯录，账号已注册。请联系部门管理员用你的注册手机号邀请进部门。",
   error:
-    "核对钉钉通讯录失败，账号已注册。登录后可在 Token Bot 说出部门名加入。",
+    "核对钉钉通讯录失败，账号已注册。请联系部门管理员用你的注册手机号邀请进部门。",
 } as const;
 
 export function registerDingtalkJoinMessage(result: RegisterDingtalkJoinResult): string {

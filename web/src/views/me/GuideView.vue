@@ -268,13 +268,13 @@
         <div class="pin-item">
           <span class="pin-label">遇到问题？咨询 Token Bot</span>
           <p class="pin-copy">
-            点页面<strong>右下角 Token Bot</strong>。它可以看你的 Key 前缀和调用记录，也能帮你加入部门。
+            点页面<strong>右下角 Token Bot</strong>。它可以看你的 Key 前缀和调用记录，也能帮你查该找哪位管理员邀请进部门。
           </p>
         </div>
         <div v-if="!loaded || !inTeam" class="pin-item">
           <span class="pin-label">没有自动加入部门？</span>
           <p class="pin-copy">
-            登录时一般会按钉钉通讯录自动加入部门。若本次没匹配到，打开右下角 Token Bot，说出所属部门（有同名时再补企业名）。
+            登录时一般会按钉钉通讯录自动加入部门。若本次没匹配到，请联系部门管理员用你的注册手机号邀请进部门。Token Bot 可以帮你查该找哪位管理员。
           </p>
         </div>
       </section>
@@ -328,20 +328,16 @@
         <template v-if="loaded && !inTeam">
           <p class="lead">
             没被自动加入，一般是钉钉通讯录信息对不上（姓名 / 手机号不一致，或部门尚未同步）。
-            对照下面两张图，在 Token Bot 说出部门名即可补加：
+            对照下图确认钉钉里的部门名，然后请部门管理员用你的注册手机号邀请进部门：
           </p>
-          <div class="guide-shots" aria-label="Token Bot 加入部门截图">
+          <div class="guide-shots" aria-label="钉钉个人资料中的部门">
             <figure>
               <img :src="dingtalkDepartmentSrc" alt="钉钉个人资料中的部门一栏" />
-              <figcaption>钉钉个人资料里，「部门」这一栏就是部门名。有同名时再补「企业/组织」。</figcaption>
-            </figure>
-            <figure>
-              <img :src="tokenBotJoinDepartmentSrc" alt="Token Bot 对话中说出部门名并加入成功" />
-              <figcaption>打开右下角 Token Bot，直接说出部门名。加入成功后刷新页面，再到「API Key」复制。</figcaption>
+              <figcaption>钉钉个人资料里，「部门」这一栏就是部门名。把这个名字告诉部门管理员即可。</figcaption>
             </figure>
           </div>
           <ul class="notes">
-            <li>也可以请部门管理员用你的注册手机号邀请进部门。</li>
+            <li>也可以打开右下角 Token Bot，让它帮你查该部门的管理员姓名。</li>
             <li>工作台仍提示「普通注册用户」，表示还没加入部门。</li>
           </ul>
         </template>
@@ -549,7 +545,6 @@ const teams = ref<Array<{ id: number; name: string }>>([]);
 const teamNames = computed(() => teams.value.map((team) => team.name).filter(Boolean).join("、"));
 const clientBaseUrl = CLIENT_BASE_URL;
 const dingtalkDepartmentSrc = "/guides/dingtalk-department.png";
-const tokenBotJoinDepartmentSrc = "/guides/token-bot-join-department.png";
 const zcodeAddProviderSrc = "/guides/zcode-add-provider.png";
 const zcodeAddModelSrc = "/guides/zcode-add-model.png";
 const workbuddyAddModelSrc = "/guides/workbuddy-add-model.png";

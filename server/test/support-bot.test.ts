@@ -40,6 +40,7 @@ const {
   applySupportOriginPlaceholders,
   buildSupportAgentSystemPrompt,
 } = await import("../src/lib/support-bot/knowledge.js");
+const { SUPPORT_BOT_TOOL_NAMES } = await import("../src/lib/support-bot/tools.js");
 const { supportBotRateLimitKey } = await import("../src/lib/support-bot/rate-limit.js");
 const { supportRoutes, supportBotRuntime } = await import("../src/routes/support.js");
 
@@ -81,7 +82,6 @@ test("knowledge covers GuideView facts and refuses invented features", () => {
   assert.match(SUPPORT_BOT_KNOWLEDGE, /图片输入/);
   assert.match(SUPPORT_BOT_KNOWLEDGE, /workbuddy-add-model\.png/);
   assert.match(SUPPORT_BOT_KNOWLEDGE, /dingtalk-department\.png/);
-  assert.match(SUPPORT_BOT_KNOWLEDGE, /token-bot-join-department\.png/);
   assert.match(SUPPORT_BOT_KNOWLEDGE, /Claude Code 接 Token Hub/);
   assert.match(SUPPORT_BOT_KNOWLEDGE, /ANTHROPIC_BASE_URL/);
   assert.match(SUPPORT_BOT_KNOWLEDGE, /~\/\.claude\/settings\.json/);
@@ -95,7 +95,6 @@ test("knowledge covers GuideView facts and refuses invented features", () => {
   assert.match(prompt, /https:\/\/tokenhub\.haizhi\.com\/guides\/zcode-add-model\.png/);
   assert.match(prompt, /https:\/\/tokenhub\.haizhi\.com\/guides\/workbuddy-add-model\.png/);
   assert.match(prompt, /https:\/\/tokenhub\.haizhi\.com\/guides\/dingtalk-department\.png/);
-  assert.match(prompt, /https:\/\/tokenhub\.haizhi\.com\/guides\/token-bot-join-department\.png/);
   assert.match(prompt, /"ANTHROPIC_BASE_URL": "https:\/\/tokenhub\.haizhi\.com"/);
   assert.match(prompt, /base_url = "https:\/\/tokenhub\.haizhi\.com"/);
   assert.equal(
@@ -114,14 +113,17 @@ test("knowledge covers GuideView facts and refuses invented features", () => {
     existsSync(resolve(dirname(fileURLToPath(import.meta.url)), "../../web/public/guides/dingtalk-department.png")),
     true,
   );
-  assert.equal(
-    existsSync(resolve(dirname(fileURLToPath(import.meta.url)), "../../web/public/guides/token-bot-join-department.png")),
-    true,
-  );
+  assert.deepEqual([...SUPPORT_BOT_TOOL_NAMES], [
+    "lookup_my_account",
+    "lookup_request",
+    "lookup_invite_contacts",
+  ]);
   assert.match(prompt, /lookup_my_account/);
   assert.match(prompt, /lookup_request/);
   assert.match(prompt, /lookup_invite_contacts/);
-  assert.match(prompt, /join_department/);
+  assert.doesNotMatch(prompt, /join_department/);
+  assert.doesNotMatch(SUPPORT_BOT_KNOWLEDGE, /join_department/);
+  assert.match(SUPPORT_BOT_KNOWLEDGE, /Token Bot 不能加入部门/);
   assert.match(prompt, /不要编造/);
   assert.match(prompt, /不要写 \{origin\}/);
   assert.doesNotMatch(prompt, /retrieve_docs/);

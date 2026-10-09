@@ -7,14 +7,12 @@ import {
   type LoadSupportAccountContextInput,
 } from "./account-context.js";
 import { lookupInviteContacts } from "./invite-contacts.js";
-import { joinDepartmentForEmployee } from "./join-department.js";
 import { lookupSupportRequest } from "./lookup-request.js";
 
 export const SUPPORT_BOT_TOOL_NAMES = [
   "lookup_my_account",
   "lookup_request",
   "lookup_invite_contacts",
-  "join_department",
 ] as const;
 
 export type SupportBotToolName = (typeof SUPPORT_BOT_TOOL_NAMES)[number];
@@ -27,10 +25,6 @@ export type SupportAgentToolContext = {
     enterpriseName?: string;
     teamName?: string;
     departmentName?: string;
-  }) => Promise<string>;
-  joinDepartment?: (input: {
-    departmentName?: string;
-    enterpriseName?: string;
   }) => Promise<string>;
 };
 
@@ -60,14 +54,6 @@ export function createSupportAgentTools(ctx: SupportAgentToolContext): AgentTool
         bareAdmin: isBareSuperAdmin(ctx.account),
       }));
   const lookupInviteFn = ctx.lookupInvite ?? lookupInviteContacts;
-  const joinDepartmentFn =
-    ctx.joinDepartment ??
-    ((input: { departmentName?: string; enterpriseName?: string }) =>
-      joinDepartmentForEmployee({
-        employeeId: ctx.account.employeeId,
-        departmentName: input.departmentName,
-        enterpriseName: input.enterpriseName,
-      }));
 
   const lookupMyAccount: AgentTool = {
     name: "lookup_my_account",
@@ -96,7 +82,7 @@ export function createSupportAgentTools(ctx: SupportAgentToolContext): AgentTool
     name: "lookup_invite_contacts",
     label: "查邀请人",
     description:
-      "仅当用户明确要找管理员邀请时使用。用户说出自己的部门并想加入时，改用 join_department。按企业名、部门名只读查找管理员姓名与角色，不含手机号。",
+      "用户要加入部门或找管理员邀请时使用。按企业名、部门名只读查找管理员姓名与角色，不含手机号。不要声称已加入部门。",
     parameters: Type.Object({
       enterpriseName: Type.Optional(Type.String({ description: "企业名" })),
       teamName: Type.Optional(Type.String({ description: "团队名" })),
@@ -118,30 +104,7 @@ export function createSupportAgentTools(ctx: SupportAgentToolContext): AgentTool
     },
   };
 
-  const joinDepartment: AgentTool = {
-    name: "join_department",
-    label: "加入部门",
-    description:
-      "把当前提问用户加入他说出的部门。用户说「我是某某部门的」「帮我加入某某部门」或给出部门名时必须调用。departmentName 必填；多家企业同名时再带 enterpriseName。不要替别人加入。",
-    parameters: Type.Object({
-      departmentName: Type.String({ description: "用户说出的部门名，可带路径如 业务产品技术部/产品组" }),
-      enterpriseName: Type.Optional(Type.String({ description: "企业名，同名部门时需要" })),
-    }),
-    execute: async (_toolCallId, params) => {
-      const raw = params as {
-        departmentName?: unknown;
-        enterpriseName?: unknown;
-      };
-      return textResult(
-        await joinDepartmentFn({
-          departmentName: readString(raw.departmentName),
-          enterpriseName: readString(raw.enterpriseName),
-        }),
-      );
-    },
-  };
-
-  return [lookupMyAccount, lookupRequestTool, lookupInvite, joinDepartment];
+  return [lookupMyAccount, lookupRequestTool, lookupInvite];
 }
 
 export function isSupportBotToolName(name: string): name is SupportBotToolName {

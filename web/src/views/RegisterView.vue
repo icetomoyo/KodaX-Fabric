@@ -70,7 +70,7 @@ async function onRegister() {
     const message =
       typeof result?.message === "string" && result.message.trim()
         ? result.message.trim()
-        : "注册成功。未能从钉钉匹配部门，登录后可在 Token Bot 说出部门名加入。";
+        : "注册成功。未能从钉钉匹配部门，请联系部门管理员用你的注册手机号邀请进部门。";
     if (result?.dingtalkJoined) ElMessage.success(message);
     else ElMessage.warning(message);
     await router.replace({ path: "/login", query: { phone: registerForm.phone.trim() } });
