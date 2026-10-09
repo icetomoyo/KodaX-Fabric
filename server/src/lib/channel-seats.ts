@@ -7,6 +7,7 @@ export const SEAT_EMPLOYEE_MISSING_MESSAGE = "员工不存在";
 export const SEAT_CHANNEL_MISSING_MESSAGE = "渠道不存在";
 export const SEAT_MISSING_MESSAGE = "席位不存在";
 export const SEAT_TAG_INVALID_MESSAGE = "席位标签最多 32 个字符";
+export const SEAT_TAG_REQUIRED_MESSAGE = "同一人在此模式下已有席位，请填写标签";
 export const SEAT_CHANNEL_FULL_MESSAGE = "该渠道席位已满";
 export const SEAT_COUNT_BELOW_REGISTERED_MESSAGE = "渠道席位不能少于已登记数";
 export const SEAT_TAG_MAX_LENGTH = 32;
@@ -94,7 +95,8 @@ export type SeatCreatePlan =
   | { kind: "employee_missing" }
   | { kind: "channel_missing" }
   | { kind: "conflict" }
-  | { kind: "tag_invalid" };
+  | { kind: "tag_invalid" }
+  | { kind: "tag_required" };
 
 export function planChannelSeatCreate(input: {
   employeeRole: string | null;
@@ -102,10 +104,13 @@ export function planChannelSeatCreate(input: {
   channelExists: boolean;
   alreadySeated: boolean;
   tagValid?: boolean;
+  tagEmpty?: boolean;
+  existingSeatCount?: number;
 }): SeatCreatePlan {
   if (input.tagValid === false) return { kind: "tag_invalid" };
   if (!input.employeeExists) return { kind: "employee_missing" };
   if (!input.channelExists) return { kind: "channel_missing" };
+  if ((input.existingSeatCount ?? 0) > 0 && input.tagEmpty) return { kind: "tag_required" };
   if (input.alreadySeated) return { kind: "conflict" };
   return { kind: "accepted" };
 }
@@ -123,6 +128,8 @@ export function seatCreateError(kind: Exclude<SeatCreatePlan["kind"], "accepted"
       return { status: 409, message: SEAT_CONFLICT_MESSAGE };
     case "tag_invalid":
       return { status: 400, message: SEAT_TAG_INVALID_MESSAGE };
+    case "tag_required":
+      return { status: 400, message: SEAT_TAG_REQUIRED_MESSAGE };
   }
 }
 
@@ -132,7 +139,8 @@ export type SeatUpdatePlan =
   | { kind: "not_found" }
   | { kind: "employee_missing" }
   | { kind: "conflict" }
-  | { kind: "tag_invalid" };
+  | { kind: "tag_invalid" }
+  | { kind: "tag_required" };
 
 export function planChannelSeatUpdate(input: {
   seatExists: boolean;
@@ -143,6 +151,8 @@ export function planChannelSeatUpdate(input: {
   nextTag: string;
   currentTag: string;
   tagValid: boolean;
+  tagEmpty?: boolean;
+  existingSeatCount?: number;
 }): SeatUpdatePlan {
   if (!input.seatExists) return { kind: "not_found" };
   if (!input.tagValid) return { kind: "tag_invalid" };
@@ -153,6 +163,7 @@ export function planChannelSeatUpdate(input: {
   ) {
     return { kind: "unchanged" };
   }
+  if ((input.existingSeatCount ?? 0) > 0 && input.tagEmpty) return { kind: "tag_required" };
   if (input.alreadySeated) return { kind: "conflict" };
   return {
     kind: "accepted",

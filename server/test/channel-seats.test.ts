@@ -23,6 +23,7 @@ const {
   SEAT_MISSING_MESSAGE,
   SEAT_REQUIRED_MESSAGE,
   SEAT_TAG_INVALID_MESSAGE,
+  SEAT_TAG_REQUIRED_MESSAGE,
   seatCreateError,
   seatUpdateError,
 } = await import("../src/lib/channel-seats.js");
@@ -84,9 +85,33 @@ test("seat create plan accepts super admin and rejects missing rows, duplicates,
     }).kind,
     "tag_invalid",
   );
+  assert.equal(
+    planChannelSeatCreate({
+      employeeExists: true,
+      employeeRole: "employee",
+      channelExists: true,
+      alreadySeated: false,
+      tagEmpty: true,
+      existingSeatCount: 1,
+    }).kind,
+    "tag_required",
+  );
+  assert.equal(
+    planChannelSeatCreate({
+      employeeExists: true,
+      employeeRole: "employee",
+      channelExists: true,
+      alreadySeated: false,
+      tagEmpty: false,
+      existingSeatCount: 1,
+    }).kind,
+    "accepted",
+  );
   assert.equal(seatCreateError("conflict").status, 409);
   assert.equal(seatCreateError("conflict").message, SEAT_CONFLICT_MESSAGE);
   assert.equal(seatCreateError("tag_invalid").message, SEAT_TAG_INVALID_MESSAGE);
+  assert.equal(seatCreateError("tag_required").status, 400);
+  assert.equal(seatCreateError("tag_required").message, SEAT_TAG_REQUIRED_MESSAGE);
 });
 
 test("seat update plan accepts employee or tag changes and rejects missing or conflicting seats", () => {
@@ -97,11 +122,11 @@ test("seat update plan accepts employee or tag changes and rejects missing or co
       alreadySeated: false,
       nextEmployeeId: 2,
       currentEmployeeId: 1,
-      nextTag: "备用",
+      nextTag: "13900139000",
       currentTag: "",
       tagValid: true,
     }),
-    { kind: "accepted", employeeId: 2, tag: "备用" },
+    { kind: "accepted", employeeId: 2, tag: "13900139000" },
   );
   assert.equal(
     planChannelSeatUpdate({
@@ -168,8 +193,39 @@ test("seat update plan accepts employee or tag changes and rejects missing or co
     }).kind,
     "tag_invalid",
   );
+  assert.equal(
+    planChannelSeatUpdate({
+      seatExists: true,
+      employeeExists: true,
+      alreadySeated: false,
+      nextEmployeeId: 1,
+      currentEmployeeId: 1,
+      nextTag: "",
+      currentTag: "13900139000",
+      tagValid: true,
+      tagEmpty: true,
+      existingSeatCount: 1,
+    }).kind,
+    "tag_required",
+  );
+  assert.equal(
+    planChannelSeatUpdate({
+      seatExists: true,
+      employeeExists: true,
+      alreadySeated: false,
+      nextEmployeeId: 1,
+      currentEmployeeId: 1,
+      nextTag: "",
+      currentTag: "",
+      tagValid: true,
+      tagEmpty: true,
+      existingSeatCount: 0,
+    }).kind,
+    "unchanged",
+  );
   assert.equal(seatUpdateError("not_found").message, SEAT_MISSING_MESSAGE);
   assert.equal(seatUpdateError("conflict").status, 409);
+  assert.equal(seatUpdateError("tag_required").message, SEAT_TAG_REQUIRED_MESSAGE);
 });
 
 test("channel seat capacity accepts unconfigured channels and rejects overflow", () => {
@@ -194,7 +250,9 @@ test("channel seat capacity accepts unconfigured channels and rejects overflow",
 
 test("seat tags trim and reject overlong identifiers", () => {
   assert.equal(normalizeSeatTag(undefined), "");
+  assert.equal(normalizeSeatTag("   "), "");
   assert.equal(normalizeSeatTag("  备用  "), "备用");
+  assert.equal(normalizeSeatTag("E2E"), "E2E");
   assert.equal(normalizeSeatTag("x".repeat(33)), null);
   assert.equal(normalizeSeatTag("x".repeat(32)), "x".repeat(32));
 });
@@ -281,7 +339,7 @@ test("admin seat routes exist and require a session", async () => {
   const create = await app.inject({
     method: "POST",
     url: "/api/admin/channel-seats",
-    payload: { employeeId: 1, productLineId: 1, tag: "备用" },
+    payload: { employeeId: 1, productLineId: 1, tag: "13900139000" },
   });
   assert.equal(create.statusCode, 401);
   const removed = await app.inject({
@@ -292,7 +350,7 @@ test("admin seat routes exist and require a session", async () => {
   const updated = await app.inject({
     method: "PATCH",
     url: "/api/admin/channel-seats/1",
-    payload: { tag: "备用" },
+    payload: { tag: "13900139000" },
   });
   assert.equal(updated.statusCode, 401);
   await app.close();

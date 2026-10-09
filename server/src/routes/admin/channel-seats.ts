@@ -178,12 +178,23 @@ export async function adminChannelSeatRoutes(app: FastifyInstance) {
             ),
           )
           .limit(1);
+        const [siblings] = await tx
+          .select({ n: count() })
+          .from(channelSeats)
+          .where(
+            and(
+              eq(channelSeats.employeeId, body.data.employeeId),
+              eq(channelSeats.productLineId, body.data.productLineId),
+            ),
+          );
 
         const plan = planChannelSeatCreate({
           employeeExists: Boolean(employee),
           employeeRole: employee?.role ?? null,
           channelExists: Boolean(channel),
           alreadySeated: Boolean(existing),
+          tagEmpty: tag === "",
+          existingSeatCount: Number(siblings?.n ?? 0),
         });
         if (plan.kind !== "accepted") return plan;
 
@@ -273,6 +284,7 @@ export async function adminChannelSeatRoutes(app: FastifyInstance) {
         }
 
         let alreadySeated = false;
+        let existingSeatCount = 0;
         if (seat && nextTag != null) {
           const [conflict] = await tx
             .select({ id: channelSeats.id })
@@ -287,6 +299,17 @@ export async function adminChannelSeatRoutes(app: FastifyInstance) {
             )
             .limit(1);
           alreadySeated = Boolean(conflict);
+          const [siblings] = await tx
+            .select({ n: count() })
+            .from(channelSeats)
+            .where(
+              and(
+                eq(channelSeats.employeeId, nextEmployeeId),
+                eq(channelSeats.productLineId, seat.productLineId),
+                ne(channelSeats.id, seat.id),
+              ),
+            );
+          existingSeatCount = Number(siblings?.n ?? 0);
         }
 
         const plan = planChannelSeatUpdate({
@@ -298,6 +321,8 @@ export async function adminChannelSeatRoutes(app: FastifyInstance) {
           nextTag: nextTag ?? "",
           currentTag: seat?.tag ?? "",
           tagValid: nextTag != null,
+          tagEmpty: nextTag === "",
+          existingSeatCount,
         });
         if (plan.kind !== "accepted") return plan;
         if (!seat) return { kind: "not_found" as const };

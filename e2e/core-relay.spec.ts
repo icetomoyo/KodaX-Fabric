@@ -123,7 +123,6 @@ test.describe.serial("核心闭环：渠道 → 席位 → 员工 Key → relay 
     const seat = await postJson(request, "/api/admin/channel-seats", admin, {
       employeeId: created[0].id,
       productLineId: channel.id,
-      tag: "E2E",
     });
 
     // 6. 员工测试渠道 KEY → 拿 proof → 提交。

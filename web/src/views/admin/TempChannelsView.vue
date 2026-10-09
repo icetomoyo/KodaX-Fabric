@@ -100,7 +100,7 @@
                 <el-table-column label="状态" width="100">
                   <template #default="{ row }">{{ credentialStatusLabel(row.status) }}</template>
                 </el-table-column>
-                <el-table-column label="添加时间" min-width="160">
+                <el-table-column label="添加时间" min-width="200" width="200" class-name="datetime-cell">
                   <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
                 </el-table-column>
                 <el-table-column label="操作" width="140" align="center">
@@ -138,7 +138,7 @@
                 <el-input
                   v-model="seatNameQuery"
                   clearable
-                  placeholder="按姓名查找"
+                  placeholder="按姓名或手机号查找"
                   class="seat-filter-input"
                 />
                 <el-checkbox v-model="onlyUnsubmitted">只看未提交</el-checkbox>
@@ -151,6 +151,9 @@
               <el-table :data="pagedSeats" stripe :empty-text="seatEmptyText" height="100%">
                 <el-table-column label="员工" min-width="120" prop="employeeName" />
                 <el-table-column label="手机号" min-width="120" prop="employeePhone" />
+                <el-table-column label="标签" min-width="120">
+                  <template #default="{ row }">{{ row.tag || "—" }}</template>
+                </el-table-column>
                 <el-table-column label="企业" min-width="120">
                   <template #default="{ row }">{{ row.enterpriseName || "—" }}</template>
                 </el-table-column>
@@ -161,7 +164,7 @@
                     </el-tag>
                   </template>
                 </el-table-column>
-                <el-table-column label="登记时间" min-width="160">
+                <el-table-column label="登记时间" min-width="200" width="200" class-name="datetime-cell">
                   <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
                 </el-table-column>
                 <el-table-column label="操作" width="140" align="center">
@@ -385,8 +388,14 @@
             />
           </el-select>
         </el-form-item>
-        <el-form-item label="标签">
-          <el-input v-model="seatForm.tag" maxlength="32" show-word-limit placeholder="可选" />
+        <el-form-item label="标签" :required="createSeatTagRequired">
+          <el-input
+            v-model="seatForm.tag"
+            maxlength="32"
+            show-word-limit
+            placeholder="能区分即可，自己定"
+          />
+          <p class="form-hint">同一人第一条可不填；再登记必须填，用来区分多把 KEY。KEY 由本人在个人中心提交。</p>
         </el-form-item>
       </el-form>
       <template #footer>
@@ -441,8 +450,14 @@
             />
           </el-select>
         </el-form-item>
-        <el-form-item label="标签">
-          <el-input v-model="editSeatForm.tag" maxlength="32" show-word-limit placeholder="可选" />
+        <el-form-item label="标签" :required="editSeatTagRequired">
+          <el-input
+            v-model="editSeatForm.tag"
+            maxlength="32"
+            show-word-limit
+            placeholder="能区分即可，自己定"
+          />
+          <p class="form-hint">同一人在此模式下已有其他席位时必填。</p>
         </el-form-item>
       </el-form>
       <template #footer>
@@ -704,15 +719,45 @@ const selectedPackage = computed(
   () => packagesOfChannel.value.find((row) => row.id === selectedPackageId.value) ?? null,
 );
 
+function employeeSeatCountOnPackage(employeeId: number | undefined, excludeSeatId?: number) {
+  if (!employeeId || selectedPackageId.value == null) return 0;
+  return seats.value.filter((seat) => (
+    seat.employeeId === employeeId
+    && seat.productLineId === selectedPackageId.value
+    && seat.id !== excludeSeatId
+  )).length;
+}
+
+function normalizeSeatTag(value: string): string | null {
+  const tag = value.trim();
+  if (tag.length > 32) return null;
+  return tag;
+}
+
 const selectedSeats = computed(() => {
   const nameQuery = seatNameQuery.value.trim();
   return seats.value.filter((seat) => {
     if (seat.productLineId !== selectedPackageId.value) return false;
     if (onlyUnsubmitted.value && seat.secretSuffix) return false;
-    if (nameQuery && !seat.employeeName.includes(nameQuery)) return false;
+    if (
+      nameQuery
+      && !seat.employeeName.includes(nameQuery)
+      && !seat.employeePhone.includes(nameQuery)
+      && !seat.tag.includes(nameQuery)
+    ) {
+      return false;
+    }
     return true;
   });
 });
+
+const createSeatTagRequired = computed(
+  () => employeeSeatCountOnPackage(seatForm.employeeId) > 0,
+);
+
+const editSeatTagRequired = computed(
+  () => employeeSeatCountOnPackage(editSeatForm.employeeId, editSeatForm.id) > 0,
+);
 
 const {
   page: seatPage,
@@ -1264,12 +1309,21 @@ async function saveSeat() {
     ElMessage.warning("请选择员工");
     return;
   }
+  const tag = normalizeSeatTag(seatForm.tag);
+  if (tag == null) {
+    ElMessage.warning("席位标签最多 32 个字符");
+    return;
+  }
+  if (createSeatTagRequired.value && !tag) {
+    ElMessage.warning("同一人在此模式下已有席位，请填写标签");
+    return;
+  }
   seatSaving.value = true;
   try {
     const { data } = await http.post("/api/admin/channel-seats", {
       employeeId: seatForm.employeeId,
       productLineId: selectedPackageId.value,
-      tag: seatForm.tag.trim(),
+      tag,
     });
     if (!data.success) throw new Error(data.message || "登记失败");
     ElMessage.success("已登记席位");
@@ -1303,7 +1357,15 @@ async function saveEditSeat() {
     ElMessage.warning("请选择员工");
     return;
   }
-  const tag = editSeatForm.tag.trim();
+  const tag = normalizeSeatTag(editSeatForm.tag);
+  if (tag == null) {
+    ElMessage.warning("席位标签最多 32 个字符");
+    return;
+  }
+  if (editSeatTagRequired.value && !tag) {
+    ElMessage.warning("同一人在此模式下已有席位，请填写标签");
+    return;
+  }
   const payload: Record<string, unknown> = {};
   if (editSeatForm.employeeId !== editSeatOriginal.employeeId) {
     payload.employeeId = editSeatForm.employeeId;
@@ -1437,6 +1499,13 @@ onMounted(() => {
   align-items: center;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.form-hint {
+  margin: 6px 0 0;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .muted {
@@ -1604,6 +1673,10 @@ onMounted(() => {
   flex: 1;
   min-height: 0;
   overflow: hidden;
+}
+
+:deep(.datetime-cell .cell) {
+  white-space: nowrap;
 }
 
 .pager {
