@@ -41,6 +41,8 @@
       </div>
     </div>
 
+    <LogStorageCard />
+
     <section class="page-card mix-card">
       <div class="mix-row">
         <div class="mix-block">
@@ -224,6 +226,7 @@ import { ElMessage } from "element-plus";
 import type { EChartsCoreOption } from "echarts/core";
 import { http } from "@/api/http";
 import UsageChart from "@/components/UsageChart.vue";
+import LogStorageCard from "./LogStorageCard.vue";
 import { formatTokenCompact } from "@/lib/tokens";
 import { formatChangeFoot, formatPercent } from "@/lib/workbench-today";
 

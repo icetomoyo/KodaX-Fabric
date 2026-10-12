@@ -46,6 +46,8 @@ export const E2E = {
   databaseUrl: deriveDatabaseUrl(),
   redisUrl: deriveRedisUrl(),
   jwtSecret: "e2e-jwt-secret-0123456789abcdef",
+  // 请求全文单独放一个目录，不和 dev 的 server/request-context 混在一起。
+  requestContextDir: resolve(repoRoot, ".tmp/e2e-request-context"),
   credentialEncryptKey: "e2e-credential-key-0123456789abcdef",
   admin: {
     name: "E2E管理员",
@@ -61,6 +63,7 @@ export function e2eServerEnv(): NodeJS.ProcessEnv {
     REDIS_URL: E2E.redisUrl,
     JWT_SECRET: E2E.jwtSecret,
     CREDENTIAL_ENCRYPT_KEY: E2E.credentialEncryptKey,
+    REQUEST_CONTEXT_DIR: E2E.requestContextDir,
     PORT: String(E2E.apiPort),
     HOST: "127.0.0.1",
     CORS_ORIGIN: E2E.webBaseUrl,
