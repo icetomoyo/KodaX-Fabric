@@ -96,6 +96,26 @@ export const useAuthStore = defineStore("auth", () => {
     return data.data.user as User;
   }
 
+  async function startDingtalkLogin(redirectUri: string, pendingState?: string) {
+    const { data } = await http.get("/api/auth/dingtalk/start", {
+      params: {
+        redirect_uri: redirectUri,
+        ...(pendingState ? { pending_state: pendingState } : {}),
+      },
+    });
+    if (!data.success) throw new Error(data.message || "无法开始钉钉登录");
+    const authorizeUrl = data.data?.authorizeUrl as string | undefined;
+    if (!authorizeUrl) throw new Error("无法开始钉钉登录");
+    return authorizeUrl;
+  }
+
+  async function loginDingtalk(code: string, state: string) {
+    const { data } = await http.post("/api/auth/login-dingtalk", { code, state });
+    if (!data.success) throw new Error(data.message || "登录失败");
+    setSession(data.data.token, data.data.user);
+    return data.data.user as User;
+  }
+
   async function register(payload: {
     name: string;
     phone: string;
@@ -112,9 +132,9 @@ export const useAuthStore = defineStore("auth", () => {
     };
   }
 
-  async function changePassword(oldPassword: string, newPassword: string) {
+  async function changePassword(oldPassword: string | undefined, newPassword: string) {
     const { data } = await http.post("/api/auth/change-password", {
-      oldPassword,
+      ...(oldPassword ? { oldPassword } : {}),
       newPassword,
     });
     if (!data.success) throw new Error(data.message || "修改失败");
@@ -146,6 +166,8 @@ export const useAuthStore = defineStore("auth", () => {
     logout,
     login,
     loginLdap,
+    startDingtalkLogin,
+    loginDingtalk,
     register,
     changePassword,
     fetchMe,

@@ -4,6 +4,11 @@ import { db } from "../db/client.js";
 import { employees, enterprises } from "../db/schema/index.js";
 import { parseActAsHeader, resolveActAs } from "../lib/act-as.js";
 import { isSessionRole, verifySession, type SessionClaims } from "../lib/jwt.js";
+import {
+  isAllowedDuringForcedPasswordChange,
+  MUST_CHANGE_PASSWORD,
+  MUST_CHANGE_PASSWORD_MESSAGE,
+} from "../lib/initial-password-gate.js";
 
 function extractBearer(req: FastifyRequest): string | null {
   const h = req.headers.authorization;
@@ -82,6 +87,14 @@ export async function requireSession(req: FastifyRequest, reply: FastifyReply) {
     trueRole: user.role,
   };
   req.employeeId = user.id;
+
+  if (user.mustChangePassword && !isAllowedDuringForcedPasswordChange(req.url)) {
+    return reply.code(403).send({
+      success: false,
+      code: MUST_CHANGE_PASSWORD,
+      message: MUST_CHANGE_PASSWORD_MESSAGE,
+    });
+  }
 
   if (user.role !== "admin") return;
   const parsed = parseActAsHeader(req.headers["x-act-as"]);

@@ -82,6 +82,7 @@ test("knowledge covers GuideView facts and refuses invented features", () => {
   assert.match(SUPPORT_BOT_KNOWLEDGE, /图片输入/);
   assert.match(SUPPORT_BOT_KNOWLEDGE, /workbuddy-add-model\.png/);
   assert.match(SUPPORT_BOT_KNOWLEDGE, /dingtalk-department\.png/);
+  assert.match(SUPPORT_BOT_KNOWLEDGE, /钉钉扫码/);
   assert.match(SUPPORT_BOT_KNOWLEDGE, /Claude Code 接 Token Hub/);
   assert.match(SUPPORT_BOT_KNOWLEDGE, /ANTHROPIC_BASE_URL/);
   assert.match(SUPPORT_BOT_KNOWLEDGE, /~\/\.claude\/settings\.json/);

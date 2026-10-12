@@ -67,5 +67,7 @@ export function e2eServerEnv(): NodeJS.ProcessEnv {
     SEED_ADMIN_NAME: E2E.admin.name,
     SEED_ADMIN_PHONE: E2E.admin.phone,
     SEED_ADMIN_PASSWORD: E2E.admin.password,
+    DINGTALK_APP_KEY: "",
+    DINGTALK_APP_SECRET: "",
   };
 }

@@ -104,6 +104,14 @@ const envSchema = z.object({
   SUPPORT_BOT_RATE_LIMIT_PER_HOUR: z.coerce.number().int().min(1).default(30),
   DINGTALK_APP_KEY: optionalSecret(),
   DINGTALK_APP_SECRET: optionalSecret(),
+  DINGTALK_LOGIN_REDIRECT_URI: z
+    .string()
+    .optional()
+    .transform((value) => {
+      const trimmed = value?.trim();
+      return trimmed ? trimmed : undefined;
+    })
+    .refine((value) => value == null || URL.canParse(value), "must be a URL"),
   LDAP_URL: z
     .string()
     .optional()

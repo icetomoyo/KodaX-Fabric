@@ -12,6 +12,12 @@ export const router = createRouter({
       meta: { public: true },
     },
     {
+      path: "/login/dingtalk",
+      name: "login-dingtalk",
+      component: () => import("@/views/DingtalkCallbackView.vue"),
+      meta: { public: true },
+    },
+    {
       path: "/register",
       name: "register",
       component: () => import("@/views/RegisterView.vue"),
@@ -19,10 +25,8 @@ export const router = createRouter({
     },
     {
       path: "/change-password",
-      redirect: () => {
-        const auth = useAuthStore();
-        return canUseAdminConsole(auth.user) ? "/admin/profile" : "/me/profile";
-      },
+      name: "change-password",
+      component: () => import("@/views/ChangePasswordView.vue"),
     },
     {
       path: "/",
@@ -239,13 +243,21 @@ router.beforeEach((to) => {
 
   if (to.meta.public) {
     if (auth.isLoggedIn && (to.name === "login" || to.name === "register")) {
-      return home;
+      return auth.user?.mustChangePassword ? "/change-password" : home;
     }
     return true;
   }
 
   if (!auth.isLoggedIn) {
     return { path: "/login", query: { redirect: to.fullPath } };
+  }
+
+  if (auth.user?.mustChangePassword) {
+    return to.path === "/change-password" ? true : "/change-password";
+  }
+
+  if (to.path === "/change-password") {
+    return canUseAdminConsole(auth.user) ? "/admin/profile" : "/me/profile";
   }
 
   const need = to.matched

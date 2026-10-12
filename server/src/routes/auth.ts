@@ -6,6 +6,7 @@ import { employees, enterprises } from "../db/schema/index.js";
 import { isSessionRole, signSession } from "../lib/jwt.js";
 import {
   hashPassword,
+  isInitialRegistrationPassword,
   validateNewPassword,
   verifyPassword,
 } from "../lib/password.js";
@@ -16,8 +17,33 @@ import {
   registerDingtalkJoinMessage,
   tryJoinRegisteredEmployeeFromDingtalk,
 } from "../lib/dingtalk-register-join.js";
+import { readDingtalkCredentials } from "../lib/dingtalk-department-tree.js";
+import { resolveDingtalkLoginEmployee } from "../lib/dingtalk-login.js";
+import {
+  buildDingtalkAuthorizeUrl,
+  createDingtalkLoginState,
+  dingtalkLoginRedirectUriFromOrigin,
+  isAllowedDingtalkRedirectUri,
+  readDingtalkLoginState,
+} from "../lib/dingtalk-oauth.js";
+import {
+  INITIAL_PASSWORD_DINGTALK_MESSAGE,
+  INITIAL_PASSWORD_DINGTALK_REQUIRED,
+} from "../lib/initial-password-gate.js";
 import { env } from "../config.js";
 import { requireSession } from "../middleware/auth.js";
+
+function allowedDingtalkLoginRedirects(): string[] {
+  const origin = env.CORS_ORIGIN.replace(/\/$/, "");
+  const uris = [dingtalkLoginRedirectUriFromOrigin(origin)];
+  if (origin.includes("127.0.0.1")) {
+    uris.push(dingtalkLoginRedirectUriFromOrigin(origin.replace("127.0.0.1", "localhost")));
+  } else if (origin.includes("localhost")) {
+    uris.push(dingtalkLoginRedirectUriFromOrigin(origin.replace("localhost", "127.0.0.1")));
+  }
+  if (env.DINGTALK_LOGIN_REDIRECT_URI) uris.push(env.DINGTALK_LOGIN_REDIRECT_URI);
+  return [...new Set(uris)];
+}
 
 function publicEmployee(
   row: typeof employees.$inferSelect,
@@ -88,9 +114,14 @@ async function issueLoginSession(
     }
   }
 
+  const mustChangePassword = await isInitialRegistrationPassword(user.passwordHash);
   await db
     .update(employees)
-    .set({ lastLoginAt: new Date(), updatedAt: new Date() })
+    .set({
+      lastLoginAt: new Date(),
+      mustChangePassword,
+      updatedAt: new Date(),
+    })
     .where(eq(employees.id, user.id));
 
   const token = await signSession({
@@ -98,7 +129,7 @@ async function issueLoginSession(
     role: user.role,
     phone: user.phone,
     name: user.name,
-    mustChangePassword: false,
+    mustChangePassword,
     enterpriseId: user.enterpriseId,
   });
 
@@ -115,10 +146,20 @@ async function issueLoginSession(
     data: {
       token,
       user: publicEmployee(user, await loadEnterprise(user.enterpriseId), {
-        mustChangePassword: false,
+        mustChangePassword,
       }),
     },
   };
+}
+
+function initialPasswordDingtalkChallenge(reply: FastifyReply, employeeId: number) {
+  const pendingState = createDingtalkLoginState(env.JWT_SECRET, Date.now(), employeeId);
+  return reply.code(403).send({
+    success: false,
+    code: INITIAL_PASSWORD_DINGTALK_REQUIRED,
+    message: INITIAL_PASSWORD_DINGTALK_MESSAGE,
+    data: { pendingState },
+  });
 }
 
 export async function authRoutes(app: FastifyInstance) {
@@ -256,6 +297,10 @@ export async function authRoutes(app: FastifyInstance) {
       return reply.code(401).send({ success: false, message: "手机号或密码错误" });
     }
 
+    if (await isInitialRegistrationPassword(user.passwordHash)) {
+      return initialPasswordDingtalkChallenge(reply, user.id);
+    }
+
     return issueLoginSession(req, reply, user, {
       action: "auth.login",
     });
@@ -317,8 +362,127 @@ export async function authRoutes(app: FastifyInstance) {
       return reply.code(401).send({ success: false, message: "公司账号或密码错误" });
     }
 
+    if (await isInitialRegistrationPassword(user.passwordHash)) {
+      return initialPasswordDingtalkChallenge(reply, user.id);
+    }
+
     return issueLoginSession(req, reply, user, {
       action: "auth.login_ldap",
+    });
+  });
+
+  app.get("/api/auth/dingtalk/start", async (req, reply) => {
+    const credentials = readDingtalkCredentials(env);
+    if (!credentials) {
+      return reply.code(503).send({ success: false, message: "未配置钉钉登录" });
+    }
+    const query = z
+      .object({
+        redirect_uri: z.string().url().optional(),
+        pending_state: z.string().trim().min(1).max(2048).optional(),
+      })
+      .safeParse(req.query);
+    if (!query.success) {
+      return reply.code(400).send({ success: false, message: "参数无效" });
+    }
+    const allowed = allowedDingtalkLoginRedirects();
+    const redirectUri = query.data.redirect_uri ?? allowed[0]!;
+    if (!isAllowedDingtalkRedirectUri(redirectUri, allowed)) {
+      return reply.code(400).send({ success: false, message: "回调地址未登记" });
+    }
+    let state = createDingtalkLoginState(env.JWT_SECRET);
+    if (query.data.pending_state) {
+      const pending = readDingtalkLoginState(env.JWT_SECRET, query.data.pending_state);
+      if (!pending.ok) {
+        return reply.code(401).send({ success: false, message: "钉钉登录已过期，请重试" });
+      }
+      state = query.data.pending_state;
+    }
+    return {
+      success: true,
+      data: {
+        authorizeUrl: buildDingtalkAuthorizeUrl({
+          clientId: credentials.appKey,
+          redirectUri,
+          state,
+        }),
+      },
+    };
+  });
+
+  app.post("/api/auth/login-dingtalk", async (req, reply) => {
+    const credentials = readDingtalkCredentials(env);
+    if (!credentials) {
+      return reply.code(503).send({ success: false, message: "未配置钉钉登录" });
+    }
+    const body = z
+      .object({
+        code: z.string().trim().min(1).max(512),
+        state: z.string().trim().min(1).max(2048),
+      })
+      .safeParse(req.body);
+    if (!body.success) {
+      return reply.code(400).send({ success: false, message: "参数无效" });
+    }
+    const pending = readDingtalkLoginState(env.JWT_SECRET, body.data.state);
+    if (!pending.ok) {
+      return reply.code(401).send({ success: false, message: "钉钉登录已过期，请重试" });
+    }
+
+    let resolved: Awaited<ReturnType<typeof resolveDingtalkLoginEmployee>>;
+    try {
+      resolved = await resolveDingtalkLoginEmployee({
+        code: body.data.code,
+        ip: req.ip,
+        pendingEmployeeId: pending.employeeId,
+      });
+    } catch (error) {
+      req.log.warn({ err: error }, "dingtalk login failed");
+      return reply.code(401).send({ success: false, message: "钉钉授权失败，请重试" });
+    }
+
+    if (resolved.status === "oauth_failed") {
+      return reply.code(401).send({ success: false, message: "钉钉授权失败，请重试" });
+    }
+    if (resolved.status === "not_in_corp") {
+      return reply.code(403).send({
+        success: false,
+        code: "DINGTALK_NOT_IN_CORP",
+        message: "钉钉账号不是本企业成员，无法登录",
+      });
+    }
+    if (resolved.status === "not_linked") {
+      return reply.code(403).send({
+        success: false,
+        code: "DINGTALK_USER_NOT_LINKED",
+        message: "钉钉已验证，但系统中没有对应员工，请联系管理员",
+      });
+    }
+    if (resolved.status === "pending_mismatch") {
+      return reply.code(403).send({
+        success: false,
+        code: "DINGTALK_ACCOUNT_MISMATCH",
+        message: "钉钉账号与当前登录账户不一致",
+      });
+    }
+
+    const user = resolved.user;
+    if (!isSessionRole(user.role)) {
+      return reply.code(401).send({ success: false, message: "钉钉授权失败，请重试" });
+    }
+    if (user.status === "pending") {
+      return reply.code(403).send({
+        success: false,
+        code: "REGISTRATION_PENDING",
+        message: "注册申请待审核，请等待管理员审核",
+      });
+    }
+    if (user.status !== "active") {
+      return reply.code(401).send({ success: false, message: "用户不可用" });
+    }
+
+    return issueLoginSession(req, reply, user, {
+      action: "auth.login_dingtalk",
     });
   });
 
@@ -348,7 +512,7 @@ export async function authRoutes(app: FastifyInstance) {
     async (req, reply) => {
       const body = z
         .object({
-          oldPassword: z.string().min(1),
+          oldPassword: z.string().min(1).max(128).optional(),
           newPassword: z.string().min(8).max(128),
         })
         .safeParse(req.body);
@@ -372,12 +536,23 @@ export async function authRoutes(app: FastifyInstance) {
         return reply.code(401).send({ success: false, message: "用户不存在" });
       }
 
-      const ok = await verifyPassword(body.data.oldPassword, user.passwordHash);
-      if (!ok) {
-        return reply.code(400).send({ success: false, message: "原密码错误" });
+      const forced = user.mustChangePassword;
+      if (!forced) {
+        if (!body.data.oldPassword) {
+          return reply.code(400).send({ success: false, message: "参数无效" });
+        }
+        const ok = await verifyPassword(body.data.oldPassword, user.passwordHash);
+        if (!ok) {
+          return reply.code(400).send({ success: false, message: "原密码错误" });
+        }
+      } else if (body.data.oldPassword) {
+        const ok = await verifyPassword(body.data.oldPassword, user.passwordHash);
+        if (!ok) {
+          return reply.code(400).send({ success: false, message: "原密码错误" });
+        }
       }
 
-      if (body.data.oldPassword === body.data.newPassword) {
+      if (body.data.oldPassword && body.data.oldPassword === body.data.newPassword) {
         return reply.code(400).send({ success: false, message: "新密码不能与原密码相同" });
       }
 

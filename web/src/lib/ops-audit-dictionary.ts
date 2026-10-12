@@ -2,6 +2,8 @@ import { formatDateTime } from "@/lib/date-time";
 
 export const OPS_AUDIT_ACTION_LABELS: Record<string, string> = {
   "auth.login": "登录系统",
+  "auth.login_ldap": "LDAP 登录",
+  "auth.login_dingtalk": "钉钉登录",
   "auth.register_application": "提交注册申请",
   "auth.change_password": "修改密码",
   "api_key.create": "创建个人 API Key",

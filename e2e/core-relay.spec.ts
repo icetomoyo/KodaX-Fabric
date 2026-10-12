@@ -13,7 +13,7 @@ import { E2E_ORG } from "./org-fixture.ts";
 const CLIENT_MODEL = "e2e-glm";
 const UPSTREAM_MODEL = "e2e-upstream-model";
 const UPSTREAM_SECRET = "sk-e2e-mock-secret";
-const EMPLOYEE = { name: "E2E员工", phone: "13800000002", password: "Hz123456" };
+const EMPLOYEE = { name: "E2E员工", phone: "13800000002", password: "E2eEmp@2026" };
 const EXPECTED_TOTAL_TOKENS = 46;
 
 const state: { employeeApiKey?: string } = {};
@@ -46,7 +46,7 @@ async function loginViaUi(page: Page, phone: string, password: string) {
   await page.getByText("账户登录", { exact: true }).click();
   await page.getByPlaceholder("11 位手机号").fill(phone);
   await page.getByPlaceholder("请输入密码").fill(password);
-  await page.getByRole("button", { name: "登录" }).click();
+  await page.getByRole("button", { name: "登录", exact: true }).click();
   await expect(page).toHaveURL(/\/(admin|me)/, { timeout: 15_000 });
 }
 
@@ -85,6 +85,10 @@ test.describe.serial("核心闭环：渠道 → 席位 → 员工 Key → relay 
     });
     const created = imported.created as Array<{ id: number; phone: string }>;
     expect(created, `员工应被创建: ${JSON.stringify(imported)}`).toHaveLength(1);
+    // 批量开户仍是初始密码，账户登录需钉钉认证；E2E 没有真扫码，由管理员改成可用密码。
+    await postJson(request, `/api/admin/users/${created[0].id}/reset-password`, admin, {
+      password: EMPLOYEE.password,
+    });
     const teamRows = (await getJson(
       request,
       `/api/admin/teams?departmentId=${department!.id}`,

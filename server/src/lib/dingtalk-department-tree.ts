@@ -352,6 +352,34 @@ export async function fetchDingtalkUseridByMobile(options: {
   }
 }
 
+export async function fetchDingtalkUseridByUnionid(options: {
+  token: string;
+  unionid: string;
+  fetchImpl?: FetchImpl;
+  baseUrl?: string;
+}): Promise<{ userid: string; contactType: number } | null> {
+  const unionid = options.unionid.trim();
+  if (!unionid) return null;
+  const fetchImpl = options.fetchImpl ?? fetch;
+  const baseUrl = (options.baseUrl ?? DINGTALK_API_BASE_URL).replace(/\/$/, "");
+  try {
+    const body = await dingtalkPost(
+      fetchImpl,
+      topapiUrl(baseUrl, options.token, "/topapi/user/getbyunionid"),
+      { unionid },
+    );
+    const result = asRecord(body.result);
+    const userid = typeof result?.userid === "string" ? result.userid.trim() : "";
+    if (!userid) return null;
+    const contactType = Number(result?.contact_type ?? 0);
+    if (contactType === 1) return null;
+    return { userid, contactType: Number.isFinite(contactType) ? contactType : 0 };
+  } catch (error) {
+    if (isAbsentDingtalkUser(error)) return null;
+    throw error;
+  }
+}
+
 export function parseDingtalkTitle(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const title = value.trim().slice(0, 100);

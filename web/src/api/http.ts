@@ -22,9 +22,14 @@ http.interceptors.response.use(
   (err) => {
     const status = err.response?.status;
     const code = err.response?.data?.code;
+    if (status === 403 && code === "MUST_CHANGE_PASSWORD") {
+      if (location.pathname !== "/change-password") {
+        location.assign("/change-password");
+      }
+    }
     if (status === 401) {
       const auth = useAuthStore();
-      const alreadyOnLogin = location.pathname === "/login";
+      const alreadyOnLogin = location.pathname === "/login" || location.pathname.startsWith("/login/");
       auth.logout();
       if (!alreadyOnLogin) {
         location.assign(`/login?redirect=${encodeURIComponent(location.pathname)}`);

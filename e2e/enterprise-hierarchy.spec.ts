@@ -43,7 +43,7 @@ async function loginViaUi(page: Page) {
   await page.getByText("账户登录", { exact: true }).click();
   await page.getByPlaceholder("11 位手机号").fill(E2E.admin.phone);
   await page.getByPlaceholder("请输入密码").fill(E2E.admin.password);
-  await page.getByRole("button", { name: "登录" }).click();
+  await page.getByRole("button", { name: "登录", exact: true }).click();
   await expect(page).toHaveURL(/\/admin/, { timeout: 15_000 });
 }
 

@@ -213,7 +213,7 @@ async function loadMappedDingtalkDepartments(): Promise<MappedDingtalkDepartment
   );
 }
 
-async function applyRegisterDingtalkJoin(
+export async function applyRegisterDingtalkJoin(
   employeeId: number,
   plan: Extract<RegisterDingtalkJoinPlan, { status: "matched" }>,
 ): Promise<void> {
