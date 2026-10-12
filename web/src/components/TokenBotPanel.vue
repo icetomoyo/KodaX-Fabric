@@ -68,7 +68,6 @@
       </div>
 
       <footer class="panel-foot">
-        <router-link class="guide-link" :to="guidePath">教程</router-link>
         <PromptInput @submit="onPromptSubmit">
           <PromptInputTextarea
             v-model="draft"
@@ -178,7 +177,6 @@ const conversationId = ref<number | null>(null);
 const messages = ref<ChatLine[]>([]);
 
 const isCanvasPage = computed(() => route.path === "/admin/key-bindings");
-const guidePath = computed(() => (route.path.startsWith("/admin") ? "/admin/guide" : "/me/guide"));
 const dragging = computed(() => Boolean(dragSession.value?.moved));
 const positionStyle = computed(() => {
   if (!position.value) return undefined;
@@ -482,13 +480,6 @@ async function sendMessage(message: string) {
   padding: 10px 16px 14px;
   border-top: 1px solid #e5e7eb;
   background: #fff;
-}
-
-.guide-link {
-  display: inline-block;
-  margin-bottom: 8px;
-  color: #2563eb;
-  font-size: 12px;
 }
 
 .panel-body :deep(img) {

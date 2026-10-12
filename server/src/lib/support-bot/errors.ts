@@ -10,7 +10,7 @@ export class SupportBotError extends Error {
   }
 }
 
-export function supportBotUnavailable(message = "问答助手暂时不可用，请稍后再试或查看接入教程"): SupportBotError {
+export function supportBotUnavailable(message = "问答助手暂时不可用，请稍后再试"): SupportBotError {
   return new SupportBotError(503, "SUPPORT_BOT_UNAVAILABLE", message);
 }
 

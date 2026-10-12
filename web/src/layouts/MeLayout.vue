@@ -13,14 +13,6 @@
         text-color="#cbd5e1"
         active-text-color="#ffffff"
       >
-        <el-sub-menu index="guide">
-          <template #title>教程</template>
-          <el-menu-item index="/me/guide">接入流程</el-menu-item>
-          <el-menu-item index="/me/guide/workbuddy">WorkBuddy 接入</el-menu-item>
-          <el-menu-item index="/me/guide/zcode">ZCode 接入</el-menu-item>
-          <el-menu-item index="/me/guide/claude-code">Claude Code 接入</el-menu-item>
-          <el-menu-item index="/me/guide/codex">Codex 接入</el-menu-item>
-        </el-sub-menu>
         <el-menu-item index="/me">工作台</el-menu-item>
         <el-menu-item index="/me/keys">API Key</el-menu-item>
         <el-menu-item index="/me/models">模型列表</el-menu-item>

@@ -1,7 +1,7 @@
 <template>
   <div class="dashboard-page">
     <el-alert
-      v-if="!hasEnterprise"
+      v-if="orgLoaded && !hasEnterprise"
       class="join-alert"
       title="当前是普通注册用户，没有员工权限"
       type="warning"
@@ -11,37 +11,13 @@
       <p>等待已有企业的团队管理员用你的注册手机号邀请进团队。</p>
     </el-alert>
     <el-alert
-      v-else-if="hasEnterprise && !hasTeam"
+      v-else-if="orgLoaded && !hasTeam"
       class="join-alert"
       title="尚未加入部门，仍是普通注册用户。被邀请进部门后才有员工权限（API Key / 调用）。"
       type="info"
       show-icon
       :closable="false"
     />
-
-    <section class="page-card tips-card" aria-label="友情提示">
-      <h3 class="tips-title">友情提示</h3>
-      <ol class="tips-list">
-        <li>
-          <button type="button" class="tip-link" @click="router.push('/me/guide')">
-            <strong>教程看了吗？</strong>
-            <span>先看教程，复制 Base URL 和部门 Key 填进客户端。</span>
-          </button>
-        </li>
-        <li>
-          <button type="button" class="tip-link" @click="router.push('/me/keys')">
-            <strong>API Key 配置了吗？</strong>
-            <span>创建后填进客户端。Base URL 不要带端口或接口路径。</span>
-          </button>
-        </li>
-        <li>
-          <button type="button" class="tip-link" @click="router.push('/me/logs')">
-            <strong>调用突然失败？</strong>
-            <span>到「调用记录」复制 Request ID，发给右下角 Token Bot，它会帮你分析原因。</span>
-          </button>
-        </li>
-      </ol>
-    </section>
 
     <section class="page-card hero-card">
       <div class="page-head">
@@ -86,13 +62,6 @@
           <span>
             <strong>模型列表</strong>
             <small>可用模型</small>
-          </span>
-        </button>
-        <button type="button" class="quick-link" @click="router.push('/me/guide')">
-          <span class="quick-dot violet" />
-          <span>
-            <strong>教程</strong>
-            <small>各客户端接入步骤</small>
           </span>
         </button>
         <button type="button" class="quick-link" @click="router.push('/me/logs')">
@@ -387,6 +356,7 @@ const router = useRouter();
 const loading = ref(false);
 const hasEnterprise = ref(false);
 const hasTeam = ref(false);
+const orgLoaded = ref(false);
 const usage = ref<UsageResponse | null>(null);
 
 const todayKey = quotaDayAt(new Date());
@@ -516,6 +486,7 @@ async function loadUsage() {
       hasEnterprise.value = false;
       hasTeam.value = false;
     }
+    orgLoaded.value = true;
   } finally {
     loading.value = false;
   }
@@ -533,59 +504,6 @@ onMounted(() => {
   flex-direction: column;
   gap: 16px;
   min-width: 0;
-}
-.tips-card {
-  padding: 16px 18px 8px;
-  border: 1px solid #93c5fd;
-  background: linear-gradient(180deg, #eff6ff 0%, #ffffff 100%);
-}
-
-.tips-title {
-  margin: 0 0 10px;
-  color: #1d4ed8;
-  font-size: 13px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-}
-
-.tips-list {
-  margin: 0;
-  padding: 0 0 8px 20px;
-  color: #1e3a8a;
-}
-
-.tips-list li + li {
-  margin-top: 6px;
-}
-
-.tip-link {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
-  width: 100%;
-  padding: 6px 0;
-  border: 0;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.tip-link strong {
-  color: #0f172a;
-  font-size: 14px;
-}
-
-.tip-link span {
-  color: #1e3a8a;
-  font-size: 13px;
-  line-height: 1.55;
-}
-
-.tip-link:hover strong {
-  color: #1d4ed8;
 }
 
 .hero-card {
@@ -648,7 +566,7 @@ onMounted(() => {
 }
 .quick-links {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
   margin-top: 16px;
 }
@@ -691,7 +609,6 @@ onMounted(() => {
 }
 .quick-dot.blue { background: #2563eb; }
 .quick-dot.indigo { background: #4f46e5; }
-.quick-dot.violet { background: #7c3aed; }
 .quick-dot.teal { background: #0d9488; }
 .join-alert {
   margin: 0;
