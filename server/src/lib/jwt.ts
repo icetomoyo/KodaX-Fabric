@@ -12,6 +12,12 @@ export function isSessionRole(value: unknown): value is SessionRole {
   return typeof value === "string" && SESSION_ROLE_SET.has(value);
 }
 
+/**
+ * 会话版本。调高后此前签发的会话全部失效，需重新登录。
+ * 2：初始密码改为须钉钉核身，作废此前可能凭初始密码拿到的会话。
+ */
+const SESSION_VERSION = 2;
+
 export type ActAsRole = "org_admin" | "dept_admin" | "employee";
 
 export type SessionActAs = {
@@ -55,6 +61,7 @@ export async function signSession(
     name: claims.name,
     mustChangePassword: claims.mustChangePassword,
     enterpriseId: claims.enterpriseId,
+    ver: SESSION_VERSION,
   })
     .setProtectedHeader({ alg: "HS256" })
     .setSubject(claims.sub)
@@ -66,6 +73,7 @@ export async function signSession(
 export async function verifySession(token: string): Promise<SessionClaims> {
   const { payload } = await jwtVerify(token, secret);
   if (!payload.sub) throw new Error("invalid token");
+  if (payload.ver !== SESSION_VERSION) throw new Error("stale session");
   if (!isSessionRole(payload.role)) throw new Error("invalid role");
   const rawEnterpriseId = payload.enterpriseId;
   const enterpriseId =

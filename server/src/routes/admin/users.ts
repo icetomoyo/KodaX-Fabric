@@ -7,7 +7,6 @@ import {
   departments,
   employeeApiKeys,
   employees,
-  opsAuditLogs,
   requestAudits,
   teamMembers,
   teams,
@@ -15,10 +14,6 @@ import {
 } from "../../db/schema/index.js";
 
 import { listEmployeeTeamUsageViews } from "../../lib/team-quota.js";
-import {
-  bulkRegisterAuditTargetId,
-  planBulkRegisterUsers,
-} from "../../lib/bulk-register-users.js";
 import {
   canAccessEmployee,
   listEnterpriseIdsInSubtree,
@@ -35,7 +30,6 @@ import {
 import type { SessionRole } from "../../lib/jwt.js";
 import {
   hashPassword,
-  REGISTRATION_INITIAL_PASSWORD,
   validateNewPassword,
   verifyPassword,
 } from "../../lib/password.js";
@@ -663,208 +657,12 @@ export async function adminUserRoutes(app: FastifyInstance) {
     };
   });
 
-  app.post("/api/admin/users/:id/approve", async (req, reply) => {
-    const params = z.object({ id: z.coerce.number().int().positive() }).safeParse(req.params);
-    if (!params.success) {
-      return reply.code(400).send({ success: false, message: "参数无效" });
-    }
-
-    const result = await db.transaction(async (tx) => {
-      const [application] = await tx
-        .select({
-          id: employees.id,
-          name: employees.name,
-          phone: employees.phone,
-          dept: employees.dept,
-          status: employees.status,
-          role: employees.role,
-          enterpriseId: employees.enterpriseId,
-        })
-        .from(employees)
-        .where(eq(employees.id, params.data.id))
-        .limit(1)
-        .for("update");
-
-      if (!application) return { outcome: "not_found" } as const;
-      if (!canAccessEmployee(actorFrom(req), application)) return { outcome: "forbidden" } as const;
-      if (application.status !== "pending") return { outcome: "already_processed" } as const;
-
-      const passwordHash = await hashPassword(REGISTRATION_INITIAL_PASSWORD);
-      const [employee] = await tx
-        .update(employees)
-        .set({
-          status: "active",
-          role: "employee",
-          passwordHash,
-          mustChangePassword: false,
-          passwordChangedAt: null,
-          updatedAt: new Date(),
-        })
-        .where(eq(employees.id, application.id))
-        .returning({
-          id: employees.id,
-          name: employees.name,
-          dept: employees.dept,
-          phone: employees.phone,
-          status: employees.status,
-          mustChangePassword: employees.mustChangePassword,
-        });
-
-      return { outcome: "approved", employee } as const;
-    });
-
-    if (result.outcome === "not_found") {
-      return reply.code(404).send({ success: false, message: "注册申请不存在" });
-    }
-    if (result.outcome === "forbidden") {
-      return reply.code(403).send({ success: false, message: "权限不足" });
-    }
-    if (result.outcome === "already_processed") {
-      return reply.code(409).send({ success: false, message: "该注册申请已审核" });
-    }
-
-    await writeOpsAudit({
-      actorEmployeeId: req.employeeId,
-      action: "user.registration_approve",
-      targetType: "employee",
-      targetId: String(result.employee.id),
-      detail: {
-        name: result.employee.name,
-        dept: result.employee.dept,
-        phone: result.employee.phone,
-      },
-      ip: req.ip,
-    });
-
-    return { success: true, data: result.employee };
-  });
-
   app.post("/api/admin/users", async (_req, reply) => {
     return reply.code(403).send({
       success: false,
-      message: "新账号只能由用户自行注册或由超级管理员批量注册",
+      message: "新账号只能由用户自行注册或登录时自动开通",
     });
   });
-
-  app.post(
-    "/api/admin/users/import",
-    { preHandler: [requireRoles("admin")] },
-    async (req, reply) => {
-      const body = z
-        .object({
-          users: z
-            .array(
-              z.object({
-                name: z.string().trim().min(1).max(100),
-                phone: z.string().trim().min(5).max(20),
-              }),
-            )
-            .min(1)
-            .max(200),
-        })
-        .safeParse(req.body);
-      if (!body.success) {
-        return reply.code(400).send({
-          success: false,
-          message: "请提供姓名和手机号，单次最多 200 人",
-        });
-      }
-
-      const phones = body.data.users.map((user) => user.phone);
-      const existingRows = await db
-        .select({ phone: employees.phone })
-        .from(employees)
-        .where(inArray(employees.phone, phones));
-      const planned = planBulkRegisterUsers(
-        body.data.users,
-        existingRows.map((row) => row.phone),
-      );
-      if (planned.kind === "batch_duplicate") {
-        return reply.code(409).send({
-          success: false,
-          message: `名单中存在重复手机号（第 ${planned.duplicateIndexes.join("、")} 项）`,
-          duplicateIndexes: planned.duplicateIndexes,
-        });
-      }
-
-      if (planned.plan.create.length === 0) {
-        return {
-          success: true,
-          data: {
-            createdCount: 0,
-            created: [],
-            existingPhones: planned.plan.existingPhones,
-            initialPassword: REGISTRATION_INITIAL_PASSWORD,
-          },
-        };
-      }
-
-      const passwordHash = await hashPassword(REGISTRATION_INITIAL_PASSWORD);
-      try {
-        const created = await db.transaction(async (tx) => {
-          const rows = await tx
-            .insert(employees)
-            .values(
-              planned.plan.create.map((user) => ({
-                name: user.name,
-                phone: user.phone,
-                passwordHash,
-                role: "employee" as const,
-                status: "active" as const,
-                enterpriseId: null,
-                mustChangePassword: false,
-                passwordChangedAt: null,
-                createdBy: req.employeeId ?? null,
-              })),
-            )
-            .returning({
-              id: employees.id,
-              name: employees.name,
-              phone: employees.phone,
-              status: employees.status,
-              role: employees.role,
-              enterpriseId: employees.enterpriseId,
-            });
-
-          await tx.insert(opsAuditLogs).values({
-            actorEmployeeId: req.employeeId ?? null,
-            action: "user.import",
-            targetType: "employee",
-            targetId: bulkRegisterAuditTargetId(rows.map((row) => row.id)),
-            detail: {
-              count: rows.length,
-              ids: rows.map((row) => row.id),
-              names: rows.map((row) => row.name),
-              phones: rows.map((row) => row.phone),
-              skippedExistingCount: planned.plan.existingPhones.length,
-            },
-            ip: req.ip,
-          });
-
-          return rows;
-        });
-
-        return {
-          success: true,
-          data: {
-            createdCount: created.length,
-            created,
-            existingPhones: planned.plan.existingPhones,
-            initialPassword: REGISTRATION_INITIAL_PASSWORD,
-          },
-        };
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        if (message.includes("employees_phone_uidx") || message.includes("unique")) {
-          return reply.code(409).send({
-            success: false,
-            message: "部分手机号刚被注册，请刷新名单后重试",
-          });
-        }
-        throw error;
-      }
-    },
-  );
 
   app.patch("/api/admin/users/:id", async (req, reply) => {
     const params = z.object({ id: z.coerce.number().int().positive() }).safeParse(req.params);
@@ -900,13 +698,6 @@ export async function adminUserRoutes(app: FastifyInstance) {
         });
         if ("error" in membership) {
           return { outcome: "forbidden" } as const;
-        }
-
-        if (
-          targetUser.status === "pending" &&
-          (body.data.status !== undefined || body.data.role !== undefined)
-        ) {
-          return { outcome: "pending_review" } as const;
         }
 
         if (
@@ -974,12 +765,6 @@ export async function adminUserRoutes(app: FastifyInstance) {
       if (result.outcome === "forbidden") {
         return reply.code(403).send({ success: false, message: "权限不足" });
       }
-      if (result.outcome === "pending_review") {
-        return reply.code(400).send({
-          success: false,
-          message: "待审核注册申请请使用“审核通过”操作",
-        });
-      }
       if (result.outcome === "self_role_or_status") {
         return reply.code(400).send({ success: false, message: "不能修改自己的角色或状态" });
       }
@@ -1036,13 +821,6 @@ export async function adminUserRoutes(app: FastifyInstance) {
     if (!(await canManageScopedUser(req, targetUser))) {
       return reply.code(403).send({ success: false, message: "权限不足" });
     }
-    if (targetUser.status === "pending") {
-      return reply.code(400).send({
-        success: false,
-        message: "待审核注册申请请使用“审核通过”操作",
-      });
-    }
-
     const [row] = await db
       .update(employees)
       .set({ status: body.data.status, updatedAt: new Date() })

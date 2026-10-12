@@ -3,7 +3,7 @@ import bcrypt from "bcryptjs";
 const ROUNDS = 10;
 const MAX_PASSWORD_BYTES = 72;
 
-/** 超级管理员批量注册、以及审核通过后的首次登录密码。 */
+/** 钉钉 / LDAP 开户与历史账号的占位密码：单凭它拿不到会话，须先过钉钉核身再改密。 */
 export const REGISTRATION_INITIAL_PASSWORD = "Hz123456";
 
 function passwordBytes(password: string): number {

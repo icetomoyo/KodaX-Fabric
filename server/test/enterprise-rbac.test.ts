@@ -114,11 +114,6 @@ test("org_admin cannot create or list-all enterprises and cannot call super-admi
       url: "/api/admin/users",
       payload: { name: "A", phone: "13800001111", password: "ChangeMe@123" },
     });
-    const importUsers = await app.inject({
-      method: "POST",
-      url: "/api/admin/users/import",
-      payload: { users: [{ name: "A", phone: "13800001111", password: "ChangeMe@123" }] },
-    });
     const credentials = await app.inject({ method: "GET", url: "/api/admin/credentials" });
     const quota = await app.inject({ method: "GET", url: "/api/admin/quota-policy" });
     const unscopedUsers = await app.inject({
@@ -131,7 +126,6 @@ test("org_admin cannot create or list-all enterprises and cannot call super-admi
     assert.equal(disableEnterprise.statusCode, 403);
     assert.equal(approveEnterprise.statusCode, 403);
     assert.equal(createUser.statusCode, 403);
-    assert.equal(importUsers.statusCode, 403);
     assert.equal(credentials.statusCode, 403);
     assert.equal(quota.statusCode, 404);
     assert.equal(unscopedUsers.statusCode, 403);

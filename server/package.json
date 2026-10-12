@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc -p tsconfig.json",
-    "test": "tsx --test test/relay-core.test.ts test/chat-completions.test.ts test/sensitive-words.test.ts test/admin-user-security.test.ts test/channel-credential-submit.test.ts test/channel-seats.test.ts test/bulk-register-users.test.ts test/upstream-channel-create.test.ts test/enterprise-rbac.test.ts test/team-org.test.ts test/model-prices.test.ts test/error-logs.test.ts test/user-analytics.test.ts test/logs.test.ts test/support-bot.test.ts test/dingtalk-oauth-login.test.ts test/initial-password-gate.test.ts",
+    "test": "tsx --test test/relay-core.test.ts test/chat-completions.test.ts test/sensitive-words.test.ts test/admin-user-security.test.ts test/channel-credential-submit.test.ts test/channel-seats.test.ts test/upstream-channel-create.test.ts test/enterprise-rbac.test.ts test/team-org.test.ts test/model-prices.test.ts test/error-logs.test.ts test/user-analytics.test.ts test/logs.test.ts test/support-bot.test.ts test/dingtalk-oauth-login.test.ts test/initial-password-gate.test.ts",
     "db:sync-org": "tsx src/db/sync-org-chart.ts",
     "db:sync-dingtalk-dept-ids": "tsx src/db/sync-dingtalk-dept-ids.ts",
     "db:sync-dingtalk-department-tree": "tsx src/db/sync-dingtalk-department-tree.ts",

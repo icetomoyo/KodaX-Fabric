@@ -5,7 +5,7 @@ import { E2E_ORG } from "./org-fixture.ts";
 /**
  * 核心业务闭环 E2E：
  * 使用 seed 组织（海致集团 → E2E子企业甲 → E2E部门）→
- * 批量注册员工并加入部门（部门默认团队自动承载）→
+ * 员工自行注册并加入部门（部门默认团队自动承载）→
  * 建 haizhi 自建渠道（配置测试模型）→ 员工测试+提交渠道 KEY → 员工创建 API Key →
  * 通过 relay 调用 mock 上游 → 员工与管理员在页面上都能看到这次调用的 tokens 与积分。
  * 全程走真实 HTTP（经 vite 代理进真实 server），上游为本机 mock，可离线重复执行。
@@ -79,16 +79,14 @@ test.describe.serial("核心闭环：渠道 → 席位 → 员工 Key → relay 
     const department = departments.find((row) => row.name === E2E_ORG.department.name);
     expect(department, `应有夹具部门 ${E2E_ORG.department.name}: ${JSON.stringify(departments)}`).toBeTruthy();
 
-    // 2. 员工：批量注册 → 加入部门（落到该部门的默认团队，自动归属企业）
-    const imported = await postJson(request, "/api/admin/users/import", admin, {
-      users: [{ name: EMPLOYEE.name, phone: EMPLOYEE.phone }],
-    });
-    const created = imported.created as Array<{ id: number; phone: string }>;
-    expect(created, `员工应被创建: ${JSON.stringify(imported)}`).toHaveLength(1);
-    // 批量开户仍是初始密码，账户登录需钉钉认证；E2E 没有真扫码，由管理员改成可用密码。
-    await postJson(request, `/api/admin/users/${created[0].id}/reset-password`, admin, {
-      password: EMPLOYEE.password,
-    });
+    // 2. 员工：自行注册 → 加入部门（落到该部门的默认团队，自动归属企业）
+    const registered = await request.post("/api/auth/register", { data: EMPLOYEE });
+    const registeredBody = (await registered.json()) as { success?: boolean; data?: { id: number } };
+    expect(
+      registeredBody.success === true,
+      `员工注册失败: ${registered.status()} ${JSON.stringify(registeredBody)}`,
+    ).toBeTruthy();
+    const created = [{ id: registeredBody.data!.id }];
     const teamRows = (await getJson(
       request,
       `/api/admin/teams?departmentId=${department!.id}`,

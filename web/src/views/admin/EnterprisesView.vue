@@ -7,7 +7,6 @@
       </div>
       <div class="head-actions">
         <el-button :icon="Refresh" :loading="loading" @click="refreshAll">刷新</el-button>
-        <el-button v-if="canBulkRegisterUsers" :icon="Upload" @click="openBulkRegister">批量注册用户</el-button>
       </div>
     </div>
 
@@ -164,15 +163,6 @@
               </el-table-column>
               <el-table-column label="操作" width="120" align="center">
                 <template #default="{ row }">
-                  <el-button
-                    v-if="row.status === 'pending'"
-                    link
-                    type="success"
-                    :loading="approvingUserId === row.id"
-                    @click="approveUser(row)"
-                  >
-                    审核通过
-                  </el-button>
                   <el-button link type="primary" @click="openUserDetail(row)">详情</el-button>
                   <el-button link type="primary" @click="openEditUser(row)">编辑</el-button>
                 </template>
@@ -232,59 +222,6 @@
       <template #footer>
         <el-button @click="showEditDepartment = false">取消</el-button>
         <el-button type="primary" :loading="updatingDepartment" @click="updateDepartment">保存</el-button>
-      </template>
-    </el-dialog>
-
-    <el-dialog v-model="showBulkRegister" title="批量注册用户" width="560px">
-      <el-form label-position="top">
-        <el-form-item label="姓名和手机号" required>
-          <el-input
-            v-model="bulkRegisterRaw"
-            type="textarea"
-            :rows="10"
-            resize="vertical"
-            placeholder="每行一人：姓名,手机号&#10;也支持用空格或 Tab 分隔"
-          />
-          <el-text class="form-help" type="info" size="small">
-            只开通注册账号，不加入企业或团队。初始密码 Hz123456，登录后可在个人中心自行修改。单次最多 200 人。
-            <b v-if="bulkRegisterParse.users.length">已识别 {{ bulkRegisterParse.users.length }} 人</b>
-          </el-text>
-          <el-alert
-            v-if="bulkRegisterParse.errors.length"
-            class="parse-errors"
-            type="error"
-            :closable="false"
-            show-icon
-          >
-            <div v-for="error in bulkRegisterParse.errors.slice(0, 4)" :key="error">{{ error }}</div>
-            <div v-if="bulkRegisterParse.errors.length > 4">
-              另有 {{ bulkRegisterParse.errors.length - 4 }} 项格式错误
-            </div>
-          </el-alert>
-        </el-form-item>
-        <el-table
-          v-if="bulkRegisterParse.users.length"
-          :data="bulkRegisterParse.users.slice(0, 5)"
-          size="small"
-          stripe
-        >
-          <el-table-column prop="name" label="姓名" />
-          <el-table-column prop="phone" label="手机号" class-name="mono" />
-        </el-table>
-        <el-text v-if="bulkRegisterParse.users.length > 5" class="form-help" type="info" size="small">
-          其余 {{ bulkRegisterParse.users.length - 5 }} 人将一并注册
-        </el-text>
-      </el-form>
-      <template #footer>
-        <el-button @click="showBulkRegister = false">取消</el-button>
-        <el-button
-          type="primary"
-          :loading="bulkRegistering"
-          :disabled="!bulkRegisterParse.users.length || Boolean(bulkRegisterParse.errors.length)"
-          @click="submitBulkRegister"
-        >
-          注册 {{ bulkRegisterParse.users.length || "" }} 人
-        </el-button>
       </template>
     </el-dialog>
 
@@ -387,11 +324,9 @@ import {
   Plus,
   Refresh,
   Search,
-  Upload,
   User,
 } from "@element-plus/icons-vue";
 import { http } from "@/api/http";
-import { parseBulkRegisterText } from "@/lib/bulk-register-users";
 import { departmentPathLabel } from "@/lib/org-employees";
 import { orgConsoleUserListParams } from "@/lib/org-console-loads";
 import { roleLabel } from "@/lib/roles";
@@ -485,7 +420,6 @@ const route = useRoute();
 const router = useRouter();
 const auth = useAuthStore();
 const showOrgTree = computed(() => true);
-const canBulkRegisterUsers = computed(() => auth.isSuperAdmin);
 const canManageDepartments = computed(() => auth.isSuperAdmin || auth.isOrgAdmin || auth.isDeptAdmin);
 const canAppointOrgAdmin = computed(() => auth.isSuperAdmin);
 const canAppointDeptAdmin = computed(() => auth.isSuperAdmin || auth.isOrgAdmin);
@@ -510,7 +444,6 @@ let employeeSearchTimer: ReturnType<typeof setTimeout> | null = null;
 
 const showEditEnterprise = ref(false);
 const showEditDepartment = ref(false);
-const showBulkRegister = ref(false);
 const showInvite = ref(false);
 const showEditUser = ref(false);
 const showResetPassword = ref(false);
@@ -518,11 +451,9 @@ const showUserDetail = ref(false);
 
 const updatingEnterprise = ref(false);
 const updatingDepartment = ref(false);
-const bulkRegistering = ref(false);
 const inviting = ref(false);
 const updatingUser = ref(false);
 const resetting = ref(false);
-const approvingUserId = ref<number | null>(null);
 
 const editEnterpriseName = ref("");
 const editEnterpriseParentId = ref<number | undefined>();
@@ -531,7 +462,6 @@ const editEnterprise = ref<EnterpriseRow | null>(null);
 const editDepartmentName = ref("");
 const editDepartmentDingtalkId = ref("");
 const editDepartment = ref<DepartmentRow | null>(null);
-const bulkRegisterRaw = ref("");
 const invitePhone = ref("");
 const inviteTeamId = ref<number | undefined>();
 const editUser = ref<EmployeeRow | null>(null);
@@ -545,8 +475,6 @@ const editUserForm = reactive({
   status: "active" as UserStatus,
   teamId: undefined as number | undefined,
 });
-
-const bulkRegisterParse = computed(() => parseBulkRegisterText(bulkRegisterRaw.value));
 
 const canInvite = computed(() => selectedEnterpriseId.value != null);
 const selectedEnterprise = computed(
@@ -1209,44 +1137,6 @@ async function deleteDepartment(department: DepartmentRow) {
   }
 }
 
-function openBulkRegister() {
-  bulkRegisterRaw.value = "";
-  showBulkRegister.value = true;
-}
-
-async function submitBulkRegister() {
-  const parsed = bulkRegisterParse.value;
-  if (!parsed.users.length) {
-    ElMessage.warning("请填写姓名和手机号");
-    return;
-  }
-  if (parsed.errors.length) {
-    ElMessage.warning("请先修正名单格式错误");
-    return;
-  }
-
-  bulkRegistering.value = true;
-  try {
-    const { data } = await http.post("/api/admin/users/import", {
-      users: parsed.users.map(({ name, phone }) => ({ name, phone })),
-    });
-    if (!data.success) throw new Error(data.message || "注册失败");
-    const createdCount = Number(data.data?.createdCount ?? data.data?.created?.length ?? 0);
-    const skipped = Array.isArray(data.data?.existingPhones) ? data.data.existingPhones.length : 0;
-    const initialPassword = String(data.data?.initialPassword ?? "");
-    const parts = [`已注册 ${createdCount} 人`];
-    if (skipped) parts.push(`跳过 ${skipped} 个已注册手机号`);
-    if (initialPassword && createdCount) parts.push(`初始密码 ${initialPassword}，可在个人中心自行修改`);
-    ElMessage.success(parts.join("，"));
-    bulkRegisterRaw.value = "";
-    showBulkRegister.value = false;
-  } catch (error) {
-    ElMessage.error(requestMessage(error, "批量注册失败"));
-  } finally {
-    bulkRegistering.value = false;
-  }
-}
-
 function openInvite() {
   invitePhone.value = "";
   const selectedDepartmentTeamId = selectedDepartmentId.value
@@ -1358,29 +1248,6 @@ async function updateUser() {
     ElMessage.error(requestMessage(error, "更新失败"));
   } finally {
     updatingUser.value = false;
-  }
-}
-
-async function approveUser(person: EmployeeRow) {
-  try {
-    await ElMessageBox.confirm(
-      `确认审核通过 ${person.name} 的注册申请？账号将使用初始密码 Hz123456，登录后可在个人中心自行修改。`,
-      "审核通过",
-      { confirmButtonText: "确认通过", cancelButtonText: "取消", type: "warning" },
-    );
-  } catch {
-    return;
-  }
-  approvingUserId.value = person.id;
-  try {
-    const { data } = await http.post(`/api/admin/users/${person.id}/approve`);
-    if (!data.success) throw new Error(data.message);
-    ElMessage.success("审核已通过，初始密码为 Hz123456");
-    await loadTeamsAndPeople();
-  } catch (error) {
-    ElMessage.error(requestMessage(error, "审核失败"));
-  } finally {
-    approvingUserId.value = null;
   }
 }
 
@@ -1716,10 +1583,6 @@ onMounted(() => {
   display: block;
   margin-top: 8px;
   line-height: 1.6;
-}
-
-.parse-errors {
-  margin-top: 8px;
 }
 
 @media (max-width: 900px) {
