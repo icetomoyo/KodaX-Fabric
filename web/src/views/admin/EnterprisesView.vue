@@ -85,16 +85,6 @@
         <div class="pane-header">
           <span class="pane-title">{{ employeeSectionTitle }}</span>
           <el-tag type="info" size="small" round>{{ employeeTotal }} 人</el-tag>
-          <el-button
-            class="pane-header-action"
-            type="primary"
-            size="small"
-            :icon="Plus"
-            :disabled="!canInvite"
-            @click="openInvite"
-          >
-            邀请已注册员工
-          </el-button>
         </div>
 
         <el-empty
@@ -225,29 +215,6 @@
       </template>
     </el-dialog>
 
-    <el-dialog v-model="showInvite" title="邀请已注册员工" width="560px">
-      <el-form label-width="90px">
-        <el-form-item label="手机号" required>
-          <el-input v-model="invitePhone" placeholder="已注册用户的手机号" />
-        </el-form-item>
-        <el-form-item label="加入部门" required>
-          <el-select v-model="inviteTeamId" style="width: 100%" placeholder="选择部门" filterable>
-            <el-option v-for="item in teamOptions" :key="item.id" :label="item.name" :value="item.id" />
-          </el-select>
-        </el-form-item>
-        <el-alert
-          type="info"
-          :closable="false"
-          show-icon
-          title="不能新建账号。对方必须已自行注册，邀请进团队后才有员工权限。"
-        />
-      </el-form>
-      <template #footer>
-        <el-button @click="showInvite = false">取消</el-button>
-        <el-button type="primary" :loading="inviting" @click="inviteMember">邀请</el-button>
-      </template>
-    </el-dialog>
-
     <el-dialog v-model="showEditUser" :title="`编辑员工 · ${editUser?.name || ''}`" width="480px">
       <el-form label-width="90px">
         <el-form-item label="姓名" required><el-input v-model="editUserForm.name" /></el-form-item>
@@ -321,13 +288,11 @@ import {
   Folder,
   MoreFilled,
   OfficeBuilding,
-  Plus,
   Refresh,
   Search,
   User,
 } from "@element-plus/icons-vue";
 import { http } from "@/api/http";
-import { departmentPathLabel } from "@/lib/org-employees";
 import { orgConsoleUserListParams } from "@/lib/org-console-loads";
 import { roleLabel } from "@/lib/roles";
 import { formatDate } from "@/lib/date-time";
@@ -444,14 +409,12 @@ let employeeSearchTimer: ReturnType<typeof setTimeout> | null = null;
 
 const showEditEnterprise = ref(false);
 const showEditDepartment = ref(false);
-const showInvite = ref(false);
 const showEditUser = ref(false);
 const showResetPassword = ref(false);
 const showUserDetail = ref(false);
 
 const updatingEnterprise = ref(false);
 const updatingDepartment = ref(false);
-const inviting = ref(false);
 const updatingUser = ref(false);
 const resetting = ref(false);
 
@@ -462,8 +425,6 @@ const editEnterprise = ref<EnterpriseRow | null>(null);
 const editDepartmentName = ref("");
 const editDepartmentDingtalkId = ref("");
 const editDepartment = ref<DepartmentRow | null>(null);
-const invitePhone = ref("");
-const inviteTeamId = ref<number | undefined>();
 const editUser = ref<EmployeeRow | null>(null);
 const detailEmployee = ref<EmployeeRow | null>(null);
 const resetUser = ref<EmployeeRow | null>(null);
@@ -476,7 +437,6 @@ const editUserForm = reactive({
   teamId: undefined as number | undefined,
 });
 
-const canInvite = computed(() => selectedEnterpriseId.value != null);
 const selectedEnterprise = computed(
   () => enterprises.value.find((row) => row.id === selectedEnterpriseId.value) ?? null,
 );
@@ -618,22 +578,6 @@ const currentTreeKey = computed(() => {
   }
   if (selectedEnterpriseId.value != null) return `enterprise:${selectedEnterpriseId.value}`;
   return undefined;
-});
-
-const teamOptions = computed(() => {
-  const enterpriseId = selectedEnterpriseId.value;
-  const enterpriseName = selectedEnterprise.value?.name ?? null;
-  return namedDepartments.value
-    .filter((department) => enterpriseId == null || department.enterpriseId === enterpriseId)
-    .map((department) => ({
-      id: department.defaultTeamId ?? 0,
-      name: departmentPathLabel({
-        departmentId: department.id,
-        departments: departments.value,
-        enterpriseName,
-      }),
-    }))
-    .filter((item) => item.id > 0 && item.name.length > 0);
 });
 
 const editUserTeamOptions = computed(() => {
@@ -1137,43 +1081,6 @@ async function deleteDepartment(department: DepartmentRow) {
   }
 }
 
-function openInvite() {
-  invitePhone.value = "";
-  const selectedDepartmentTeamId = selectedDepartmentId.value
-    ? namedDepartments.value.find((row) => row.id === selectedDepartmentId.value)?.defaultTeamId
-    : null;
-  inviteTeamId.value = selectedDepartmentTeamId ?? selectedTeamId.value ?? undefined;
-  showInvite.value = true;
-}
-
-async function inviteMember() {
-  const phone = invitePhone.value.trim();
-  if (phone.length < 5) {
-    ElMessage.warning("请填写已注册用户的手机号");
-    return;
-  }
-  if (!inviteTeamId.value) {
-    ElMessage.warning(teamOptions.value.length ? "请选择要加入的部门" : "该企业暂无部门，请先同步钉钉通讯录");
-    return;
-  }
-  inviting.value = true;
-  try {
-    const { data } = await http.post(`/api/admin/teams/${inviteTeamId.value}/members`, {
-      phone,
-    });
-    if (!data.success) throw new Error(data.message);
-    ElMessage.success("已邀请进团队");
-    showInvite.value = false;
-    selectedTeamId.value = inviteTeamId.value;
-    await loadTeamsAndPeople();
-    syncQuery();
-  } catch (error) {
-    ElMessage.error(requestMessage(error, "邀请失败"));
-  } finally {
-    inviting.value = false;
-  }
-}
-
 function openUserDetail(person: EmployeeRow) {
   detailEmployee.value = person;
   showUserDetail.value = true;
@@ -1443,10 +1350,6 @@ onMounted(() => {
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.pane-header-action {
-  flex-shrink: 0;
 }
 
 .tree-search,
