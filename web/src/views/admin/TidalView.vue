@@ -196,7 +196,7 @@
             <el-option
               v-for="item in employeeOptions"
               :key="item.id"
-              :label="`${item.name}（${item.phone}）`"
+              :label="employeeOptionLabel(item)"
               :value="item.id"
             />
           </el-select>
@@ -328,7 +328,8 @@ const dialogVisible = ref(false);
 const editing = ref<Grant | null>(null);
 const submitting = ref(false);
 const searching = ref(false);
-const employeeOptions = ref<Array<{ id: number; name: string; phone: string }>>([]);
+type EmployeeOption = { id: number; name: string; phone: string; departmentName?: string | null };
+const employeeOptions = ref<EmployeeOption[]>([]);
 const grantForm = reactive({
   employeeId: null as number | null,
   maxConcurrency: 20,
@@ -456,6 +457,12 @@ async function loadGrants() {
   }
 }
 
+/** 带上部门，重名的人能分得开。 */
+function employeeOptionLabel(item: EmployeeOption): string {
+  const base = `${item.name}（${item.phone}）`;
+  return item.departmentName ? `${base} · ${item.departmentName}` : base;
+}
+
 async function searchEmployees(query: string) {
   const q = query.trim();
   if (!q) {
@@ -467,7 +474,8 @@ async function searchEmployees(query: string) {
     const { data } = await http.get("/api/admin/users", {
       params: { q, status: "active", limit: 20 },
     });
-    employeeOptions.value = data.data?.items ?? [];
+    // 这个接口的员工数组直接放在 data 里（分页总数在同级的 total）。
+    employeeOptions.value = Array.isArray(data.data) ? data.data : [];
   } catch {
     employeeOptions.value = [];
   } finally {

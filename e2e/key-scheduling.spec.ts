@@ -43,11 +43,14 @@ import {
  * 11. 主人在自己的 Key 满并发时被解绑，而不是只把这一次请求临时发到别处。
  * 12. 所有 Key 都满并发时请求挂住或报 5xx，而不是立刻 429 带 retry-after。
  * 13. 借用者越过 85% 借用线继续用主人的 Key；或者主人在 85% 被本地拦下。
- * 14. 上游返回 5 小时额度用尽（1308）后没有冷却到重置时刻，或者换 Key 超过 1 次。
- * 15. 上游返回公平使用风控（1313）后 Key 没停用、请求被换 Key 重放、没有告警。
+ * 14. 上游返回 5 小时额度用尽（1308）后没有冷却到重置时刻；或者池里还有能用的 Key，
+ *     请求却因为「限流只换一次 Key」而失败（员工白白失败一次）。
+ * 15. 上游返回公平使用风控（1313）后 Key 没停用、没有告警；或者这次请求没有换 Key 重发，
+ *     直接把失败甩给了员工。
  * 16. 上游模型拥堵（1305）连带冷却了健康的 Key，或者请求在多把 Key 上连扫。
  * 16b. 模型拥堵以 HTTP 529 返回时（线上 1305 多数是 529）被当成普通 5xx，在多把 Key 上连扫。
- * 17. 套餐未开放模型（1311）冷却了 Key。
+ * 17. 上游说模型未开放（1311，多半是调用方把模型名写错了）时：冷却了 Key；或者换 Key
+ *     去别的 Key 上再试；或者按限流回 429 让客户端反复重试，而不是明确告诉调用方模型不支持。
  * 18. 上游 5xx 时不再换 Key 重试（限流的换 Key 上限误伤了故障重试）。
  * 19. 30 分钟没调用的成员没有被释放；还在用的成员被误释放；最后一人走后 Key 没回池。
  * 20. 管理端画布上的「谁在用哪把 Key」和库里的实际绑定对不上。
@@ -62,6 +65,10 @@ import {
  * 28. 在套餐上改了上限后，没有立即对套餐下所有 Key 生效。
  * 29. 管理端显示的上限不是实际生效的上限。
  * 30. 「编辑模式」对话框里填的积分上限没有真正保存，或者保存后重新打开看不到。
+ * 31. 所有 Key 都限流、请求最终失败时，retry-after 不是真实的恢复时间（以前固定 5 分钟）。
+ * 32. 试满尝试次数而池里还有别的 Key 时，retry-after 仍是 5 分钟，客户端白等。
+ * 33. 套餐到期 / 失效（1309、1314、1315）的 Key 只是冷却，到点又被选中再失败一次，
+ *     而不是停用并告警；或者这次请求没有换 Key 重发。
  */
 const ARTIFACT_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "artifacts");
 const MODEL = "e2e-upstream-model";
@@ -350,6 +357,12 @@ const FAIR_USE_BODY = {
 const MODEL_BUSY_BODY = {
   error: { code: "1305", message: "该模型当前访问量过大，请您稍后再试" },
 };
+const PLAN_EXPIRED_BODY = {
+  error: {
+    code: "1309",
+    message: "您的 GLM Coding Plan 套餐已到期，暂无法使用，前往官方续订后即可恢复 https://bigmodel.cn/claude-code",
+  },
+};
 const PLAN_DENIED_BODY = {
   error: { code: "1311", message: `当前订阅套餐暂未开放 ${MODEL} 权限` },
 };
@@ -582,7 +595,7 @@ test.describe.serial("渠道 Key 调度", () => {
     };
   });
 
-  test("借用者到 85% 让出，主人用到上游真的限额；1308 冷却到重置时刻且只换一次 Key", async () => {
+  test("借用者到 85% 让出，主人用到上游真的限额；1308 冷却到重置时刻并换 Key 完成请求", async () => {
     const pool = "quota";
     const ownerKey = await credentialRow(pool, "qtao");
 
@@ -620,7 +633,7 @@ test.describe.serial("渠道 Key 调度", () => {
     const resetAt = new Date(Date.now() + 2 * 3_600_000);
     await setBehavior(pool, "qtao", { type: "status", status: 429, body: fiveHourCapBody(resetAt) });
     const capped = await call(pool, "ownerQuota");
-    expect(capped.status, "撞到上游限额后换一次 Key 完成请求").toBe(200);
+    expect(capped.status, "撞到上游限额后换 Key 完成请求").toBe(200);
     expect(capped.key).toBe("qtaf");
     expect(await hitsFor(pool, capped.marker)).toEqual(["qtao", "qtaf"]);
 
@@ -941,14 +954,14 @@ test.describe.serial("渠道 Key 调度", () => {
     report.packageLimitDialog = { afterSave, screenshot: "package-credit-limits.png" };
   });
 
-  test("上游 429 按业务码分类：1313 停用并告警、1305 不冷却不换 Key、1308 最多换一次", async () => {
+  test("上游 429 按业务码分类：1313 停用告警并换 Key、1305 不冷却不换 Key、1308 一直换到有 Key 能用", async () => {
     const pool = "ratelimit";
 
-    // 1313 公平使用风控。
+    // 1313 公平使用风控：Key 停用、告警，这次请求换一把 Key 完成。
     await setBehavior(pool, "rl01", { type: "status", status: 429, body: FAIR_USE_BODY });
     const fairUse = await call(pool, "guest1");
-    expect(fairUse.status, "风控码直接把错误还给调用方").toBe(429);
-    expect(await hitsFor(pool, fairUse.marker), "风控码不能换 Key 重放").toEqual(["rl01"]);
+    expect(fairUse.status, "撞到风控的请求换一把 Key 完成，不把失败甩给员工").toBe(200);
+    expect(await hitsFor(pool, fairUse.marker)).toEqual(["rl01", "rl02"]);
     const disabled = await credentialRow(pool, "rl01");
     expect(disabled.status, "被风控的 Key 停用，等管理员确认").toBe("auto_disabled");
     expect(disabled.last_failure_kind).toBe("fair_use");
@@ -973,7 +986,7 @@ test.describe.serial("渠道 Key 调度", () => {
     expect(healthy.cool_until).toBeNull();
     expect(await boundKey(pool, "guest1"), "模型拥堵不改绑定").toBe("rl02");
 
-    // 1308 额度用尽：换一次 Key。
+    // 1308 额度用尽：换 Key。
     const resetAt = new Date(Date.now() + 2 * 3_600_000);
     await setBehavior(pool, "rl02", { type: "status", status: 429, body: fiveHourCapBody(resetAt) });
     const oneHop = await call(pool, "guest1");
@@ -981,40 +994,117 @@ test.describe.serial("渠道 Key 调度", () => {
     expect(await hitsFor(pool, oneHop.marker)).toEqual(["rl02", "rl03"]);
     expect((await credentialRow(pool, "rl02")).status).toBe("cooling");
 
-    // 连续两把都额度用尽：换过一次后不再换，第三把健康的 Key 不能被扫到。
+    // 连续两把都额度用尽：继续换，直到有 Key 能用。
     await setBehavior(pool, "rl03", { type: "status", status: 429, body: fiveHourCapBody(resetAt) });
     await setBehavior(pool, "rl04", { type: "status", status: 429, body: fiveHourCapBody(resetAt) });
-    const hopLimit = await call(pool, "guest1");
-    expect(hopLimit.status, "换过一次仍限流就把 429 还给调用方").toBe(429);
-    expect(await hitsFor(pool, hopLimit.marker), "限流类最多换 1 次 Key").toEqual(["rl03", "rl04"]);
-    const untouched = (await mockState()).hits.filter(
-      (hit) => hit.secret === schedSecret(pool, "rl05"),
-    );
-    expect(untouched, "第 5 把 Key 不应被这次请求扫到").toEqual([]);
+    const twoHops = await call(pool, "guest1");
+    expect(twoHops.status, "池里还有能用的 Key 时请求不应失败").toBe(200);
+    expect(await hitsFor(pool, twoHops.marker)).toEqual(["rl03", "rl04", "rl05"]);
+
+    // 最后一把也额度用尽：池子真的空了，retry-after 给出真实的恢复时间（约 2 小时后）。
+    await setBehavior(pool, "rl05", { type: "status", status: 429, body: fiveHourCapBody(resetAt) });
+    const exhausted = await call(pool, "guest1");
+    expect(exhausted.status, "所有 Key 都限流时才把 429 还给调用方").toBe(429);
+    expect(await hitsFor(pool, exhausted.marker)).toEqual(["rl05"]);
+    const secondsToReset = (resetAt.getTime() - Date.now()) / 1_000;
+    expect(Number(exhausted.retryAfter), "retry-after 应是最早恢复的那把 Key 的冷却剩余时间")
+      .toBeGreaterThan(secondsToReset - 60);
+    expect(Number(exhausted.retryAfter)).toBeLessThanOrEqual(2 * 3_600);
 
     report.ratelimit = {
       fairUse: {
-        hits: ["rl01"],
-        status: disabled.status,
+        hits: ["rl01", "rl02"],
+        requestStatus: fairUse.status,
+        keyStatus: disabled.status,
         failureKind: disabled.last_failure_kind,
         alert,
       },
       modelBusy: { hits: ["rl02"], keyStatus: healthy.status, retryAfter: modelBusy.retryAfter },
       usageCapOneHop: ["rl02", "rl03"],
-      usageCapHopLimit: { hits: ["rl03", "rl04"], status: hopLimit.status },
+      usageCapTwoHops: { hits: ["rl03", "rl04", "rl05"], status: twoHops.status },
+      poolExhausted: { status: exhausted.status, retryAfter: exhausted.retryAfter },
     };
   });
 
-  test("1311 套餐未开放模型：不冷却 Key，换一次 Key", async () => {
+  test("试满尝试次数而池里还有 Key：429 的 retry-after 很短，重试就能换到别的 Key", async () => {
+    const pool = "attempts";
+    const resetAt = new Date(Date.now() + 2 * 3_600_000);
+    for (const label of ["at01", "at02", "at03", "at04", "at05"]) {
+      await setBehavior(pool, label, { type: "status", status: 429, body: fiveHourCapBody(resetAt) });
+    }
+    const failed = await call(pool, "guest1");
+    expect(failed.status, "5 次尝试都限流").toBe(429);
+    expect(await hitsFor(pool, failed.marker)).toEqual(["at01", "at02", "at03", "at04", "at05"]);
+    expect(Number(failed.retryAfter), "池里还有 Key 时不该让客户端等 5 分钟").toBeGreaterThan(0);
+    expect(Number(failed.retryAfter)).toBeLessThanOrEqual(5);
+
+    const retried = await call(pool, "guest1");
+    expect(retried.status, "客户端重试即可成功").toBe(200);
+    expect(retried.key).toBe("at06");
+
+    report.attemptsExhausted = {
+      hits: 5,
+      retryAfter: failed.retryAfter,
+      retryStatus: retried.status,
+      retryKey: retried.key,
+    };
+  });
+
+  test("套餐到期（1309）：Key 停用并告警，这次请求换 Key 完成", async () => {
+    const pool = "planExpired";
+    await setBehavior(pool, "ex01", { type: "status", status: 429, body: PLAN_EXPIRED_BODY });
+    const result = await call(pool, "guest1");
+    expect(result.status, "套餐到期的 Key 不能让员工的请求失败").toBe(200);
+    expect(await hitsFor(pool, result.marker)).toEqual(["ex01", "ex02"]);
+    const expired = await credentialRow(pool, "ex01");
+    expect(expired.status, "到期的 Key 停用，不再到点恢复后又被选中").toBe("auto_disabled");
+    expect(expired.cool_until, "停用而不是冷却").toBeNull();
+    expect(expired.last_failure_kind).toBe("plan_expired");
+    expect(expired.last_vendor_code).toBe("1309");
+    const alert = await waitFor("套餐到期告警送达 webhook", async () => {
+      const state = await mockState();
+      return state.alerts
+        .map((item) => (typeof item === "string" ? item : item.text?.content ?? ""))
+        .find((content) => content.includes("到期") && content.includes("ex01"));
+    });
+
+    const next = await call(pool, "guest1");
+    expect(next.status).toBe(200);
+    expect(await hitsFor(pool, next.marker), "停用后不再打到期的 Key").toEqual(["ex02"]);
+
+    report.planExpired = {
+      hits: ["ex01", "ex02"],
+      keyStatus: expired.status,
+      failureKind: expired.last_failure_kind,
+      alert,
+    };
+  });
+
+  test("1311 模型未开放：不换 Key、不冷却，明确告诉调用方模型不支持", async () => {
     const pool = "planDenied";
     await setBehavior(pool, "pd01", { type: "status", status: 429, body: PLAN_DENIED_BODY });
     const result = await call(pool, "guest1");
-    expect(result.status).toBe(200);
-    expect(await hitsFor(pool, result.marker)).toEqual(["pd01", "pd02"]);
+    expect(result.status, "模型名不对不是限流，不能回 429 让客户端一直重试").toBe(404);
+    expect(result.code).toBe("model_not_found");
+    expect(result.retryAfter, "不该带 retry-after").toBeNull();
+    expect(await hitsFor(pool, result.marker), "换哪把 Key 都一样，不换").toEqual(["pd01"]);
     const denied = await credentialRow(pool, "pd01");
-    expect(denied.status, "套餐权限问题不能冷却 Key").toBe("active");
+    expect(denied.status, "模型名的问题不能冷却 Key").toBe("active");
     expect(denied.cool_until).toBeNull();
-    report.planDenied = { hits: ["pd01", "pd02"], keyStatus: denied.status };
+    expect(await boundKey(pool, "guest1"), "不改绑定").toBe("pd01");
+    const [audit] = await sql<Array<{ status: string }>>`
+      select status from request_audits
+      where employee_id = ${employeeId("guest1")} and product_line_id = ${lineId(pool)}
+      order by id desc limit 1
+    `;
+    expect(audit.status, "记为调用方的请求错误，不算上游故障").toBe("client_error");
+    report.planDenied = {
+      hits: ["pd01"],
+      status: result.status,
+      code: result.code,
+      keyStatus: denied.status,
+      auditStatus: audit.status,
+    };
   });
 
   test("模型拥堵以 HTTP 529 返回时同样不换 Key、不动 Key 状态", async () => {

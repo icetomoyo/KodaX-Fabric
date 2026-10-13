@@ -39,11 +39,16 @@ export type RelayUpstreamAttemptKind =
   | "timeout"
   | "cancelled"
   | "configuration_error"
+  /** The upstream does not serve this model; the caller has to fix the model name. */
+  | "model_unsupported"
   /** The Key was already at its concurrency limit; nothing was sent upstream. */
   | "key_busy";
 
-/** A request may switch Keys at most this many times because of upstream 429s. */
-export const RELAY_RATE_LIMIT_MAX_HOPS = 1;
+/**
+ * Retry-After when a request used up its attempts on Keys that were all rate
+ * limited. Those Keys are cooling now, so a retry lands on different ones.
+ */
+export const RELAY_RATE_LIMIT_RETRY_AFTER_SECONDS = 3;
 
 /** Retry-After for "every usable Key is at its concurrency limit". */
 export const RELAY_KEY_BUSY_RETRY_AFTER_SECONDS = 3;
@@ -66,6 +71,26 @@ export type RelayUpstreamAttemptResult = {
   /** Abort the upstream response body, for example when the downstream client disconnects. */
   abort: (reason?: unknown) => void;
 };
+
+/**
+ * Retry-After for a request that ends in 429.
+ * - The failed attempt named its own wait (model overloaded, Key busy): use it.
+ * - No Key was left to try: the wait the pool reported (its earliest cooling
+ *   end), or the default cooldown when it gave none.
+ * - Attempts ran out while other Keys remain: a short wait, the retry will
+ *   be scheduled onto those.
+ */
+export function finalRateLimitRetryAfterSeconds(input: {
+  failureRetryAfterSeconds: number | null | undefined;
+  /** Set when the request stopped because no further Key could be acquired. */
+  poolExhausted: { retryAfterSeconds: number | null } | null;
+}): number {
+  if (input.failureRetryAfterSeconds != null) return input.failureRetryAfterSeconds;
+  if (input.poolExhausted) {
+    return input.poolExhausted.retryAfterSeconds ?? env.RELAY_COOLDOWN_SECONDS;
+  }
+  return RELAY_RATE_LIMIT_RETRY_AFTER_SECONDS;
+}
 
 export type SendRelayUpstreamChatInput = {
   candidate: RelayCandidate;
@@ -933,7 +958,7 @@ export async function sendRelayUpstream(
   }
 
   const classification = classifyHttpStatus(response.status);
-  // 429 的换 Key 与 Retry-After 由业务码决定，见 classifyUpstreamRateLimit。
+  // 429 怎么处置这把 Key、要不要换 Key 由业务码决定，见 classifyUpstreamRateLimit。
   let kind = classification.kind;
   let retryable = classification.retryable;
   let errorCode = classification.errorCode;
@@ -947,15 +972,17 @@ export async function sendRelayUpstream(
       const bodyText = await peekResponseText(response);
       const now = new Date();
       const disposition = classifyUpstreamRateLimit(bodyText ?? "");
-      if (disposition === "fair_use") {
-        // 上游明确说使用模式不合规：停用等管理员确认，不换 Key 重放这次请求。
+      if (disposition === "fair_use" || disposition === "plan_expired") {
+        // 这把 Key 自己不会恢复（风控要人工解除，套餐要续订）：停用并通知管理员。
+        // 请求照常换一把 Key 重发，不把失败甩给员工。
         const vendor = extractUpstreamBusinessError(bodyText ?? "");
         await autoDisableCredential(input.candidate, response.status, {
           lastError: formatUpstreamVendorError(response.status, bodyText),
-          failureKind: "fair_use",
+          failureKind: disposition,
           vendorCode: vendor?.code ?? null,
         });
         void notifyFairUseRestriction({
+          kind: disposition,
           credentialId: input.candidate.credentialId,
           credentialSuffix: input.candidate.credentialSuffix,
           productLineId: input.candidate.productLineId,
@@ -963,8 +990,9 @@ export async function sendRelayUpstream(
           vendorMessage: vendor?.message ?? null,
           at: now,
         });
-        retryable = false;
-        errorCode = "upstream_fair_use_restricted";
+        errorCode = disposition === "fair_use"
+          ? "upstream_fair_use_restricted"
+          : "upstream_plan_expired";
       } else if (disposition === "model_busy") {
         // 模型侧拥堵，换哪把 Key 都一样：不冷却这把 Key，也不去扫别的 Key。
         await markCredentialUsed(input.candidate);
@@ -972,8 +1000,11 @@ export async function sendRelayUpstream(
         errorCode = "upstream_model_busy";
         retryAfterSeconds = RELAY_MODEL_BUSY_RETRY_AFTER_SECONDS;
       } else if (disposition === "model_not_in_plan") {
-        // 这把 Key 的套餐没开放该模型，Key 本身是健康的：不冷却，允许换一把试。
+        // 上游不提供这个模型，线上基本都是调用方把模型名写错了（比如填了别家的模型）。
+        // Key 是健康的，换哪把都一样：不冷却、不换 Key，让调用方改模型名。
         await markCredentialUsed(input.candidate);
+        kind = "model_unsupported";
+        retryable = false;
         errorCode = "upstream_model_not_in_plan";
       } else {
         const candidateAnchors: CredentialWindowAnchors = {

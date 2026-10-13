@@ -113,15 +113,20 @@ const QUOTA_EXHAUSTED_MESSAGE_MARKERS = [
 ] as const;
 
 /**
- * 429 并不都是「这把 Key 被限流」。按业务码分成四类，调度据此决定
- * 是否冷却 Key、是否换 Key 重试：
- * - fair_use：1313，上游判定使用模式不合规。Key 停用等人工确认，不换 Key 重放。
+ * 429 并不都是「这把 Key 被限流」。按业务码分成五类，调度据此决定怎么处置这把 Key。
+ * 问题出在这把 Key 上的（风控、到期、限流）都换一把 Key 重发：池里还有能用的 Key 时，
+ * 员工的请求不应失败。和 Key 无关的（模型拥堵、模型不支持）不换。
+ * - fair_use：1313，上游判定使用模式不合规。Key 停用等人工确认。
+ * - plan_expired：1309 / 1314 / 1315，套餐到期、失效或 Key 类型不对。续订前不会自己好，
+ *   Key 停用等人工处理（冷却的话到点又会被选中，再让一个请求失败一次）。
  * - model_busy：1305，模型侧拥堵，与哪把 Key 无关。不冷却、不换 Key。
- * - model_not_in_plan：1311，这把 Key 的套餐没开放该模型。不冷却，可换一把试。
- * - key_limited：其余（额度用尽、账户限速、无法识别），按原逻辑冷却这把 Key。
+ * - model_not_in_plan：1311，上游不提供这个模型（多半是模型名写错了）。不冷却、不换 Key，
+ *   按「模型不支持」回给调用方。
+ * - key_limited：其余（额度用尽、账户限速、无法识别），冷却这把 Key。
  */
 export type UpstreamRateLimitDisposition =
   | "fair_use"
+  | "plan_expired"
   | "model_busy"
   | "model_not_in_plan"
   | "key_limited";
@@ -133,6 +138,9 @@ const RATE_LIMIT_DISPOSITION_RULES: ReadonlyArray<{
   marker: string;
 }> = [
   { disposition: "fair_use", code: "1313", marker: "公平使用策略" },
+  { disposition: "plan_expired", code: "1309", marker: "套餐已到期" },
+  { disposition: "plan_expired", code: "1314", marker: "套餐已失效" },
+  { disposition: "plan_expired", code: "1315", marker: "仅限企业编程套餐" },
   { disposition: "model_busy", code: "1305", marker: "当前访问量过大" },
   { disposition: "model_not_in_plan", code: "1311", marker: "暂未开放" },
 ];

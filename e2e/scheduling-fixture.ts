@@ -122,7 +122,8 @@ export type SchedPoolDef = {
  * 渠道 Key 按数组顺序入库，ID 递增；同分时调度取 ID 小的。
  *
  * 席位套餐的池子里每把 Key 都有席位主人。只有充值模式（管理员直接添加 Key）
- * 的池子里 Key 没有主人：recharge、ratelimit、planDenied、overload、serverError。
+ * 的池子里 Key 没有主人：recharge、ratelimit、planDenied、attempts、planExpired、
+ * overload、serverError。
  */
 export const SCHED_POOLS = {
   affinity: {
@@ -164,6 +165,24 @@ export const SCHED_POOLS = {
   planDenied: {
     name: "调度E2E-套餐",
     keys: [{ label: "pd01" }, { label: "pd02" }],
+    users: ["guest1"],
+  },
+  // 比一次请求的尝试次数（5）多一把 Key：试满次数时池里还剩健康的 Key。
+  attempts: {
+    name: "调度E2E-次数",
+    keys: [
+      { label: "at01" },
+      { label: "at02" },
+      { label: "at03" },
+      { label: "at04" },
+      { label: "at05" },
+      { label: "at06" },
+    ],
+    users: ["guest1"],
+  },
+  planExpired: {
+    name: "调度E2E-到期",
+    keys: [{ label: "ex01" }, { label: "ex02" }],
     users: ["guest1"],
   },
   overload: {

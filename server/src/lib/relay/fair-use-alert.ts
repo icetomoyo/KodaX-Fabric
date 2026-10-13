@@ -8,7 +8,12 @@ import {
   productLines,
 } from "../../db/schema/index.js";
 
+/** Why the upstream reply made us take a Key out of rotation. */
+export type KeyDisabledAlertKind = "fair_use" | "plan_expired";
+
 export type FairUseAlertInput = {
+  /** Defaults to the fair-use restriction. */
+  kind?: KeyDisabledAlertKind;
   credentialId: number;
   credentialSuffix: string;
   productLineId: number;
@@ -18,6 +23,7 @@ export type FairUseAlertInput = {
 };
 
 export function formatFairUseAlertContent(input: {
+  kind?: KeyDisabledAlertKind;
   credentialSuffix: string;
   productLineName: string;
   vendorCode: string | null;
@@ -39,6 +45,13 @@ export function formatFairUseAlertContent(input: {
   const users = input.memberNames.length > 0 ? input.memberNames.join("、") : "无";
   const code = input.vendorCode ? `（${input.vendorCode}）` : "";
   const detail = input.vendorMessage ? `上游原文：${input.vendorMessage.slice(0, 200)}。` : "";
+  if (input.kind === "plan_expired") {
+    return (
+      `【套餐告警】渠道「${input.productLineName}」的渠道 Key 尾号 ${input.credentialSuffix} ` +
+      `所在套餐已到期或失效${code}，已自动停用，续订后需管理员手动启用。` +
+      `当时在用这把 Key 的人：${users}。${detail}时间：${time}`
+    );
+  }
   return (
     `【风控告警】渠道「${input.productLineName}」的渠道 Key 尾号 ${input.credentialSuffix} ` +
     `被上游判定不符合公平使用策略${code}，已自动停用，需管理员确认解除限制后手动启用。` +
@@ -47,7 +60,7 @@ export function formatFairUseAlertContent(input: {
 }
 
 /**
- * 上游返回公平使用风控时通知管理员。只发通知，不影响请求处理：
+ * 上游回复让一把 Key 被自动停用时（公平使用风控、套餐到期失效）通知管理员。只发通知，不影响请求处理：
  * 任何失败都只记日志。成员名单要在他们下一次请求换 Key 之前读出来。
  */
 export async function notifyFairUseRestriction(input: FairUseAlertInput): Promise<void> {
@@ -67,6 +80,7 @@ export async function notifyFairUseRestriction(input: FairUseAlertInput): Promis
       .innerJoin(employees, eq(employees.id, credentialBindingMembers.employeeId))
       .where(eq(credentialBindings.credentialId, input.credentialId));
     const content = formatFairUseAlertContent({
+      kind: input.kind,
       credentialSuffix: input.credentialSuffix,
       productLineName: line?.name ?? String(input.productLineId),
       vendorCode: input.vendorCode,

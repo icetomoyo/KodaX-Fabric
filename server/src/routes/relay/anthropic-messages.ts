@@ -36,7 +36,7 @@ import type {
   RelayRetryTraceItem,
 } from "../../lib/relay/types.js";
 import {
-  RELAY_RATE_LIMIT_MAX_HOPS,
+  finalRateLimitRetryAfterSeconds,
   sendRelayUpstream,
   type RelayUpstreamAttemptKind,
   type RelayUpstreamAttemptResult,
@@ -241,6 +241,13 @@ function downstreamFailure(kind: RelayUpstreamAttemptKind): {
         type: "rate_limit_error",
         code: "model_channels_busy",
         message: "当前渠道并发已满，请稍后重试",
+      };
+    case "model_unsupported":
+      return {
+        status: 404,
+        type: "not_found_error",
+        code: "model_not_found",
+        message: "当前渠道不支持该模型，请检查模型名称",
       };
     case "timeout":
       return {
@@ -494,8 +501,8 @@ async function handleNativeRequest(
           sessionKey: tidalSessionKey(principal.employeeApiKeyId, req.headers, body),
         }
       : null;
-    // 上游 429 最多换一次 Key；5xx、超时等故障仍按 RELAY_MAX_ATTEMPTS 重试。
-    let rateLimitHops = 0;
+    // 没有别的 Key 可换而停下时记下调度池给的等待时间，用来回 retry-after。
+    let poolExhausted: { retryAfterSeconds: number | null } | null = null;
     let lastCandidate: RelayCandidate | null = null;
     let lastFailure: RelayUpstreamAttemptResult | null = null;
 
@@ -575,6 +582,7 @@ async function handleNativeRequest(
           });
           return reply.code(httpStatus).send(payload);
         }
+        poolExhausted = { retryAfterSeconds: resolution.retryAfterSeconds };
         break;
       }
 
@@ -597,9 +605,7 @@ async function handleNativeRequest(
       activeAttempt = result;
 
       if (result.kind !== "success" || !result.response) {
-        const hopAllowed = result.kind !== "rate_limited" ||
-          rateLimitHops < RELAY_RATE_LIMIT_MAX_HOPS;
-        const willRetry = result.retryable && hopAllowed && hasNext && !req.signal.aborted;
+        const willRetry = result.retryable && hasNext && !req.signal.aborted;
         retryTrace.push(
           traceItem(
             index + 1,
@@ -617,7 +623,6 @@ async function handleNativeRequest(
         const disposition = await settleFailedAttempt(result, willRetry);
         if (disposition === "released") activeAttempt = null;
         if (willRetry) {
-          if (result.kind === "rate_limited") rateLimitHops += 1;
           excludeCredentialIds.add(candidate.credentialId);
           continue;
         }
@@ -929,7 +934,8 @@ async function handleNativeRequest(
       }
       upstreamPayload = parseJson(raw) ?? (raw.length ? raw.toString("utf8") : null);
       const status = failure.status ?? (failure.kind === "client_error" ? 400 : 502);
-      if (isNativeErrorPayload(upstreamPayload)) {
+      // 模型不支持时上游回的是 429：原样透传会让客户端当成限流一直重试，改回明确的 404。
+      if (failure.kind !== "model_unsupported" && isNativeErrorPayload(upstreamPayload)) {
         await finalizeAudit({
           candidate,
           status: failure.kind === "client_error" ? "client_error" : "upstream_error",
@@ -977,12 +983,21 @@ async function handleNativeRequest(
     if (mapped.status === 429) {
       reply.header(
         "retry-after",
-        String(failure?.retryAfterSeconds ?? env.RELAY_COOLDOWN_SECONDS),
+        String(
+          finalRateLimitRetryAfterSeconds({
+            failureRetryAfterSeconds: failure?.retryAfterSeconds,
+            poolExhausted,
+          }),
+        ),
       );
     }
     await finalizeAudit({
       candidate,
-      status: failure?.kind === "cancelled" ? "cancelled" : "upstream_error",
+      status: failure?.kind === "cancelled"
+        ? "cancelled"
+        : failure?.kind === "model_unsupported"
+          ? "client_error"
+          : "upstream_error",
       httpStatus: failure?.status ?? mapped.status,
       upstreamStatus: failure?.status ?? null,
       errorCode: upstreamPayload ? null : (failure?.errorCode ?? mapped.code),

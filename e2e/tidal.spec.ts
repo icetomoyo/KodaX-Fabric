@@ -57,6 +57,7 @@ import {
  * 22. 撤销授权后潮汐KEY 仍可用，或者没有被删除。
  * 23. 管理端没有「潮汐调度」页，或者被授权的人没显示在名单里。
  * 24. 被授权员工的页面上没有潮汐KEY；没授权员工的页面上出现了潮汐KEY。
+ * 25. 管理端「新增授权」对话框里按姓名或手机号搜不到员工，没法在界面上完成授权。
  */
 const ARTIFACT_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "artifacts");
 const MODEL = "e2e-upstream-model";
@@ -717,6 +718,26 @@ test.describe.serial("潮汐调度", () => {
     await expect(adminPage.locator(".stat strong").first()).not.toHaveText("0");
     await adminPage.waitForTimeout(500);
     await adminPage.screenshot({ path: resolve(ARTIFACT_DIR, "tidal-admin.png"), fullPage: true });
+
+    // 25：在界面上给另一个人授权——按姓名搜、按手机号搜都要能找到。
+    const target = SCHED_PEOPLE.tdO2;
+    await adminPage.getByRole("button", { name: "新增授权" }).click();
+    const dialog = adminPage.locator(".el-dialog", { hasText: "新增授权" });
+    await expect(dialog).toBeVisible();
+    const option = adminPage.locator(".el-select-dropdown__item", { hasText: target.name });
+    await dialog.locator(".el-select").click();
+    await adminPage.keyboard.type(target.phone);
+    await expect(option, "按手机号应能搜到员工").toBeVisible();
+    await adminPage.keyboard.press("ControlOrMeta+A");
+    await adminPage.keyboard.type(target.name);
+    await expect(option, "按姓名应能搜到员工").toBeVisible();
+    await option.click();
+    await dialog.getByRole("button", { name: "确定" }).click();
+    await expect(adminPage.getByRole("row", { name: new RegExp(target.name) })).toBeVisible();
+    const [uiGrant] = await sql<Array<{ max_concurrency: number }>>`
+      select max_concurrency from tidal_grants where employee_id = ${employeeId("tdO2")}
+    `;
+    expect(uiGrant, "界面上的授权应写入库").toBeTruthy();
     await adminContext.close();
 
     // 24
@@ -742,7 +763,10 @@ test.describe.serial("潮汐调度", () => {
     await expect(plainBoard.getByText("潮汐")).toHaveCount(0);
     await plainContext.close();
 
-    report.ui = { screenshots: ["tidal-admin.png", "tidal-employee.png"] };
+    report.ui = {
+      screenshots: ["tidal-admin.png", "tidal-employee.png"],
+      grantedInDialog: { employee: target.name, maxConcurrency: uiGrant.max_concurrency },
+    };
   });
 
   test("到期与撤销：到期后 KEY 失效并隐藏，撤销后 KEY 被删除", async () => {
