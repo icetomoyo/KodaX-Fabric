@@ -2,6 +2,7 @@
   <div class="charts-page" v-loading="loading">
     <div class="toolbar">
       <el-radio-group v-model="rangePreset" @change="onPresetChange">
+        <el-radio-button value="today">今天</el-radio-button>
         <el-radio-button value="7d">近 7 天</el-radio-button>
         <el-radio-button value="30d">近 30 天</el-radio-button>
       </el-radio-group>
@@ -82,7 +83,7 @@
       <section class="page-card chart-card">
         <div class="chart-head">
           <h3>Token 趋势</h3>
-          <span>{{ rangeLabel }} · 日</span>
+          <span>{{ rangeLabel }} · {{ hourly ? "小时" : "日" }}</span>
         </div>
         <UsageChart :option="tokenTrendOption" height="280px" />
       </section>
@@ -158,6 +159,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
+import { useRoute } from "vue-router";
 import { ElMessage } from "element-plus";
 import type { EChartsCoreOption } from "echarts/core";
 import { http } from "@/api/http";
@@ -165,7 +167,7 @@ import UsageChart from "@/components/UsageChart.vue";
 import { formatTokenCompact } from "@/lib/tokens";
 import { analysisWindow, formatChangeFoot, formatPercent } from "@/lib/workbench-today";
 
-type RangePreset = "7d" | "30d";
+type RangePreset = "today" | "7d" | "30d";
 type RankLevel = "enterprise" | "department" | "employee";
 
 type TrendPoint = {
@@ -240,7 +242,8 @@ const PRODUCT_TYPE_LABEL: Record<string, string> = {
 
 const loading = ref(false);
 const data = ref<AnalyticsData | null>(null);
-const rangePreset = ref<RangePreset>("7d");
+// 工作台的「今日排行」带 ?range=today 过来。
+const rangePreset = ref<RangePreset>(useRoute().query.range === "today" ? "today" : "7d");
 const rankLevel = ref<RankLevel>("enterprise");
 const rankLevels = [
   { value: "enterprise" as const, label: "企业" },
@@ -248,11 +251,16 @@ const rankLevels = [
   { value: "employee" as const, label: "员工" },
 ];
 
-const comparedTo = computed(() => (rangePreset.value === "7d" ? "较前 7 天" : "较前 30 天"));
+const comparedTo = computed(() => {
+  if (rangePreset.value === "today") return "较昨天";
+  return rangePreset.value === "7d" ? "较前 7 天" : "较前 30 天";
+});
+const hourly = computed(() => data.value?.range?.granularity === "hour");
 const rangeLabel = computed(() => {
   const from = data.value?.range?.from;
   const to = data.value?.range?.to;
-  return from && to ? `${from} ~ ${to}` : "";
+  if (!from || !to) return "";
+  return from === to ? from : `${from} ~ ${to}`;
 });
 
 const summary = computed(() => ({
@@ -289,7 +297,9 @@ const productTypeRows = computed(() =>
   })).filter((row) => row.totalTokens > 0),
 );
 
-const axisLabels = computed(() => (data.value?.trend ?? []).map((row) => formatDay(row.day)));
+const axisLabels = computed(() =>
+  (data.value?.trend ?? []).map((row) => (hourly.value ? row.day.slice(-5) : formatDay(row.day))),
+);
 
 const tokenTrendOption = computed<EChartsCoreOption>(() => ({
   color: ["#2563eb", "#7c3aed"],

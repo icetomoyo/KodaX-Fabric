@@ -27,6 +27,7 @@ import {
 } from "../../lib/quota-time.js";
 import { billedCacheReadTokensSql } from "../../lib/usage-cache.js";
 import { fillDailyUsage, summarizeDailyUsage } from "../../lib/user-usage.js";
+import { buildAttention, loadWorkbenchOps } from "../../lib/workbench-ops.js";
 import {
   avgTokensPerRequest,
   cacheHitRate,
@@ -695,6 +696,7 @@ async function platformOverview() {
     productTypes,
     errorsByStatus,
     modelRows,
+    ops,
   ] = await Promise.all([
     db.select({ n: count() }).from(enterprises).then((rows) => rows[0]),
     db.select({ n: count() }).from(enterprises).where(eq(enterprises.status, "active")).then((rows) => rows[0]),
@@ -714,6 +716,7 @@ async function platformOverview() {
     buildTodayProductTypeQuery(start, endExclusive),
     buildTodayErrorsByStatusQuery(start, endExclusive),
     buildAnalyticsByModelQuery(start, endExclusive),
+    loadWorkbenchOps(now, { start, endExclusive }),
   ]);
   const tokens = Number(tokenRow?.tokens ?? 0);
   const yesterdayTokens = Number(yesterdayTokenRow?.tokens ?? 0);
@@ -738,6 +741,9 @@ async function platformOverview() {
       requestCount: Number(row.requestCount) || 0,
     })),
     { totalTokens: auditTotalTokens, requestCount: auditRequests },
+  );
+  const upstreamErrors = Number(
+    errorsByStatus.find((row) => String(row.key) === "upstream_error")?.requestCount ?? 0,
   );
   return {
     role: "admin" as const,
@@ -780,6 +786,17 @@ async function platformOverview() {
     ...ranks,
     byProviderToday: byProvider,
     recentErrors: errors,
+    keyPool: ops.keyPool,
+    seats: ops.seats,
+    tidal: ops.tidal,
+    sensitive: ops.sensitive,
+    attention: buildAttention({
+      keyPool: ops.keyPool,
+      tidal: ops.tidal,
+      storage: ops.storage,
+      today: { requests: today.requests, upstreamErrors },
+      timeZone: ops.timeZone,
+    }),
   };
 }
 

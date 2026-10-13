@@ -1,78 +1,151 @@
 <template>
   <div class="charts-page" v-loading="loading">
-    <div class="toolbar">
-      <el-button link type="primary" @click="router.push('/admin/usage')">用量分析</el-button>
-      <el-button :loading="loading" @click="load">刷新</el-button>
-    </div>
+    <section class="page-card attention-card" data-testid="attention">
+      <div class="chart-head">
+        <h3>
+          需要处理
+          <em v-if="attention.length" class="attention-count">{{ attention.length }}</em>
+        </h3>
+        <el-button :loading="loading" @click="load">刷新</el-button>
+      </div>
+      <div v-if="!attention.length" class="attention-clear">
+        <strong>一切正常</strong>
+        <span>Key 池、渠道、磁盘和授权都没有要跟进的事</span>
+      </div>
+      <div v-else class="attention-list">
+        <button
+          v-for="item in attention"
+          :key="item.key"
+          type="button"
+          class="attention-item"
+          :class="item.level"
+          data-testid="attention-item"
+          @click="openAttention(item)"
+        >
+          <i class="attention-dot" />
+          <span class="attention-text">
+            <span class="attention-title">{{ item.title }}</span>
+            <span class="attention-detail" :title="item.detail">{{ item.detail }}</span>
+          </span>
+          <span class="attention-go">去处理</span>
+        </button>
+      </div>
+    </section>
 
-    <div class="kpi-grid">
-      <div class="kpi-card accent">
-        <span class="kpi-label">今日 Tokens</span>
-        <strong class="kpi-value">{{ formatTokenCompact(today.tokens) }}</strong>
-        <span class="kpi-foot">{{ formatChangeFoot(today.tokensChange) }}</span>
-      </div>
-      <div class="kpi-card">
-        <span class="kpi-label">今日请求</span>
-        <strong class="kpi-value">{{ formatNumber(today.requests) }}</strong>
-        <span class="kpi-foot">{{ formatChangeFoot(today.requestsChange) }}</span>
-      </div>
-      <div class="kpi-card" :class="{ danger: today.errors > 0 }">
-        <span class="kpi-label">失败</span>
-        <strong class="kpi-value">{{ formatNumber(today.errors) }}</strong>
-        <span class="kpi-foot">
-          {{ today.requests > 0 ? formatPercent(today.errors / today.requests) : "—" }}
-          失败率
-        </span>
-      </div>
-      <div class="kpi-card">
-        <span class="kpi-label">活跃员工</span>
-        <strong class="kpi-value">{{ formatNumber(today.activeEmployees) }}</strong>
-        <span class="kpi-foot">今日有调用的人</span>
-      </div>
-      <div class="kpi-card">
-        <span class="kpi-label">缓存命中</span>
-        <strong class="kpi-value">{{ formatPercent(today.cacheHitRate) }}</strong>
-        <span class="kpi-foot">输入里命中的比例</span>
-      </div>
-      <div class="kpi-card">
-        <span class="kpi-label">次均 Token</span>
-        <strong class="kpi-value">{{ today.avgTokens == null ? "—" : formatTokenCompact(today.avgTokens) }}</strong>
-        <span class="kpi-foot">Token / 次</span>
-      </div>
-    </div>
-
-    <LogStorageCard />
-
-    <section class="page-card mix-card">
-      <div class="mix-row">
-        <div class="mix-block">
-          <div class="mix-legend">
-            <span><i class="dot prompt" />未缓存输入 {{ formatTokenCompact(composition.uncachedPrompt) }}</span>
-            <span><i class="dot cache" />缓存命中 {{ formatTokenCompact(composition.cacheRead) }}</span>
-            <span><i class="dot completion" />输出 {{ formatTokenCompact(composition.completion) }}</span>
+    <div class="chart-grid">
+      <section class="page-card chart-card" data-testid="key-pool">
+        <div class="chart-head">
+          <h3>渠道 Key 池</h3>
+          <el-button link type="primary" @click="router.push('/admin/keys-board')">KEYS看板</el-button>
+        </div>
+        <div class="pool-stats">
+          <div class="pool-stat">
+            <span class="pool-label">可用</span>
+            <strong class="pool-value" data-testid="pool-active">{{ keyPool.active }}</strong>
           </div>
-          <div class="mix-bar" aria-label="Token 构成">
-            <span class="seg prompt" :style="{ width: mixWidth(composition.uncachedPrompt, compositionTotal) }" />
-            <span class="seg cache" :style="{ width: mixWidth(composition.cacheRead, compositionTotal) }" />
-            <span class="seg completion" :style="{ width: mixWidth(composition.completion, compositionTotal) }" />
+          <div class="pool-stat">
+            <span class="pool-label">冷却中</span>
+            <strong class="pool-value" data-testid="pool-cooling">{{ keyPool.cooling }}</strong>
+          </div>
+          <div class="pool-stat" :class="{ danger: keyPool.autoDisabled > 0 }">
+            <span class="pool-label">自动停用</span>
+            <strong class="pool-value" data-testid="pool-auto-disabled">{{ keyPool.autoDisabled }}</strong>
+          </div>
+          <div class="pool-stat">
+            <span class="pool-label">手动停用</span>
+            <strong class="pool-value" data-testid="pool-disabled">{{ keyPool.disabled }}</strong>
           </div>
         </div>
-        <div class="mix-block">
+        <div v-for="bar in poolBars" :key="bar.key" class="mix-block pool-bar">
           <div class="mix-legend">
-            <span v-for="row in productTypeRows" :key="row.key">
-              {{ row.label }} {{ formatPercent(row.share) }}
+            <span>{{ bar.label }}</span>
+            <span class="peak">{{ formatPercent(bar.ratio) }}</span>
+          </div>
+          <div class="mix-bar" :aria-label="bar.label">
+            <span class="seg" :class="loadLevel(bar.ratio)" :style="{ width: mixWidth(bar.used, bar.capacity) }" />
+          </div>
+        </div>
+        <div v-if="loadedLines.length" class="rank-list pool-lines">
+          <button
+            v-for="line in loadedLines"
+            :key="line.productLineId"
+            type="button"
+            class="rank-row"
+            @click="openKeysBoard(line.productLineId)"
+          >
+            <span class="rank-title">{{ line.name }}</span>
+            <span class="rank-meta">可调度 {{ line.schedulable }} / {{ line.total }}</span>
+            <span class="rank-value" :class="loadLevel(line.peak)">
+              <template v-if="line.fiveHour">5 小时 {{ formatPercent(line.fiveHour.ratio) }}</template>
+              <template v-if="line.fiveHour && line.weekly"> · </template>
+              <template v-if="line.weekly">周 {{ formatPercent(line.weekly.ratio) }}</template>
             </span>
-            <span v-if="peakLabel" class="peak">{{ peakLabel }}</span>
-          </div>
-          <div class="mix-bar" aria-label="产品类型">
-            <span
-              v-for="row in productTypeRows"
-              :key="row.key"
-              class="seg"
-              :class="row.key"
-              :style="{ width: mixWidth(row.totalTokens, productTypeTotal) }"
-            />
-          </div>
+          </button>
+        </div>
+      </section>
+
+      <section class="page-card chart-card" data-testid="ops-status">
+        <div class="chart-head">
+          <h3>运行状态</h3>
+        </div>
+        <div class="rank-list">
+          <button
+            v-for="row in statusRows"
+            :key="row.key"
+            type="button"
+            class="status-row"
+            @click="router.push(row.to)"
+          >
+            <span class="status-label">{{ row.label }}</span>
+            <span class="status-detail" :class="{ danger: row.danger }">{{ row.detail }}</span>
+          </button>
+        </div>
+      </section>
+    </div>
+
+    <LogStorageCard id="log-storage" />
+
+    <section class="usage-block" data-testid="today-usage">
+      <div class="chart-head">
+        <h3>今日用量</h3>
+        <div class="head-actions">
+          <el-button link type="primary" @click="router.push('/admin/usage?range=today')">今日排行</el-button>
+          <el-button link type="primary" @click="router.push('/admin/usage')">用量分析</el-button>
+        </div>
+      </div>
+      <div class="kpi-grid">
+        <div class="kpi-card accent">
+          <span class="kpi-label">今日 Tokens</span>
+          <strong class="kpi-value">{{ formatTokenCompact(today.tokens) }}</strong>
+          <span class="kpi-foot">{{ formatChangeFoot(today.tokensChange) }}</span>
+        </div>
+        <div class="kpi-card">
+          <span class="kpi-label">今日请求</span>
+          <strong class="kpi-value">{{ formatNumber(today.requests) }}</strong>
+          <span class="kpi-foot">{{ formatChangeFoot(today.requestsChange) }}</span>
+        </div>
+        <div class="kpi-card" :class="{ danger: today.errors > 0 }">
+          <span class="kpi-label">失败</span>
+          <strong class="kpi-value">{{ formatNumber(today.errors) }}</strong>
+          <span class="kpi-foot">
+            {{ today.requests > 0 ? formatPercent(today.errors / today.requests) : "—" }}
+            失败率
+          </span>
+        </div>
+        <div class="kpi-card">
+          <span class="kpi-label">活跃员工</span>
+          <strong class="kpi-value">{{ formatNumber(today.activeEmployees) }}</strong>
+          <span class="kpi-foot">今日有调用的人</span>
+        </div>
+        <div class="kpi-card">
+          <span class="kpi-label">缓存命中</span>
+          <strong class="kpi-value">{{ formatPercent(today.cacheHitRate) }}</strong>
+          <span class="kpi-foot">输入里命中的比例</span>
+        </div>
+        <div class="kpi-card">
+          <span class="kpi-label">次均 Token</span>
+          <strong class="kpi-value">{{ today.avgTokens == null ? "—" : formatTokenCompact(today.avgTokens) }}</strong>
+          <span class="kpi-foot">Token / 次</span>
         </div>
       </div>
     </section>
@@ -93,129 +166,6 @@
         <UsageChart :option="requestTrendOption" height="280px" />
       </section>
     </div>
-
-    <div class="chart-grid">
-      <section class="page-card chart-card">
-        <div class="chart-head">
-          <h3>组织消耗</h3>
-          <el-radio-group v-model="rankLevel">
-            <el-radio-button
-              v-for="level in rankLevels"
-              :key="level.value"
-              :value="level.value"
-            >
-              {{ level.label }}
-            </el-radio-button>
-          </el-radio-group>
-        </div>
-        <el-empty v-if="!orgRows.length" description="今日暂无组织用量" :image-size="64" />
-        <div v-else class="rank-list">
-          <button
-            v-for="row in orgRows"
-            :key="row.key"
-            type="button"
-            class="rank-row"
-            @click="openLogs"
-          >
-            <span class="rank-label">
-              <span class="rank-title">{{ row.name }}</span>
-              <span v-if="row.sub" class="rank-sub">{{ row.sub }}</span>
-            </span>
-            <span class="rank-meta">{{ formatNumber(row.requestCount) }} 次 · {{ formatPercent(row.share) }}</span>
-            <span class="rank-value">{{ formatTokenCompact(row.totalTokens) }}</span>
-          </button>
-        </div>
-      </section>
-      <section class="page-card chart-card">
-        <div class="chart-head">
-          <h3>模型消耗</h3>
-        </div>
-        <el-empty v-if="!modelRows.length" description="今日暂无模型用量" :image-size="64" />
-        <div v-else class="rank-list">
-          <div v-for="row in modelRows" :key="row.key" class="rank-row static">
-            <span class="rank-title">{{ row.name }}</span>
-            <span class="rank-meta">{{ formatNumber(row.requestCount) }} 次 · {{ formatPercent(row.share) }}</span>
-            <span class="rank-value">{{ formatTokenCompact(row.totalTokens) }}</span>
-          </div>
-        </div>
-      </section>
-    </div>
-
-    <div class="chart-grid">
-      <section class="page-card chart-card">
-        <div class="chart-head">
-          <h3>渠道消耗</h3>
-        </div>
-        <el-empty v-if="!channelRows.length" description="今日暂无渠道用量" :image-size="64" />
-        <div v-else class="rank-list">
-          <button
-            v-for="row in channelRows"
-            :key="row.key"
-            type="button"
-            class="rank-row"
-            @click="openLogs"
-          >
-            <span class="rank-title">{{ row.name }}</span>
-            <span class="rank-meta">
-              {{ formatNumber(row.requestCount) }} 次
-              <template v-if="row.errors > 0"> · 失败 {{ formatNumber(row.errors) }}</template>
-              · {{ formatPercent(row.share) }}
-            </span>
-            <span class="rank-value">{{ formatTokenCompact(row.totalTokens) }}</span>
-          </button>
-        </div>
-      </section>
-      <section class="page-card chart-card">
-        <div class="chart-head">
-          <h3>今天的问题</h3>
-          <el-button v-if="today.errors > 0" link type="primary" @click="openErrorLogs">
-            报错日志
-          </el-button>
-        </div>
-        <el-empty v-if="!hasIssues" description="今日暂无失败" :image-size="64" />
-        <div v-else class="issue-stack">
-          <div v-if="errorStatusRows.length" class="mix-block">
-            <div class="mix-legend">
-              <span v-for="row in errorStatusRows" :key="row.key">
-                {{ row.label }} {{ formatNumber(row.requestCount) }}
-              </span>
-            </div>
-            <div class="mix-bar" aria-label="失败类型">
-              <span
-                v-for="row in errorStatusRows"
-                :key="row.key"
-                class="seg"
-                :class="row.key"
-                :style="{ width: mixWidth(row.requestCount, errorStatusTotal) }"
-              />
-            </div>
-          </div>
-          <button
-            v-for="row in recentErrors"
-            :key="row.requestId || row.createdAt"
-            type="button"
-            class="issue-row"
-            @click="openErrorLogs"
-          >
-            <span class="issue-title">{{ row.employeeName || "—" }} · {{ row.clientModel || "—" }}</span>
-            <span class="issue-sub">
-              {{ [row.enterpriseName, row.departmentName].filter(Boolean).join(" · ") || "—" }}
-              · {{ errorStatusLabel(row.status) }}
-              · {{ formatClock(row.createdAt) }}
-            </span>
-          </button>
-          <button
-            v-if="unavailableChannels > 0"
-            type="button"
-            class="issue-row warn"
-            @click="openChannels"
-          >
-            <span class="issue-title">{{ unavailableChannels }} 条启用渠道没有可调度 Key</span>
-            <span class="issue-sub">去上游处理</span>
-          </button>
-        </div>
-      </section>
-    </div>
   </div>
 </template>
 
@@ -230,8 +180,6 @@ import LogStorageCard from "./LogStorageCard.vue";
 import { formatTokenCompact } from "@/lib/tokens";
 import { formatChangeFoot, formatPercent } from "@/lib/workbench-today";
 
-type RankLevel = "enterprise" | "department" | "employee";
-
 type TrendPoint = {
   day: string;
   promptTokens: number;
@@ -242,10 +190,28 @@ type TrendPoint = {
   errorCount: number;
 };
 
-type NamedCount = {
+type WindowLoad = {
+  used?: number;
+  capacity?: number;
+  ratio?: number;
+  nextResetAt?: string | null;
+};
+
+type KeyPoolLine = {
+  productLineId: number;
+  name?: string;
+  total?: number;
+  schedulable?: number;
+  fiveHour?: WindowLoad | null;
+  weekly?: WindowLoad | null;
+};
+
+type AttentionItem = {
   key: string;
-  totalTokens?: number;
-  requestCount?: number;
+  level: "danger" | "warn";
+  title: string;
+  detail: string;
+  to: string;
 };
 
 type WorkbenchData = {
@@ -254,72 +220,34 @@ type WorkbenchData = {
     requests?: number;
     tokens?: number;
     errors?: number;
-    promptTokens?: number;
-    cacheReadTokens?: number;
-    completionTokens?: number;
     cacheHitRate?: number | null;
     avgTokens?: number | null;
     activeEmployees?: number;
     tokensChange?: number | null;
     requestsChange?: number | null;
   };
-  composition?: {
-    uncachedPrompt?: number;
-    cacheRead?: number;
-    completion?: number;
-  };
-  peakHour?: { hour?: string; totalTokens?: number } | null;
-  productTypes?: NamedCount[];
   errorsByStatus?: Array<{ key?: string; requestCount?: number }>;
   trend?: TrendPoint[];
-  byModel?: NamedCount[];
-  topEnterprisesToday?: Array<{
-    enterpriseName?: string;
-    totalTokens?: number;
-    requestCount?: number;
-  }>;
-  topDepartmentsToday?: Array<{
-    departmentName?: string;
-    enterpriseName?: string;
-    totalTokens?: number;
-    requestCount?: number;
-  }>;
-  topMembersToday?: Array<{
-    employeeName?: string;
-    departmentName?: string;
-    enterpriseName?: string;
-    totalTokens?: number;
-    requestCount?: number;
-  }>;
-  byProviderToday?: Array<{
-    providerCode?: string | null;
-    requests?: number;
-    tokens?: number;
-    errors?: number;
-  }>;
-  recentErrors?: Array<{
-    requestId?: string;
-    enterpriseName?: string;
-    departmentName?: string;
-    employeeName?: string;
-    clientModel?: string;
-    status?: string;
-    createdAt?: string;
-  }>;
-  channels?: { unavailable?: number };
-};
-
-const PROVIDER_META: Record<string, string> = {
-  glm: "智谱/GLM",
-  kimi: "月之暗面/Kimi",
-  deepseek: "深度求索/DeepSeek",
-  minimax: "MiniMax",
-};
-
-const PRODUCT_TYPE_LABEL: Record<string, string> = {
-  api: "按量 API",
-  coding_plan: "编程套餐",
-  unknown: "未知",
+  keyPool?: {
+    active?: number;
+    cooling?: number;
+    autoDisabled?: number;
+    disabled?: number;
+    fiveHour?: WindowLoad | null;
+    weekly?: WindowLoad | null;
+    lines?: KeyPoolLine[];
+  };
+  seats?: { registered?: number; submitted?: number; capacity?: number };
+  tidal?: {
+    enabled?: boolean;
+    windowOpen?: boolean;
+    windowStart?: string;
+    windowEnd?: string;
+    inFlight?: number;
+    grants?: { total?: number; expired?: number; expiringSoon?: number };
+  };
+  sensitive?: { detectToday?: number; interceptToday?: number };
+  attention?: AttentionItem[];
 };
 
 const ERROR_STATUS_LABEL: Record<string, string> = {
@@ -331,12 +259,6 @@ const ERROR_STATUS_LABEL: Record<string, string> = {
 const router = useRouter();
 const loading = ref(false);
 const data = ref<WorkbenchData | null>(null);
-const rankLevel = ref<RankLevel>("enterprise");
-const rankLevels = [
-  { value: "enterprise" as const, label: "企业" },
-  { value: "department" as const, label: "部门" },
-  { value: "employee" as const, label: "员工" },
-];
 
 const today = computed(() => ({
   requests: Number(data.value?.today?.requests) || 0,
@@ -349,37 +271,100 @@ const today = computed(() => ({
   requestsChange: data.value?.today?.requestsChange ?? null,
 }));
 
-const composition = computed(() => ({
-  uncachedPrompt: Number(data.value?.composition?.uncachedPrompt) || 0,
-  cacheRead: Number(data.value?.composition?.cacheRead) || 0,
-  completion: Number(data.value?.composition?.completion) || 0,
+const attention = computed(() => data.value?.attention ?? []);
+
+const keyPool = computed(() => ({
+  active: Number(data.value?.keyPool?.active) || 0,
+  cooling: Number(data.value?.keyPool?.cooling) || 0,
+  autoDisabled: Number(data.value?.keyPool?.autoDisabled) || 0,
+  disabled: Number(data.value?.keyPool?.disabled) || 0,
 }));
 
-const compositionTotal = computed(() =>
-  composition.value.uncachedPrompt + composition.value.cacheRead + composition.value.completion,
-);
-
-const productTypeRows = computed(() => {
-  const rows = (data.value?.productTypes ?? []).map((row) => ({
-    key: row.key || "unknown",
-    label: PRODUCT_TYPE_LABEL[row.key || ""] ?? row.key ?? "未知",
-    totalTokens: Number(row.totalTokens) || 0,
-    share: shareOf(Number(row.totalTokens) || 0, productTypeTotal.value),
-  }));
-  return rows.filter((row) => row.totalTokens > 0);
+const poolBars = computed(() => {
+  const pool = data.value?.keyPool;
+  return [
+    { key: "fiveHour", label: "5 小时积分（设了上限的套餐合计）", load: pool?.fiveHour },
+    { key: "weekly", label: "周积分（设了上限的套餐合计）", load: pool?.weekly },
+  ]
+    .filter((bar) => bar.load)
+    .map((bar) => ({
+      key: bar.key,
+      label: bar.label,
+      used: Number(bar.load?.used) || 0,
+      capacity: Number(bar.load?.capacity) || 0,
+      ratio: Number(bar.load?.ratio) || 0,
+    }));
 });
 
-const productTypeTotal = computed(() =>
-  (data.value?.productTypes ?? []).reduce((sum, row) => sum + (Number(row.totalTokens) || 0), 0),
+/** 设了积分上限的渠道，用得最多的排前面。 */
+const loadedLines = computed(() =>
+  (data.value?.keyPool?.lines ?? [])
+    .filter((line) => line.fiveHour || line.weekly)
+    .map((line) => ({
+      productLineId: line.productLineId,
+      name: line.name || "—",
+      total: Number(line.total) || 0,
+      schedulable: Number(line.schedulable) || 0,
+      fiveHour: line.fiveHour ?? null,
+      weekly: line.weekly ?? null,
+      peak: Math.max(Number(line.fiveHour?.ratio) || 0, Number(line.weekly?.ratio) || 0),
+    }))
+    .sort((a, b) => b.peak - a.peak)
+    .slice(0, 6),
 );
 
-const peakLabel = computed(() => {
-  const hour = data.value?.peakHour?.hour;
-  if (!hour) return "";
-  const start = Number(hour.slice(0, 2));
-  if (!Number.isFinite(start)) return `高峰 ${hour}`;
-  const end = start === 23 ? "24:00" : `${String(start + 1).padStart(2, "0")}:00`;
-  return `高峰 ${hour}–${end}`;
+const statusRows = computed(() => {
+  const seats = data.value?.seats;
+  const registered = Number(seats?.registered) || 0;
+  const submitted = Number(seats?.submitted) || 0;
+  const capacity = Number(seats?.capacity) || 0;
+  const tidal = data.value?.tidal;
+  const grants = tidal?.grants;
+  const expiredGrants = Number(grants?.expired) || 0;
+  const intercepts = Number(data.value?.sensitive?.interceptToday) || 0;
+  return [
+    {
+      key: "seats",
+      label: "席位",
+      detail: [
+        capacity > 0 ? `已登记 ${registered} / ${capacity}` : `已登记 ${registered}`,
+        `已提交 KEY ${submitted}`,
+        registered > submitted ? `待提交 ${registered - submitted}` : "",
+      ].filter(Boolean).join(" · "),
+      danger: false,
+      to: "/admin/temp-channels",
+    },
+    {
+      key: "tidal",
+      label: "潮汐调度",
+      detail: tidal?.enabled
+        ? [
+          `${tidal.windowOpen ? "开放中" : "未到开放时段"} ${tidalWindow(tidal.windowStart, tidal.windowEnd)}`,
+          `在途 ${Number(tidal.inFlight) || 0}`,
+          `授权 ${Number(grants?.total) || 0} 人`,
+          expiredGrants > 0 ? `已过期 ${expiredGrants}` : "",
+        ].filter(Boolean).join(" · ")
+        : "未开启",
+      danger: false,
+      to: "/admin/tidal",
+    },
+    {
+      key: "sensitive",
+      label: "敏感词",
+      detail: `今日拦截 ${intercepts} · 检测 ${Number(data.value?.sensitive?.detectToday) || 0}`,
+      danger: intercepts > 0,
+      to: intercepts > 0 ? "/admin/sensitive-intercept-records" : "/admin/sensitive-detect-records",
+    },
+    {
+      key: "errors",
+      label: "今日失败",
+      detail: errorStatusRows.value.length
+        ? errorStatusRows.value.map((row) => `${row.label} ${formatNumber(row.requestCount)}`).join(" · ")
+        : "暂无",
+      danger: false,
+      to: "/admin/error-logs",
+    },
+  ];
 });
 
 const axisLabels = computed(() =>
@@ -449,62 +434,6 @@ const requestTrendOption = computed<EChartsCoreOption>(() => {
   };
 });
 
-const orgRows = computed(() => {
-  if (rankLevel.value === "department") {
-    return (data.value?.topDepartmentsToday ?? []).map((row, index) => ({
-      key: `dept-${index}`,
-      name: [row.enterpriseName, row.departmentName].filter(Boolean).join(" · ") || "—",
-      sub: "",
-      totalTokens: Number(row.totalTokens) || 0,
-      requestCount: Number(row.requestCount) || 0,
-      share: shareOf(Number(row.totalTokens) || 0, today.value.tokens),
-    }));
-  }
-  if (rankLevel.value === "employee") {
-    return (data.value?.topMembersToday ?? []).map((row, index) => ({
-      key: `emp-${index}`,
-      name: row.employeeName || "—",
-      sub: [row.enterpriseName, row.departmentName].filter(Boolean).join(" · "),
-      totalTokens: Number(row.totalTokens) || 0,
-      requestCount: Number(row.requestCount) || 0,
-      share: shareOf(Number(row.totalTokens) || 0, today.value.tokens),
-    }));
-  }
-  return (data.value?.topEnterprisesToday ?? []).map((row, index) => ({
-    key: `ent-${index}`,
-    name: row.enterpriseName || "—",
-    sub: "",
-    totalTokens: Number(row.totalTokens) || 0,
-    requestCount: Number(row.requestCount) || 0,
-    share: shareOf(Number(row.totalTokens) || 0, today.value.tokens),
-  }));
-});
-
-const modelRows = computed(() => {
-  const source = data.value?.byModel ?? [];
-  const total = source.reduce((sum, row) => sum + (Number(row.totalTokens) || 0), 0);
-  return source.map((row) => ({
-    key: row.key || "unknown",
-    name: row.key === "other" ? "其他" : row.key || "—",
-    totalTokens: Number(row.totalTokens) || 0,
-    requestCount: Number(row.requestCount) || 0,
-    share: shareOf(Number(row.totalTokens) || 0, total),
-  })).filter((row) => row.totalTokens > 0);
-});
-
-const channelRows = computed(() => {
-  const source = data.value?.byProviderToday ?? [];
-  const total = source.reduce((sum, row) => sum + (Number(row.tokens) || 0), 0);
-  return source.map((row) => ({
-    key: String(row.providerCode ?? "unknown"),
-    name: providerLabel(String(row.providerCode ?? "")),
-    totalTokens: Number(row.tokens) || 0,
-    requestCount: Number(row.requests) || 0,
-    errors: Number(row.errors) || 0,
-    share: shareOf(Number(row.tokens) || 0, total),
-  })).filter((row) => row.totalTokens > 0 || row.requestCount > 0);
-});
-
 const errorStatusRows = computed(() =>
   (data.value?.errorsByStatus ?? []).map((row) => ({
     key: row.key || "unknown",
@@ -512,21 +441,6 @@ const errorStatusRows = computed(() =>
     requestCount: Number(row.requestCount) || 0,
   })).filter((row) => row.requestCount > 0),
 );
-
-const errorStatusTotal = computed(() =>
-  errorStatusRows.value.reduce((sum, row) => sum + row.requestCount, 0),
-);
-
-const recentErrors = computed(() => (data.value?.recentErrors ?? []).slice(0, 5));
-const unavailableChannels = computed(() => Number(data.value?.channels?.unavailable) || 0);
-const hasIssues = computed(() =>
-  Boolean(errorStatusRows.value.length || recentErrors.value.length || unavailableChannels.value > 0),
-);
-
-function shareOf(part: number, total: number): number | null {
-  if (!(total > 0)) return null;
-  return part / total;
-}
 
 function mixWidth(part: number, total: number): string {
   if (!(total > 0) || !(part > 0)) return "0%";
@@ -554,21 +468,16 @@ function formatNumber(value: unknown): string {
   return new Intl.NumberFormat("zh-CN").format(n);
 }
 
-function formatClock(value?: string) {
-  if (!value) return "—";
-  const date = new Date(value);
-  if (!Number.isFinite(date.getTime())) return "—";
-  return new Intl.DateTimeFormat("zh-CN", {
-    timeZone: data.value?.range?.timezone ?? "Asia/Shanghai",
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23",
-  }).format(date);
+function tidalWindow(start?: string, end?: string): string {
+  if (!start || !end) return "";
+  return start === end ? "全天" : `${start}–${end}`;
 }
 
-function providerLabel(code: string): string {
-  if (!code || code === "unknown") return "未知渠道";
-  return PROVIDER_META[code] ?? code;
+/** 与待办的提醒线一致：80% 提醒，95% 紧急。 */
+function loadLevel(ratio: number): string {
+  if (ratio >= 0.95) return "danger";
+  if (ratio >= 0.8) return "warn";
+  return "calm";
 }
 
 function errorStatusLabel(code?: string): string {
@@ -576,16 +485,16 @@ function errorStatusLabel(code?: string): string {
   return ERROR_STATUS_LABEL[code] ?? code;
 }
 
-function openLogs() {
-  void router.push("/admin/logs");
+function openKeysBoard(productLineId: number) {
+  void router.push({ path: "/admin/keys-board", query: { channelId: String(productLineId) } });
 }
 
-function openErrorLogs() {
-  void router.push("/admin/error-logs");
-}
-
-function openChannels() {
-  void router.push("/admin/temp-channels");
+function openAttention(item: AttentionItem) {
+  if (item.to.startsWith("#")) {
+    document.getElementById(item.to.slice(1))?.scrollIntoView({ behavior: "smooth", block: "center" });
+    return;
+  }
+  void router.push(item.to);
 }
 
 async function load() {
@@ -614,11 +523,154 @@ onMounted(load);
   gap: 16px;
   min-width: 0;
 }
-.toolbar {
+.attention-count {
+  display: inline-block;
+  min-width: 20px;
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: #dc2626;
+  color: #ffffff;
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 600;
+  line-height: 20px;
+  text-align: center;
+  vertical-align: 2px;
+}
+.attention-clear {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid #bbf7d0;
+  border-radius: 8px;
+  background: #f0fdf4;
+}
+.attention-clear strong {
+  color: #15803d;
+  font-size: 15px;
+  font-weight: 650;
+}
+.attention-clear span {
+  color: #64748b;
+  font-size: 13px;
+}
+.attention-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.attention-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid #fed7aa;
+  border-radius: 8px;
+  background: #fff7ed;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.attention-item.danger {
+  border-color: #fecaca;
+  background: #fef2f2;
+}
+.attention-item:hover {
+  filter: brightness(0.98);
+}
+.attention-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #ea580c;
+}
+.attention-item.danger .attention-dot {
+  background: #dc2626;
+}
+.attention-text {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+.attention-title {
+  color: #0f172a;
+  font-size: 14px;
+  font-weight: 600;
+}
+.attention-detail {
+  overflow: hidden;
+  color: #64748b;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.attention-go {
+  color: #2563eb;
+  font-size: 13px;
+  white-space: nowrap;
+}
+.pool-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.pool-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+.pool-stat.danger {
+  border-color: #fecaca;
+  background: #fef2f2;
+}
+.pool-label {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 600;
+}
+.pool-value {
+  color: #0f172a;
+  font-size: 22px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  line-height: 1.1;
+}
+.pool-stat.danger .pool-value {
+  color: #dc2626;
+}
+.pool-bar {
+  margin-bottom: 12px;
+}
+.pool-lines {
+  margin-top: 4px;
+  border-top: 1px solid #eef2f7;
+  padding-top: 8px;
+}
+.usage-block {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+/* 这一块没有卡片边框，标题缩进到与上面卡片的标题对齐。 */
+.usage-block > .chart-head {
+  padding: 0 20px;
+}
+.head-actions {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
+  gap: 4px;
 }
 .kpi-grid {
   display: grid;
@@ -660,14 +712,6 @@ onMounted(load);
   color: #94a3b8;
   font-size: 12px;
 }
-.mix-card {
-  padding: 16px 20px;
-}
-.mix-row {
-  display: grid;
-  grid-template-columns: 1.4fr 1fr;
-  gap: 24px;
-}
 .mix-block {
   display: flex;
   flex-direction: column;
@@ -686,16 +730,6 @@ onMounted(load);
   color: #0f172a;
   font-weight: 600;
 }
-.dot {
-  display: inline-block;
-  width: 8px;
-  height: 8px;
-  margin-right: 6px;
-  border-radius: 50%;
-}
-.dot.prompt { background: #2563eb; }
-.dot.cache { background: #0d9488; }
-.dot.completion { background: #7c3aed; }
 .mix-bar {
   display: flex;
   height: 8px;
@@ -704,15 +738,9 @@ onMounted(load);
   background: #e2e8f0;
 }
 .seg { height: 100%; }
-.seg.prompt { background: #2563eb; }
-.seg.cache { background: #0d9488; }
-.seg.completion { background: #7c3aed; }
-.seg.api { background: #2563eb; }
-.seg.coding_plan { background: #7c3aed; }
-.seg.unknown { background: #94a3b8; }
-.seg.upstream_error { background: #dc2626; }
-.seg.client_error { background: #ea580c; }
-.seg.cancelled { background: #64748b; }
+.seg.calm { background: #2563eb; }
+.seg.warn { background: #ea580c; }
+.seg.danger { background: #dc2626; }
 .chart-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -734,7 +762,7 @@ onMounted(load);
   font-size: 16px;
   font-weight: 650;
 }
-.chart-head span {
+.chart-head > span {
   color: #94a3b8;
   font-size: 12px;
 }
@@ -743,9 +771,9 @@ onMounted(load);
   flex-direction: column;
   gap: 2px;
 }
-.rank-row {
+.rank-row,
+.status-row {
   display: grid;
-  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) auto;
   gap: 12px;
   align-items: baseline;
   width: 100%;
@@ -757,19 +785,18 @@ onMounted(load);
   color: inherit;
   font: inherit;
   text-align: left;
-}
-button.rank-row {
   cursor: pointer;
 }
-.rank-row:hover,
-.rank-row.static:hover {
-  background: #f1f5f9;
+.rank-row {
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) auto;
 }
-.rank-label {
-  display: flex;
-  min-width: 0;
-  align-items: baseline;
-  gap: 8px;
+.status-row {
+  grid-template-columns: 72px minmax(0, 1fr);
+  min-height: 44px;
+}
+.rank-row:hover,
+.status-row:hover {
+  background: #f1f5f9;
 }
 .rank-title {
   overflow: hidden;
@@ -779,7 +806,6 @@ button.rank-row {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.rank-sub,
 .rank-meta {
   overflow: hidden;
   color: #94a3b8;
@@ -793,45 +819,26 @@ button.rank-row {
   font-variant-numeric: tabular-nums;
   font-weight: 650;
 }
-.issue-stack {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.issue-row {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  width: 100%;
-  padding: 8px 10px;
-  border: 1px solid #eef2f7;
-  border-radius: 8px;
-  background: #f8fafc;
-  color: inherit;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-.issue-row.warn {
-  border-color: #fed7aa;
-  background: #fff7ed;
-}
-.issue-title {
-  color: #0f172a;
+.rank-value.warn { color: #c2410c; }
+.rank-value.danger { color: #dc2626; }
+.status-label {
+  color: #64748b;
   font-size: 13px;
   font-weight: 600;
 }
-.issue-sub {
-  color: #94a3b8;
-  font-size: 12px;
+.status-detail {
+  color: #0f172a;
+  font-size: 14px;
+}
+.status-detail.danger {
+  color: #dc2626;
 }
 @media (max-width: 1100px) {
-  .kpi-grid,
-  .chart-grid,
-  .mix-row {
+  .chart-grid {
     grid-template-columns: 1fr;
   }
-  .kpi-grid {
+  .kpi-grid,
+  .pool-stats {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }

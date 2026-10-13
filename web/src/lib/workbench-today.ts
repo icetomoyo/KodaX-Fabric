@@ -28,12 +28,12 @@ export function addCalendarDays(value: string, days: number): string {
 }
 
 export function analysisWindow(
-  preset: "7d" | "30d",
+  preset: "today" | "7d" | "30d",
   now = new Date(),
   timeZone = "Asia/Shanghai",
 ): { from: string; to: string } {
   const to = quotaDayAt(now, timeZone);
-  const span = preset === "7d" ? 7 : 30;
+  const span = preset === "today" ? 1 : preset === "7d" ? 7 : 30;
   return { from: addCalendarDays(to, -(span - 1)), to };
 }
 
