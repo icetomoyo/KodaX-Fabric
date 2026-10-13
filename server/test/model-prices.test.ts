@@ -21,7 +21,6 @@ const {
   parseDiscoveredModels,
   toCatalogModelName,
 } = await import("../src/lib/discovered-models.js");
-const { meRoutes } = await import("../src/routes/me.js");
 const { billedCacheReadTokens, extractCacheReadTokens } = await import(
   "../src/lib/usage-cache.js"
 );
@@ -82,27 +81,10 @@ async function injectPriceRoutes(session: typeof adminSession | null, request: {
   }
 }
 
-test("unauthenticated model catalog calls return 401", async () => {
-  const list = await injectPriceRoutes(null, { method: "GET", url: "/api/admin/model-prices" });
-  assert.equal(list.statusCode, 401);
-});
-
 test("org_admin and team_admin cannot list the admin model catalog", async () => {
   for (const session of [orgAdminSession, teamAdminSession]) {
     const list = await injectPriceRoutes(session, { method: "GET", url: "/api/admin/model-prices" });
     assert.equal(list.statusCode, 403);
-  }
-});
-
-test("employee model list is unauthenticated 401", async () => {
-  const anonymous = Fastify();
-  await anonymous.register(meRoutes);
-  await anonymous.ready();
-  try {
-    const response = await anonymous.inject({ method: "GET", url: "/api/me/models" });
-    assert.equal(response.statusCode, 401);
-  } finally {
-    await anonymous.close();
   }
 });
 

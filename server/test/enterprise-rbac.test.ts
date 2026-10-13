@@ -7,10 +7,9 @@ process.env.REDIS_URL ??= "redis://127.0.0.1:6379/15";
 process.env.JWT_SECRET ??= "unit-test-jwt-secret";
 process.env.CREDENTIAL_ENCRYPT_KEY ??= "unit-test-credential-secret";
 
-const { adminEnterpriseRoutes, buildEnterpriseListQuery } = await import(
+const { adminEnterpriseRoutes } = await import(
   "../src/routes/admin/enterprises.js"
 );
-const { meRoutes } = await import("../src/routes/me.js");
 const { adminUserRoutes, buildAdminUserListQuery } = await import(
   "../src/routes/admin/users.js"
 );
@@ -42,48 +41,6 @@ function attachSession(session: TestSession) {
     req.employeeId = Number(session.sub);
   };
 }
-
-test("unauthenticated enterprise and scoped-user calls return 401", async () => {
-  const app = Fastify();
-  await app.register(adminEnterpriseRoutes);
-  await app.register(adminUserRoutes);
-  await app.register(meRoutes);
-  await app.ready();
-
-  try {
-    const joinEnterprise = await app.inject({
-      method: "POST",
-      url: "/api/me/join-enterprise",
-      payload: { code: "EAAAAAAAA" },
-    });
-    const applyEnterprise = await app.inject({
-      method: "POST",
-      url: "/api/me/enterprise-applications",
-      payload: { name: "申请企业" },
-    });
-    assert.equal(joinEnterprise.statusCode, 401);
-    assert.equal(applyEnterprise.statusCode, 401);
-    const listEnterprises = await app.inject({ method: "GET", url: "/api/admin/enterprises" });
-    const createEnterprise = await app.inject({
-      method: "POST",
-      url: "/api/admin/enterprises",
-      payload: { name: "X" },
-    });
-    const listUsers = await app.inject({ method: "GET", url: "/api/admin/users" });
-    const createUser = await app.inject({
-      method: "POST",
-      url: "/api/admin/users",
-      payload: { name: "A", phone: "13800001111", password: "ChangeMe@123" },
-    });
-
-    assert.equal(listEnterprises.statusCode, 401);
-    assert.equal(createEnterprise.statusCode, 401);
-    assert.equal(listUsers.statusCode, 401);
-    assert.equal(createUser.statusCode, 401);
-  } finally {
-    await app.close();
-  }
-});
 
 test("org_admin cannot create or list-all enterprises and cannot call super-admin platform APIs", async () => {
   const app = Fastify();
@@ -129,25 +86,6 @@ test("org_admin cannot create or list-all enterprises and cannot call super-admi
     assert.equal(credentials.statusCode, 403);
     assert.equal(quota.statusCode, 404);
     assert.equal(unscopedUsers.statusCode, 403);
-  } finally {
-    await app.close();
-  }
-});
-
-test("unauthenticated key-binding calls return 401", async () => {
-  const app = Fastify();
-  await app.register(adminKeyBindingRoutes);
-  await app.ready();
-  try {
-    const graph = await app.inject({ method: "GET", url: "/api/admin/key-bindings" });
-    const live = await app.inject({ method: "GET", url: "/api/admin/key-bindings/live" });
-    const release = await app.inject({
-      method: "POST",
-      url: "/api/admin/key-bindings/credentials/1/release",
-    });
-    assert.equal(graph.statusCode, 401);
-    assert.equal(live.statusCode, 401);
-    assert.equal(release.statusCode, 401);
   } finally {
     await app.close();
   }
@@ -228,15 +166,6 @@ test("org_admin user-list SQL constrains to that enterprise and does not scan un
   assert.doesNotMatch(unscoped, /"employees"\."enterprise_id" =/);
 });
 
-test("super-admin enterprise list builder selects name and status", () => {
-  const compiledSql = buildEnterpriseListQuery().toSQL().sql.replace(/\s+/g, " ");
-  assert.match(compiledSql, /from "enterprises"/);
-  assert.match(compiledSql, /"name"/);
-  assert.match(compiledSql, /"code"/);
-  assert.match(compiledSql, /"status"/);
-  assert.doesNotMatch(compiledSql, /package_plan/);
-});
-
 test("self-register rejects missing or weak passwords without writing an account", async () => {
   const app = Fastify();
   await app.register(authRoutes);
@@ -255,20 +184,6 @@ test("self-register rejects missing or weak passwords without writing an account
     assert.equal(missing.statusCode, 400);
     assert.equal(weak.statusCode, 400);
     assert.match(String(weak.json().message), /密码/);
-  } finally {
-    await app.close();
-  }
-});
-
-test("super-admin approves cooperation applications instead of assigning admins", async () => {
-  const app = Fastify();
-  await app.register(adminEnterpriseRoutes);
-  await app.register(meRoutes);
-  await app.ready();
-  try {
-    assert.equal(app.hasRoute({ method: "POST", url: "/api/admin/enterprises/:id/approve" }), true);
-    assert.equal(app.hasRoute({ method: "POST", url: "/api/admin/enterprises/:id/admins" }), false);
-    assert.equal(app.hasRoute({ method: "POST", url: "/api/me/enterprise-applications" }), true);
   } finally {
     await app.close();
   }

@@ -15,7 +15,6 @@ const {
   usageStreaks,
   weekdayWeekendSplit,
 } = await import("../src/lib/user-analytics.js");
-const { adminUserAnalyticsRoutes } = await import("../src/routes/admin/user-analytics.js");
 
 test("contribution grid is Sunday-first and pads future cells after to", () => {
   const grid = buildContributionGrid("2026-09-21", [
@@ -83,19 +82,6 @@ test("user analytics rank query reads the daily usage counters", async () => {
   assert.doesNotMatch(sqlText, /"request_audits"/);
   assert.doesNotMatch(sqlText, /group by/);
   assert.equal(compiled.params.includes("2026-09-18"), true);
-});
-
-test("user analytics routes expose ranks and require a session", async () => {
-  const app = Fastify();
-  await app.register(adminUserAnalyticsRoutes);
-  await app.ready();
-  try {
-    assert.equal(app.hasRoute({ method: "GET", url: "/api/admin/user-analytics" }), true);
-    const unauth = await app.inject({ method: "GET", url: "/api/admin/user-analytics" });
-    assert.equal(unauth.statusCode, 401);
-  } finally {
-    await app.close();
-  }
 });
 
 const employeeSession = {

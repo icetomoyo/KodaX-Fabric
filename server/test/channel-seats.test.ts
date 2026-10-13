@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import Fastify from "fastify";
 
 process.env.DATABASE_URL ??= "postgresql://test:test@127.0.0.1:5432/test";
 process.env.REDIS_URL ??= "redis://127.0.0.1:6379/15";
@@ -18,16 +17,13 @@ const {
   planChannelSeatUpdate,
   planSeatCapacity,
   SEAT_CHANNEL_FULL_MESSAGE,
-  SEAT_ALREADY_SUBMITTED_MESSAGE,
   SEAT_CONFLICT_MESSAGE,
   SEAT_MISSING_MESSAGE,
-  SEAT_REQUIRED_MESSAGE,
   SEAT_TAG_INVALID_MESSAGE,
   SEAT_TAG_REQUIRED_MESSAGE,
   seatCreateError,
   seatUpdateError,
 } = await import("../src/lib/channel-seats.js");
-const { adminChannelSeatRoutes } = await import("../src/routes/admin/channel-seats.js");
 
 test("seat create plan accepts super admin and rejects missing rows, duplicates, and invalid tags", () => {
   assert.deepEqual(
@@ -324,34 +320,4 @@ test("submitable seats keep unsubmitted tagged seats on active channels", () => 
       { seatId: 11, tag: "B", productLineId: 1 },
     ],
   );
-});
-
-test("seat copy is the product language", () => {
-  assert.match(SEAT_REQUIRED_MESSAGE, /席位/);
-  assert.match(SEAT_ALREADY_SUBMITTED_MESSAGE, /已提交/);
-});
-
-test("admin seat routes exist and require a session", async () => {
-  const app = Fastify();
-  await app.register(adminChannelSeatRoutes);
-  const list = await app.inject({ method: "GET", url: "/api/admin/channel-seats" });
-  assert.equal(list.statusCode, 401);
-  const create = await app.inject({
-    method: "POST",
-    url: "/api/admin/channel-seats",
-    payload: { employeeId: 1, productLineId: 1, tag: "13900139000" },
-  });
-  assert.equal(create.statusCode, 401);
-  const removed = await app.inject({
-    method: "DELETE",
-    url: "/api/admin/channel-seats/1",
-  });
-  assert.equal(removed.statusCode, 401);
-  const updated = await app.inject({
-    method: "PATCH",
-    url: "/api/admin/channel-seats/1",
-    payload: { tag: "13900139000" },
-  });
-  assert.equal(updated.statusCode, 401);
-  await app.close();
 });

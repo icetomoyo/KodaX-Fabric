@@ -148,7 +148,7 @@ test.describe.serial("核心闭环：渠道 → 席位 → 员工 Key → relay 
     // 7. 员工创建 API Key（明文只返回一次）
     const apiKey = await postJson(request, "/api/me/api-keys", employee, {
       name: "E2E Key",
-      departmentId: department.id,
+      departmentId: department!.id,
       productLineId: channel.id,
       protocol: "openai_chat",
     });

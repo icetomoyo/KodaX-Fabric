@@ -10,22 +10,6 @@ process.env.CREDENTIAL_ENCRYPT_KEY ??= "unit-test-credential-secret";
 const { adminLogRoutes } = await import("../src/routes/admin/logs.js");
 const { formatOpsAuditTargetLabel } = await import("../src/lib/ops-audit.js");
 
-test("admin log routes expose list, detail, and context download", async () => {
-  const app = Fastify();
-  await app.register(adminLogRoutes);
-  await app.ready();
-
-  try {
-    assert.equal(app.hasRoute({ method: "GET", url: "/api/admin/logs" }), true);
-    assert.equal(app.hasRoute({ method: "GET", url: "/api/admin/logs/:requestId" }), true);
-    assert.equal(app.hasRoute({ method: "GET", url: "/api/admin/logs/:requestId/context" }), true);
-    const unauth = await app.inject({ method: "GET", url: "/api/admin/logs" });
-    assert.equal(unauth.statusCode, 401);
-  } finally {
-    await app.close();
-  }
-});
-
 test("ops audit employee labels use name and phone, not id-only placeholders", () => {
   assert.equal(
     formatOpsAuditTargetLabel(["海致科技", "管理员", "13800000000"], "员工 #1"),

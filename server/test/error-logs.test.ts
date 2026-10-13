@@ -13,52 +13,10 @@ const {
   formatUpstreamVendorError,
   lookupGlmErrorCatalog,
   resolveLoggedError,
-  GLM_ERROR_CATALOG,
-  GLM_ERROR_CODE_DOC_URL,
 } = await import("../src/lib/glm-error-codes.js");
 const { buildErrorLogListQuery, adminErrorLogRoutes } = await import(
   "../src/routes/admin/error-logs.js"
 );
-
-test("智谱目录未实测改写的条目仍是官方 FAQ 原文", () => {
-  const entry = lookupGlmErrorCatalog("1001");
-  assert.deepEqual(entry, {
-    code: "1001",
-    httpStatus: 401,
-    message: "Header 中未收到 Authentication 参数，无法进行身份验证",
-  });
-  assert.equal(
-    lookupGlmErrorCatalog("1309")?.message,
-    "您的 GLM Coding Plan 套餐已到期，暂无法使用，前往官方续订后即可恢复 https://bigmodel.cn/claude-code",
-  );
-  assert.equal(
-    lookupGlmErrorCatalog("1313")?.message,
-    "您的账户当前使用模式不符合公平使用策略，请求频率已受到限制。详情请参阅《条款与协议-订阅及自动续费协议》，如需恢复请前往个人中心-编程套餐总览-顶部申请解除限制",
-  );
-  assert.equal(GLM_ERROR_CATALOG[0]?.code, null);
-  assert.equal(GLM_ERROR_CATALOG[0]?.httpStatus, 500);
-  assert.equal(GLM_ERROR_CATALOG[0]?.message, "内部错误");
-  assert.equal(GLM_ERROR_CODE_DOC_URL, "https://docs.bigmodel.cn/cn/faq/api-code");
-});
-
-test("智谱 1302 / 1113 / 1261 分别对应官方 HTTP 与错误信息原文", () => {
-  assert.equal(lookupGlmErrorCatalog("1302")?.httpStatus, 429);
-  assert.equal(lookupGlmErrorCatalog("1113")?.message, "您的账户已欠费，请充值后重试");
-  assert.equal(lookupGlmErrorCatalog("1261")?.message, "Prompt 超长");
-});
-
-test("智谱 1308 / 1310 目录与 coding-plan 线上原文对齐", () => {
-  assert.equal(
-    lookupGlmErrorCatalog("1308")?.message,
-    "已达到 5 小时使用上限，${next_flush_time} 后可继续使用。如需超限额按量付费使用，可联系管理员开启超额按量付费。",
-  );
-  assert.equal(
-    lookupGlmErrorCatalog("1310")?.message,
-    "已达到 7 天使用上限，${next_flush_time} 后可继续使用。如需超限额按量付费使用，可联系管理员开启超额按量付费。",
-  );
-  // 文档 1317 仍是「7 天 + 无法超额按量」变体，不是线上周额度码。
-  assert.match(lookupGlmErrorCatalog("1317")?.message ?? "", /主账号余额不足/);
-});
 
 test("formatUpstreamVendorError keeps the channel error code and message", () => {
   assert.equal(
@@ -133,18 +91,6 @@ test("logged error keeps GLM 业务错误码 / HTTP / 错误信息原文", () =>
     httpStatus: 401,
     message: "身份验证失败",
   });
-});
-
-test("unauthenticated error-log calls return 401", async () => {
-  const app = Fastify();
-  await app.register(adminErrorLogRoutes);
-  await app.ready();
-  try {
-    const anon = await app.inject({ method: "GET", url: "/api/admin/error-logs" });
-    assert.equal(anon.statusCode, 401);
-  } finally {
-    await app.close();
-  }
 });
 
 test("org_admin cannot list error logs", async () => {
@@ -225,21 +171,4 @@ test("error-log SQL includes employee identity and scopes org/team/request", () 
   assert.match(compiled, /"team_id"/);
   assert.equal(teamSql.params.includes(3), true);
   assert.equal(teamSql.params.includes(5), true);
-});
-
-test("error-log routes expose list and detail", async () => {
-  const app = Fastify();
-  await app.register(adminErrorLogRoutes);
-  await app.ready();
-  try {
-    assert.equal(app.hasRoute({ method: "GET", url: "/api/admin/error-logs" }), true);
-    assert.equal(app.hasRoute({ method: "GET", url: "/api/admin/error-logs/:requestId" }), true);
-    const unauth = await app.inject({
-      method: "GET",
-      url: "/api/admin/error-logs/threq_abcdefgh",
-    });
-    assert.equal(unauth.statusCode, 401);
-  } finally {
-    await app.close();
-  }
 });

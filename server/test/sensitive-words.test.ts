@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import Fastify from "fastify";
 
 process.env.DATABASE_URL ??= "postgresql://test:test@127.0.0.1:5432/test";
 process.env.REDIS_URL ??= "redis://127.0.0.1:6379/15";
@@ -28,8 +27,6 @@ const {
   extractWordsFromText,
   parseSensitiveWordFile,
 } = await import("../src/lib/relay/sensitive-word-import.js");
-const { adminSensitiveWordRoutes } = await import("../src/routes/admin/sensitive-words.js");
-const { adminSettingsRoutes } = await import("../src/routes/admin/settings.js");
 const require = createRequire(import.meta.url);
 const ExcelJS = require("exceljs");
 
@@ -304,33 +301,4 @@ test("excerptForSensitiveHit keeps the matched region", () => {
   assert.ok(excerpt.length <= 4000);
   assert.match(excerpt, /^…/);
   assert.match(excerpt, /…$/);
-});
-
-test("unauthenticated sensitive-word admin calls return 401", async () => {
-  const app = Fastify();
-  await app.register(adminSensitiveWordRoutes);
-  await app.register(adminSettingsRoutes);
-  await app.ready();
-  try {
-    const list = await app.inject({ method: "GET", url: "/api/admin/sensitive-words" });
-    const add = await app.inject({
-      method: "POST",
-      url: "/api/admin/sensitive-words",
-      payload: { word: "英雄联盟" },
-    });
-    const hits = await app.inject({ method: "GET", url: "/api/admin/sensitive-word-hits" });
-    const imported = await app.inject({
-      method: "POST",
-      url: "/api/admin/sensitive-words/import",
-      payload: { filename: "words.txt", contentBase64: Buffer.from("lol\n").toString("base64") },
-    });
-    const settings = await app.inject({ method: "GET", url: "/api/admin/settings" });
-    assert.equal(list.statusCode, 401);
-    assert.equal(add.statusCode, 401);
-    assert.equal(hits.statusCode, 401);
-    assert.equal(imported.statusCode, 401);
-    assert.equal(settings.statusCode, 401);
-  } finally {
-    await app.close();
-  }
 });

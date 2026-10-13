@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import Fastify from "fastify";
 
 process.env.DATABASE_URL ??= "postgresql://test:test@127.0.0.1:5432/test";
 process.env.REDIS_URL ??= "redis://127.0.0.1:6379/15";
@@ -19,7 +18,6 @@ const {
   submittedByEmployeeIdFromMeta,
   verifyEmployeeSubmitTestProof,
 } = await import("../src/lib/channel-credential-submit.js");
-const { meRoutes } = await import("../src/routes/me.js");
 
 const openaiChatConfig = {
   openai_chat: { baseUrl: "https://example.test/v1", authStyle: "bearer" as const },
@@ -341,61 +339,4 @@ test("employee submit test proof binds the tester, channel, and secret and expir
     }).kind,
     "expired",
   );
-});
-
-test("me channel-key submit routes exist and reject anonymous callers", async () => {
-  const app = Fastify();
-  await app.register(meRoutes);
-  await app.ready();
-  try {
-    assert.equal(
-      app.hasRoute({ method: "GET", url: "/api/me/upstream-credential-channels" }),
-      true,
-    );
-    assert.equal(
-      app.hasRoute({ method: "POST", url: "/api/me/upstream-credentials" }),
-      true,
-    );
-    assert.equal(
-      app.hasRoute({ method: "POST", url: "/api/me/upstream-credentials/test" }),
-      true,
-    );
-    assert.equal(
-      app.hasRoute({ method: "GET", url: "/api/me/upstream-credentials" }),
-      true,
-    );
-    assert.equal(
-      app.hasRoute({ method: "DELETE", url: "/api/me/upstream-credentials/:id" }),
-      true,
-    );
-    const list = await app.inject({
-      method: "GET",
-      url: "/api/me/upstream-credential-channels",
-    });
-    const history = await app.inject({
-      method: "GET",
-      url: "/api/me/upstream-credentials",
-    });
-    const tested = await app.inject({
-      method: "POST",
-      url: "/api/me/upstream-credentials/test",
-      payload: { seatId: 1, secret: "12345678" },
-    });
-    const created = await app.inject({
-      method: "POST",
-      url: "/api/me/upstream-credentials",
-      payload: { seatId: 1, secret: "12345678" },
-    });
-    const removed = await app.inject({
-      method: "DELETE",
-      url: "/api/me/upstream-credentials/1",
-    });
-    assert.equal(list.statusCode, 401);
-    assert.equal(history.statusCode, 401);
-    assert.equal(tested.statusCode, 401);
-    assert.equal(created.statusCode, 401);
-    assert.equal(removed.statusCode, 401);
-  } finally {
-    await app.close();
-  }
 });

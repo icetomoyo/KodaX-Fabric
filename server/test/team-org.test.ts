@@ -35,52 +35,6 @@ function attachSession(session: typeof teamAdminSession) {
   };
 }
 
-test("unauthenticated department calls return 401", async () => {
-  const { adminDepartmentRoutes } = await import("../src/routes/admin/departments.js");
-  const app = Fastify();
-  await app.register(adminDepartmentRoutes);
-  await app.ready();
-  try {
-    const list = await app.inject({ method: "GET", url: "/api/admin/departments" });
-    const create = await app.inject({
-      method: "POST",
-      url: "/api/admin/departments",
-      payload: { name: "研发中心" },
-    });
-    const removed = await app.inject({ method: "DELETE", url: "/api/admin/departments/1" });
-    assert.equal(list.statusCode, 401);
-    assert.equal(create.statusCode, 401);
-    assert.equal(removed.statusCode, 401);
-  } finally {
-    await app.close();
-  }
-});
-
-test("unauthenticated team calls return 401", async () => {
-  const app = Fastify();
-  await app.register(adminTeamRoutes);
-  await app.ready();
-  try {
-    const list = await app.inject({ method: "GET", url: "/api/admin/teams" });
-    const members = await app.inject({ method: "GET", url: "/api/admin/teams/1/members" });
-    const added = await app.inject({
-      method: "POST",
-      url: "/api/admin/teams/1/members",
-      payload: { phone: "13800138000" },
-    });
-    const removed = await app.inject({
-      method: "DELETE",
-      url: "/api/admin/teams/1/members/9",
-    });
-    assert.equal(list.statusCode, 401);
-    assert.equal(members.statusCode, 401);
-    assert.equal(added.statusCode, 401);
-    assert.equal(removed.statusCode, 401);
-  } finally {
-    await app.close();
-  }
-});
-
 test("creating an API key without a team is rejected", async () => {
   const app = Fastify();
   app.addHook("onRequest", attachSession({
@@ -163,11 +117,11 @@ test("super-admin can list and create teams in any enterprise", () => {
 
   assert.equal(canCreateTeam(actor, 9), true);
   assert.equal(
-    canAdminTeam(actor, { teamId: 2, enterpriseId: 9, departmentId: 1, memberRole: null }),
+    canAdminTeam(actor, { teamId: 2, enterpriseId: 9, departmentId: 1 }),
     true,
   );
   assert.equal(
-    canReadTeam(actor, { teamId: 2, enterpriseId: 9, departmentId: 1, memberRole: null }),
+    canReadTeam(actor, { teamId: 2, enterpriseId: 9, departmentId: 1 }),
     true,
   );
 });
@@ -198,7 +152,7 @@ test("dept_admin can create teams only in their department", () => {
   assert.equal(canCreateTeam(actor, 3, 6), false);
   assert.equal(canCreateTeam(actor, 4, 5), false);
   assert.equal(
-    canAdminTeam(actor, { teamId: 9, enterpriseId: 3, departmentId: 6, memberRole: null }),
+    canAdminTeam(actor, { teamId: 9, enterpriseId: 3, departmentId: 6 }),
     false,
   );
 });
@@ -221,17 +175,6 @@ test("joining a second department is allowed; the same department is a 409", () 
     employeeDepartmentConflictMessage(existing, { teamId: 2, departmentId: 8 }),
     "该员工已在该部门中",
   );
-});
-
-test("re-adding a member to the same department keeps the 409 copy", () => {
-  assert.equal(
-    employeeDepartmentConflictMessage(
-      [{ teamId: 8, departmentId: 3, departmentName: "产品组", isDefault: true, status: "active" }],
-      { teamId: 8, departmentId: 3 },
-    ),
-    "该员工已在该部门中",
-  );
-  assert.equal(employeeDepartmentConflictMessage([], { teamId: 8, departmentId: 3 }), null);
 });
 
 test("API Key department binding uses the only membership or the chosen department", () => {

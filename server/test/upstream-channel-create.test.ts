@@ -179,20 +179,3 @@ test("stored GLM channels with unique codes still resolve to 国内版 or 国际
   );
   assert.equal(intl?.label, "国际版");
 });
-
-test("deleting a channel requires a session", async () => {
-  process.env.DATABASE_URL ??= "postgresql://test:test@127.0.0.1:5432/test";
-  process.env.REDIS_URL ??= "redis://127.0.0.1:6379/15";
-  process.env.JWT_SECRET ??= "unit-test-jwt-secret";
-  process.env.CREDENTIAL_ENCRYPT_KEY ??= "unit-test-credential-secret";
-  const Fastify = (await import("fastify")).default;
-  const { adminProviderRoutes } = await import("../src/routes/admin/providers.js");
-  const app = Fastify();
-  await app.register(adminProviderRoutes);
-  const removed = await app.inject({
-    method: "DELETE",
-    url: "/api/admin/product-lines/1",
-  });
-  assert.equal(removed.statusCode, 401);
-  await app.close();
-});

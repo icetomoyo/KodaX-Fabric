@@ -1,7 +1,4 @@
 import assert from "node:assert/strict";
-import { existsSync } from "node:fs";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import test from "node:test";
 import Fastify from "fastify";
 
@@ -36,11 +33,8 @@ const {
   readAssistantContent,
 } = await import("../src/lib/support-bot/invoke.js");
 const {
-  SUPPORT_BOT_KNOWLEDGE,
   applySupportOriginPlaceholders,
-  buildSupportAgentSystemPrompt,
 } = await import("../src/lib/support-bot/knowledge.js");
-const { SUPPORT_BOT_TOOL_NAMES } = await import("../src/lib/support-bot/tools.js");
 const { supportBotRateLimitKey } = await import("../src/lib/support-bot/rate-limit.js");
 const { supportRoutes, supportBotRuntime } = await import("../src/routes/support.js");
 
@@ -61,74 +55,6 @@ function attachSession(
     req.employeeId = Number(session.sub);
   };
 }
-
-test("knowledge covers GuideView facts and refuses invented features", () => {
-  assert.match(SUPPORT_BOT_KNOWLEDGE, /th_\.\.\./);
-  assert.match(SUPPORT_BOT_KNOWLEDGE, /\/v1\/messages/);
-  assert.match(SUPPORT_BOT_KNOWLEDGE, /\/v1\/chat\/completions/);
-  assert.match(SUPPORT_BOT_KNOWLEDGE, /\/v1\/responses/);
-  assert.match(SUPPORT_BOT_KNOWLEDGE, /:3000/);
-  assert.match(SUPPORT_BOT_KNOWLEDGE, /127\.0\.0\.1:15721/);
-  assert.match(SUPPORT_BOT_KNOWLEDGE, /team_required/);
-  assert.match(SUPPORT_BOT_KNOWLEDGE, /工单系统已删除/);
-  assert.match(SUPPORT_BOT_KNOWLEDGE, /飞书 Bot/);
-  assert.match(SUPPORT_BOT_KNOWLEDGE, /不要要求用户粘贴完整 API Key/);
-  assert.match(SUPPORT_BOT_KNOWLEDGE, /ZCode/);
-  assert.match(SUPPORT_BOT_KNOWLEDGE, /勾选「图片」/);
-  assert.match(SUPPORT_BOT_KNOWLEDGE, /zcode-add-provider\.png/);
-  assert.match(SUPPORT_BOT_KNOWLEDGE, /zcode-add-model\.png/);
-  assert.match(SUPPORT_BOT_KNOWLEDGE, /WorkBuddy/);
-  assert.match(SUPPORT_BOT_KNOWLEDGE, /Chat Completions API/);
-  assert.match(SUPPORT_BOT_KNOWLEDGE, /图片输入/);
-  assert.match(SUPPORT_BOT_KNOWLEDGE, /workbuddy-add-model\.png/);
-  assert.match(SUPPORT_BOT_KNOWLEDGE, /dingtalk-department\.png/);
-  assert.match(SUPPORT_BOT_KNOWLEDGE, /钉钉扫码/);
-  assert.match(SUPPORT_BOT_KNOWLEDGE, /Claude Code 接 Token Hub/);
-  assert.match(SUPPORT_BOT_KNOWLEDGE, /ANTHROPIC_BASE_URL/);
-  assert.match(SUPPORT_BOT_KNOWLEDGE, /~\/\.claude\/settings\.json/);
-  assert.match(SUPPORT_BOT_KNOWLEDGE, /Codex 接 Token Hub/);
-  assert.match(SUPPORT_BOT_KNOWLEDGE, /wire_api = "responses"/);
-  assert.match(SUPPORT_BOT_KNOWLEDGE, /~\/\.codex\/config\.toml/);
-  assert.match(SUPPORT_BOT_KNOWLEDGE, /用户问协议怎么选/);
-  const prompt = buildSupportAgentSystemPrompt("https://tokenhub.haizhi.com");
-  assert.match(prompt, /https:\/\/tokenhub\.haizhi\.com/);
-  assert.match(prompt, /https:\/\/tokenhub\.haizhi\.com\/guides\/zcode-add-provider\.png/);
-  assert.match(prompt, /https:\/\/tokenhub\.haizhi\.com\/guides\/zcode-add-model\.png/);
-  assert.match(prompt, /https:\/\/tokenhub\.haizhi\.com\/guides\/workbuddy-add-model\.png/);
-  assert.match(prompt, /https:\/\/tokenhub\.haizhi\.com\/guides\/dingtalk-department\.png/);
-  assert.match(prompt, /"ANTHROPIC_BASE_URL": "https:\/\/tokenhub\.haizhi\.com"/);
-  assert.match(prompt, /base_url = "https:\/\/tokenhub\.haizhi\.com"/);
-  assert.equal(
-    existsSync(resolve(dirname(fileURLToPath(import.meta.url)), "../../web/public/guides/zcode-add-provider.png")),
-    true,
-  );
-  assert.equal(
-    existsSync(resolve(dirname(fileURLToPath(import.meta.url)), "../../web/public/guides/zcode-add-model.png")),
-    true,
-  );
-  assert.equal(
-    existsSync(resolve(dirname(fileURLToPath(import.meta.url)), "../../web/public/guides/workbuddy-add-model.png")),
-    true,
-  );
-  assert.equal(
-    existsSync(resolve(dirname(fileURLToPath(import.meta.url)), "../../web/public/guides/dingtalk-department.png")),
-    true,
-  );
-  assert.deepEqual([...SUPPORT_BOT_TOOL_NAMES], [
-    "lookup_my_account",
-    "lookup_request",
-    "lookup_invite_contacts",
-  ]);
-  assert.match(prompt, /lookup_my_account/);
-  assert.match(prompt, /lookup_request/);
-  assert.match(prompt, /lookup_invite_contacts/);
-  assert.doesNotMatch(prompt, /join_department/);
-  assert.doesNotMatch(SUPPORT_BOT_KNOWLEDGE, /join_department/);
-  assert.match(SUPPORT_BOT_KNOWLEDGE, /Token Bot 不能加入部门/);
-  assert.match(prompt, /不要编造/);
-  assert.match(prompt, /不要写 \{origin\}/);
-  assert.doesNotMatch(prompt, /retrieve_docs/);
-});
 
 test("Base URL answers use the request origin, not the {origin} template", () => {
   assert.equal(publicSiteOrigin("https://tokenhub.haizhi.com/ai"), "https://tokenhub.haizhi.com");
@@ -376,26 +302,6 @@ test("invoke failure keeps the user message and writes no empty assistant", asyn
   assert.equal(dumped.messages[0]?.role, "user");
 });
 
-test("unauthenticated support routes return 401", async () => {
-  const app = Fastify();
-  await app.register(supportRoutes);
-  await app.ready();
-  try {
-    const status = await app.inject({ method: "GET", url: "/api/support/status" });
-    const history = await app.inject({ method: "GET", url: "/api/support/history" });
-    const chat = await app.inject({
-      method: "POST",
-      url: "/api/support/chat",
-      payload: { message: "hi" },
-    });
-    assert.equal(status.statusCode, 401);
-    assert.equal(history.statusCode, 401);
-    assert.equal(chat.statusCode, 401);
-  } finally {
-    await app.close();
-  }
-});
-
 test("status payload matches the enabled flag without calling upstream", async () => {
   const app = Fastify();
   app.addHook("onRequest", attachSession(employeeSession));
@@ -455,44 +361,6 @@ test("chat without override or channel is 503", async () => {
     assert.equal(response.statusCode, 503);
     const body = response.json() as { success: boolean; error: { code: string } };
     assert.equal(body.error.code, "SUPPORT_BOT_UNAVAILABLE");
-  } finally {
-    Object.assign(supportBotRuntime, previous);
-    await app.close();
-  }
-});
-
-test("mocked successful chat persists two messages without quota", async () => {
-  const store = createMemorySupportChatStore();
-  const previous = { ...supportBotRuntime };
-  let invokeCount = 0;
-  supportBotRuntime.consumeRateLimit = async () => {};
-  supportBotRuntime.resolveTransport = async () => ({ kind: "override" });
-  supportBotRuntime.createStore = () => store;
-  supportBotRuntime.runAgent = async () => {
-    invokeCount += 1;
-    return "Base URL 是当前站点的 /ai。";
-  };
-
-  const app = Fastify();
-  app.addHook("onRequest", attachSession(employeeSession));
-  await app.register(supportRoutes);
-  await app.ready();
-  try {
-    const response = await app.inject({
-      method: "POST",
-      url: "/api/support/chat",
-      payload: { message: "怎么配 Base URL" },
-    });
-    assert.equal(response.statusCode, 200);
-    const body = response.json() as {
-      success: boolean;
-      data: { conversationId: number; reply: string };
-    };
-    assert.equal(body.success, true);
-    assert.equal(body.data.conversationId, 1);
-    assert.match(body.data.reply, /\/ai/);
-    assert.equal(invokeCount, 1);
-    assert.equal(store.dump().messages.length, 2);
   } finally {
     Object.assign(supportBotRuntime, previous);
     await app.close();

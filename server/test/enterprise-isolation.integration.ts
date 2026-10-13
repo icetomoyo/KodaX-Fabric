@@ -285,8 +285,8 @@ async function main() {
     assert.ok(allUsers.some((row) => row.id === newUser.id));
 
     console.log("enterprise isolation integration passed", {
-      createdEnterprise: createdEnterprise.name,
-      createdStatus: createdEnterprise.status,
+      createdEnterprise: enterpriseX.name,
+      createdStatus: enterpriseX.status,
       orgAdminSawOnlyX: true,
       orgAdminDeniedYAndPlatform: true,
       createdUserStayedInX: true,

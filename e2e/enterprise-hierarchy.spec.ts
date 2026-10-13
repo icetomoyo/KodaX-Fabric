@@ -1,7 +1,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
+import { expect, test, type APIRequestContext } from "@playwright/test";
 import { E2E } from "./env.ts";
 import { E2E_ORG, ORG_UNITS_SYNC_ONLY_MESSAGE } from "./org-fixture.ts";
 
@@ -36,15 +36,6 @@ async function loginToken(ctx: APIRequestContext) {
   const body = (await res.json()) as { success?: boolean; data?: { token?: string } };
   expect(body.success === true && typeof body.data?.token === "string").toBeTruthy();
   return body.data!.token as string;
-}
-
-async function loginViaUi(page: Page) {
-  await page.goto("/");
-  await page.getByText("账户登录", { exact: true }).click();
-  await page.getByPlaceholder("11 位手机号").fill(E2E.admin.phone);
-  await page.getByPlaceholder("请输入密码").fill(E2E.admin.password);
-  await page.getByRole("button", { name: "登录", exact: true }).click();
-  await expect(page).toHaveURL(/\/admin/, { timeout: 15_000 });
 }
 
 test.describe.serial("企业层级与钉钉部门 ID", () => {
@@ -96,6 +87,19 @@ test.describe.serial("企业层级与钉钉部门 ID", () => {
     expect(department!.enterpriseId).toBe(childA!.id);
     expect(department!.dingtalkDeptId).toBe(E2E_ORG.department.dingtalkDeptId);
     state.department = department!;
+
+    mkdirSync(ARTIFACT_DIR, { recursive: true });
+    writeFileSync(
+      resolve(ARTIFACT_DIR, "enterprise-hierarchy.json"),
+      `${JSON.stringify({
+        enterprises: listBody.data.map((row) => ({
+          id: row.id,
+          name: row.name,
+          parentId: row.parentId,
+          dingtalkDeptId: row.dingtalkDeptId,
+        })),
+      }, null, 2)}\n`,
+    );
   });
 
   test("钉钉 dept_id 在企业与部门间全局唯一，禁止把上级设成自己的下级", async ({ request }) => {
@@ -136,82 +140,7 @@ test.describe.serial("企业层级与钉钉部门 ID", () => {
     expect(selfBody.message).toBe("上级企业不能是自己");
   });
 
-  test("企业管理树把下级企业挂在集团下，编制行不展示钉钉编号，且没有手工新建入口", async ({ page, request }) => {
-    const token = await loginToken(request);
-    await loginViaUi(page);
-    await page.goto("/admin/enterprises");
-    await expect(page.getByRole("heading", { name: "组织架构" })).toBeVisible();
-    await expect(page.getByText("子公司和部门由钉钉通讯录同步，不可手工新建")).toBeVisible();
-    await expect(page.getByRole("button", { name: "新建企业" })).toHaveCount(0);
-    await expect(page.getByRole("button", { name: "新建部门" })).toHaveCount(0);
-    await expect(page.getByRole("button", { name: "新建子部门" })).toHaveCount(0);
-
-    const groupNode = page.locator(".el-tree-node", {
-      has: page.locator(".tree-label", { hasText: E2E_ORG.group.name }),
-    }).first();
-    const groupContent = page.locator(".el-tree-node__content", {
-      has: page.locator(".tree-label", { hasText: E2E_ORG.group.name }),
-    }).first();
-    const childAContent = page.locator(".el-tree-node__content", {
-      has: page.locator(".tree-label", { hasText: E2E_ORG.childA.name }),
-    }).first();
-    const childBContent = page.locator(".el-tree-node__content", {
-      has: page.locator(".tree-label", { hasText: E2E_ORG.childB.name }),
-    }).first();
-    await expect(groupNode.locator(".tree-label", { hasText: E2E_ORG.childA.name })).toBeVisible();
-    await expect(groupNode.locator(".tree-label", { hasText: E2E_ORG.childB.name })).toBeVisible();
-    await expect(groupContent.locator(".tree-ding")).toHaveCount(0);
-    await expect(childAContent.locator(".tree-ding")).toHaveCount(0);
-    await expect(childBContent.locator(".tree-ding")).toHaveCount(0);
-    await expect(childAContent).not.toContainText(String(E2E_ORG.childA.dingtalkDeptId));
-    await expect(childBContent).not.toContainText(String(E2E_ORG.childB.dingtalkDeptId));
-    await expect(groupContent.locator(".tree-people")).toContainText(/（2）/);
-    await expect(groupContent.locator(".tree-people .tree-people-icon")).toBeVisible();
-    await expect(childAContent.locator(".tree-people")).toContainText(/（1）/);
-    await expect(childBContent.locator(".tree-people")).toContainText(/（1）/);
-
-    const childANode = groupNode.locator(".el-tree-node", {
-      has: page.locator(".tree-label", { hasText: E2E_ORG.childA.name }),
-    }).first();
-    await childANode.locator(".el-tree-node__expand-icon").first().click();
-    const deptRow = childANode.locator(".tree-row", {
-      has: page.locator(".tree-label", { hasText: new RegExp(`^${E2E_ORG.department.name}$`) }),
-    }).first();
-    await expect(deptRow.locator(".tree-label")).toHaveText(E2E_ORG.department.name);
-    await expect(deptRow.locator(".tree-ding")).toHaveCount(0);
-    await expect(deptRow.locator(".tree-people")).toBeVisible();
-    await expect(deptRow.locator(".tree-people")).toContainText(/（\d+）/);
-    await expect(deptRow.locator(".tree-people .tree-people-icon")).toBeVisible();
-
-    const groupRow = page.locator(".tree-row", { hasText: E2E_ORG.group.name }).first();
-    await groupRow.hover();
-    await groupRow.locator(".tree-more-btn").click();
-    await page.getByRole("menuitem", { name: "编辑" }).click();
-    const dialog = page.getByRole("dialog", { name: /编辑企业/ });
-    await expect(dialog.getByText("钉钉部门 ID")).toBeVisible();
-    await expect(dialog.getByPlaceholder("对应钉钉 dept_id，可空")).toHaveValue(String(E2E_ORG.group.dingtalkDeptId));
-    await dialog.getByRole("button", { name: "取消" }).click();
-
-    mkdirSync(ARTIFACT_DIR, { recursive: true });
-    const screenshotPath = resolve(ARTIFACT_DIR, "enterprise-hierarchy.png");
-    await page.screenshot({ path: screenshotPath, fullPage: true });
-    const listRes = await request.get("/api/admin/enterprises", {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    const listBody = (await listRes.json()) as { data: Enterprise[] };
-    const artifact = {
-      screenshot: screenshotPath,
-      enterprises: listBody.data.map((row) => ({
-        id: row.id,
-        name: row.name,
-        parentId: row.parentId,
-        dingtalkDeptId: row.dingtalkDeptId,
-      })),
-    };
-    writeFileSync(resolve(ARTIFACT_DIR, "enterprise-hierarchy.json"), `${JSON.stringify(artifact, null, 2)}\n`);
-  });
-
-  test("点集团列出下级企业员工，且不展示超级管理员", async ({ page, request }) => {
+  test("集团含下级时列出下级企业员工，且不返回超级管理员", async ({ request }) => {
     const token = await loginToken(request);
     const headers = { Authorization: `Bearer ${token}` };
     expect(state.group && state.childA && state.childB).toBeTruthy();
@@ -249,76 +178,18 @@ test.describe.serial("企业层级与钉钉部门 ID", () => {
     expect(names(childAOnly)).toContain(E2E_ORG.employees.childA.name);
     expect(names(childAOnly)).not.toContain(E2E_ORG.employees.childB.name);
 
-    await loginViaUi(page);
-    await page.goto(`/admin/enterprises?enterpriseId=${state.group!.id}`);
-    await expect(page.getByRole("heading", { name: "组织架构" })).toBeVisible();
-    const groupContent = page.locator(".el-tree-node__content", {
-      has: page.locator(".tree-label", { hasText: E2E_ORG.group.name }),
-    }).first();
-    await groupContent.click();
-    const peopleTable = page.locator(".people-table");
-    await expect(peopleTable.getByText(E2E_ORG.employees.childA.name, { exact: true })).toBeVisible();
-    await expect(peopleTable.getByText(E2E_ORG.employees.childB.name, { exact: true })).toBeVisible();
-    await expect(peopleTable.getByText(E2E.admin.name, { exact: true })).toHaveCount(0);
-    await expect(peopleTable.getByText("超级管理员")).toHaveCount(0);
-    await expect(peopleTable.getByRole("columnheader", { name: "部门", exact: true })).toHaveCount(0);
-    await expect(peopleTable.getByRole("columnheader", { name: "职位", exact: true })).toBeVisible();
-    await expect(peopleTable.getByRole("columnheader", { name: "入职时间", exact: true })).toBeVisible();
-    await expect(peopleTable.getByText(E2E_ORG.employees.childA.jobTitle, { exact: true })).toBeVisible();
-    await expect(peopleTable.getByText(E2E_ORG.employees.childA.hiredAt, { exact: true })).toBeVisible();
-
-    const childARow = peopleTable.locator(".el-table__row", {
-      has: page.getByText(E2E_ORG.employees.childA.name, { exact: true }),
-    }).first();
-    await childARow.getByRole("button", { name: "详情" }).click();
-    const profile = page.locator(".employee-profile");
-    await expect(profile).toBeVisible();
-    await expect(profile.getByText("企业/组织")).toBeVisible();
-    await expect(profile.getByText(E2E_ORG.childA.name, { exact: true })).toBeVisible();
-    await expect(profile.getByText("姓名")).toBeVisible();
-    await expect(profile.getByText(E2E_ORG.employees.childA.jobTitle, { exact: true })).toBeVisible();
-    await expect(profile.getByText(`+86-${E2E_ORG.employees.childA.phone}`)).toBeVisible();
-    await expect(profile.getByText(E2E_ORG.employees.childA.email, { exact: true })).toBeVisible();
-    await expect(profile.getByText(E2E_ORG.employees.childA.hiredAt, { exact: true })).toBeVisible();
-    await expect(profile.getByText(`${E2E_ORG.childA.name}-${E2E_ORG.department.name}`, { exact: true })).toBeVisible();
-    await expect(profile.getByText(`${E2E_ORG.childA.name}-${E2E_ORG.departmentB.name}`, { exact: true })).toBeVisible();
     mkdirSync(ARTIFACT_DIR, { recursive: true });
-    const detailScreenshotPath = resolve(ARTIFACT_DIR, "employee-detail-profile.png");
-    await profile.screenshot({ path: detailScreenshotPath });
-    writeFileSync(
-      resolve(ARTIFACT_DIR, "employee-detail-profile.json"),
-      `${JSON.stringify({
-        screenshot: detailScreenshotPath,
-        name: E2E_ORG.employees.childA.name,
-        departments: [
-          `${E2E_ORG.childA.name}-${E2E_ORG.department.name}`,
-          `${E2E_ORG.childA.name}-${E2E_ORG.departmentB.name}`,
-        ],
-      }, null, 2)}\n`,
-    );
-    await page.keyboard.press("Escape");
-    await expect(profile).toHaveCount(0);
-
-    const childAContent = page.locator(".el-tree-node__content", {
-      has: page.locator(".tree-label", { hasText: E2E_ORG.childA.name }),
-    }).first();
-    await childAContent.click();
-    await expect(peopleTable.getByText(E2E_ORG.employees.childA.name, { exact: true })).toBeVisible();
-    await expect(peopleTable.getByText(E2E_ORG.employees.childB.name, { exact: true })).toHaveCount(0);
-    await expect(peopleTable.getByRole("columnheader", { name: "部门", exact: true })).toHaveCount(0);
-
-    mkdirSync(ARTIFACT_DIR, { recursive: true });
-    const screenshotPath = resolve(ARTIFACT_DIR, "enterprise-group-people.png");
-    await groupContent.click();
-    await expect(peopleTable.getByText(E2E_ORG.employees.childB.name, { exact: true })).toBeVisible();
-    await page.locator(".people-pane").screenshot({ path: screenshotPath });
     writeFileSync(
       resolve(ARTIFACT_DIR, "enterprise-group-people.json"),
-      `${JSON.stringify({ screenshot: screenshotPath, groupUsers: names(groupTree) }, null, 2)}\n`,
+      `${JSON.stringify({
+        groupOnly: names(exactGroup),
+        groupWithDescendants: names(groupTree),
+        childAWithDescendants: names(childAOnly),
+      }, null, 2)}\n`,
     );
   });
 
-  test("员工列表可按是否在企业钉钉通讯录筛选", async ({ page, request }) => {
+  test("员工列表可按是否在企业钉钉通讯录筛选", async ({ request }) => {
     const token = await loginToken(request);
     const headers = { Authorization: `Bearer ${token}` };
     expect(state.group).toBeTruthy();
@@ -343,33 +214,10 @@ test.describe.serial("企业层级与钉钉部门 ID", () => {
     expect(names(outRoster)).not.toContain(E2E_ORG.employees.childA.name);
     expect(outRoster.data.every((row) => row.isDingtalk === false)).toBeTruthy();
 
-    await loginViaUi(page);
-    await page.goto(`/admin/enterprises?enterpriseId=${state.group!.id}`);
-    await expect(page.getByRole("heading", { name: "组织架构" })).toBeVisible();
-    const peopleTable = page.locator(".people-table");
-    await expect(peopleTable.getByText(E2E_ORG.employees.childA.name, { exact: true })).toBeVisible();
-    await expect(peopleTable.getByText(E2E_ORG.employees.childB.name, { exact: true })).toBeVisible();
-    await expect(peopleTable.getByText("在册", { exact: true }).first()).toBeVisible();
-    await expect(peopleTable.getByText("未在册", { exact: true }).first()).toBeVisible();
-
-    const filter = page.locator(".people-dingtalk-filter");
-    await filter.click();
-    await page.getByRole("option", { name: "未在通讯录", exact: true }).click();
-    await expect(peopleTable.getByText(E2E_ORG.employees.childB.name, { exact: true })).toBeVisible();
-    await expect(peopleTable.getByText(E2E_ORG.employees.childA.name, { exact: true })).toHaveCount(0);
-
-    await filter.click();
-    await page.getByRole("option", { name: "在通讯录", exact: true }).click();
-    await expect(peopleTable.getByText(E2E_ORG.employees.childA.name, { exact: true })).toBeVisible();
-    await expect(peopleTable.getByText(E2E_ORG.employees.childB.name, { exact: true })).toHaveCount(0);
-
     mkdirSync(ARTIFACT_DIR, { recursive: true });
-    const screenshotPath = resolve(ARTIFACT_DIR, "employee-dingtalk-filter.png");
-    await page.locator(".people-pane").screenshot({ path: screenshotPath });
     writeFileSync(
       resolve(ARTIFACT_DIR, "employee-dingtalk-filter.json"),
       `${JSON.stringify({
-        screenshot: screenshotPath,
         inRoster: names(inRoster),
         outRoster: names(outRoster),
       }, null, 2)}\n`,

@@ -13,6 +13,7 @@
     "dev:server": "npm run dev --workspace=@kodax-fabric/server",
     "dev:web": "npm run dev --workspace=@kodax-fabric/web",
     "build": "npm run build --workspace=@kodax-fabric/server && npm run build --workspace=@kodax-fabric/web",
+    "test": "npm run test:server && npm run test:e2e",
     "test:server": "npm test --workspace=@kodax-fabric/server",
     "test:e2e": "playwright test",
     "test:e2e:report": "playwright show-report playwright-report",
