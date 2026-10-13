@@ -19,6 +19,7 @@ import { E2E } from "./env.ts";
 import {
   SCHED_DEPARTMENTS,
   SCHED_ENTERPRISE,
+  SCHED_LOGIN_PASSWORD,
   SCHED_EXTERNAL_ENTERPRISE,
   SCHED_PEOPLE,
   SCHED_POOLS,
@@ -26,6 +27,7 @@ import {
   schedApiKey,
   schedSecret,
   type SchedDeptKey,
+  type SchedPerson,
   type SchedPersonKey,
   type SchedPoolDef,
   type SchedPoolKey,
@@ -88,16 +90,17 @@ async function main() {
     }
 
     const passwordHash = await hashPassword(REGISTRATION_INITIAL_PASSWORD);
+    const loginPasswordHash = await hashPassword(SCHED_LOGIN_PASSWORD);
     const employeeIds = {} as Record<SchedPersonKey, number>;
     for (const key of Object.keys(SCHED_PEOPLE) as SchedPersonKey[]) {
-      const def = SCHED_PEOPLE[key];
+      const def: SchedPerson = SCHED_PEOPLE[key];
       const [row] = await db
         .insert(employees)
         .values({
           name: def.name,
           phone: def.phone,
-          passwordHash,
-          role: "employee",
+          passwordHash: def.canLogin ? loginPasswordHash : passwordHash,
+          role: def.role ?? "employee",
           status: "active",
           enterpriseId: enterpriseIdOf(def.depts[0]),
           mustChangePassword: false,

@@ -229,6 +229,7 @@ export async function adminLogRoutes(app: FastifyInstance) {
         cacheReadTokens: requestAudits.cacheReadTokens,
         startedAt: requestAudits.startedAt,
         requestCredits: requestAudits.requestCredits,
+        tidal: requestAudits.tidal,
         createdAt: requestAudits.createdAt,
       })
       .from(requestAudits)

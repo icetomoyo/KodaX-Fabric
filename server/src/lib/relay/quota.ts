@@ -4,6 +4,12 @@ import { env } from "../../config.js";
 import { db } from "../../db/client.js";
 import { teams } from "../../db/schema/index.js";
 import { redis } from "../../redis.js";
+import {
+  isTidalWindowOpen,
+  loadTidalSettings,
+  tidalWindowLabel,
+} from "./tidal-settings.js";
+import type { RelayTidalGrant } from "./types.js";
 
 export type RelayQuotaLease = {
   release: () => Promise<void>;
@@ -24,6 +30,9 @@ export class RelayLimitError extends Error {
 const PERMISSION_LIMIT_CODES = new Set([
   "enterprise_required",
   "team_required",
+  // 潮汐KEY 在总开关关闭或开放时段之外：重试没有意义，不按限流回 429。
+  "tidal_disabled",
+  "tidal_window_closed",
 ]);
 
 export function relayLimitResponse(error: RelayLimitError): {
@@ -51,9 +60,10 @@ async function ensureRedisReady() {
   if (pong !== "PONG") throw new Error("Redis PING failed");
 }
 
-async function acquireRpm(employeeId: number, limit: number) {
+/** `subject` is the employee id, or `tidal:<key id>` for a tidal Key's own limits. */
+async function acquireRpm(subject: string, limit: number) {
   const minute = Math.floor(Date.now() / 60_000);
-  const key = `tokenhub:relay:rpm:${employeeId}:${minute}`;
+  const key = `tokenhub:relay:rpm:${subject}:${minute}`;
   const script = `
     local current = redis.call("INCR", KEYS[1])
     if current == 1 then redis.call("EXPIRE", KEYS[1], ARGV[2]) end
@@ -67,8 +77,8 @@ async function acquireRpm(employeeId: number, limit: number) {
   }
 }
 
-async function acquireConcurrency(employeeId: number, limit: number): Promise<() => Promise<void>> {
-  const key = `tokenhub:relay:concurrency:v2:${employeeId}`;
+async function acquireConcurrency(subject: string, limit: number): Promise<() => Promise<void>> {
+  const key = `tokenhub:relay:concurrency:v2:${subject}`;
   const leaseId = randomUUID();
   // Attempts are sequential and each may consume the full upstream timeout.
   // Keep the concurrency slot alive for the entire retry budget.
@@ -120,11 +130,28 @@ async function acquireConcurrency(employeeId: number, limit: number): Promise<()
   };
 }
 
+/** Tidal Keys only work while the feature is on and inside the daily window. */
+async function assertTidalOpen(): Promise<void> {
+  const settings = await loadTidalSettings();
+  if (!settings.enabled) {
+    throw new RelayLimitError("潮汐调度未开启，潮汐KEY 暂不可用", "tidal_disabled");
+  }
+  if (!isTidalWindowOpen(settings)) {
+    throw new RelayLimitError(
+      `潮汐KEY 仅在 ${tidalWindowLabel(settings)} 开放`,
+      "tidal_window_closed",
+    );
+  }
+}
+
 export async function acquireRelayQuota(
   employeeId: number,
   teamId: number | null,
+  /** The grant behind a tidal Key; such a Key is held to the grant's limits, not the employee's. */
+  tidal?: (RelayTidalGrant & { apiKeyId: number }) | null,
 ): Promise<RelayQuotaLease> {
   assertTeamBound(teamId);
+  if (tidal) await assertTidalOpen();
 
   const [team] = await db
     .select({ id: teams.id })
@@ -136,8 +163,16 @@ export async function acquireRelayQuota(
   }
 
   await ensureRedisReady();
-  await acquireRpm(employeeId, env.RELAY_SAFEGUARD_RPM);
-  const release = await acquireConcurrency(employeeId, env.RELAY_SAFEGUARD_MAX_CONCURRENCY);
+  if (tidal) {
+    const subject = `tidal:${tidal.apiKeyId}`;
+    await acquireRpm(subject, tidal.rpmLimit);
+    return { release: await acquireConcurrency(subject, tidal.maxConcurrency) };
+  }
+  await acquireRpm(String(employeeId), env.RELAY_SAFEGUARD_RPM);
+  const release = await acquireConcurrency(
+    String(employeeId),
+    env.RELAY_SAFEGUARD_MAX_CONCURRENCY,
+  );
 
   return { release };
 }

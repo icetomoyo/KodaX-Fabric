@@ -29,6 +29,7 @@
           <el-menu-item index="/admin/temp-channels">上游渠道</el-menu-item>
           <el-menu-item index="/admin/keys-board">KEYS看板</el-menu-item>
           <el-menu-item index="/admin/key-bindings">调度画布</el-menu-item>
+          <el-menu-item index="/admin/tidal">潮汐调度</el-menu-item>
           <el-menu-item index="/admin/model-prices">模型列表</el-menu-item>
         </el-sub-menu>
         <el-sub-menu v-if="auth.isSuperAdmin" index="logs">

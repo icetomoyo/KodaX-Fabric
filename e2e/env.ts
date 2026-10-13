@@ -76,5 +76,7 @@ export function e2eServerEnv(): NodeJS.ProcessEnv {
     ALERT_WEBHOOK_URL: `${E2E.mockUpstreamBaseUrl}/__control/alerts`,
     RELAY_KEY_IDLE_SWEEP_SECONDS: "1",
     RELAY_SAFEGUARD_RPM: "100000",
+    // 潮汐用例改完库里的用量、Key 状态后立刻发请求，不能读到上一份快照。
+    RELAY_TIDAL_SNAPSHOT_TTL_MS: "0",
   };
 }

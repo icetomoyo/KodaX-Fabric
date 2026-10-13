@@ -192,7 +192,10 @@ export async function loadSupportAccountSnapshot(
     })
     .from(employeeApiKeys)
     .leftJoin(teams, eq(employeeApiKeys.teamId, teams.id))
-    .where(eq(employeeApiKeys.employeeId, input.employeeId))
+    // 潮汐KEY 只对被授权的人可见，助手一律不提。
+    .where(
+      and(eq(employeeApiKeys.employeeId, input.employeeId), eq(employeeApiKeys.mode, "bound")),
+    )
     .orderBy(desc(employeeApiKeys.id));
 
   const auditRows = await db

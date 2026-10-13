@@ -72,6 +72,12 @@ import {
   resolveProtocolUpstreamConfig,
 } from "../lib/upstream-protocol-config.js";
 import { actingEmployeeId } from "../lib/act-as.js";
+import { isOpenPoolProvider } from "../lib/relay/open-pool.js";
+import {
+  findActiveTidalGrant,
+  isTidalWindowOpen,
+  loadTidalSettings,
+} from "../lib/relay/tidal-settings.js";
 import { loadSelectedUser } from "./admin/user-analytics.js";
 import { departmentPathLabel } from "../lib/department-tree.js";
 import { resolveEmployeeApiKeyTeam } from "../lib/org.js";
@@ -87,6 +93,8 @@ const createApiKeySchema = z
     teamId: z.number().int().positive().optional(),
     productLineId: z.number().int().positive().optional(),
     protocol: z.enum(RELAY_PROTOCOLS).optional(),
+    /** 潮汐KEY：只有被授权的员工能建，没授权时和参数无效一个回复。 */
+    tidal: z.boolean().optional(),
   })
   .refine((data) => data.departmentId != null || data.teamId != null);
 
@@ -813,6 +821,7 @@ export async function meRoutes(app: FastifyInstance) {
         providerCode: providers.code,
         providerName: providers.name,
         status: employeeApiKeys.status,
+        mode: employeeApiKeys.mode,
         lastUsedAt: employeeApiKeys.lastUsedAt,
         createdAt: employeeApiKeys.createdAt,
       })
@@ -824,16 +833,35 @@ export async function meRoutes(app: FastifyInstance) {
       .where(eq(employeeApiKeys.employeeId, meId(req)))
       .orderBy(desc(employeeApiKeys.id));
 
+    // 潮汐相关的内容只发给有未到期授权的员工：没授权的人连字段都看不到。
+    const grant = await findActiveTidalGrant(meId(req));
+    const visible = rows.filter((row) => row.mode === "bound" || grant != null);
+    const data = visible.map(({ relayPoolKey, keyEncrypted, mode, ...row }) => ({
+      ...row,
+      key: revealEmployeeApiKey(keyEncrypted),
+      productLineName: pooledProductLineDisplayName({
+        relayPoolKey,
+        productLineName: row.productLineName,
+      }),
+      ...(mode === "tidal" ? { tidal: true } : {}),
+    }));
+    if (!grant) return { success: true, data };
+
+    const settings = await loadTidalSettings();
     return {
       success: true,
-      data: rows.map(({ relayPoolKey, keyEncrypted, ...row }) => ({
-        ...row,
-        key: revealEmployeeApiKey(keyEncrypted),
-        productLineName: pooledProductLineDisplayName({
-          relayPoolKey,
-          productLineName: row.productLineName,
-        }),
-      })),
+      data,
+      tidal: {
+        maxConcurrency: grant.maxConcurrency,
+        rpmLimit: grant.rpmLimit,
+        expiresAt: grant.expiresAt,
+        hasKey: visible.some((row) => row.mode === "tidal"),
+        enabled: settings.enabled,
+        windowStart: settings.windowStart,
+        windowEnd: settings.windowEnd,
+        windowOpen: settings.enabled && isTidalWindowOpen(settings),
+        timezone: env.QUOTA_TIMEZONE,
+      },
     };
   });
 
@@ -878,6 +906,9 @@ export async function meRoutes(app: FastifyInstance) {
       }
       if (owner.enterpriseId == null) {
         return { outcome: "no_enterprise" } as const;
+      }
+      if (body.data.tidal === true && !(await findActiveTidalGrant(meId(req), new Date(), tx))) {
+        return { outcome: "invalid_request" } as const;
       }
 
       const membershipRows = await tx
@@ -932,7 +963,11 @@ export async function meRoutes(app: FastifyInstance) {
         const channels = await getEmployeeUpstreamChannels(meId(req), tx, {
           lockForCreate: true,
         });
-        channel = channels[0] ?? null;
+        // 潮汐KEY 没指定渠道时落在席位套餐的调度池上，不落到自建渠道。
+        channel = (body.data.tidal === true
+          ? channels.find((item) => item.productType === "coding_plan") ??
+            channels.find((item) => !isOpenPoolProvider(item.providerCode))
+          : channels[0]) ?? null;
       }
       if (!channel) {
         return { outcome: "channel_unavailable" } as const;
@@ -942,6 +977,23 @@ export async function meRoutes(app: FastifyInstance) {
         !channel.compatibleProtocols.includes(body.data.protocol)
       ) {
         return { outcome: "protocol_incompatible" } as const;
+      }
+
+      const tidal = body.data.tidal === true;
+      if (tidal) {
+        // 自建渠道没有席位和闲置额度可言，潮汐KEY 只建在席位套餐的调度池上。
+        if (isOpenPoolProvider(channel.providerCode)) {
+          return { outcome: "tidal_channel_unsupported" } as const;
+        }
+        // 员工行锁已在上面拿到：同一个人并发建两把时，第二个请求在这里看得到第一把。
+        const [existingTidal] = await tx
+          .select({ id: employeeApiKeys.id })
+          .from(employeeApiKeys)
+          .where(
+            and(eq(employeeApiKeys.employeeId, meId(req)), eq(employeeApiKeys.mode, "tidal")),
+          )
+          .limit(1);
+        if (existingTidal) return { outcome: "tidal_exists" } as const;
       }
 
       const [created] = await tx
@@ -955,6 +1007,7 @@ export async function meRoutes(app: FastifyInstance) {
           protocol,
           productLineId: channel.productLineId,
           teamId: membership.teamId,
+          mode: tidal ? "tidal" : "bound",
         })
         .returning({
           id: employeeApiKeys.id,
@@ -969,7 +1022,7 @@ export async function meRoutes(app: FastifyInstance) {
 
       await tx.insert(opsAuditLogs).values({
         actorEmployeeId: req.employeeId,
-        action: "api_key.create",
+        action: tidal ? "tidal.key.create" : "api_key.create",
         targetType: "employee_api_key",
         targetId: String(created.id),
         detail: {
@@ -988,12 +1041,34 @@ export async function meRoutes(app: FastifyInstance) {
       return {
         outcome: "created",
         row: created,
+        tidal,
         channel,
         departmentId: membership.departmentId,
         departmentName: membership.departmentName,
       } as const;
     });
 
+    if (result.outcome === "invalid_request") {
+      return reply.code(400).send({
+        success: false,
+        code: "invalid_request",
+        message: "参数无效",
+      });
+    }
+    if (result.outcome === "tidal_exists") {
+      return reply.code(409).send({
+        success: false,
+        code: "tidal_key_exists",
+        message: "已有一把潮汐KEY，可在列表里重置",
+      });
+    }
+    if (result.outcome === "tidal_channel_unsupported") {
+      return reply.code(400).send({
+        success: false,
+        code: "tidal_channel_unsupported",
+        message: "所选渠道不支持潮汐KEY",
+      });
+    }
     if (result.outcome === "forbidden") {
       return reply.code(403).send({
         success: false,
@@ -1054,6 +1129,7 @@ export async function meRoutes(app: FastifyInstance) {
         providerCode: result.channel.providerCode,
         providerName: result.channel.providerName,
         key: raw,
+        ...(result.tidal ? { tidal: true } : {}),
       },
     };
   });
@@ -1139,6 +1215,8 @@ export async function meRoutes(app: FastifyInstance) {
           and(
             eq(employeeApiKeys.employeeId, meId(req)),
             eq(employeeApiKeys.status, "active"),
+            // 潮汐KEY 不算这个部门的日常 Key，照样要补齐一把普通的。
+            eq(employeeApiKeys.mode, "bound"),
           ),
         );
       const existing = new Set(
@@ -1281,6 +1359,7 @@ export async function meRoutes(app: FastifyInstance) {
         return { outcome: "forbidden" } as const;
       }
 
+      const activeGrant = await findActiveTidalGrant(meId(req), new Date(), tx);
       const { raw, prefix, hash } = generateApiKey();
       const [row] = await tx
         .update(employeeApiKeys)
@@ -1293,6 +1372,8 @@ export async function meRoutes(app: FastifyInstance) {
           and(
             eq(employeeApiKeys.id, params.data.id),
             eq(employeeApiKeys.employeeId, meId(req)),
+            // 授权已撤销或到期的潮汐KEY 对员工不可见，也不能重置。
+            activeGrant ? undefined : eq(employeeApiKeys.mode, "bound"),
           ),
         )
         .returning({
@@ -1588,6 +1669,7 @@ export async function meRoutes(app: FastifyInstance) {
           completionTokens: requestAudits.completionTokens,
           totalTokens: requestAudits.totalTokens,
           cacheReadTokens: requestAudits.cacheReadTokens,
+          tidal: requestAudits.tidal,
           createdAt: requestAudits.createdAt,
         })
         .from(requestAudits)
@@ -1601,7 +1683,8 @@ export async function meRoutes(app: FastifyInstance) {
       success: true,
       data: {
         total: countRow?.total ?? 0,
-        items,
+        // 只有潮汐请求带这个标记，其余行和以前一样。
+        items: items.map(({ tidal, ...item }) => (tidal ? { ...item, tidal: true } : item)),
       },
     };
   });

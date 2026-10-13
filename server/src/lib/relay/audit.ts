@@ -154,6 +154,7 @@ export async function writeRelayAudit(input: RelayAuditInput): Promise<void> {
         cacheReadTokens,
         startedAt,
         requestCredits: requestCreditsText,
+        tidal: input.principal.tidal != null,
       })
       .onConflictDoNothing()
       .returning({ requestId: requestAudits.requestId });

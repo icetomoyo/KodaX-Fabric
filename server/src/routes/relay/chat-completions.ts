@@ -23,6 +23,7 @@ import {
   resolveAccessibleRelayModels,
   resolveRelayBoundCandidate,
 } from "../../lib/relay/routing.js";
+import { tidalSessionKey } from "../../lib/relay/tidal-pool.js";
 import { createSsePassthrough } from "../../lib/relay/sse.js";
 import type {
   RelayCandidate,
@@ -504,7 +505,13 @@ export async function chatCompletionRoutes(app: FastifyInstance) {
         }
 
         try {
-          lease = await acquireRelayQuota(principal.employeeId, principal.teamId);
+          lease = await acquireRelayQuota(
+            principal.employeeId,
+            principal.teamId,
+            principal.tidal
+              ? { ...principal.tidal, apiKeyId: principal.employeeApiKeyId }
+              : null,
+          );
         } catch (error) {
           if (!(error instanceof RelayLimitError)) throw error;
           const { status: httpStatus, type } = relayLimitResponse(error);
@@ -530,6 +537,12 @@ export async function chatCompletionRoutes(app: FastifyInstance) {
         }
 
         const excludeCredentialIds = new Set<number>();
+        const tidalRequest = principal.tidal
+          ? {
+              apiKeyId: principal.employeeApiKeyId,
+              sessionKey: tidalSessionKey(principal.employeeApiKeyId, req.headers, body),
+            }
+          : null;
         // 上游 429 最多换一次 Key；5xx、超时等故障仍按 RELAY_MAX_ATTEMPTS 重试。
         let rateLimitHops = 0;
         let lastCandidate: RelayCandidate | null = null;
@@ -542,6 +555,7 @@ export async function chatCompletionRoutes(app: FastifyInstance) {
             principal.protocol,
             principal.productLineId,
             excludeCredentialIds,
+            tidalRequest,
           );
           const candidate = resolution.candidate;
           if (!candidate) {
@@ -622,6 +636,7 @@ export async function chatCompletionRoutes(app: FastifyInstance) {
             signal: req.signal,
             virtualKeyId: principal.employeeApiKeyId,
             employeeId: principal.employeeId,
+            heldSlot: resolution.heldSlot,
           });
           activeAttempt = result;
 

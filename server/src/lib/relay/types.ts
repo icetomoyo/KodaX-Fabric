@@ -13,6 +13,14 @@ export type RelayPrincipal = {
   employeeName: string;
   employeePhone: string;
   employeeDept: string | null;
+  /** Set when the request came in on a tidal Key: the limits of the employee's grant. */
+  tidal?: RelayTidalGrant | null;
+};
+
+export type RelayTidalGrant = {
+  grantId: number;
+  maxConcurrency: number;
+  rpmLimit: number;
 };
 
 export type RelayCandidate = {

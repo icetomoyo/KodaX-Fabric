@@ -60,6 +60,8 @@ const envSchema = z.object({
   // 借用线：非席位主人用到这个比例就让出这把 Key（1 表示不设借用线）。
   RELAY_GUEST_FIVE_HOUR_RATIO: z.coerce.number().min(0.01).max(1).default(0.85),
   RELAY_GUEST_WEEKLY_RATIO: z.coerce.number().min(0.01).max(1).default(0.95),
+  // 潮汐调度：池内 Key 状态和用量账本的快照复用多久（每个潮汐请求都要看全池）。
+  RELAY_TIDAL_SNAPSHOT_TTL_MS: z.coerce.number().int().min(0).max(60_000).default(2_000),
   QUOTA_TIMEZONE: z
     .string()
     .default("Asia/Shanghai")

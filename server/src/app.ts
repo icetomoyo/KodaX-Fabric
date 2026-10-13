@@ -24,6 +24,7 @@ import { adminOpsAuditRoutes } from "./routes/admin/ops-audit.js";
 import { adminSensitiveWordRoutes } from "./routes/admin/sensitive-words.js";
 import { adminSettingsRoutes } from "./routes/admin/settings.js";
 import { adminStorageRoutes } from "./routes/admin/storage.js";
+import { adminTidalRoutes } from "./routes/admin/tidal.js";
 import { chatCompletionRoutes } from "./routes/relay/chat-completions.js";
 import { anthropicMessageRoutes } from "./routes/relay/anthropic-messages.js";
 
@@ -62,6 +63,7 @@ export async function buildApp() {
   await app.register(adminSensitiveWordRoutes);
   await app.register(adminSettingsRoutes);
   await app.register(adminStorageRoutes);
+  await app.register(adminTidalRoutes);
   await app.register(chatCompletionRoutes);
   await app.register(anthropicMessageRoutes);
 

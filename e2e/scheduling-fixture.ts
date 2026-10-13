@@ -33,10 +33,31 @@ export const SCHED_DEPARTMENTS: Record<
   ext: { name: "调度外部部门", parent: null, external: true },
 };
 
-export type SchedPerson = { name: string; phone: string; depts: SchedDeptKey[] };
+export type SchedPerson = {
+  name: string;
+  phone: string;
+  depts: SchedDeptKey[];
+  /** 默认是普通员工。 */
+  role?: "employee" | "org_admin";
+  /** 需要登录的人用 SCHED_LOGIN_PASSWORD；其余人是初始密码，拿不到会话。 */
+  canLogin?: boolean;
+};
 
-function person(index: number, name: string, depts: SchedDeptKey[]): SchedPerson {
-  return { name, phone: `1390000${String(index).padStart(4, "0")}`, depts };
+/** 初始密码登录会被要求先过钉钉核身，需要登录的夹具账号单独设密码。 */
+export const SCHED_LOGIN_PASSWORD = "Tidal2026pw";
+
+function person(
+  index: number,
+  name: string,
+  depts: SchedDeptKey[],
+  login?: { role?: SchedPerson["role"] },
+): SchedPerson {
+  return {
+    name,
+    phone: `1390000${String(index).padStart(4, "0")}`,
+    depts,
+    ...(login ? { canLogin: true, ...(login.role ? { role: login.role } : {}) } : {}),
+  };
 }
 
 /** 人员按「相对网关小组的远近」命名，方便读用例。 */
@@ -65,6 +86,17 @@ export const SCHED_PEOPLE = {
   ownerWin5: person(27, "调度-五小时主人", ["d1a1"]),
   ownerWeek: person(28, "调度-周窗口主人", ["d1a1"]),
   ownerLimit: person(29, "调度-上限主人", ["d1a1"]),
+  // 潮汐调度：被授权的人、没被授权的人、企业管理员，以及各把 Key 的席位主人
+  tdUser: person(31, "潮汐-被授权员工", ["d1a1"], {}),
+  tdPlain: person(32, "潮汐-未授权员工", ["d1a1"], {}),
+  tdOrgAdmin: person(33, "潮汐-企业管理员", ["d1a1"], { role: "org_admin" }),
+  tdO1: person(41, "潮汐-主人一", ["d1a1"]),
+  tdO2: person(42, "潮汐-主人二", ["d1a1"]),
+  tdO3: person(43, "潮汐-主人三", ["d1a1"]),
+  tdO4: person(44, "潮汐-主人四", ["d1a1"]),
+  tdO5: person(45, "潮汐-主人五", ["d1a1"]),
+  tdO7: person(47, "潮汐-主人七", ["d1a1"]),
+  tdO8: person(48, "潮汐-主人八", ["d1a1"]),
 } as const satisfies Record<string, SchedPerson>;
 
 export type SchedPersonKey = keyof typeof SCHED_PEOPLE;
@@ -186,6 +218,24 @@ export const SCHED_POOLS = {
     name: "调度E2E-回家",
     keys: [{ label: "homo", owner: "ownerHome" }, { label: "homf", owner: "entMate" }],
     users: ["ownerHome", "guest1"],
+  },
+  // 潮汐调度：8 把席位 Key，用例往账本里写用量把它们分到不同档位（见 tidal.spec.ts）。
+  // 5 小时上限故意比周上限小一个量级，这样能单独把某把 Key 的 5 小时用量顶过借用线。
+  tidal: {
+    name: "调度E2E-潮汐",
+    keys: [
+      { label: "td01", owner: "tdO1" },
+      { label: "td02", owner: "tdO2" },
+      { label: "td03", owner: "tdO3" },
+      { label: "td04", owner: "tdO4" },
+      { label: "td05", owner: "tdO5" },
+      { label: "td06", owner: "outsider" },
+      { label: "td07", owner: "tdO7" },
+      { label: "td08", owner: "tdO8" },
+    ],
+    users: ["tdO1"],
+    fiveHourCreditLimit: 100,
+    weeklyCreditLimit: 1000,
   },
 } as const satisfies Record<string, SchedPoolDef>;
 

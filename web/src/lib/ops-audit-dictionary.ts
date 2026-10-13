@@ -73,6 +73,11 @@ export const OPS_AUDIT_ACTION_LABELS: Record<string, string> = {
   "sensitive_words.update": "更新敏感词拦截",
   "sensitive_words.import": "导入敏感词",
   "settings.update": "更新系统设置",
+  "tidal.settings.update": "更新潮汐调度规则",
+  "tidal.grant.create": "授权潮汐KEY",
+  "tidal.grant.update": "修改潮汐授权",
+  "tidal.grant.revoke": "撤销潮汐授权",
+  "tidal.key.create": "创建潮汐KEY",
 };
 
 export const OPS_AUDIT_TARGET_LABELS: Record<string, string> = {

@@ -94,6 +94,62 @@
             </el-button>
           </div>
         </section>
+
+        <!-- 只有被授权的员工会拿到 tidal，没授权的人这里什么都不渲染。 -->
+        <section v-if="tidal" class="dept-section">
+          <h3 class="dept-title">
+            潮汐KEY
+            <el-tag :type="tidalStatus.type" effect="light" size="small">{{ tidalStatus.text }}</el-tag>
+          </h3>
+          <p class="tidal-desc">
+            用于大并发的 Agent 测试：只在开放时段可用，请求会铺到闲置的渠道 Key 上。
+            开放时段 {{ tidalWindowText }} · 并发上限 {{ tidal.maxConcurrency }} ·
+            每分钟最多 {{ tidal.rpmLimit }} 次 ·
+            {{ tidal.expiresAt ? `授权到 ${formatTime(tidal.expiresAt)}` : "授权长期有效" }}
+          </p>
+          <div v-if="tidalKey" class="key-row">
+            <span class="proto-label">{{ tidalKey.name || "潮汐KEY" }}</span>
+            <code class="key-text" :title="displayKey(tidalKey)">{{ displayKey(tidalKey) }}</code>
+            <el-button
+              class="row-action"
+              link
+              type="warning"
+              :loading="regeneratingId === tidalKey.id"
+              @click="regenerateKey(tidalKey)"
+            >
+              更新
+            </el-button>
+            <el-button
+              class="row-action"
+              link
+              type="primary"
+              :disabled="!tidalKey.key"
+              :loading="copyingId === tidalKey.id"
+              @click="copyKey(tidalKey)"
+            >
+              复制
+            </el-button>
+            <el-button
+              class="row-action"
+              link
+              type="danger"
+              :loading="deletingId === tidalKey.id"
+              @click="removeKey(tidalKey)"
+            >
+              删除
+            </el-button>
+          </div>
+          <el-button
+            v-else
+            type="primary"
+            plain
+            :disabled="!hasDepartment"
+            :loading="creatingTidal"
+            @click="createTidalKey"
+          >
+            创建潮汐KEY
+          </el-button>
+        </section>
       </div>
 
       <el-dialog v-model="showCreate" title="新增 Key" width="440px" @closed="resetCreate">
@@ -164,9 +220,24 @@ type KeyRow = {
   status: string;
   createdAt: string;
   lastUsedAt?: string | null;
+  /** 潮汐KEY；普通 Key 没有这个字段。 */
+  tidal?: boolean;
 };
 
 type KeyRowView = KeyRow & { deletable: boolean };
+
+/** 潮汐授权；只有被授权的员工，接口才会返回这一段。 */
+type TidalInfo = {
+  maxConcurrency: number;
+  rpmLimit: number;
+  expiresAt: string | null;
+  hasKey: boolean;
+  enabled: boolean;
+  windowStart: string;
+  windowEnd: string;
+  windowOpen: boolean;
+  timezone: string;
+};
 
 type DepartmentGroup = {
   key: string;
@@ -189,6 +260,27 @@ const departments = ref<OrgDepartment[]>([]);
 const hasDepartment = computed(() => departments.value.length > 0);
 
 const keys = ref<KeyRow[]>([]);
+const tidal = ref<TidalInfo | null>(null);
+const tidalKey = ref<KeyRow | null>(null);
+const creatingTidal = ref(false);
+
+const tidalStatus = computed<{ type: "success" | "warning" | "info"; text: string }>(() => {
+  if (!tidal.value?.enabled) return { type: "info", text: "暂未开启" };
+  return tidal.value.windowOpen
+    ? { type: "success", text: "开放中" }
+    : { type: "warning", text: "未到开放时段" };
+});
+
+const tidalWindowText = computed(() => {
+  const info = tidal.value;
+  if (!info) return "";
+  if (info.windowStart === info.windowEnd) return "全天";
+  return `${info.windowStart}–${info.windowEnd}（${info.timezone}）`;
+});
+
+function formatTime(value: string): string {
+  return new Date(value).toLocaleString("zh-CN", { hour12: false });
+}
 const loading = ref(false);
 const showKeys = ref(false);
 const showCreate = ref(false);
@@ -324,7 +416,31 @@ async function provisionKeys() {
 
 async function loadKeys() {
   const { data } = await http.get("/api/me/api-keys");
-  if (data.success) keys.value = Array.isArray(data.data) ? data.data : [];
+  if (!data.success) return;
+  const rows: KeyRow[] = Array.isArray(data.data) ? data.data : [];
+  // 潮汐KEY 单独一块，不算进部门分组（否则会影响「同部门最后一把不能删」的判断）。
+  keys.value = rows.filter((row) => !row.tidal);
+  tidalKey.value = rows.find((row) => row.tidal) ?? null;
+  tidal.value = data.tidal ?? null;
+}
+
+async function createTidalKey() {
+  const department = departments.value[0];
+  if (!department) return;
+  creatingTidal.value = true;
+  try {
+    await http.post("/api/me/api-keys", {
+      name: "潮汐KEY",
+      departmentId: department.id,
+      tidal: true,
+    });
+    ElMessage.success("已创建潮汐KEY");
+    await loadKeys();
+  } catch (error) {
+    ElMessage.error(getErrorMessage(error, "创建失败"));
+  } finally {
+    creatingTidal.value = false;
+  }
 }
 
 async function load() {
@@ -506,6 +622,13 @@ onMounted(load);
   font-size: 15px;
   font-weight: 600;
   color: var(--el-text-color-primary);
+}
+
+.tidal-desc {
+  margin: 0 0 12px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--el-text-color-secondary);
 }
 
 .key-row {

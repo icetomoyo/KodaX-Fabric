@@ -101,6 +101,11 @@ export type SendRelayUpstreamInput = {
   virtualKeyId?: number;
   /** Employee behind the attempt, for per-employee in-flight tracking. */
   employeeId?: number;
+  /**
+   * The Key's concurrency slot, when scheduling already took it (tidal picks
+   * and reserves in one step). This call owns it from here on.
+   */
+  heldSlot?: (() => void) | null;
 };
 
 type RequestLifetime = {
@@ -793,7 +798,7 @@ export async function sendRelayUpstream(
   );
   // Take the Key's concurrency slot before anything else. A full Key is not a
   // failure of the Key: the caller excludes it for this request and re-binds.
-  const releaseLoad = tryBeginCredentialUse(input.candidate.credentialId, {
+  const releaseLoad = input.heldSlot ?? tryBeginCredentialUse(input.candidate.credentialId, {
     virtualKeyId: input.virtualKeyId,
     employeeId: input.employeeId,
     limit: input.candidate.maxConcurrency ?? null,

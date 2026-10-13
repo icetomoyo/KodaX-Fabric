@@ -77,7 +77,12 @@
           {{ row.employeeName || "—" }}
         </template>
       </el-table-column>
-      <el-table-column prop="clientModel" label="模型" min-width="120" show-overflow-tooltip />
+      <el-table-column label="模型" min-width="120" show-overflow-tooltip>
+        <template #default="{ row }">
+          {{ row.clientModel }}
+          <el-tag v-if="row.tidal" type="success" effect="plain" size="small">潮汐</el-tag>
+        </template>
+      </el-table-column>
       <el-table-column label="Tokens" width="200">
         <template #default="{ row }">
           <dl class="metric-stack">
@@ -317,6 +322,8 @@ interface LogRow {
   clientModel: string;
   providerCode: string | null;
   productType: ProductType | null;
+  /** 经潮汐KEY 发起的请求。 */
+  tidal?: boolean;
   status: LogStatus;
   promptTokens: number | null;
   completionTokens: number | null;

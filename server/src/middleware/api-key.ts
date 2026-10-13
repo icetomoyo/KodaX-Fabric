@@ -8,7 +8,8 @@ import {
   DEFAULT_RELAY_PROTOCOL,
   type RelayProtocol,
 } from "../lib/relay/protocol.js";
-import { isValidRelayProductLineId } from "../lib/relay/types.js";
+import { findActiveTidalGrant } from "../lib/relay/tidal-settings.js";
+import { isValidRelayProductLineId, type RelayTidalGrant } from "../lib/relay/types.js";
 
 function relayError(
   reply: FastifyReply,
@@ -120,6 +121,7 @@ async function authenticateRelayApiKey(
       teamId: employeeApiKeys.teamId,
       protocol: employeeApiKeys.protocol,
       productLineId: employeeApiKeys.productLineId,
+      mode: employeeApiKeys.mode,
       employeeName: employees.name,
       employeePhone: employees.phone,
       employeeDept: employees.dept,
@@ -157,6 +159,27 @@ async function authenticateRelayApiKey(
     );
   }
 
+  // 潮汐KEY 要有未到期的授权才算数；撤销或到期后和不存在的 Key 一个回复。
+  let tidal: RelayTidalGrant | null = null;
+  if (principal.mode === "tidal") {
+    const grant = await findActiveTidalGrant(principal.employeeId);
+    if (!grant) {
+      return relayError(
+        reply,
+        errorProtocol,
+        401,
+        "无效的 KodaX Fabric API Key",
+        "authentication_error",
+        "invalid_api_key",
+      );
+    }
+    tidal = {
+      grantId: grant.id,
+      maxConcurrency: grant.maxConcurrency,
+      rpmLimit: grant.rpmLimit,
+    };
+  }
+
   if (principal.teamId != null) {
     const [membership] = await db
       .select({ teamStatus: teams.status, memberId: teamMembers.id })
@@ -188,6 +211,7 @@ async function authenticateRelayApiKey(
     employeeName: principal.employeeName,
     employeePhone: principal.employeePhone,
     employeeDept: principal.employeeDept,
+    tidal,
   };
 }
 

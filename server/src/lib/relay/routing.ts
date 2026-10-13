@@ -28,7 +28,9 @@ import type { RelayProtocol } from "./protocol.js";
 import type {
   RelayCandidate,
 } from "./types.js";
+import { isOpenPoolProvider } from "./open-pool.js";
 import { isValidRelayProductLineId } from "./types.js";
+import { acquireTidalCredential, type TidalRequest } from "./tidal-pool.js";
 import { RELAY_KEY_BUSY_RETRY_AFTER_SECONDS } from "./upstream.js";
 import {
   isProviderClientModelAllowed,
@@ -85,6 +87,11 @@ export type RelayBoundCandidateResolution = {
   candidate: RelayCandidate | null;
   unavailableReason: RelayCandidateResolution["unavailableReason"];
   retryAfterSeconds: number | null;
+  /**
+   * Tidal only: the candidate Key's concurrency slot is already taken. Hand it
+   * to `sendRelayUpstream`, which releases it when the attempt ends.
+   */
+  heldSlot?: (() => void) | null;
 };
 
 /** Defense-in-depth: scope raw snapshots before routing or ranking. */
@@ -486,6 +493,8 @@ export async function resolveRelayBoundCandidate(
   protocol: RelayProtocol,
   productLineId: number,
   excludeCredentialIds?: ReadonlySet<number>,
+  /** Set when the request came in on a tidal Key. */
+  tidal?: TidalRequest | null,
 ): Promise<RelayBoundCandidateResolution> {
   const parsed = parseClientModel(clientModel);
   const routedProductLineId = parsed.kind === "legacy"
@@ -516,6 +525,36 @@ export async function resolveRelayBoundCandidate(
     };
   }
 
+  // 潮汐KEY 不走绑定：每次请求从池里挑一把闲置的 Key 并直接占住并发位。
+  // 自建渠道（开放池）本来就没有绑定和并发上限，潮汐KEY 在那里按普通请求处理。
+  if (tidal && !isOpenPoolProvider(pool.providerCode)) {
+    const acquired = await acquireTidalCredential({
+      employeeId,
+      pool,
+      protocol,
+      tidal,
+      excludeCredentialIds,
+    });
+    if (!acquired.ok) {
+      return { candidate: null, ...mapAcquireFailure(acquired.reason, null) };
+    }
+    let handedOff = false;
+    try {
+      const resolved = await candidateForCredential(
+        acquired.credential,
+        clientModel,
+        upstreamModel,
+        protocol,
+      );
+      if (!resolved.candidate) return resolved;
+      resolved.candidate.maxConcurrency = env.RELAY_KEY_MAX_CONCURRENCY;
+      handedOff = true;
+      return { ...resolved, heldSlot: acquired.release };
+    } finally {
+      if (!handedOff) acquired.release();
+    }
+  }
+
   const acquired = await acquireBoundCredential({
     employeeId,
     productLineId: routedProductLineId,
@@ -527,7 +566,26 @@ export async function resolveRelayBoundCandidate(
     return { candidate: null, ...mapAcquireFailure(acquired.reason, acquired.retryAt) };
   }
 
-  const bound: BoundCredential = acquired.credential;
+  const resolved = await candidateForCredential(
+    acquired.credential,
+    clientModel,
+    upstreamModel,
+    protocol,
+  );
+  if (resolved.candidate) {
+    // Bound Keys are shared by a few employees and capped per Key; open pools are not.
+    resolved.candidate.maxConcurrency = acquired.openPool ? null : env.RELAY_KEY_MAX_CONCURRENCY;
+  }
+  return resolved;
+}
+
+/** Map the client model onto the acquired Key through its package's model routes. */
+async function candidateForCredential(
+  bound: BoundCredential,
+  clientModel: string,
+  upstreamModel: string,
+  protocol: RelayProtocol,
+): Promise<RelayBoundCandidateResolution> {
   if (!credentialSupportsProtocol(bound, protocol)) {
     return { candidate: null, ...mapAcquireFailure("no_binding_available", null) };
   }
@@ -544,8 +602,6 @@ export async function resolveRelayBoundCandidate(
   const route = modelRoute.kind === "routed" ? modelRoute.route : undefined;
   const candidate = toRelayCandidate(bound, clientModel, protocol, route);
   candidate.upstreamModel = route?.upstreamModel ?? upstreamModel;
-  // Bound Keys are shared by a few employees and capped per Key; open pools are not.
-  candidate.maxConcurrency = acquired.openPool ? null : env.RELAY_KEY_MAX_CONCURRENCY;
 
   return {
     candidate,

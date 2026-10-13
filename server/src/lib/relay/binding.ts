@@ -170,7 +170,7 @@ type CredentialSnapshotRow = {
 };
 
 /** A Key with who holds it now and whose seat it belongs to. */
-type PoolKeyRow = CredentialSnapshotRow & {
+export type PoolKeyRow = CredentialSnapshotRow & {
   bindingId: number | null;
   bindingScopeType: BindingScopeType | null;
   bindingScopeId: number | null;
@@ -871,7 +871,7 @@ async function touchMembership(membership: Membership, now: Date): Promise<void>
     .where(eq(credentialBindingMembers.id, membership.memberId));
 }
 
-async function loadPoolKeys(filter: {
+export async function loadPoolKeys(filter: {
   productLineIds?: readonly number[];
   credentialIds?: readonly number[];
   excludeCredentialIds?: readonly number[];
@@ -913,7 +913,7 @@ async function loadPoolKeys(filter: {
   return rows.map((row) => ({ ...row, memberCount: Number(row.memberCount) || 0 }));
 }
 
-async function loadUsage(
+export async function loadUsage(
   keys: readonly CredentialSnapshotRow[],
   now: Date,
 ): Promise<Map<number, CredentialQuotaUsage>> {
@@ -1031,7 +1031,7 @@ async function loadOpenPool(
   return rows.filter((row) => supportsProtocol(row.supportedProtocols, protocol));
 }
 
-async function restoreExpiredCooling(productLineIds: readonly number[], now: Date): Promise<void> {
+export async function restoreExpiredCooling(productLineIds: readonly number[], now: Date): Promise<void> {
   if (productLineIds.length === 0) return;
   await db
     .update(upstreamCredentials)
@@ -1045,7 +1045,7 @@ async function restoreExpiredCooling(productLineIds: readonly number[], now: Dat
     );
 }
 
-function toBoundCredential(
+export function toBoundCredential(
   snapshot: CredentialSnapshotRow,
   protocol: RelayProtocol,
   now: Date,

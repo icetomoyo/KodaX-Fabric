@@ -55,6 +55,8 @@ export const bindingScopeTypeEnum = pgEnum("binding_scope_type", [
   "department",
 ]);
 export const usageTierEnum = pgEnum("usage_tier", ["idle", "standard", "heavy"]);
+/** bound：挂在一把渠道 Key 上；tidal：潮汐KEY，每次请求从闲置的渠道 Key 里挑。 */
+export const apiKeyModeEnum = pgEnum("api_key_mode", ["bound", "tidal"]);
 
 export const enterprises = pgTable(
   "enterprises",
@@ -214,17 +216,40 @@ export const employeeApiKeys = pgTable(
       onUpdate: "no action",
     }),
     status: apiKeyStatusEnum("status").notNull().default("active"),
+    mode: apiKeyModeEnum("mode").notNull().default("bound"),
     lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
     expiresAt: timestamp("expires_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
     uniqueIndex("employee_api_keys_hash_uidx").on(t.keyHash),
+    uniqueIndex("employee_api_keys_tidal_employee_uidx")
+      .on(t.employeeId)
+      .where(sql`${t.mode} = 'tidal'`),
     index("employee_api_keys_employee_idx").on(t.employeeId),
     index("employee_api_keys_product_line_idx").on(t.productLineId),
     index("employee_api_keys_employee_product_line_idx").on(t.employeeId, t.productLineId),
     index("employee_api_keys_team_idx").on(t.teamId),
   ],
+);
+
+/** 潮汐调度授权：谁可以有潮汐KEY，以及这把 KEY 的并发、RPM 上限和到期时间。 */
+export const tidalGrants = pgTable(
+  "tidal_grants",
+  {
+    id: bigint("id", { mode: "number" }).generatedAlwaysAsIdentity().primaryKey(),
+    employeeId: bigint("employee_id", { mode: "number" })
+      .notNull()
+      .references(() => employees.id, { onDelete: "cascade", onUpdate: "no action" }),
+    maxConcurrency: integer("max_concurrency").notNull(),
+    rpmLimit: integer("rpm_limit").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+    note: varchar("note", { length: 200 }),
+    grantedBy: bigint("granted_by", { mode: "number" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("tidal_grants_employee_uidx").on(t.employeeId)],
 );
 
 export const providers = pgTable(
@@ -507,10 +532,13 @@ export const requestAudits = pgTable(
     cacheReadTokens: integer("cache_read_tokens"),
     startedAt: timestamp("started_at", { withTimezone: true }),
     requestCredits: numeric("request_credits", { precision: 14, scale: 4 }),
+    /** 经潮汐KEY 发起的请求。 */
+    tidal: boolean("tidal").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
     uniqueIndex("request_audits_request_id_uidx").on(t.requestId),
+    index("request_audits_tidal_created_idx").on(t.createdAt).where(sql`${t.tidal}`),
     index("request_audits_employee_created_idx").on(t.employeeId, t.createdAt),
     index("request_audits_created_idx").on(t.createdAt),
     index("request_audits_team_created_idx").on(t.teamId, t.createdAt),

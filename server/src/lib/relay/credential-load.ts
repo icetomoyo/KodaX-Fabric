@@ -58,6 +58,8 @@ type HopCounter = LiveCounter & {
 };
 
 const inFlightByCredential = new Map<number, number>();
+/** 其中经潮汐KEY 发起的部分；潮汐在每把 Key 上另有一个更小的并发上限。 */
+const inFlightTidalByCredential = new Map<number, number>();
 const inFlightByEmployee = new Map<number, number>();
 const totalUsesByCredential = new Map<number, number>();
 const totalTokensByCredential = new Map<number, number>();
@@ -150,6 +152,16 @@ export function getCredentialLoad(credentialId: number): CredentialLoad {
   };
 }
 
+/** Tidal attempts in flight on one Key. */
+export function getTidalInFlight(credentialId: number): number {
+  return inFlightTidalByCredential.get(credentialId) ?? 0;
+}
+
+/** Every Key that has tidal attempts in flight right now. */
+export function snapshotTidalInFlight(): Map<number, number> {
+  return new Map(inFlightTidalByCredential);
+}
+
 /** Upstream attempts this employee currently has in flight, across all Keys. */
 export function getEmployeeInFlight(employeeId: number): number {
   return inFlightByEmployee.get(employeeId) ?? 0;
@@ -208,11 +220,16 @@ export function snapshotRelayLiveLoad(
  * Pass `virtualKeyId` when the attempt is tied to an employee API key so the
  * binding graph can light the correct hop. Scheduling still keys only on the
  * credential.
+ *
+ * Tidal attempts are counted on the Key like any other, plus in their own
+ * per-Key counter. They are not counted against the employee: that number
+ * sizes the burst for the employee's bound Key.
  */
 export function beginCredentialUse(
   credentialId: number,
   virtualKeyId?: number | null,
   employeeId?: number | null,
+  tidal = false,
 ): () => void {
   const now = Date.now();
   pruneLive(now, RELAY_LIVE_AFTERGLOW_MS);
@@ -230,7 +247,13 @@ export function beginCredentialUse(
     bumpLive(liveByVirtualKey, trackedKeyId);
     bumpHop(trackedKeyId, credentialId);
   }
-  const trackedEmployeeId = isPositiveId(employeeId) ? employeeId : null;
+  if (tidal) {
+    inFlightTidalByCredential.set(
+      credentialId,
+      (inFlightTidalByCredential.get(credentialId) ?? 0) + 1,
+    );
+  }
+  const trackedEmployeeId = !tidal && isPositiveId(employeeId) ? employeeId : null;
   if (trackedEmployeeId != null) {
     inFlightByEmployee.set(
       trackedEmployeeId,
@@ -247,6 +270,14 @@ export function beginCredentialUse(
       inFlightByCredential.delete(credentialId);
     } else {
       inFlightByCredential.set(credentialId, current - 1);
+    }
+    if (tidal) {
+      const tidalCurrent = inFlightTidalByCredential.get(credentialId) ?? 0;
+      if (tidalCurrent <= 1) {
+        inFlightTidalByCredential.delete(credentialId);
+      } else {
+        inFlightTidalByCredential.set(credentialId, tidalCurrent - 1);
+      }
     }
     dropLive(liveByCredential, credentialId, endedAt);
     if (trackedKeyId != null) {
@@ -269,6 +300,8 @@ export type CredentialUseOptions = {
   employeeId?: number | null;
   /** Refuse the attempt when the Key already has this many requests in flight. */
   limit?: number | null;
+  /** Set for tidal attempts: refuse when the Key already has this many tidal requests in flight. */
+  tidalLimit?: number | null;
 };
 
 /**
@@ -284,5 +317,14 @@ export function tryBeginCredentialUse(
   if (limit != null && (inFlightByCredential.get(credentialId) ?? 0) >= limit) {
     return null;
   }
-  return beginCredentialUse(credentialId, options.virtualKeyId, options.employeeId);
+  const tidalLimit = options.tidalLimit;
+  if (tidalLimit != null && (inFlightTidalByCredential.get(credentialId) ?? 0) >= tidalLimit) {
+    return null;
+  }
+  return beginCredentialUse(
+    credentialId,
+    options.virtualKeyId,
+    options.employeeId,
+    tidalLimit != null,
+  );
 }

@@ -163,6 +163,12 @@ export const router = createRouter({
           meta: { roles: ["admin"] },
         },
         {
+          path: "tidal",
+          name: "admin-tidal",
+          component: () => import("@/views/admin/TidalView.vue"),
+          meta: { roles: ["admin"] },
+        },
+        {
           path: "model-prices",
           name: "admin-model-prices",
           component: () => import("@/views/admin/ModelPricesView.vue"),

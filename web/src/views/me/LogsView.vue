@@ -64,6 +64,7 @@
           <span class="model-cell">
             {{ row.clientModel }}
             <el-tag v-if="row.productType === 'coding_plan'" effect="plain" size="small">套餐</el-tag>
+            <el-tag v-if="row.tidal" type="success" effect="plain" size="small">潮汐</el-tag>
           </span>
         </template>
       </el-table-column>
@@ -120,6 +121,8 @@ interface MeLogRow {
   clientModel: string;
   providerCode: string | null;
   productType: ProductType | null;
+  /** 经潮汐KEY 发起的请求。 */
+  tidal?: boolean;
   status: LogStatus;
   promptTokens: number | null;
   completionTokens: number | null;
