@@ -1,4 +1,3 @@
-import { randomBytes } from "node:crypto";
 import type { RelayProtocol } from "./relay/protocol.js";
 import type { TemplateProtocolConfigResolution } from "./provider-templates.js";
 import {
@@ -6,10 +5,6 @@ import {
   parseProductLineProtocolConfigs,
   type ProductLineProtocolConfigs,
 } from "./upstream-protocol-config.js";
-
-export function allocateCustomProductLineCode(): string {
-  return `c_${randomBytes(8).toString("hex")}`;
-}
 
 export function mergeCustomProtocolConfigs(
   stored: unknown,

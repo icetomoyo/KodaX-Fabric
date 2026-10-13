@@ -1,4 +1,4 @@
-import { and, gte, inArray } from "drizzle-orm";
+import { and, gte, inArray, sql, type SQL } from "drizzle-orm";
 import { db } from "../../db/client.js";
 import { credentialUsageHourly } from "../../db/schema/index.js";
 import type { UpstreamUsageCapKind } from "../glm-error-codes.js";
@@ -8,8 +8,8 @@ const FIVE_HOUR_BUCKETS = 5;
 const WEEK_MS = 7 * 24 * HOUR_MS;
 
 /**
- * Fallback 7-day window for proactive cooling when a 429 has no reset time
- * and the Key has no learned per-key phase.
+ * Last-resort 7-day window for a Key that has neither learned its own reset
+ * instant nor a reset time set on its package.
  *
  * This is not an upstream invariant. Live 429s quote per-key times
  * (e.g. 2026-09-21 17:49:49 Asia/Shanghai); 2026-09-03 (Thu 19:00) and
@@ -67,7 +67,7 @@ export function fiveHourResetAt(now: Date): Date {
 
 /**
  * Start of the 7-day credit window containing `now`, aligned to
- * `CREDENTIAL_WEEKLY_EPOCH` (shared across all GLM team-plan keys).
+ * `CREDENTIAL_WEEKLY_EPOCH`. Only a guess: real phases differ per package.
  */
 export function weekStartOf(now: Date): Date {
   const elapsed = now.getTime() - CREDENTIAL_WEEKLY_EPOCH.getTime();
@@ -211,12 +211,79 @@ export function remainingQuotaFraction(
  *   full reset at anchor + 5h; the next window anchors at the first request
  *   after expiry.
  * - weekly: fixed-phase tumbling window. Full reset at the learned instant,
- *   cycling every 7 days regardless of usage.
+ *   cycling every 7 days regardless of usage. A Key that has not learned its
+ *   own instant from a 1310 reply follows the one set on its package.
  */
 export type CredentialWindowAnchors = {
   fiveHourAnchor: Date | null;
+  /**
+   * Credits already in the anchor's clock-hour bucket when the window began.
+   * The ledger is bucketed per UTC hour, so this is what separates the old
+   * window's usage from the new one inside that bucket.
+   */
+  fiveHourBaseCredits?: number;
   weeklyResetAt: Date | null;
 };
+
+/** Window columns as selected from a Key and its package (product line). */
+export type CredentialWindowColumns = {
+  fiveHourWindowAnchor: Date | null;
+  fiveHourWindowBaseCredits?: string | number | null;
+  /** Learned from this Key's own 1310 reply. */
+  weeklyWindowResetAt: Date | null;
+  /** Set on the package; every Key under it shares it by default. */
+  lineWeeklyWindowResetAt?: Date | null;
+};
+
+/** The weekly reset instant a Key actually follows: its own, else its package's. */
+export function effectiveWeeklyResetAt(
+  row: Pick<CredentialWindowColumns, "weeklyWindowResetAt" | "lineWeeklyWindowResetAt">,
+): Date | null {
+  return row.weeklyWindowResetAt ?? row.lineWeeklyWindowResetAt ?? null;
+}
+
+export function credentialWindowAnchors(row: CredentialWindowColumns): CredentialWindowAnchors {
+  const base = Number(row.fiveHourWindowBaseCredits);
+  return {
+    fiveHourAnchor: row.fiveHourWindowAnchor,
+    fiveHourBaseCredits: Number.isFinite(base) && base > 0 ? base : 0,
+    weeklyResetAt: effectiveWeeklyResetAt(row),
+  };
+}
+
+/**
+ * SQL for a Key's base credits when its 5h window is calibrated to start at
+ * `anchor` (an instant in the past, from an upstream reply): what the Key had
+ * already recorded in that clock hour before the anchor. Use inside an
+ * UPDATE of `upstream_credentials`.
+ */
+export function fiveHourBaseCreditsBeforeSql(anchor: Date): SQL {
+  const hourStartIso = hourStartOf(anchor).toISOString();
+  const anchorIso = anchor.toISOString();
+  return sql`coalesce((
+    select sum(ra.request_credits)
+    from request_audits ra
+    where ra.credential_id = upstream_credentials.id
+      and ra.status = 'success'
+      and ra.created_at >= ${hourStartIso}::timestamptz
+      and ra.created_at < ${anchorIso}::timestamptz
+  ), 0)`;
+}
+
+/**
+ * SQL for a Key's base credits when a new 5h window starts right now: the
+ * total already in the current clock-hour bucket. The request that starts
+ * the window is recorded only when it completes, so it is not included.
+ */
+export function fiveHourBaseCreditsNowSql(now: Date): SQL {
+  const hourStartIso = hourStartOf(now).toISOString();
+  return sql`coalesce((
+    select h.total_credits
+    from credential_usage_hourly h
+    where h.credential_id = upstream_credentials.id
+      and h.hour_start = ${hourStartIso}::timestamptz
+  ), 0)`;
+}
 
 const FIVE_HOUR_MS = FIVE_HOUR_BUCKETS * HOUR_MS;
 export { FIVE_HOUR_MS };
@@ -312,9 +379,10 @@ export type CredentialUsageBucketRow = {
  * - 5h: the anchored window `[anchor, anchor+5h)` when active; an expired
  *   anchor means full headroom (sum 0, the upstream window already flipped);
  *   a missing anchor falls back to the legacy rolling 5-bucket window.
- *   Buckets are UTC-hour aligned, so an anchor mid-hour excludes its first
- *   partial bucket (at most one hour of pre-anchor usage, and only when the
- *   Key served traffic in that hour — impossible right after expiry).
+ *   Buckets are UTC-hour aligned, so the anchor's own bucket is included
+ *   whole and `fiveHourBaseCredits` (what that bucket held before the window
+ *   began) is subtracted. Dropping the bucket instead loses everything used
+ *   between the anchor and the next full hour.
  * - weekly: the learned phase rolled to the cycle containing `now`
  *   (epoch fallback), so usage zeroes at the Key's real reset instant.
  */
@@ -325,16 +393,20 @@ export function aggregateCredentialUsage(
   now: Date,
 ): Map<number, CredentialQuotaUsage> {
   const usage = new Map<number, CredentialQuotaUsage>();
-  const startsById = new Map<number, { fiveHour: Date | null; weekly: Date }>();
+  const startsById = new Map<
+    number,
+    { fiveHour: Date | null; fiveHourBase: number; weekly: Date }
+  >();
   for (const id of credentialIds) {
     const anchors = anchorsById?.get(id) ?? null;
     const fiveHourWindow = activeFiveHourWindow(anchors?.fiveHourAnchor ?? null, now);
     startsById.set(id, {
       fiveHour: fiveHourWindow
-        ? fiveHourWindow.start
+        ? hourStartOf(fiveHourWindow.start)
         : anchors?.fiveHourAnchor
           ? null
           : fiveHourWindowStart(now),
+      fiveHourBase: fiveHourWindow ? Math.max(0, anchors?.fiveHourBaseCredits ?? 0) : 0,
       weekly: weeklyWindowStart(anchors?.weeklyResetAt ?? null, now),
     });
     usage.set(id, {
@@ -362,6 +434,11 @@ export function aggregateCredentialUsage(
       target.weeklyRequests = (target.weeklyRequests ?? 0) + (Number(row.requestCount) || 0);
     }
   }
+  for (const [id, starts] of startsById) {
+    if (starts.fiveHourBase <= 0) continue;
+    const target = usage.get(id);
+    if (target) target.fiveHourCredits = Math.max(0, target.fiveHourCredits - starts.fiveHourBase);
+  }
   return usage;
 }
 
@@ -382,8 +459,9 @@ export async function getCredentialQuotaUsage(
     const anchors = anchorsById?.get(id);
     if (anchors?.fiveHourAnchor) {
       const window = activeFiveHourWindow(anchors.fiveHourAnchor, now);
-      if (window && window.start.getTime() < rangeStart.getTime()) {
-        rangeStart = window.start;
+      const bucketStart = window ? hourStartOf(window.start) : null;
+      if (bucketStart && bucketStart.getTime() < rangeStart.getTime()) {
+        rangeStart = bucketStart;
       }
     }
     if (anchors?.weeklyResetAt) {

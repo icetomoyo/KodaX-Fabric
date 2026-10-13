@@ -262,6 +262,11 @@ export const productLines = pgTable(
     seatCount: integer("seat_count").notNull().default(0),
     tag: varchar("tag", { length: 32 }).notNull().default(""),
     testModel: varchar("test_model", { length: 128 }),
+    /**
+     * 套餐的周限额重置时刻（任意一次重置的时间点，按整周滚动）。同一套餐下的 Key
+     * 默认共用它；某把 Key 从上游 1310 回包学到的时刻优先于这里。
+     */
+    weeklyWindowResetAt: timestamp("weekly_window_reset_at", { withTimezone: true }),
     relayPoolKey: varchar("relay_pool_key", { length: 64 }).notNull().default(""),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -301,6 +306,10 @@ export const upstreamCredentials = pgTable(
     weeklyCreditLimit: numeric("weekly_credit_limit", { precision: 14, scale: 4 }),
     /** 5h 窗口为「首用锚定的翻转窗口」：窗口起点，过期后由下一次成功调用重新锚定。 */
     fiveHourWindowAnchor: timestamp("five_hour_window_anchor", { withTimezone: true }),
+    /** 窗口起点所在的整点小时桶里，窗口开始之前就已记下的积分；求和时扣掉。 */
+    fiveHourWindowBaseCredits: numeric("five_hour_window_base_credits", { precision: 14, scale: 4 })
+      .notNull()
+      .default("0"),
     /** 周窗口为「固定相位翻转窗口」：从 1310 报文学到的下一次翻转时刻。 */
     weeklyWindowResetAt: timestamp("weekly_window_reset_at", { withTimezone: true }),
     /** 结构化失败分类；看板泳道据此划分，不再解析 last_error 文本。 */

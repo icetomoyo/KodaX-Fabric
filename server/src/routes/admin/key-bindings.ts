@@ -30,6 +30,7 @@ import {
   releaseCredentialBinding,
 } from "../../lib/relay/binding.js";
 import {
+  credentialWindowAnchors,
   evaluateCredentialQuota,
   getCredentialQuotaUsage,
   resolveGraphCoolingKind,
@@ -105,7 +106,9 @@ export async function adminKeyBindingRoutes(app: FastifyInstance) {
           fiveHourCreditLimit: upstreamCredentials.fiveHourCreditLimit,
           weeklyCreditLimit: upstreamCredentials.weeklyCreditLimit,
           fiveHourWindowAnchor: upstreamCredentials.fiveHourWindowAnchor,
+          fiveHourWindowBaseCredits: upstreamCredentials.fiveHourWindowBaseCredits,
           weeklyWindowResetAt: upstreamCredentials.weeklyWindowResetAt,
+          lineWeeklyWindowResetAt: productLines.weeklyWindowResetAt,
           supportedProtocols: upstreamCredentials.supportedProtocols,
           ownerEmployeeId: channelSeats.employeeId,
           ownerName: employees.name,
@@ -179,15 +182,7 @@ export async function adminKeyBindingRoutes(app: FastifyInstance) {
     const usageById = await getCredentialQuotaUsage(
       credentialRows.map((row) => row.id),
       now,
-      new Map(
-        credentialRows.map((row) => [
-          row.id,
-          {
-            fiveHourAnchor: row.fiveHourWindowAnchor,
-            weeklyResetAt: row.weeklyWindowResetAt,
-          },
-        ]),
-      ),
+      new Map(credentialRows.map((row) => [row.id, credentialWindowAnchors(row)])),
     );
     const bindingViewById = await loadCredentialBindingViews(bindingRows);
 
@@ -215,10 +210,7 @@ export async function adminKeyBindingRoutes(app: FastifyInstance) {
             weeklyLimit: creditLimitNumber(row.weeklyCreditLimit),
           },
           now,
-          {
-            fiveHourAnchor: row.fiveHourWindowAnchor,
-            weeklyResetAt: row.weeklyWindowResetAt,
-          },
+          credentialWindowAnchors(row),
           // 画布上的「额度冷却」与调度里借用者让出 Key 的借用线一致。
           {
             fiveHour: env.RELAY_GUEST_FIVE_HOUR_RATIO,

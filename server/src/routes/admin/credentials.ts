@@ -18,21 +18,16 @@ import {
 import { env } from "../../config.js";
 import {
   FIVE_HOUR_MS,
+  credentialWindowAnchors,
+  effectiveWeeklyResetAt,
+  fiveHourBaseCreditsBeforeSql,
   getCredentialQuotaUsage,
   nextFiveHourResetAt,
   nextWeeklyResetAt,
   type CredentialWindowAnchors,
 } from "../../lib/relay/credential-quota.js";
 import { resolveRelayRateLimitCooldown } from "../../lib/relay/upstream.js";
-import {
-  describeBulkCreateLocator,
-  inspectCredentialSecretDuplicates,
-  shouldRejectExistingChannelForMetadataRequest,
-} from "../../lib/credential-bulk.js";
-import {
-  allocateCustomProductLineCode,
-  resolveCustomProtocolConfigs,
-} from "../../lib/custom-channel.js";
+import { inspectCredentialSecretDuplicates } from "../../lib/credential-duplicates.js";
 import {
   partitionCredentialSubmitRoster,
   presentEmployeeSubmittedCredentials,
@@ -50,29 +45,23 @@ import {
   type UpstreamConnectionTestResult,
 } from "../../lib/upstream-connection-test.js";
 import {
-  CUSTOM_PROVIDER_CODE,
-  CUSTOM_PROVIDER_NAME,
   getProviderTemplate,
   PROVIDER_TEMPLATES,
-  resolveTemplateBaseUrlOption,
   resolveTemplateProtocolConfigs,
 } from "../../lib/provider-templates.js";
 import {
-  DEFAULT_RELAY_PROTOCOL,
   RELAY_PROTOCOLS,
   type RelayProtocol,
 } from "../../lib/relay/protocol.js";
 import {
   configurableSupportedProtocolsSchema,
   resolveChannelCredentialInsertProtocols,
-  resolveTemplateChannelName,
 } from "../../lib/upstream-channel-update.js";
 import {
   configuredProtocols,
   parseProductLineProtocolConfigs,
   planEmptyChannelProtocolConfigInitialization,
   resolveProtocolUpstreamConfig,
-  UPSTREAM_AUTH_STYLES,
 } from "../../lib/upstream-protocol-config.js";
 import {
   requireRoles,
@@ -80,12 +69,6 @@ import {
 } from "../../middleware/auth.js";
 
 type CredentialTestResult = UpstreamConnectionTestResult;
-
-type BulkProductLineContext = {
-  productLine: typeof productLines.$inferSelect;
-  provider: typeof providers.$inferSelect;
-  baseUrl: string;
-};
 
 const RECENT_WINDOW_MS = 24 * 60 * 60 * 1_000;
 
@@ -219,172 +202,11 @@ const upstreamSecretSchema = z
   .min(8, "上游 Key 至少需要 8 个字符")
   .max(4096, "上游 Key 最多允许 4096 个字符");
 
-const bulkCredentialDefaultsSchema = z.object({
-  supportedProtocols: supportedProtocolsSchema.optional(),
-  weight: z.number().int().min(0).max(10000).optional(),
-  priority: z.number().int().min(-1000).max(1000).optional(),
-});
-
-const optionalCredentialLabelSchema = z.preprocess(
-  (value) => typeof value === "string" && value.trim() === "" ? undefined : value,
-  z.string().trim().min(1).max(200).optional(),
-);
-
-const optionalCredentialTagSchema = z.preprocess(
-  (value) => {
-    if (value == null) return null;
-    if (typeof value !== "string") return value;
-    const trimmed = value.trim();
-    return trimmed === "" ? null : trimmed;
-  },
-  z.string().max(32).nullable().optional(),
-);
-
-const protocolUpstreamConfigSchema = z.object({
-  baseUrl: z
-    .string()
-    .trim()
-    .min(1, "上游地址不能为空")
-    .max(2048, "上游地址过长")
-    .refine((value) => {
-      try {
-        const url = new URL(value);
-        return url.protocol === "http:" || url.protocol === "https:";
-      } catch {
-        return false;
-      }
-    }, "上游地址必须是有效的 http 或 https URL"),
-  authStyle: z.enum(UPSTREAM_AUTH_STYLES),
-});
-
-const customProtocolConfigsSchema = z.object({
-  openai_chat: protocolUpstreamConfigSchema.optional(),
-  anthropic_messages: protocolUpstreamConfigSchema.optional(),
-}).strict();
-
-const bulkCredentialCreateSchema = z
-  .object({
-    productLineId: z.number().int().positive().optional(),
-    providerCode: z.string().trim().min(1).max(64).optional(),
-    baseUrl: z.string().url().optional(),
-    custom: z.boolean().optional(),
-    protocolConfigs: customProtocolConfigsSchema.optional(),
-    name: z.string().trim().min(1).max(100).optional(),
-    seatCount: z.number().int().min(0).max(100_000).optional(),
-    status: z.enum(["active", "disabled"]).optional(),
-    keys: z
-      .array(
-        z.object({
-          label: optionalCredentialLabelSchema,
-          secret: upstreamSecretSchema,
-        }),
-      )
-      .min(1)
-      .max(200),
-    defaults: bulkCredentialDefaultsSchema.optional(),
-    tag: optionalCredentialTagSchema,
-    // Also accept the originally proposed flat form for API compatibility.
-    supportedProtocols: supportedProtocolsSchema.optional(),
-    weight: z.number().int().min(0).max(10000).optional(),
-    priority: z.number().int().min(-1000).max(1000).optional(),
-  })
-  .superRefine((value, context) => {
-    const locator = describeBulkCreateLocator(value);
-
-    if (locator === "invalid") {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "必须且只能通过 productLineId、官方模板 providerCode + baseUrl，或 custom 定位渠道",
-        path: ["productLineId"],
-      });
-    }
-    if (locator === "template" && (!value.providerCode || !value.baseUrl)) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "providerCode 和 baseUrl 必须同时提供",
-        path: value.providerCode ? ["baseUrl"] : ["providerCode"],
-      });
-    }
-    if (
-      locator === "existing"
-      && (
-        value.name !== undefined
-        || value.status !== undefined
-        || value.seatCount !== undefined
-        || value.protocolConfigs !== undefined
-        || value.custom !== undefined
-      )
-    ) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "渠道配置项仅可在新建渠道时提供",
-        path: ["productLineId"],
-      });
-    }
-    if (locator === "custom") {
-      if (value.providerCode !== undefined || value.baseUrl !== undefined) {
-        context.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: "自定义渠道不能同时提供官方模板定位参数",
-          path: value.providerCode ? ["providerCode"] : ["baseUrl"],
-        });
-      }
-      if (!value.name) {
-        context.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: "自定义渠道必须提供名称",
-          path: ["name"],
-        });
-      }
-      if (!value.protocolConfigs) {
-        context.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: "自定义渠道必须填写上游地址",
-          path: ["protocolConfigs"],
-        });
-      }
-    }
-    if (locator !== "existing" && locator !== "invalid" && value.seatCount === undefined) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "请填写席位数量",
-        path: ["seatCount"],
-      });
-    }
-    if (locator !== "custom" && value.protocolConfigs !== undefined) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "上游地址仅自定义渠道可提交",
-        path: ["protocolConfigs"],
-      });
-    }
-  });
-
 function metaWithoutStaleTest(meta: unknown): Record<string, unknown> {
   const previous = meta && typeof meta === "object" ? { ...(meta as Record<string, unknown>) } : {};
   delete previous.lastTest;
   delete previous.discoveredModels;
   return previous;
-}
-
-/** Keep the provider company name aligned without overwriting editable channel names. */
-async function syncTemplateProviderDisplayName(
-  tx: Pick<typeof db, "update">,
-  provider: typeof providers.$inferSelect,
-  template: { name: string },
-): Promise<typeof providers.$inferSelect> {
-  let nextProvider = provider;
-
-  if (provider.name !== template.name) {
-    const [updated] = await tx
-      .update(providers)
-      .set({ name: template.name, updatedAt: new Date() })
-      .where(eq(providers.id, provider.id))
-      .returning();
-    if (updated) nextProvider = updated;
-  }
-
-  return nextProvider;
 }
 
 type TemplateChannelProtocolInitializationResult =
@@ -481,6 +303,7 @@ async function testCredentialConnection(
       meta: upstreamCredentials.meta,
       fiveHourWindowAnchor: upstreamCredentials.fiveHourWindowAnchor,
       weeklyWindowResetAt: upstreamCredentials.weeklyWindowResetAt,
+      lineWeeklyWindowResetAt: productLines.weeklyWindowResetAt,
       supportedProtocols: upstreamCredentials.supportedProtocols,
       providerCode: providers.code,
       authStyle: providers.authStyle,
@@ -560,10 +383,7 @@ async function testCredentialConnection(
     env.RELAY_COOLDOWN_SECONDS,
     env.RELAY_QUOTA_COOLDOWN_SECONDS,
     now,
-    {
-      fiveHourAnchor: credential.fiveHourWindowAnchor,
-      weeklyResetAt: credential.weeklyWindowResetAt,
-    },
+    credentialWindowAnchors(credential),
   );
   const shouldCool = !result.ok
     && (result.httpStatus === 429 || cooldown.quotaExhausted || cooldown.cap != null);
@@ -642,7 +462,12 @@ async function testCredentialConnection(
         lastFailureKind: result.ok ? null : (shouldCool ? cooldown.failureKind : "other"),
         lastVendorCode: result.ok ? null : cooldown.vendorCode,
         ...(calibrationReset && cooldown.cap?.kind === "five_hour"
-          ? { fiveHourWindowAnchor: new Date(calibrationReset.getTime() - FIVE_HOUR_MS) }
+          ? {
+              fiveHourWindowAnchor: new Date(calibrationReset.getTime() - FIVE_HOUR_MS),
+              fiveHourWindowBaseCredits: fiveHourBaseCreditsBeforeSql(
+                new Date(calibrationReset.getTime() - FIVE_HOUR_MS),
+              ),
+            }
           : {}),
         ...(calibrationReset && cooldown.cap?.kind === "weekly"
           ? { weeklyWindowResetAt: calibrationReset }
@@ -828,6 +653,7 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
         fiveHourCreditLimit: upstreamCredentials.fiveHourCreditLimit,
         weeklyCreditLimit: upstreamCredentials.weeklyCreditLimit,
         fiveHourWindowAnchor: upstreamCredentials.fiveHourWindowAnchor,
+        fiveHourWindowBaseCredits: upstreamCredentials.fiveHourWindowBaseCredits,
         weeklyWindowResetAt: upstreamCredentials.weeklyWindowResetAt,
         lastFailureKind: upstreamCredentials.lastFailureKind,
       })
@@ -849,10 +675,11 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
       : [{ recentSuccessCount: 0, recentErrorCount: 0 }];
 
     const now = new Date();
+    const lineWeeklyWindowResetAt = located.productLine.weeklyWindowResetAt;
     const summaryAnchorsById = new Map<number, CredentialWindowAnchors>(
       credentialRows.map((row) => [
         row.id,
-        { fiveHourAnchor: row.fiveHourWindowAnchor, weeklyResetAt: row.weeklyWindowResetAt },
+        credentialWindowAnchors({ ...row, lineWeeklyWindowResetAt }),
       ]),
     );
     const [usageById, bindingById] = await Promise.all([
@@ -926,7 +753,10 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
             fiveHourCredits: usage.fiveHourCredits,
             weeklyCredits: usage.weeklyCredits,
             nextFiveHourResetAt: nextFiveHourResetAt(row.fiveHourWindowAnchor, now),
-            nextWeeklyResetAt: nextWeeklyResetAt(row.weeklyWindowResetAt, now),
+            nextWeeklyResetAt: nextWeeklyResetAt(
+              effectiveWeeklyResetAt({ ...row, lineWeeklyWindowResetAt }),
+              now,
+            ),
             lastFailureKind: row.lastFailureKind,
             binding: bindingById.get(row.id) ?? null,
           };
@@ -934,567 +764,6 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
       },
     };
   });
-
-  app.post(
-    "/api/admin/credentials/bulk-create",
-    { preHandler: [requireRoles("admin")] },
-    async (req, reply) => {
-      const body = bulkCredentialCreateSchema.safeParse(req.body);
-      if (!body.success) {
-        return reply.code(400).send({
-          success: false,
-          message: "批量创建参数无效",
-          errors: body.error.flatten(),
-        });
-      }
-
-      const requestedSecrets = body.data.keys.map((item) => item.secret);
-      const batchDuplicates = inspectCredentialSecretDuplicates(requestedSecrets);
-      if (batchDuplicates.batchDuplicateIndexes.length) {
-        return reply.code(409).send({
-          success: false,
-          message: `批量导入中存在重复 Key（第 ${batchDuplicates.batchDuplicateIndexes.join("、")} 项）`,
-          duplicateIndexes: batchDuplicates.batchDuplicateIndexes,
-        });
-      }
-
-      const requestedSupportedProtocols =
-        body.data.defaults?.supportedProtocols
-        ?? body.data.supportedProtocols;
-      const weight = body.data.defaults?.weight ?? body.data.weight ?? 100;
-      const priority = body.data.defaults?.priority ?? body.data.priority ?? 0;
-
-      const creatingCustomChannel = body.data.custom === true
-        && body.data.productLineId === undefined;
-      const template = !creatingCustomChannel && body.data.providerCode
-        ? getProviderTemplate(body.data.providerCode)
-        : undefined;
-      const baseUrlOption = template && body.data.baseUrl
-        ? resolveTemplateBaseUrlOption(template, body.data.baseUrl)
-        : undefined;
-
-      if (body.data.productLineId === undefined && !creatingCustomChannel && !template) {
-        return reply.code(400).send({ success: false, message: "暂不支持该供应商" });
-      }
-      if (body.data.productLineId === undefined && !creatingCustomChannel && !baseUrlOption) {
-        return reply.code(400).send({
-          success: false,
-          message: "Base URL 必须选择该供应商的官方地址",
-        });
-      }
-      const customProtocolConfigResolution = creatingCustomChannel
-        ? resolveCustomProtocolConfigs(
-          body.data.protocolConfigs,
-          requestedSupportedProtocols
-            ?? configuredProtocols(parseProductLineProtocolConfigs(body.data.protocolConfigs)),
-        )
-        : null;
-      if (creatingCustomChannel && customProtocolConfigResolution && !customProtocolConfigResolution.ok) {
-        return reply.code(400).send({
-          success: false,
-          code: "CHANNEL_PROTOCOL_UNSUPPORTED",
-          message: "自定义渠道必须为每个所选协议提供 URL 和鉴权配置",
-          unsupportedProtocols: customProtocolConfigResolution.unsupportedProtocols,
-        });
-      }
-      if (
-        creatingCustomChannel
-        && customProtocolConfigResolution?.ok
-        && Object.keys(customProtocolConfigResolution.configs).length === 0
-      ) {
-        return reply.code(400).send({
-          success: false,
-          message: "自定义渠道必须为至少一个协议配置上游地址",
-        });
-      }
-      const newChannelProtocols = creatingCustomChannel && customProtocolConfigResolution?.ok
-        ? configuredProtocols(customProtocolConfigResolution.configs)
-        : requestedSupportedProtocols
-          ?? template?.defaultProtocols
-          ?? [DEFAULT_RELAY_PROTOCOL];
-      const newChannelProtocolConfigResolution = template && baseUrlOption
-        ? resolveTemplateProtocolConfigs(
-          template,
-          baseUrlOption.productLineCode,
-          newChannelProtocols,
-        )
-        : customProtocolConfigResolution;
-      if (newChannelProtocolConfigResolution && !newChannelProtocolConfigResolution.ok) {
-        return reply.code(400).send({
-          success: false,
-          code: "CHANNEL_PROTOCOL_UNSUPPORTED",
-          message: "当前渠道不支持所选协议",
-          unsupportedProtocols: newChannelProtocolConfigResolution.unsupportedProtocols,
-        });
-      }
-
-      const created = await db.transaction(async (tx) => {
-        let context: BulkProductLineContext | null = null;
-
-        if (body.data.productLineId !== undefined) {
-          const [located] = await tx
-            .select({ productLine: productLines, provider: providers })
-            .from(productLines)
-            .innerJoin(providers, eq(productLines.providerId, providers.id))
-            .where(eq(productLines.id, body.data.productLineId))
-            .limit(1);
-
-          if (!located) return { kind: "product_line_not_found" } as const;
-          context = {
-            ...located,
-            baseUrl: located.productLine.baseUrlOverride || located.provider.defaultBaseUrl,
-          };
-        } else if (creatingCustomChannel) {
-          if (
-            !newChannelProtocolConfigResolution
-            || !newChannelProtocolConfigResolution.ok
-            || !body.data.name
-          ) {
-            throw new Error("渠道定位参数无效");
-          }
-
-          const customConfigs = newChannelProtocolConfigResolution.configs;
-          const primaryProtocol = newChannelProtocols[0] ?? DEFAULT_RELAY_PROTOCOL;
-          const primaryConfig = customConfigs[primaryProtocol]
-            ?? customConfigs.openai_chat
-            ?? customConfigs.anthropic_messages;
-          if (!primaryConfig) throw new Error("自定义渠道缺少上游地址");
-
-          let [provider] = await tx
-            .select()
-            .from(providers)
-            .where(eq(providers.code, CUSTOM_PROVIDER_CODE))
-            .limit(1);
-
-          if (!provider) {
-            [provider] = await tx
-              .insert(providers)
-              .values({
-                code: CUSTOM_PROVIDER_CODE,
-                name: CUSTOM_PROVIDER_NAME,
-                defaultBaseUrl: primaryConfig.baseUrl,
-                authStyle: primaryConfig.authStyle,
-                openaiCompatLevel: "full",
-                status: "active",
-              })
-              .onConflictDoNothing({ target: providers.code })
-              .returning();
-
-            if (!provider) {
-              [provider] = await tx
-                .select()
-                .from(providers)
-                .where(eq(providers.code, CUSTOM_PROVIDER_CODE))
-                .limit(1);
-            }
-          }
-          if (!provider) throw new Error("供应商创建失败");
-
-          let productLine: typeof productLines.$inferSelect | undefined;
-          for (let attempt = 0; attempt < 3 && !productLine; attempt += 1) {
-            const [inserted] = await tx
-              .insert(productLines)
-              .values({
-                providerId: provider.id,
-                code: allocateCustomProductLineCode(),
-                name: body.data.name,
-                productType: "api",
-                baseUrlOverride: primaryConfig.baseUrl,
-                protocolConfigs: customConfigs,
-                configVersion: 1,
-                seatCount: body.data.seatCount ?? 0,
-                status: body.data.status ?? "active",
-              })
-              .onConflictDoNothing({
-                target: [productLines.providerId, productLines.code],
-              })
-              .returning();
-            productLine = inserted;
-          }
-          if (!productLine) throw new Error("渠道创建失败");
-
-          await tx.execute(
-            sql`select pg_advisory_xact_lock(${productLine.id})`,
-          );
-
-          context = {
-            provider,
-            productLine,
-            baseUrl: productLine.baseUrlOverride || provider.defaultBaseUrl,
-          };
-        } else {
-          // The guards above make these values available in this locator branch.
-          if (
-            !template || !baseUrlOption ||
-            !newChannelProtocolConfigResolution ||
-            !newChannelProtocolConfigResolution.ok
-          ) {
-            throw new Error("渠道定位参数无效");
-          }
-
-          let [provider] = await tx
-            .select()
-            .from(providers)
-            .where(eq(providers.code, template.code))
-            .limit(1);
-
-          if (!provider) {
-            [provider] = await tx
-              .insert(providers)
-              .values({
-                code: template.code,
-                name: template.name,
-                defaultBaseUrl: template.baseUrls[0].url,
-                authStyle: template.authStyle,
-                openaiCompatLevel: "full",
-                status: "active",
-              })
-              .onConflictDoNothing({ target: providers.code })
-              .returning();
-
-            if (!provider) {
-              [provider] = await tx
-                .select()
-                .from(providers)
-                .where(eq(providers.code, template.code))
-                .limit(1);
-            }
-          }
-          if (!provider) throw new Error("供应商创建失败");
-
-          let productLineInsertedByRequest = false;
-          let [productLine] = await tx
-            .select()
-            .from(productLines)
-            .where(
-              and(
-                eq(productLines.providerId, provider.id),
-                eq(productLines.code, baseUrlOption.productLineCode),
-              ),
-            )
-            .limit(1);
-          const productLineName = resolveTemplateChannelName(
-            productLine?.name,
-            body.data.name ?? baseUrlOption.productLineName,
-          );
-
-          if (!productLine) {
-            [productLine] = await tx
-              .insert(productLines)
-              .values({
-                providerId: provider.id,
-                code: baseUrlOption.productLineCode,
-                name: productLineName,
-                productType: baseUrlOption.productType,
-                baseUrlOverride:
-                  baseUrlOption.url === provider.defaultBaseUrl ? null : baseUrlOption.url,
-                protocolConfigs: newChannelProtocolConfigResolution.configs,
-                configVersion: 1,
-                seatCount: body.data.seatCount ?? 0,
-                status: body.data.status ?? "active",
-              })
-              .onConflictDoNothing({
-                target: [productLines.providerId, productLines.code],
-              })
-              .returning();
-            productLineInsertedByRequest = Boolean(productLine);
-
-            if (!productLine) {
-              [productLine] = await tx
-                .select()
-                .from(productLines)
-                .where(
-                  and(
-                    eq(productLines.providerId, provider.id),
-                    eq(productLines.code, baseUrlOption.productLineCode),
-                  ),
-                )
-                .limit(1);
-            }
-          }
-          if (!productLine) throw new Error("渠道创建失败");
-          if (
-            shouldRejectExistingChannelForMetadataRequest(
-              {
-                productLineId: body.data.productLineId,
-                name: body.data.name,
-                status: body.data.status,
-              },
-              productLineInsertedByRequest,
-            )
-          ) {
-            return {
-              kind: "channel_already_exists",
-              productLineId: productLine.id,
-            } as const;
-          }
-
-          await tx.execute(
-            sql`select pg_advisory_xact_lock(${productLine.id})`,
-          );
-          provider = await syncTemplateProviderDisplayName(
-            tx,
-            provider,
-            template,
-          );
-
-          context = {
-            provider,
-            productLine,
-            baseUrl: productLine.baseUrlOverride || provider.defaultBaseUrl,
-          };
-        }
-
-        // Serialize imports for the same channel so concurrent batches cannot
-        // both pass duplicate inspection before either inserts its rows.
-        await tx.execute(
-          sql`select pg_advisory_xact_lock(${context.productLine.id})`,
-        );
-        const [lockedProductLine] = await tx
-          .select()
-          .from(productLines)
-          .where(eq(productLines.id, context.productLine.id))
-          .limit(1)
-          .for("share");
-        if (!lockedProductLine) return { kind: "product_line_not_found" } as const;
-        context = {
-          ...context,
-          productLine: lockedProductLine,
-          baseUrl: lockedProductLine.baseUrlOverride || context.provider.defaultBaseUrl,
-        };
-
-        const existingRows = await tx
-          .select({
-            id: upstreamCredentials.id,
-            secretEncrypted: upstreamCredentials.secretEncrypted,
-            supportedProtocols: upstreamCredentials.supportedProtocols,
-          })
-          .from(upstreamCredentials)
-          .where(eq(upstreamCredentials.productLineId, context.productLine.id));
-
-        const initialization = await initializeEmptyTemplateChannelProtocolConfigs(tx, {
-          productLine: context.productLine,
-          providerCode: context.provider.code,
-          credentialCount: existingRows.length,
-          requestedProtocols: requestedSupportedProtocols,
-          fallbackProtocols: body.data.productLineId === undefined
-            ? newChannelProtocols
-            : undefined,
-          repairExplicitDrift: requestedSupportedProtocols !== undefined,
-        });
-        if (initialization.kind === "protocol_unsupported") return initialization;
-        if (initialization.kind === "config_stale") return initialization;
-        context = {
-          ...context,
-          productLine: initialization.productLine,
-          baseUrl: initialization.productLine.baseUrlOverride || context.provider.defaultBaseUrl,
-        };
-
-        const storedProtocols = configuredProtocols(
-          parseProductLineProtocolConfigs(context.productLine.protocolConfigs),
-        );
-        let protocolResolution = resolveChannelCredentialInsertProtocols(
-          existingRows,
-          requestedSupportedProtocols,
-          storedProtocols,
-        );
-        if (
-          protocolResolution.kind === "unset" &&
-          body.data.productLineId === undefined
-        ) {
-          protocolResolution = resolveChannelCredentialInsertProtocols(
-            existingRows,
-            newChannelProtocols,
-            storedProtocols,
-          );
-        }
-        if (protocolResolution.kind === "mismatch") {
-          return {
-            kind: "channel_protocol_mismatch",
-            channelProtocols: protocolResolution.channelProtocols,
-          } as const;
-        }
-        if (protocolResolution.kind === "unset") {
-          return { kind: "channel_protocol_unset" } as const;
-        }
-
-        const existingSecrets: string[] = [];
-        const unreadableCredentialIds: number[] = [];
-        for (const credential of existingRows) {
-          try {
-            existingSecrets.push(decryptSecret(credential.secretEncrypted));
-          } catch {
-            unreadableCredentialIds.push(credential.id);
-          }
-        }
-        if (unreadableCredentialIds.length) {
-          return {
-            kind: "existing_secret_unreadable",
-            credentialIds: unreadableCredentialIds,
-          } as const;
-        }
-
-        const duplicates = inspectCredentialSecretDuplicates(
-          requestedSecrets,
-          existingSecrets,
-        );
-        if (duplicates.existingDuplicateIndexes.length) {
-          return {
-            kind: "existing_duplicates",
-            duplicateIndexes: duplicates.existingDuplicateIndexes,
-          } as const;
-        }
-
-        const finalCredentialCount = existingRows.length + body.data.keys.length;
-        const labelWidth = String(finalCredentialCount).length;
-        const providerTemplate = getProviderTemplate(context.provider.code);
-        const credentials = await tx
-          .insert(upstreamCredentials)
-          .values(
-            body.data.keys.map((item, index) => ({
-              productLineId: context.productLine.id,
-              label:
-                item.label
-                ?? `${context.productLine.name} Key ${String(existingRows.length + index + 1).padStart(labelWidth, "0")}`,
-              tag: body.data.tag ?? null,
-              secretEncrypted: encryptSecret(item.secret),
-              secretSuffix: secretSuffix(item.secret),
-              supportedProtocols: protocolResolution.protocols,
-              weight,
-              priority,
-              meta: {
-                createdBy: "bulk_create",
-                ...(providerTemplate
-                  ? { providerTemplate: providerTemplate.code }
-                  : { customChannel: true }),
-              },
-              status: "active" as const,
-            })),
-          )
-          .returning({
-            id: upstreamCredentials.id,
-            productLineId: upstreamCredentials.productLineId,
-            label: upstreamCredentials.label,
-            secretSuffix: upstreamCredentials.secretSuffix,
-            supportedProtocols: upstreamCredentials.supportedProtocols,
-            weight: upstreamCredentials.weight,
-            priority: upstreamCredentials.priority,
-            status: upstreamCredentials.status,
-            createdAt: upstreamCredentials.createdAt,
-          });
-
-        await tx.insert(opsAuditLogs).values({
-          actorEmployeeId: req.employeeId ?? null,
-          action: "credential.bulk_create",
-          targetType: "product_line",
-          targetId: String(context.productLine.id),
-          detail: {
-            providerCode: context.provider.code,
-            productLineId: context.productLine.id,
-            credentialIds: credentials.map((item) => item.id),
-            labels: credentials.map((item) => item.label),
-            secretSuffixes: credentials.map((item) => item.secretSuffix),
-            count: credentials.length,
-            supportedProtocols: protocolResolution.protocols,
-            weight,
-            priority,
-          },
-          ip: req.ip,
-        });
-
-        return {
-          kind: "created",
-          context,
-          credentials,
-          supportedProtocols: protocolResolution.protocols,
-        } as const;
-      });
-
-      if (created.kind === "product_line_not_found") {
-        return reply.code(404).send({ success: false, message: "渠道不存在" });
-      }
-      if (created.kind === "channel_already_exists") {
-        return reply.code(409).send({
-          success: false,
-          code: "CHANNEL_ALREADY_EXISTS",
-          message: "该渠道变体已存在，请刷新后向现有渠道添加 Key",
-          productLineId: created.productLineId,
-        });
-      }
-      if (created.kind === "config_stale") {
-        return reply.code(409).send({
-          success: false,
-          code: "CHANNEL_CONFIG_STALE",
-          message: "渠道配置已被其他操作更新，请刷新后重试",
-        });
-      }
-      if (created.kind === "protocol_unsupported") {
-        return reply.code(400).send({
-          success: false,
-          code: "CHANNEL_PROTOCOL_UNSUPPORTED",
-          message: "当前渠道不支持所选协议",
-          unsupportedProtocols: created.unsupportedProtocols,
-        });
-      }
-      if (created.kind === "existing_secret_unreadable") {
-        return reply.code(409).send({
-          success: false,
-          message: "渠道中存在无法解密的旧 Key，无法安全完成重复检查",
-          credentialIds: created.credentialIds,
-        });
-      }
-      if (created.kind === "channel_protocol_mismatch") {
-        return reply.code(409).send({
-          success: false,
-          code: "CHANNEL_PROTOCOL_MISMATCH",
-          message: "渠道协议已发生变化，请刷新后重试",
-          supportedProtocols: created.channelProtocols,
-        });
-      }
-      if (created.kind === "channel_protocol_unset") {
-        return reply.code(400).send({
-          success: false,
-          code: "CHANNEL_PROTOCOLS_UNSET",
-          message: "渠道尚未配置支持协议，请显式选择协议",
-        });
-      }
-      if (created.kind === "existing_duplicates") {
-        return reply.code(409).send({
-          success: false,
-          message: `渠道中已存在相同 Key（第 ${created.duplicateIndexes.join("、")} 项）`,
-          duplicateIndexes: created.duplicateIndexes,
-        });
-      }
-
-      return {
-        success: true,
-        data: {
-          provider: {
-            id: created.context.provider.id,
-            code: created.context.provider.code,
-            name: created.context.provider.name,
-          },
-          productLine: {
-            id: created.context.productLine.id,
-            code: created.context.productLine.code,
-            name: created.context.productLine.name,
-            productType: created.context.productLine.productType,
-            allowAutoRoute: created.context.productLine.allowAutoRoute,
-            status: created.context.productLine.status,
-            baseUrl: created.context.baseUrl,
-            protocolConfigs: created.context.productLine.protocolConfigs,
-            configVersion: created.context.productLine.configVersion,
-          },
-          credentials: created.credentials,
-          defaults: {
-            supportedProtocols: created.supportedProtocols,
-            weight,
-            priority,
-          },
-        },
-      };
-    },
-  );
 
   app.get("/api/admin/credentials", async (req, reply) => {
     const parsed = z
@@ -1529,7 +798,9 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
         fiveHourCreditLimit: upstreamCredentials.fiveHourCreditLimit,
         weeklyCreditLimit: upstreamCredentials.weeklyCreditLimit,
         fiveHourWindowAnchor: upstreamCredentials.fiveHourWindowAnchor,
+        fiveHourWindowBaseCredits: upstreamCredentials.fiveHourWindowBaseCredits,
         weeklyWindowResetAt: upstreamCredentials.weeklyWindowResetAt,
+        lineWeeklyWindowResetAt: productLines.weeklyWindowResetAt,
         lastFailureKind: upstreamCredentials.lastFailureKind,
         lastVendorCode: upstreamCredentials.lastVendorCode,
         createdAt: upstreamCredentials.createdAt,
@@ -1567,10 +838,7 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
     const recentSince = new Date(Date.now() - RECENT_WINDOW_MS);
     const now = new Date();
     const anchorsById = new Map<number, CredentialWindowAnchors>(
-      rows.map((row) => [
-        row.id,
-        { fiveHourAnchor: row.fiveHourWindowAnchor, weeklyResetAt: row.weeklyWindowResetAt },
-      ]),
+      rows.map((row) => [row.id, credentialWindowAnchors(row)]),
     );
     const [recentRows, usageById, bindingById, connectedNamesById] = await Promise.all([
       credentialIds.length
@@ -1646,9 +914,10 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
           weeklyCredits: usage.weeklyCredits,
           // 5h：窗口进行中 → 锚点+5h；已过期/未锚定 → null（满血，下次调用起算）。
           nextFiveHourResetAt: nextFiveHourResetAt(row.fiveHourWindowAnchor, now),
-          // 周窗口：学到的相位滚到下一期；未学到时按共享 epoch 估算并标记。
-          nextWeeklyResetAt: nextWeeklyResetAt(row.weeklyWindowResetAt, now),
-          weeklyResetEstimated: row.weeklyWindowResetAt == null,
+          // 周窗口：Key 自己学到的时刻优先，其次是套餐上录入的时间，滚到下一期；
+          // 两者都没有时只能按固定 epoch 估算并标记。
+          nextWeeklyResetAt: nextWeeklyResetAt(effectiveWeeklyResetAt(row), now),
+          weeklyResetEstimated: effectiveWeeklyResetAt(row) == null,
           lastFailureKind: row.lastFailureKind,
           lastVendorCode: row.lastVendorCode,
           binding,

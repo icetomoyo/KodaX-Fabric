@@ -104,7 +104,7 @@
         <section class="detail-block">
           <h3>绑定</h3>
           <p>
-            席位主人：{{ selectedCredential.ownerName || "无（管理员导入的 Key）" }}
+            席位主人：{{ selectedCredential.ownerName || "无" }}
           </p>
           <p v-if="selectedCredential.binding">
             当前使用企业：{{ selectedCredential.binding.scopeName || selectedCredential.binding.scopeId }}

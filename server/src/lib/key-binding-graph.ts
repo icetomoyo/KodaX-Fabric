@@ -56,7 +56,7 @@ export type KeyBindingCredentialInput = {
   fiveHourLimit?: number | null;
   weeklyLimit?: number | null;
   binding?: KeyBindingCredentialBinding | null;
-  /** 席位主人；管理员批量导入的 Key 没有主人。 */
+  /** 席位主人；充值模式下管理员直接添加的 Key 没有主人。 */
   ownerEmployeeId?: number | null;
   ownerName?: string | null;
 };

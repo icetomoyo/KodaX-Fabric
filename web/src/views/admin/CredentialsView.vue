@@ -548,8 +548,6 @@ const draggingId = ref<number | null>(null);
 
 const dragOverLane = ref<{ channelId: number; lane: BoardLane } | null>(null);
 
-const showBulkForm = ref(false);
-
 const showKeyDetails = ref(false);
 
 const detailCredentialId = ref<number | null>(null);
@@ -576,21 +574,6 @@ const testingIds = ref<Set<number>>(new Set());
 const batchTesting = ref(false);
 
 const batchTestProgress = reactive({ done: 0, total: 0 });
-
-const bulkForm = reactive({
-  productLineId: null as number | null,
-  providerCode: "glm" as string,
-  custom: false,
-  baseUrl: "",
-  name: "",
-  seatCount: null as number | null,
-  rawKeys: "",
-  tag: "",
-  supportedProtocols: ["openai_chat"] as RelayProtocol[],
-  status: "active" as ChannelStatus,
-  fiveHourCreditLimit: "",
-  weeklyCreditLimit: "",
-});
 
 const quotaEditForm = reactive({
   fiveHourCreditLimit: "",
@@ -811,10 +794,6 @@ watch(
     }
   },
 );
-
-watch(showBulkForm, (visible) => {
-  if (!visible) clearBulkSecrets();
-});
 
 function onCardDragStart(row: CredentialRow, event: DragEvent) {
   if (!canWrite.value) return;
@@ -1096,10 +1075,6 @@ function emptyChannelFromProductLine(line: ListedProductLine): ChannelGroup {
     tag: line.tag ?? "",
     testModel: line.testModel ?? null,
   };
-}
-
-function clearBulkSecrets() {
-  bulkForm.rawKeys = "";
 }
 
 function preferredProtocol(row: CredentialRow): RelayProtocol {

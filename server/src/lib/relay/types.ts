@@ -39,8 +39,10 @@ export type RelayCandidate = {
   /** Configured credit limits when the candidate came through the bound/open-pool path. */
   fiveHourCreditLimit?: number | null;
   weeklyCreditLimit?: number | null;
-  /** Upstream window state columns, when available on the candidate. */
+  /** Upstream window state, when available on the candidate. */
   fiveHourWindowAnchor?: Date | null;
+  fiveHourWindowBaseCredits?: number | null;
+  /** The weekly reset instant the Key follows: its own, else its package's. */
   weeklyWindowResetAt?: Date | null;
   /** Per-Key concurrency limit for bound Keys; absent means unlimited (open pool, support bot). */
   maxConcurrency?: number | null;

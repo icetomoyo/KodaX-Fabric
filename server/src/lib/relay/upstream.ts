@@ -14,6 +14,8 @@ import {
   FIVE_HOUR_MS,
   activeFiveHourWindow,
   externalDrainObservation,
+  fiveHourBaseCreditsBeforeSql,
+  fiveHourBaseCreditsNowSql,
   fiveHourResetAt,
   getCredentialQuotaUsage,
   nextWeeklyResetAt,
@@ -253,6 +255,14 @@ async function markCredentialSuccess(candidate: RelayCandidate): Promise<void> {
           or ${upstreamCredentials.fiveHourWindowAnchor} <= ${fiveHoursAgoIso}::timestamptz
         then ${nowIso}::timestamptz
         else ${upstreamCredentials.fiveHourWindowAnchor}
+      end`,
+      // 同一条 UPDATE 里两处判断看到的都是旧锚点：新窗口开始时记下本小时桶里
+      // 已有的积分（属于上一个窗口），求和时扣掉。
+      fiveHourWindowBaseCredits: sql`case
+        when ${upstreamCredentials.fiveHourWindowAnchor} is null
+          or ${upstreamCredentials.fiveHourWindowAnchor} <= ${fiveHoursAgoIso}::timestamptz
+        then ${fiveHourBaseCreditsNowSql(now)}
+        else ${upstreamCredentials.fiveHourWindowBaseCredits}
       end`,
       updatedAt: now,
     })
@@ -534,6 +544,7 @@ function credentialAnchorsFromCandidate(
       candidate.credentialId,
       {
         fiveHourAnchor: candidate.fiveHourWindowAnchor ?? null,
+        fiveHourBaseCredits: candidate.fiveHourWindowBaseCredits ?? 0,
         weeklyResetAt: candidate.weeklyWindowResetAt ?? null,
       },
     ],
@@ -587,12 +598,12 @@ async function coolCredential(
             lastFailureKind: options.failureKind.slice(0, 32),
             lastVendorCode: options.vendorCode ? options.vendorCode.slice(0, 16) : null,
             // 校准只在报文带了未来重置时刻时写入；过期时刻不回写锚点/相位。
+            // 上游给的重置时刻就是这个窗口的终点，起点直接采用（不取本地较晚的那个）：
+            // 本地起点偏晚时，窗口会比真实重置晚结束，Key 重置后还背着旧用量。
             ...(options.fiveHourAnchor
               ? {
-                  fiveHourWindowAnchor: sql`greatest(
-                    coalesce(${upstreamCredentials.fiveHourWindowAnchor}, ${options.fiveHourAnchor.toISOString()}::timestamptz),
-                    ${options.fiveHourAnchor.toISOString()}::timestamptz
-                  )`,
+                  fiveHourWindowAnchor: options.fiveHourAnchor,
+                  fiveHourWindowBaseCredits: fiveHourBaseCreditsBeforeSql(options.fiveHourAnchor),
                 }
               : {}),
             ...(options.weeklyResetAt ? { weeklyWindowResetAt: options.weeklyResetAt } : {}),
@@ -918,6 +929,7 @@ export async function sendRelayUpstream(
 
   const classification = classifyHttpStatus(response.status);
   // 429 的换 Key 与 Retry-After 由业务码决定，见 classifyUpstreamRateLimit。
+  let kind = classification.kind;
   let retryable = classification.retryable;
   let errorCode = classification.errorCode;
   let retryAfterSeconds: number | null = null;
@@ -996,11 +1008,22 @@ export async function sendRelayUpstream(
         );
       }
     } else if (response.status >= 500 && response.status <= 599) {
-      await markCredentialFailure(
-        input.candidate,
-        classification.errorMessage ?? `HTTP ${response.status}`,
-        "upstream_error",
-      );
+      // 模型拥堵（1305）线上多数以 HTTP 529 返回：和 429 的同码一样处理，
+      // 不算这把 Key 的故障，也不换 Key 去扫别的 Key。
+      const bodyText = await peekResponseText(response);
+      if (classifyUpstreamRateLimit(bodyText ?? "") === "model_busy") {
+        await markCredentialUsed(input.candidate);
+        kind = "rate_limited";
+        retryable = false;
+        errorCode = "upstream_model_busy";
+        retryAfterSeconds = RELAY_MODEL_BUSY_RETRY_AFTER_SECONDS;
+      } else {
+        await markCredentialFailure(
+          input.candidate,
+          classification.errorMessage ?? `HTTP ${response.status}`,
+          "upstream_error",
+        );
+      }
     } else {
       await markCredentialUsed(input.candidate);
     }
@@ -1012,7 +1035,7 @@ export async function sendRelayUpstream(
 
   return result({
     response,
-    kind: classification.kind,
+    kind,
     retryable,
     status: response.status,
     errorCode,

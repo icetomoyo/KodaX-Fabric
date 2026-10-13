@@ -1,6 +1,6 @@
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { env } from "../config.js";
-import { inspectCredentialSecretDuplicates } from "./credential-bulk.js";
+import { inspectCredentialSecretDuplicates } from "./credential-duplicates.js";
 import {
   effectiveCredentialStatus,
   type CredentialStatus,

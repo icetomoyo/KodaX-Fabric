@@ -62,6 +62,8 @@ export const SCHED_PEOPLE = {
   ownerIdle: person(24, "调度-闲置主人", ["d1a1"]),
   ownerIso: person(25, "调度-隔离主人", ["d1a1"]),
   ownerHome: person(26, "调度-回家主人", ["d1a1"]),
+  ownerWin5: person(27, "调度-五小时主人", ["d1a1"]),
+  ownerWeek: person(28, "调度-周窗口主人", ["d1a1"]),
 } as const satisfies Record<string, SchedPerson>;
 
 export type SchedPersonKey = keyof typeof SCHED_PEOPLE;
@@ -71,6 +73,7 @@ export type SchedKeyDef = {
   label: string;
   owner?: SchedPersonKey;
   fiveHourCreditLimit?: number;
+  weeklyCreditLimit?: number;
 };
 
 export type SchedPoolDef = {
@@ -83,6 +86,9 @@ export type SchedPoolDef = {
 /**
  * 每个场景独占一条渠道（= 一个调度池），互不影响。
  * 渠道 Key 按数组顺序入库，ID 递增；同分时调度取 ID 小的。
+ *
+ * 席位套餐的池子里每把 Key 都有席位主人。只有充值模式（管理员直接添加 Key）
+ * 的池子里 Key 没有主人：recharge、ratelimit、planDenied、overload、serverError。
  */
 export const SCHED_POOLS = {
   affinity: {
@@ -90,7 +96,6 @@ export const SCHED_POOLS = {
     keys: [
       { label: "ent0", owner: "entMate" },
       { label: "fst0", owner: "firstMate" },
-      { label: "free" },
       { label: "sub0", owner: "subMate" },
       { label: "leaf", owner: "leafMate" },
       { label: "self", owner: "self" },
@@ -100,17 +105,20 @@ export const SCHED_POOLS = {
   },
   capacity: {
     name: "调度E2E-容量",
-    keys: [{ label: "capo", owner: "ownerCap" }, { label: "capf" }],
+    keys: [{ label: "capo", owner: "ownerCap" }, { label: "capf", owner: "entMate" }],
     users: ["ownerCap", "guest1", "guest2", "guest3", "guest4"],
   },
   burst: {
     name: "调度E2E-并发",
-    keys: [{ label: "bsto", owner: "ownerBurst" }, { label: "bstf" }],
+    keys: [{ label: "bsto", owner: "ownerBurst" }, { label: "bstf", owner: "entMate" }],
     users: ["ownerBurst", "guest1", "guest2", "guest3"],
   },
   quota: {
     name: "调度E2E-额度",
-    keys: [{ label: "qtao", owner: "ownerQuota", fiveHourCreditLimit: 100 }, { label: "qtaf" }],
+    keys: [
+      { label: "qtao", owner: "ownerQuota", fiveHourCreditLimit: 100 },
+      { label: "qtaf", owner: "entMate" },
+    ],
     users: ["ownerQuota", "guest1"],
   },
   ratelimit: {
@@ -121,6 +129,11 @@ export const SCHED_POOLS = {
   planDenied: {
     name: "调度E2E-套餐",
     keys: [{ label: "pd01" }, { label: "pd02" }],
+    users: ["guest1"],
+  },
+  overload: {
+    name: "调度E2E-拥堵",
+    keys: [{ label: "ov01" }, { label: "ov02" }],
     users: ["guest1"],
   },
   serverError: {
@@ -135,12 +148,33 @@ export const SCHED_POOLS = {
   },
   isolation: {
     name: "调度E2E-隔离",
-    keys: [{ label: "isoo", owner: "ownerIso" }, { label: "isof" }],
+    keys: [{ label: "isoo", owner: "ownerIso" }, { label: "isox", owner: "outsider" }],
     users: ["outsider", "guest1"],
+  },
+  recharge: {
+    name: "调度E2E-充值",
+    keys: [{ label: "rc01" }, { label: "rc02" }],
+    users: ["outsider", "guest1"],
+  },
+  window5h: {
+    name: "调度E2E-五小时",
+    keys: [
+      { label: "w5ho", owner: "ownerWin5", fiveHourCreditLimit: 100 },
+      { label: "w5hf", owner: "entMate" },
+    ],
+    users: ["guest1"],
+  },
+  weekly: {
+    name: "调度E2E-周窗口",
+    keys: [
+      { label: "wkyo", owner: "ownerWeek", weeklyCreditLimit: 100 },
+      { label: "wkyf", owner: "entMate" },
+    ],
+    users: ["guest1", "guest2"],
   },
   homing: {
     name: "调度E2E-回家",
-    keys: [{ label: "homo", owner: "ownerHome" }, { label: "homf" }],
+    keys: [{ label: "homo", owner: "ownerHome" }, { label: "homf", owner: "entMate" }],
     users: ["ownerHome", "guest1"],
   },
 } as const satisfies Record<string, SchedPoolDef>;

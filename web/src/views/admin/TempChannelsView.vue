@@ -352,6 +352,19 @@
         >
           <el-input-number v-model="editPackageForm.seatCount" :min="0" :max="100000" controls-position="right" />
         </el-form-item>
+        <el-form-item v-if="editPackageForm.productType === 'coding_plan'" label="周重置时间">
+          <el-date-picker
+            v-model="editPackageForm.weeklyWindowResetAt"
+            type="datetime"
+            format="YYYY-MM-DD HH:mm"
+            placeholder="控制台显示的周限额重置时间"
+            clearable
+          />
+          <p class="form-hint">
+            填控制台显示的任意一次周限额重置时间，之后按每 7 天滚动。同一模式下的 KEY 共用；
+            保存后各 KEY 之前从上游学到的时间会清空，统一跟随这里。
+          </p>
+        </el-form-item>
         <el-form-item label="状态">
           <el-radio-group v-model="editPackageForm.status">
             <el-radio-button value="active">启用</el-radio-button>
@@ -582,6 +595,8 @@ type PackageRow = {
   tag: string;
   status: string;
   configVersion: number;
+  /** 套餐的周限额重置时刻（ISO），未录入为 null。 */
+  weeklyWindowResetAt: string | null;
 };
 
 type SeatRow = {
@@ -668,12 +683,14 @@ const editPackageForm = reactive({
   tag: "",
   seatCount: 0,
   status: "active" as "active" | "disabled",
+  weeklyWindowResetAt: null as Date | null,
 });
 const editPackageOriginal = reactive({
   name: "",
   tag: "",
   seatCount: 0,
   status: "active" as "active" | "disabled",
+  weeklyWindowResetAt: null as string | null,
 });
 const editSeatForm = reactive({
   id: 0,
@@ -913,6 +930,7 @@ async function refresh() {
         tag?: string | null;
         status: string;
         configVersion?: number;
+        weeklyWindowResetAt?: string | null;
       }) => ({
           id: row.id,
           providerId: row.providerId,
@@ -924,6 +942,7 @@ async function refresh() {
           tag: row.tag ?? "",
           status: row.status,
           configVersion: Number(row.configVersion) || 1,
+          weeklyWindowResetAt: row.weeklyWindowResetAt ?? null,
         }))
       : [];
     seats.value = Array.isArray(seatRes.data.data)
@@ -1143,6 +1162,10 @@ function openEditPackage(pkg: PackageRow) {
   editPackageForm.tag = pkg.tag;
   editPackageForm.seatCount = pkg.seatCount;
   editPackageForm.status = pkg.status === "disabled" ? "disabled" : "active";
+  editPackageForm.weeklyWindowResetAt = pkg.weeklyWindowResetAt
+    ? new Date(pkg.weeklyWindowResetAt)
+    : null;
+  editPackageOriginal.weeklyWindowResetAt = pkg.weeklyWindowResetAt;
   editPackageOriginal.name = pkg.name;
   editPackageOriginal.tag = pkg.tag;
   editPackageOriginal.seatCount = pkg.seatCount;
@@ -1175,6 +1198,15 @@ async function saveEditPackage() {
     && editPackageForm.seatCount !== editPackageOriginal.seatCount
   ) {
     payload.seatCount = editPackageForm.seatCount;
+  }
+  if (editPackageForm.productType === "coding_plan") {
+    const nextReset = editPackageForm.weeklyWindowResetAt;
+    const previousMs = editPackageOriginal.weeklyWindowResetAt
+      ? new Date(editPackageOriginal.weeklyWindowResetAt).getTime()
+      : null;
+    if ((nextReset?.getTime() ?? null) !== previousMs) {
+      payload.weeklyWindowResetAt = nextReset ? nextReset.toISOString() : null;
+    }
   }
   if (Object.keys(payload).length === 1) {
     ElMessage.info("未检测到需要保存的修改");

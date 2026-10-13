@@ -9,7 +9,6 @@ export type ProviderTemplateCode = "glm" | "deepseek";
 
 /** Catch-all provider for administrator-defined upstreams that are not official templates. */
 export const CUSTOM_PROVIDER_CODE = "custom" as const;
-export const CUSTOM_PROVIDER_NAME = "自定义";
 export const HAIZHI_PROVIDER_CODE = "haizhi" as const;
 export const HAIZHI_PROVIDER_NAME = "海致集团";
 
@@ -221,19 +220,6 @@ export function resolveTemplateProtocolConfigs(
 
 export function normalizeBaseUrl(value: string): string {
   return value.trim().replace(/\/+$/, "");
-}
-
-export function resolveTemplateBaseUrlOption(
-  template: ProviderTemplate,
-  value?: string,
-): ProviderBaseUrlOption | undefined {
-  const normalized = normalizeBaseUrl(value || template.baseUrls[0].url);
-  return template.baseUrls.find((item) =>
-    normalizeBaseUrl(item.url) === normalized ||
-    Object.values(item.protocolConfigs).some((config) =>
-      config && normalizeBaseUrl(config.baseUrl) === normalized
-    )
-  );
 }
 
 export function isAllowedTemplateHost(template: ProviderTemplate, value: string): boolean {

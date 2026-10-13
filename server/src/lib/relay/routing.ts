@@ -406,6 +406,7 @@ type CandidateCredentialSource = Pick<
   fiveHourCreditLimit?: number | null;
   weeklyCreditLimit?: number | null;
   fiveHourWindowAnchor?: Date | null;
+  fiveHourWindowBaseCredits?: number | null;
   weeklyWindowResetAt?: Date | null;
 };
 
@@ -438,6 +439,7 @@ function toRelayCandidate(
     fiveHourCreditLimit: credential.fiveHourCreditLimit ?? null,
     weeklyCreditLimit: credential.weeklyCreditLimit ?? null,
     fiveHourWindowAnchor: credential.fiveHourWindowAnchor ?? null,
+    fiveHourWindowBaseCredits: credential.fiveHourWindowBaseCredits ?? null,
     weeklyWindowResetAt: credential.weeklyWindowResetAt ?? null,
   };
 }

@@ -145,6 +145,8 @@ async function main() {
             status: "active",
             fiveHourCreditLimit:
               keyDef.fiveHourCreditLimit != null ? String(keyDef.fiveHourCreditLimit) : null,
+            weeklyCreditLimit:
+              keyDef.weeklyCreditLimit != null ? String(keyDef.weeklyCreditLimit) : null,
           })
           .returning({ id: upstreamCredentials.id });
         if (keyDef.owner) {

@@ -30,9 +30,9 @@ import {
  *
  * 调度可能出错的方式（每条对应下面一个断言）：
  *  1. 有席位的人没有用到自己的 Key。
- *  2. 没有席位的人没按「同组 > 同部门 > 无主 Key > 同一级部门 > 同企业」的顺序借 Key。
+ *  2. 没有席位的人没按「同组 > 同部门 > 同一级部门 > 同企业」的顺序借 Key。
  *  3. 一人多部门时没有取最近的那层关系。
- *  4. 借到了别的企业员工名下的 Key，或者两家企业的人同时挂在一把 Key 上。
+ *  4. 借到了别的企业员工名下的 Key；或者充值模式下没有主人的 Key 同时挂了两家企业的人。
  *  5. 已经绑定的人因为更近的 Key 空出来而被来回迁移（不粘）。
  *  6. 主人自己的 Key 恢复可用后，他还留在借来的 Key 上不回去。
  *  7. 一把 Key 上挂了超过 3 个人。
@@ -45,10 +45,17 @@ import {
  * 14. 上游返回 5 小时额度用尽（1308）后没有冷却到重置时刻，或者换 Key 超过 1 次。
  * 15. 上游返回公平使用风控（1313）后 Key 没停用、请求被换 Key 重放、没有告警。
  * 16. 上游模型拥堵（1305）连带冷却了健康的 Key，或者请求在多把 Key 上连扫。
+ * 16b. 模型拥堵以 HTTP 529 返回时（线上 1305 多数是 529）被当成普通 5xx，在多把 Key 上连扫。
  * 17. 套餐未开放模型（1311）冷却了 Key。
  * 18. 上游 5xx 时不再换 Key 重试（限流的换 Key 上限误伤了故障重试）。
  * 19. 30 分钟没调用的成员没有被释放；还在用的成员被误释放；最后一人走后 Key 没回池。
  * 20. 管理端画布上的「谁在用哪把 Key」和库里的实际绑定对不上。
+ * 21. 5 小时窗口开头不满一小时的用量没有计入（账本按整点分桶）；
+ *     或者把同一小时里、窗口开始之前的旧用量也算了进来。
+ * 22. 上游 1308 回包给的重置时刻说明窗口比本地记的开始得早，本地窗口起点却没被改正。
+ * 23. 没学到自己重置时刻的 Key，周窗口没有跟随套餐上录入的周重置时间。
+ * 24. 某把 Key 从上游 1310 回包学到的重置时刻，没有覆盖套餐的默认值。
+ * 25. 管理员改了套餐的周重置时间后，Key 上以前学到的旧时刻还在生效。
  */
 const ARTIFACT_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "artifacts");
 const MODEL = "e2e-upstream-model";
@@ -106,7 +113,7 @@ async function toResult(res: APIResponse, marker: string): Promise<CallResult> {
     // 非 JSON 应答按失败处理。
   }
   const content = body.choices?.[0]?.message?.content ?? "";
-  const matched = /\[key=sk-sched-[A-Za-z]+-([^\]]+)\]/.exec(content);
+  const matched = /\[key=sk-sched-[A-Za-z0-9]+-([^\]]+)\]/.exec(content);
   return {
     marker,
     status: res.status(),
@@ -245,6 +252,14 @@ async function bindingExists(pool: SchedPoolKey, label: string): Promise<boolean
   return rows.length > 0;
 }
 
+/**
+ * 用例往库里写「过去的时间」一律用本进程的时钟（和被测 server 同一台机器）。
+ * 本机数据库跑在 Docker 里，时钟可能和宿主机差几秒，不能用 SQL 的 now()。
+ */
+function minutesAgo(minutes: number): Date {
+  return new Date(Date.now() - minutes * 60_000);
+}
+
 /** 上游额度报文里的时间是 Asia/Shanghai 墙上时间。 */
 function shanghaiWallTime(date: Date): string {
   return new Intl.DateTimeFormat("sv-SE", {
@@ -257,6 +272,55 @@ function shanghaiWallTime(date: Date): string {
     second: "2-digit",
     hour12: false,
   }).format(date);
+}
+
+function weeklyCapBody(resetAt: Date) {
+  return {
+    error: {
+      code: "1310",
+      message:
+        `已达到 7 天使用上限，${shanghaiWallTime(resetAt)} 后可继续使用。` +
+        "如需超限额按量付费使用，可联系管理员开启超额按量付费。",
+    },
+  };
+}
+
+const HOUR_MS = 3_600_000;
+
+function hourStartOf(date: Date): Date {
+  return new Date(Math.floor(date.getTime() / HOUR_MS) * HOUR_MS);
+}
+
+/** 把某把 Key 某个整点小时桶的积分直接写成指定值（模拟这一小时里已经发生的用量）。 */
+async function setHourBucket(credentialId: number, hourStart: Date, credits: number): Promise<void> {
+  await sql`
+    insert into credential_usage_hourly
+      (credential_id, hour_start, total_tokens, total_credits, request_count)
+    values (${credentialId}, ${hourStart}, 1000, ${credits}, 1)
+    on conflict (credential_id, hour_start)
+    do update set total_credits = excluded.total_credits
+  `;
+}
+
+/** 依赖「当前这个小时桶」的场景避开整点前后几秒，免得桶在用例中途翻页。 */
+async function waitOutHourBoundary(): Promise<void> {
+  const msIntoHour = Date.now() % HOUR_MS;
+  if (msIntoHour > HOUR_MS - 10_000) {
+    await new Promise((done) => setTimeout(done, HOUR_MS - msIntoHour + 1_000));
+  }
+}
+
+let adminTokenCache: string | null = null;
+
+async function adminToken(): Promise<string> {
+  if (adminTokenCache) return adminTokenCache;
+  const res = await api.post("/api/auth/login", {
+    data: { phone: E2E.admin.phone, password: E2E.admin.password },
+  });
+  const token = ((await res.json()) as { data?: { token?: string } }).data?.token;
+  if (!token) throw new Error("管理员登录失败");
+  adminTokenCache = token;
+  return token;
 }
 
 function fiveHourCapBody(resetAt: Date) {
@@ -328,9 +392,9 @@ test.describe.serial("渠道 Key 调度", () => {
     await sql?.end({ timeout: 5 });
   });
 
-  test("亲和度：本人 > 同组 > 同部门 > 无主 Key > 同一级部门 > 同企业", async () => {
+  test("亲和度：本人 > 同组 > 同部门 > 同一级部门 > 同企业", async () => {
     const pool = "affinity";
-    const ladder = ["self", "leaf", "sub0", "free", "fst0", "ent0"];
+    const ladder = ["self", "leaf", "sub0", "fst0", "ent0"];
 
     // 每拿到一把就把它停用，逼调度往下一级找。
     const picks: Array<string | null> = [];
@@ -521,15 +585,16 @@ test.describe.serial("渠道 Key 调度", () => {
 
     // 把这把 Key 当前 5 小时窗口的本地用量写到 90%（额度 100）。
     const setUsage = async (credits: number) => {
+      const hourStart = new Date(Math.floor(Date.now() / 3_600_000) * 3_600_000);
       await sql`
         update upstream_credentials
-        set five_hour_window_anchor = date_trunc('hour', now())
+        set five_hour_window_anchor = ${hourStart}
         where id = ${ownerKey.id}
       `;
       await sql`
         insert into credential_usage_hourly
           (credential_id, hour_start, total_tokens, total_credits, request_count)
-        values (${ownerKey.id}, date_trunc('hour', now()), 1000, ${credits}, 1)
+        values (${ownerKey.id}, ${hourStart}, 1000, ${credits}, 1)
         on conflict (credential_id, hour_start)
         do update set total_credits = excluded.total_credits
       `;
@@ -560,6 +625,15 @@ test.describe.serial("渠道 Key 调度", () => {
     const driftMs = Math.abs(cooled.cool_until!.getTime() - resetAt.getTime());
     expect(driftMs, "冷却截止时间应等于上游给的重置时刻").toBeLessThan(2_000);
 
+    // 上游说窗口在 resetAt 结束，即窗口从 resetAt − 5h 开始，比本地记的起点早：以上游为准。
+    const [anchorRow] = await sql<Array<{ five_hour_window_anchor: Date | null }>>`
+      select five_hour_window_anchor from upstream_credentials where id = ${ownerKey.id}
+    `;
+    const anchorDriftMs = Math.abs(
+      (anchorRow.five_hour_window_anchor?.getTime() ?? 0) - (resetAt.getTime() - 5 * HOUR_MS),
+    );
+    expect(anchorDriftMs, "5 小时窗口起点应校准为上游重置时刻 − 5 小时").toBeLessThan(2_000);
+
     report.quota = {
       guestBeforeLine: guestBefore.key,
       guestAfterLine: guestAfter.key,
@@ -570,7 +644,140 @@ test.describe.serial("渠道 Key 调度", () => {
         status: cooled.status,
         vendorCode: cooled.last_vendor_code,
         coolUntilDriftMs: driftMs,
+        windowStartDriftMs: anchorDriftMs,
       },
+    };
+  });
+
+  test("5 小时窗口：开头不满一小时的用量要计入，窗口开始前同一小时的旧用量不计入", async () => {
+    const pool = "window5h";
+    await waitOutHourBoundary();
+    const key = await credentialRow(pool, "w5ho");
+    const thisHour = hourStartOf(new Date());
+
+    // 这把 Key 的上一个窗口早已过期；本小时里已有 60 积分是上一个窗口留下的。
+    await sql`
+      update upstream_credentials set five_hour_window_anchor = ${minutesAgo(6 * 60)}
+      where id = ${key.id}
+    `;
+    await setHourBucket(key.id, thisHour, 60);
+
+    const first = await call(pool, "guest1");
+    expect(first.key, "窗口已过期，旧用量不影响借用").toBe("w5ho");
+    const [afterAnchor] = await sql<
+      Array<{ five_hour_window_anchor: Date; five_hour_window_base_credits: string }>
+    >`
+      select five_hour_window_anchor, five_hour_window_base_credits
+      from upstream_credentials where id = ${key.id}
+    `;
+    expect(
+      Date.now() - afterAnchor.five_hour_window_anchor.getTime(),
+      "这次成功调用是新窗口的起点",
+    ).toBeLessThan(30_000);
+    expect(Number(afterAnchor.five_hour_window_base_credits), "记下窗口开始前本小时已有的积分").toBe(60);
+
+    // 新窗口里用了 30：本小时桶共 90，但属于新窗口的只有 30%，借用者不该让出。
+    await setHourBucket(key.id, thisHour, 90);
+    const light = await call(pool, "guest1");
+    expect(light.key, "窗口开始前的旧用量不能算进新窗口").toBe("w5ho");
+
+    // 新窗口里用到 90：还在窗口开头这不满一小时里，也必须算数。
+    await setHourBucket(key.id, thisHour, 150);
+    const heavy = await call(pool, "guest1");
+    expect(heavy.key, "窗口开头不满一小时的用量要计入，借用者到 85% 让出").toBe("w5hf");
+
+    report.window5h = {
+      baseCredits: Number(afterAnchor.five_hour_window_base_credits),
+      keyAt30Percent: light.key,
+      keyAt90Percent: heavy.key,
+    };
+  });
+
+  test("周窗口：默认跟随套餐的周重置时间，Key 自己从上游学到的时刻优先", async () => {
+    const pool = "weekly";
+    const key = await credentialRow(pool, "wkyo");
+    const token = await adminToken();
+    const headers = { Authorization: `Bearer ${token}` };
+    const WEEK_MS = 7 * 24 * HOUR_MS;
+
+    type CredentialView = {
+      id: number;
+      weeklyCredits: number;
+      nextWeeklyResetAt: string;
+      weeklyResetEstimated: boolean;
+    };
+    const listCredentials = async (): Promise<Map<string, CredentialView>> => {
+      const res = await api.get(`/api/admin/credentials?productLineId=${lineId(pool)}`, { headers });
+      const rows = ((await res.json()) as { data: Array<CredentialView & { label: string }> }).data;
+      return new Map(rows.map((row) => [row.label.replace(/^调度-/, ""), row]));
+    };
+
+    // 3 小时前这把 Key 用掉了 96 积分（周额度 100，借用线 95%）。
+    await setHourBucket(key.id, hourStartOf(minutesAgo(3 * 60)), 96);
+
+    const before = await listCredentials();
+    expect(before.get("wkyf")?.weeklyResetEstimated, "套餐没录入时周重置时间只是估算").toBe(true);
+
+    // 这把 Key 之前从上游学到：本周窗口 5 小时前开始 → 那 96 积分在本周内，借用者不能用。
+    await sql`
+      update upstream_credentials
+      set weekly_window_reset_at = ${new Date(Date.now() - 5 * HOUR_MS + WEEK_MS)}
+      where id = ${key.id}
+    `;
+    const blocked = await call(pool, "guest1");
+    expect(blocked.key, "周额度已到借用线的 Key 不借").toBe("wkyf");
+
+    // 管理员在套餐上录入周重置时间：本周窗口 1 小时前才开始 → 那 96 积分属于上一周。
+    const lineReset = new Date(Math.floor((Date.now() - HOUR_MS + WEEK_MS) / 1_000) * 1_000);
+    const linesRes = await api.get("/api/admin/product-lines", { headers });
+    const line = ((await linesRes.json()) as { data: Array<{ id: number; configVersion: number }> }).data
+      .find((row) => row.id === lineId(pool));
+    expect(line, "应能读到调度周窗口渠道").toBeTruthy();
+    const patched = await api.patch(`/api/admin/product-lines/${lineId(pool)}`, {
+      headers,
+      data: { expectedConfigVersion: line!.configVersion, weeklyWindowResetAt: lineReset.toISOString() },
+    });
+    expect(patched.status(), `保存套餐周重置时间失败: ${await patched.text()}`).toBe(200);
+
+    const [afterSave] = await sql<Array<{ weekly_window_reset_at: Date | null }>>`
+      select weekly_window_reset_at from upstream_credentials where id = ${key.id}
+    `;
+    expect(afterSave.weekly_window_reset_at, "套餐时间更新后，Key 上学到的旧时刻要清掉").toBeNull();
+
+    const followsLine = await listCredentials();
+    expect(followsLine.get("wkyo")?.weeklyCredits, "那 96 积分不在套餐的本周窗口里").toBe(0);
+    expect(followsLine.get("wkyo")?.weeklyResetEstimated).toBe(false);
+    expect(new Date(followsLine.get("wkyf")!.nextWeeklyResetAt).getTime(), "没学到相位的 Key 跟随套餐").toBe(
+      lineReset.getTime(),
+    );
+    const allowed = await call(pool, "guest2");
+    expect(allowed.key, "按套餐的周窗口算，这把 Key 本周还没用").toBe("wkyo");
+
+    // 这把 Key 真撞到上游周限额：回包里的重置时刻只覆盖这把 Key。
+    const keyReset = new Date(Math.floor((Date.now() + 2 * 24 * HOUR_MS) / 1_000) * 1_000);
+    await setBehavior(pool, "wkyo", { type: "status", status: 429, body: weeklyCapBody(keyReset) });
+    const capped = await call(pool, "guest2");
+    expect(capped.status).toBe(200);
+    expect(await hitsFor(pool, capped.marker)).toEqual(["wkyo", "wkyf"]);
+
+    const learned = await listCredentials();
+    expect(
+      new Date(learned.get("wkyo")!.nextWeeklyResetAt).getTime(),
+      "上游回包里的时刻优先于套餐默认值",
+    ).toBe(keyReset.getTime());
+    expect(new Date(learned.get("wkyf")!.nextWeeklyResetAt).getTime(), "其他 Key 仍跟随套餐").toBe(
+      lineReset.getTime(),
+    );
+    const cooled = await credentialRow(pool, "wkyo");
+    expect(cooled.status).toBe("cooling");
+    expect(cooled.cool_until?.getTime(), "周限额冷却到上游给的重置时刻").toBe(keyReset.getTime());
+
+    report.weekly = {
+      blockedByKeyPhase: blocked.key,
+      lineResetAt: lineReset.toISOString(),
+      allowedByLinePhase: allowed.key,
+      keyLearnedResetAt: keyReset.toISOString(),
+      otherKeyFollowsLine: learned.get("wkyf")?.nextWeeklyResetAt,
     };
   });
 
@@ -650,6 +857,21 @@ test.describe.serial("渠道 Key 调度", () => {
     report.planDenied = { hits: ["pd01", "pd02"], keyStatus: denied.status };
   });
 
+  test("模型拥堵以 HTTP 529 返回时同样不换 Key、不动 Key 状态", async () => {
+    const pool = "overload";
+    await setBehavior(pool, "ov01", { type: "status", status: 529, body: MODEL_BUSY_BODY });
+    const result = await call(pool, "guest1");
+    expect(result.status, "模型拥堵统一按 429 还给调用方").toBe(429);
+    expect(await hitsFor(pool, result.marker), "不能把拥堵的请求扫到别的 Key 上").toEqual(["ov01"]);
+    expect(Number(result.retryAfter)).toBeGreaterThan(0);
+    expect(Number(result.retryAfter)).toBeLessThanOrEqual(30);
+    const key = await credentialRow(pool, "ov01");
+    expect(key.status).toBe("active");
+    expect(key.last_failure_kind, "模型拥堵不算这把 Key 的故障").toBeNull();
+    expect(await boundKey(pool, "guest1")).toBe("ov01");
+    report.overload = { hits: ["ov01"], status: result.status, retryAfter: result.retryAfter };
+  });
+
   test("上游 5xx 仍按原来的次数换 Key 重试", async () => {
     const pool = "serverError";
     const failure = { type: "status", status: 500, body: { error: { message: "mock 500" } } } as const;
@@ -672,7 +894,7 @@ test.describe.serial("渠道 Key 调度", () => {
     const backdate = async (person: SchedPersonKey) => {
       await sql`
         update credential_binding_members
-        set last_used_at = now() - interval '31 minutes', created_at = now() - interval '31 minutes'
+        set last_used_at = ${minutesAgo(31)}, created_at = ${minutesAgo(31)}
         where employee_id = ${employeeId(person)} and relay_pool_key = ${poolKey}
       `;
     };
@@ -690,7 +912,7 @@ test.describe.serial("渠道 Key 调度", () => {
     const credential = await credentialRow(pool, "idlo");
     await sql`
       update credential_bindings
-      set updated_at = now() - interval '31 minutes'
+      set updated_at = ${minutesAgo(31)}
       where credential_id = ${credential.id}
     `;
     await waitFor("最后一人释放后绑定清空", async () => !(await bindingExists(pool, "idlo")));
@@ -701,21 +923,42 @@ test.describe.serial("渠道 Key 调度", () => {
     report.idle = { releasedGuestOnly: ["ownerIdle"], keyReturnedToPool: true };
   });
 
-  test("企业隔离：不借外部企业员工名下的 Key，一把 Key 不同时挂两家企业的人", async () => {
+  test("企业隔离：别的企业员工名下的 Key 不能借", async () => {
     const pool = "isolation";
     const outsider = await call(pool, "outsider");
-    expect(outsider.key, "外部企业的人只能用无主 Key").toBe("isof");
+    expect(outsider.key, "外部企业的人用自己名下的 Key").toBe("isox");
     const guest = await call(pool, "guest1");
     expect(guest.key).toBe("isoo");
 
     await setCredentialStatus(pool, "isoo", "disabled");
     const blocked = await call(pool, "guest1");
-    expect(blocked.status, "无主 Key 正被另一家企业使用时不能再挂进去").toBe(503);
+    expect(blocked.status, "不能借外部企业员工名下的 Key").toBe(503);
     expect(await hitsFor(pool, blocked.marker)).toEqual([]);
-    expect((await membersByKey(pool)).isof).toEqual(["outsider"]);
     await setCredentialStatus(pool, "isoo", "active");
 
-    report.isolation = { outsider: outsider.key, guest: guest.key, blockedStatus: blocked.status };
+    await setCredentialStatus(pool, "isox", "disabled");
+    const outsiderBlocked = await call(pool, "outsider");
+    expect(outsiderBlocked.status, "外部企业的人也不能借本企业员工名下的 Key").toBe(503);
+    expect(await hitsFor(pool, outsiderBlocked.marker)).toEqual([]);
+    await setCredentialStatus(pool, "isox", "active");
+
+    report.isolation = {
+      outsider: outsider.key,
+      guest: guest.key,
+      guestBlockedStatus: blocked.status,
+      outsiderBlockedStatus: outsiderBlocked.status,
+    };
+  });
+
+  test("充值模式的 Key 没有主人：都能用，但一把 Key 不同时挂两家企业的人", async () => {
+    const pool = "recharge";
+    const first = await call(pool, "outsider");
+    expect(first.key, "没有主人的 Key 谁都能用，同分取 ID 小的").toBe("rc01");
+    const second = await call(pool, "guest1");
+    expect(second.key, "已被另一家企业占用的 Key 不能再挂进去").toBe("rc02");
+    const members = await membersByKey(pool);
+    expect(members).toEqual({ rc01: ["outsider"], rc02: ["guest1"] });
+    report.recharge = { outsider: first.key, guest: second.key, members };
   });
 
   test("主人的 Key 冷却期间借别人的，冷却结束后回到自己的 Key", async () => {
@@ -736,7 +979,7 @@ test.describe.serial("渠道 Key 调度", () => {
     await setBehavior(pool, "homo", { type: "ok" });
     const credential = await credentialRow(pool, "homo");
     await sql`
-      update upstream_credentials set cool_until = now() - interval '1 second'
+      update upstream_credentials set cool_until = ${minutesAgo(1)}
       where id = ${credential.id}
     `;
     const home = await call(pool, "ownerHome");

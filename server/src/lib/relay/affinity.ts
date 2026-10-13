@@ -5,16 +5,17 @@
  * - 100：本人的席位 Key
  * -  90：和主人直属同一个部门（同组）
  * -  80：和主人同属某个一级部门以下的部门（同部门）
- * -  75：没有席位主人的 Key（管理员批量导入）
  * -  70：和主人同属一个一级部门
  * -  60：只是同一家企业
  *
  * 一个人可以直属多个部门，取所有组合里最高的那个分数。
+ *
+ * 渠道 Key 都来自席位。充值模式下管理员直接添加的 Key 没有席位主人，
+ * 谈不上亲疏，按「只是同一家企业」计分。
  */
 export const AFFINITY_OWN = 100;
 export const AFFINITY_SAME_DEPARTMENT = 90;
 export const AFFINITY_SHARED_SUB_DEPARTMENT = 80;
-export const AFFINITY_UNOWNED = 75;
 export const AFFINITY_SAME_FIRST_LEVEL = 70;
 export const AFFINITY_SAME_ENTERPRISE = 60;
 

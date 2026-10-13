@@ -92,6 +92,7 @@ export async function adminProviderRoutes(app: FastifyInstance) {
         seatCount: productLines.seatCount,
         tag: productLines.tag,
         testModel: productLines.testModel,
+        weeklyWindowResetAt: productLines.weeklyWindowResetAt,
         providerCode: providers.code,
         providerName: providers.name,
         defaultBaseUrl: providers.defaultBaseUrl,
@@ -439,6 +440,16 @@ export async function adminProviderRoutes(app: FastifyInstance) {
           ? existing.configVersion + 1
           : existing.configVersion;
         const updatedAt = new Date();
+        // 周限额重置时间只影响额度窗口的起算，不影响转发语义：
+        // 不参与 configVersion、不触发凭证健康重置。
+        const nextWeeklyWindowResetAt = body.data.weeklyWindowResetAt === undefined
+          ? undefined
+          : body.data.weeklyWindowResetAt === null
+            ? null
+            : new Date(body.data.weeklyWindowResetAt);
+        const weeklyWindowResetChanged = nextWeeklyWindowResetAt !== undefined &&
+          (nextWeeklyWindowResetAt?.getTime() ?? null) !==
+            (existing.weeklyWindowResetAt?.getTime() ?? null);
         const [row] = await tx
           .update(productLines)
           .set({
@@ -449,6 +460,9 @@ export async function adminProviderRoutes(app: FastifyInstance) {
             // 测试模型只影响连通性测试的模型选择，不影响转发语义：
             // 不参与 configVersion、不触发凭证健康重置。
             ...(body.data.testModel !== undefined ? { testModel: body.data.testModel } : {}),
+            ...(nextWeeklyWindowResetAt !== undefined
+              ? { weeklyWindowResetAt: nextWeeklyWindowResetAt }
+              : {}),
             ...(updatingProtocolSurface
               ? { protocolConfigs: nextProtocolConfigs }
               : {}),
@@ -458,6 +472,15 @@ export async function adminProviderRoutes(app: FastifyInstance) {
           .where(eq(productLines.id, existing.id))
           .returning();
         if (!row) return { kind: "not_found" } as const;
+
+        if (weeklyWindowResetChanged) {
+          // 管理员录入的套餐时间比各 Key 之前学到的时刻新：清掉旧的，让它们跟随套餐。
+          // 之后某把 Key 再撞到周限额，上游回包里的时刻仍会只覆盖那一把。
+          await tx
+            .update(upstreamCredentials)
+            .set({ weeklyWindowResetAt: null, updatedAt })
+            .where(eq(upstreamCredentials.productLineId, existing.id));
+        }
 
         if (shouldResetCredentialHealth) {
           await tx
@@ -492,6 +515,9 @@ export async function adminProviderRoutes(app: FastifyInstance) {
               ...(body.data.seatCount !== undefined ? { seatCount: existing.seatCount } : {}),
               ...(body.data.tag !== undefined ? { tag: existing.tag } : {}),
               ...(body.data.testModel !== undefined ? { testModel: existing.testModel } : {}),
+              ...(nextWeeklyWindowResetAt !== undefined
+                ? { weeklyWindowResetAt: existing.weeklyWindowResetAt }
+                : {}),
               ...(updatingProtocolSurface
                 ? {
                   supportedProtocols: protocolPlan.currentProtocols,
@@ -506,6 +532,9 @@ export async function adminProviderRoutes(app: FastifyInstance) {
               ...(body.data.seatCount !== undefined ? { seatCount: row.seatCount } : {}),
               ...(body.data.tag !== undefined ? { tag: row.tag } : {}),
               ...(body.data.testModel !== undefined ? { testModel: row.testModel } : {}),
+              ...(nextWeeklyWindowResetAt !== undefined
+                ? { weeklyWindowResetAt: row.weeklyWindowResetAt }
+                : {}),
               ...(updatingProtocolSurface
                 ? {
                   supportedProtocols: protocolPlan.nextProtocols,

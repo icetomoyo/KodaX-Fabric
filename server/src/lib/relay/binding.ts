@@ -33,11 +33,13 @@ import {
 } from "../credential-status.js";
 import {
   AFFINITY_OWN,
-  AFFINITY_UNOWNED,
+  AFFINITY_SAME_ENTERPRISE,
   departmentAffinity,
   type AffinityDepartmentNode,
 } from "./affinity.js";
 import {
+  credentialWindowAnchors,
+  effectiveWeeklyResetAt,
   evaluateCredentialQuota,
   getCredentialQuotaUsage,
   remainingQuotaFraction,
@@ -99,6 +101,8 @@ export type BoundCredential = {
   fiveHourCreditLimit: number | null;
   weeklyCreditLimit: number | null;
   fiveHourWindowAnchor: Date | null;
+  fiveHourWindowBaseCredits: number;
+  /** The weekly reset instant the Key follows: its own, else its package's. */
   weeklyWindowResetAt: Date | null;
   meta: unknown;
 };
@@ -157,7 +161,9 @@ type CredentialSnapshotRow = {
   fiveHourCreditLimit: string | null;
   weeklyCreditLimit: string | null;
   fiveHourWindowAnchor: Date | null;
+  fiveHourWindowBaseCredits: string;
   weeklyWindowResetAt: Date | null;
+  lineWeeklyWindowResetAt: Date | null;
   meta: unknown;
 };
 
@@ -240,7 +246,9 @@ const credentialSnapshotSelect = {
   fiveHourCreditLimit: upstreamCredentials.fiveHourCreditLimit,
   weeklyCreditLimit: upstreamCredentials.weeklyCreditLimit,
   fiveHourWindowAnchor: upstreamCredentials.fiveHourWindowAnchor,
+  fiveHourWindowBaseCredits: upstreamCredentials.fiveHourWindowBaseCredits,
   weeklyWindowResetAt: upstreamCredentials.weeklyWindowResetAt,
+  lineWeeklyWindowResetAt: productLines.weeklyWindowResetAt,
   meta: upstreamCredentials.meta,
 };
 
@@ -629,7 +637,7 @@ async function withAffinity(
     ),
   ];
   if (ownerIds.length === 0) {
-    return items.map((item) => ({ ...item, affinity: AFFINITY_UNOWNED }));
+    return items.map((item) => ({ ...item, affinity: AFFINITY_SAME_ENTERPRISE }));
   }
 
   const [membershipRows, nodes] = await Promise.all([
@@ -654,8 +662,9 @@ async function withAffinity(
 
   return items.map((item) => {
     const ownerId = item.key.ownerEmployeeId;
+    // 没有席位主人的 Key（充值模式）谈不上亲疏，和「只是同企业」同分。
     const affinity = ownerId == null
-      ? AFFINITY_UNOWNED
+      ? AFFINITY_SAME_ENTERPRISE
       : departmentAffinity(mine, departmentsByEmployee.get(ownerId) ?? [], treeNodes);
     return { ...item, affinity };
   });
@@ -917,13 +926,8 @@ async function loadUsage(
 }
 
 /** Per-Key upstream window state carried on credential snapshots. */
-function snapshotAnchors(
-  snapshot: Pick<CredentialSnapshotRow, "fiveHourWindowAnchor" | "weeklyWindowResetAt">,
-): CredentialWindowAnchors {
-  return {
-    fiveHourAnchor: snapshot.fiveHourWindowAnchor,
-    weeklyResetAt: snapshot.weeklyWindowResetAt,
-  };
+function snapshotAnchors(snapshot: CredentialSnapshotRow): CredentialWindowAnchors {
+  return credentialWindowAnchors(snapshot);
 }
 
 function anchorsMapFromSnapshots(
@@ -1081,7 +1085,8 @@ function toBoundCredential(
     fiveHourCreditLimit: creditLimitNumber(snapshot.fiveHourCreditLimit),
     weeklyCreditLimit: creditLimitNumber(snapshot.weeklyCreditLimit),
     fiveHourWindowAnchor: snapshot.fiveHourWindowAnchor,
-    weeklyWindowResetAt: snapshot.weeklyWindowResetAt,
+    fiveHourWindowBaseCredits: Number(snapshot.fiveHourWindowBaseCredits) || 0,
+    weeklyWindowResetAt: effectiveWeeklyResetAt(snapshot),
     meta: snapshot.meta,
   };
 }
