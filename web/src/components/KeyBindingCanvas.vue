@@ -58,7 +58,6 @@
           <Handle type="source" :position="Position.Right" :connectable="false" />
           <span class="kind">员工</span>
           <strong>{{ data.name }}</strong>
-          <span class="tier" :class="data.usageTier">{{ usageTierLabel(data.usageTier) }}</span>
         </div>
       </template>
       <template #node-virtual_key="{ data }">
@@ -129,7 +128,6 @@ import "@vue-flow/core/dist/style.css";
 import "@vue-flow/core/dist/theme-default.css";
 import "@vue-flow/controls/dist/style.css";
 
-type UsageTier = "idle" | "standard" | "heavy";
 type CoolingKind = "five_hour" | "weekly" | "other";
 type CredentialLane = "bound" | "pending" | "cooling_5h" | "cooling_weekly" | "disabled";
 
@@ -349,12 +347,6 @@ function protocolLabel(protocol: string) {
   return relayProtocolLabel(protocol, true);
 }
 
-function usageTierLabel(tier: UsageTier | undefined) {
-  if (tier === "idle") return "闲置用户";
-  if (tier === "heavy") return "重度用户";
-  return "标准用户";
-}
-
 function formatCoolUntil(value: string | null | undefined) {
   if (!value) return "";
   const date = new Date(value);
@@ -493,30 +485,6 @@ function credentialCaption(data: {
 
 .graph-node.employee {
   border-left: 3px solid #0f766e;
-}
-
-.graph-node .tier {
-  align-self: flex-start;
-  padding: 1px 6px;
-  border-radius: 999px;
-  font-size: 11px;
-  font-weight: 600;
-  font-style: normal;
-}
-
-.graph-node .tier.idle {
-  color: #94a3b8;
-  background: #f8fafc;
-}
-
-.graph-node .tier.standard {
-  color: #1d4ed8;
-  background: #dbeafe;
-}
-
-.graph-node .tier.heavy {
-  color: #b91c1c;
-  background: #fee2e2;
 }
 
 .graph-node.virtual {

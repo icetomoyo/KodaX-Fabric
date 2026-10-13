@@ -8,7 +8,6 @@ import {
   startRequestContextStorageScan,
   stopRequestContextStorageScan,
 } from "./lib/request-context-storage.js";
-import { startTierRebind, stopTierRebind } from "./lib/tier-rebind.js";
 
 async function main() {
   await sql`select 1`;
@@ -17,12 +16,10 @@ async function main() {
   const app = await buildApp();
   startCapacityAlert(app.log);
   startIdleBindingRelease(app.log);
-  startTierRebind(app.log);
   startRequestContextStorageScan(app.log);
   app.addHook("onClose", async () => {
     stopCapacityAlert();
     stopIdleBindingRelease();
-    stopTierRebind();
     stopRequestContextStorageScan();
   });
   await app.listen({ port: env.PORT, host: env.HOST });

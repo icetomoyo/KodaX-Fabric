@@ -1,4 +1,5 @@
-import { and, eq, inArray, isNull, lte, or } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
+import { env } from "../../config.js";
 import { db } from "../../db/client.js";
 import {
   modelRoutes,
@@ -28,6 +29,7 @@ import type {
   RelayCandidate,
 } from "./types.js";
 import { isValidRelayProductLineId } from "./types.js";
+import { RELAY_KEY_BUSY_RETRY_AFTER_SECONDS } from "./upstream.js";
 import {
   isProviderClientModelAllowed,
   providerBlocksClientModel,
@@ -66,6 +68,8 @@ export type RelayCandidateResolution = {
   unavailableReason:
     | "bound_channel_unavailable"
     | "cooling"
+    /** Every Key the employee could use is at its concurrency limit. */
+    | "busy"
     | "unavailable"
     | "model_not_allowed"
     | null;
@@ -130,10 +134,14 @@ type RelayCredentialAccess = {
   providerCode: string | null;
 };
 
+/**
+ * Credentials of the pool behind a product line, for model discovery.
+ * Strictly read-only: expired cooling is applied in memory through the
+ * effective-status function; request-time binding restores it in the database.
+ */
 async function loadAccessibleCredentials(
   protocol: RelayProtocol,
   productLineId: number,
-  options: { readOnly?: boolean } = {},
 ): Promise<RelayCredentialAccess> {
   const now = new Date();
   const pool = await loadRelayPool(productLineId);
@@ -145,22 +153,6 @@ async function loadAccessibleCredentials(
     };
   }
   const poolLineIds = pool.activeProductLineIds;
-  // Cooling is a temporary state. Restore expired entries in persistent state
-  // so admin views and subsequent scheduling agree that the credential is
-  // active again. Model discovery is strictly read-only and instead applies
-  // the same effective-status function to its query result in memory.
-  if (!options.readOnly) {
-    await db
-      .update(upstreamCredentials)
-      .set({ status: "active", coolUntil: null, updatedAt: now })
-      .where(
-        and(
-          eq(upstreamCredentials.status, "cooling"),
-          or(isNull(upstreamCredentials.coolUntil), lte(upstreamCredentials.coolUntil, now)),
-          inArray(upstreamCredentials.productLineId, poolLineIds),
-        ),
-      );
-  }
 
   const rows = await db
     .select({
@@ -266,9 +258,12 @@ function retryAfterSecondsFrom(retryAt: Date | null): number | null {
 }
 
 function mapAcquireFailure(
-  reason: "no_scope" | "exhausted_pool" | "no_binding_available",
+  reason: "no_scope" | "exhausted_pool" | "pool_busy" | "no_binding_available",
   retryAt: Date | null,
 ): Pick<RelayBoundCandidateResolution, "unavailableReason" | "retryAfterSeconds"> {
+  if (reason === "pool_busy") {
+    return { unavailableReason: "busy", retryAfterSeconds: RELAY_KEY_BUSY_RETRY_AFTER_SECONDS };
+  }
   if (reason === "exhausted_pool") {
     return { unavailableReason: "cooling", retryAfterSeconds: retryAfterSecondsFrom(retryAt) };
   }
@@ -489,7 +484,6 @@ export async function resolveRelayBoundCandidate(
   protocol: RelayProtocol,
   productLineId: number,
   excludeCredentialIds?: ReadonlySet<number>,
-  teamId?: number | null,
 ): Promise<RelayBoundCandidateResolution> {
   const parsed = parseClientModel(clientModel);
   const routedProductLineId = parsed.kind === "legacy"
@@ -504,15 +498,15 @@ export async function resolveRelayBoundCandidate(
       retryAfterSeconds: null,
     };
   }
-  const access = await loadAccessibleCredentials(protocol, routedProductLineId);
-  if (access.boundChannelUnavailable) {
+  const pool = await loadRelayPool(routedProductLineId);
+  if (!pool || pool.activeProductLineIds.length === 0) {
     return {
       candidate: null,
       unavailableReason: "bound_channel_unavailable",
       retryAfterSeconds: null,
     };
   }
-  if (access.providerCode && providerBlocksClientModel(access.providerCode, upstreamModel)) {
+  if (providerBlocksClientModel(pool.providerCode, upstreamModel)) {
     return {
       candidate: null,
       unavailableReason: "model_not_allowed",
@@ -524,7 +518,7 @@ export async function resolveRelayBoundCandidate(
     employeeId,
     productLineId: routedProductLineId,
     protocol,
-    teamId,
+    pool,
     excludeCredentialIds,
   });
   if (!acquired.ok) {
@@ -548,6 +542,8 @@ export async function resolveRelayBoundCandidate(
   const route = modelRoute.kind === "routed" ? modelRoute.route : undefined;
   const candidate = toRelayCandidate(bound, clientModel, protocol, route);
   candidate.upstreamModel = route?.upstreamModel ?? upstreamModel;
+  // Bound Keys are shared by a few employees and capped per Key; open pools are not.
+  candidate.maxConcurrency = acquired.openPool ? null : env.RELAY_KEY_MAX_CONCURRENCY;
 
   return {
     candidate,
@@ -564,11 +560,7 @@ export async function resolveAccessibleRelayModels(
   if (!isValidRelayProductLineId(productLineId)) {
     return { models: [], unavailableReason: "bound_channel_unavailable" };
   }
-  const access = await loadAccessibleCredentials(
-    upstreamProtocol,
-    productLineId,
-    { readOnly: true },
-  );
+  const access = await loadAccessibleCredentials(upstreamProtocol, productLineId);
   if (access.boundChannelUnavailable) {
     return { models: [], unavailableReason: "bound_channel_unavailable" };
   }

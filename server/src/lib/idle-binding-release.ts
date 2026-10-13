@@ -1,11 +1,11 @@
 /**
- * Release channel Keys that have had no calls for 2 hours
- * back to the unbound pool.
+ * Release members who have not called through their channel Key for
+ * RELAY_KEY_IDLE_RELEASE_SECONDS, and return Keys nobody is on to the
+ * unbound pool.
  */
 import type { FastifyBaseLogger } from "fastify";
+import { env } from "../config.js";
 import { releaseIdleCredentialBindings } from "./relay/binding.js";
-
-const IDLE_BINDING_RELEASE_INTERVAL_MS = 60_000;
 
 let timer: ReturnType<typeof setInterval> | null = null;
 let inFlight = false;
@@ -13,10 +13,10 @@ let inFlight = false;
 export async function runIdleBindingReleaseOnce(
   logger: FastifyBaseLogger,
   now: Date = new Date(),
-): Promise<number> {
+): Promise<{ members: number; bindings: number }> {
   const released = await releaseIdleCredentialBindings(now);
-  if (released > 0) {
-    logger.info({ released }, "idle channel Key bindings released");
+  if (released.members > 0 || released.bindings > 0) {
+    logger.info(released, "idle channel Key members released");
   }
   return released;
 }
@@ -38,7 +38,7 @@ export function startIdleBindingRelease(logger: FastifyBaseLogger): void {
   void tick(logger);
   timer = setInterval(() => {
     void tick(logger);
-  }, IDLE_BINDING_RELEASE_INTERVAL_MS);
+  }, env.RELAY_KEY_IDLE_SWEEP_SECONDS * 1_000);
   timer.unref?.();
   process.once("exit", stopIdleBindingRelease);
 }

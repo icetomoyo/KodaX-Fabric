@@ -112,6 +112,45 @@ const QUOTA_EXHAUSTED_MESSAGE_MARKERS = [
   "仅限企业编程套餐",
 ] as const;
 
+/**
+ * 429 并不都是「这把 Key 被限流」。按业务码分成四类，调度据此决定
+ * 是否冷却 Key、是否换 Key 重试：
+ * - fair_use：1313，上游判定使用模式不合规。Key 停用等人工确认，不换 Key 重放。
+ * - model_busy：1305，模型侧拥堵，与哪把 Key 无关。不冷却、不换 Key。
+ * - model_not_in_plan：1311，这把 Key 的套餐没开放该模型。不冷却，可换一把试。
+ * - key_limited：其余（额度用尽、账户限速、无法识别），按原逻辑冷却这把 Key。
+ */
+export type UpstreamRateLimitDisposition =
+  | "fair_use"
+  | "model_busy"
+  | "model_not_in_plan"
+  | "key_limited";
+
+/** Responses 协议的报文没有业务码，只能靠中文兜底。 */
+const RATE_LIMIT_DISPOSITION_RULES: ReadonlyArray<{
+  disposition: Exclude<UpstreamRateLimitDisposition, "key_limited">;
+  code: string;
+  marker: string;
+}> = [
+  { disposition: "fair_use", code: "1313", marker: "公平使用策略" },
+  { disposition: "model_busy", code: "1305", marker: "当前访问量过大" },
+  { disposition: "model_not_in_plan", code: "1311", marker: "暂未开放" },
+];
+
+export function classifyUpstreamRateLimit(payload: unknown): UpstreamRateLimitDisposition {
+  const extracted = extractUpstreamBusinessError(payload);
+  if (!extracted) return "key_limited";
+  for (const rule of RATE_LIMIT_DISPOSITION_RULES) {
+    if (extracted.code === rule.code) return rule.disposition;
+  }
+  // 带了别的业务码就以业务码为准，不再猜文案。
+  if (extracted.code && /^\d+$/.test(extracted.code)) return "key_limited";
+  for (const rule of RATE_LIMIT_DISPOSITION_RULES) {
+    if (extracted.message?.includes(rule.marker)) return rule.disposition;
+  }
+  return "key_limited";
+}
+
 export type UpstreamUsageCapKind = "five_hour" | "weekly" | "monthly" | "other";
 
 export type UpstreamUsageCap = {

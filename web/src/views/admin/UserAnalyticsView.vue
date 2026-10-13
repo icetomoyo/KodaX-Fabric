@@ -71,7 +71,6 @@
                 <template v-if="selected.employee.departmentName">
                   · {{ selected.employee.departmentName }}
                 </template>
-                · {{ usageTierLabel(selected.employee.usageTier) }}
               </p>
             </div>
             <dl class="year-stats">
@@ -283,7 +282,6 @@ type RankRow = {
   employeeId: number;
   name: string;
   phone: string;
-  usageTier: string;
   enterpriseName: string | null;
   departmentName: string | null;
   totalTokens: number;
@@ -303,7 +301,6 @@ type SelectedUser = {
     id: number;
     name: string;
     phone: string;
-    usageTier: string;
     enterpriseName: string | null;
     departmentName: string | null;
   };
@@ -468,13 +465,6 @@ const hourlyOption = computed<EChartsCoreOption>(() => {
 
 function rankSub(row: RankRow): string {
   return [row.enterpriseName, row.departmentName].filter(Boolean).join(" · ") || row.phone;
-}
-
-function usageTierLabel(tier: string): string {
-  if (tier === "heavy") return "重度";
-  if (tier === "standard") return "标准";
-  if (tier === "idle") return "闲置";
-  return tier || "—";
 }
 
 function providerLabel(code: string): string {

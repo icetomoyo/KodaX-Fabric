@@ -4,6 +4,7 @@ import { db } from "../../db/client.js";
 import { upstreamCredentials } from "../../db/schema/index.js";
 import { decryptSecret } from "../crypto-secret.js";
 import {
+  classifyUpstreamRateLimit,
   extractUpstreamBusinessError,
   extractUpstreamUsageCap,
   formatUpstreamVendorError,
@@ -18,7 +19,8 @@ import {
   nextWeeklyResetAt,
   type CredentialWindowAnchors,
 } from "./credential-quota.js";
-import { beginCredentialUse } from "./credential-load.js";
+import { tryBeginCredentialUse } from "./credential-load.js";
+import { notifyFairUseRestriction } from "./fair-use-alert.js";
 import {
   DEFAULT_RELAY_PROTOCOL,
   type RelayProtocol,
@@ -34,7 +36,18 @@ export type RelayUpstreamAttemptKind =
   | "network_error"
   | "timeout"
   | "cancelled"
-  | "configuration_error";
+  | "configuration_error"
+  /** The Key was already at its concurrency limit; nothing was sent upstream. */
+  | "key_busy";
+
+/** A request may switch Keys at most this many times because of upstream 429s. */
+export const RELAY_RATE_LIMIT_MAX_HOPS = 1;
+
+/** Retry-After for "every usable Key is at its concurrency limit". */
+export const RELAY_KEY_BUSY_RETRY_AFTER_SECONDS = 3;
+
+/** Retry-After when the upstream model itself is overloaded (not Key specific). */
+export const RELAY_MODEL_BUSY_RETRY_AFTER_SECONDS = 10;
 
 export type RelayUpstreamAttemptResult = {
   response: Response | null;
@@ -44,6 +57,8 @@ export type RelayUpstreamAttemptResult = {
   latencyMs: number;
   errorCode: string | null;
   errorMessage: string | null;
+  /** Retry-After to hand the client when this attempt is the final failure. */
+  retryAfterSeconds?: number | null;
   /** Release timeout/listener resources after the response body has been consumed. */
   cleanup: () => void;
   /** Abort the upstream response body, for example when the downstream client disconnects. */
@@ -82,6 +97,8 @@ export type SendRelayUpstreamInput = {
   cooldownSeconds?: number;
   method?: "GET" | "POST";
   virtualKeyId?: number;
+  /** Employee behind the attempt, for per-employee in-flight tracking. */
+  employeeId?: number;
 };
 
 type RequestLifetime = {
@@ -273,6 +290,11 @@ async function markCredentialFailure(
 async function autoDisableCredential(
   candidate: RelayCandidate,
   status: number,
+  reason: { lastError: string; failureKind: string; vendorCode: string | null } = {
+    lastError: `HTTP ${status}：上游凭证鉴权失败`,
+    failureKind: "auth",
+    vendorCode: null,
+  },
 ): Promise<void> {
   const now = new Date();
   await db
@@ -285,10 +307,10 @@ async function autoDisableCredential(
         else ${upstreamCredentials.status}
       end`,
       errorCount: sql`${upstreamCredentials.errorCount} + 1`,
-      lastError: `HTTP ${status}：上游凭证鉴权失败`,
+      lastError: reason.lastError.slice(0, 1_000),
       lastErrorAt: now,
-      lastFailureKind: "auth",
-      lastVendorCode: null,
+      lastFailureKind: reason.failureKind.slice(0, 32),
+      lastVendorCode: reason.vendorCode ? reason.vendorCode.slice(0, 16) : null,
       lastUsedAt: now,
       updatedAt: now,
     })
@@ -758,13 +780,30 @@ export async function sendRelayUpstream(
     1,
     Math.min(3_600, Math.trunc(input.cooldownSeconds ?? env.RELAY_COOLDOWN_SECONDS)),
   );
+  // Take the Key's concurrency slot before anything else. A full Key is not a
+  // failure of the Key: the caller excludes it for this request and re-binds.
+  const releaseLoad = tryBeginCredentialUse(input.candidate.credentialId, {
+    virtualKeyId: input.virtualKeyId,
+    employeeId: input.employeeId,
+    limit: input.candidate.maxConcurrency ?? null,
+  });
+  if (!releaseLoad) {
+    return {
+      response: null,
+      kind: "key_busy",
+      retryable: true,
+      status: null,
+      latencyMs: Date.now() - startedAt,
+      errorCode: "upstream_key_busy",
+      errorMessage: "渠道 Key 并发已满",
+      retryAfterSeconds: RELAY_KEY_BUSY_RETRY_AFTER_SECONDS,
+      cleanup: () => {},
+      abort: () => {},
+    };
+  }
   const baseLifetime = createRequestLifetime(timeoutMs, input.signal);
   // Load tracking must span the whole attempt, including streamed bodies, so
   // release is tied to the same cleanup/abort pair that owns the lifetime.
-  const releaseLoad = beginCredentialUse(
-    input.candidate.credentialId,
-    input.virtualKeyId,
-  );
   const lifetime: RequestLifetime = {
     signal: baseLifetime.signal,
     didTimeout: baseLifetime.didTimeout,
@@ -878,6 +917,10 @@ export async function sendRelayUpstream(
   }
 
   const classification = classifyHttpStatus(response.status);
+  // 429 的换 Key 与 Retry-After 由业务码决定，见 classifyUpstreamRateLimit。
+  let retryable = classification.retryable;
+  let errorCode = classification.errorCode;
+  let retryAfterSeconds: number | null = null;
   try {
     if (classification.kind === "success") {
       await markCredentialSuccess(input.candidate);
@@ -886,41 +929,72 @@ export async function sendRelayUpstream(
     } else if (classification.kind === "rate_limited") {
       const bodyText = await peekResponseText(response);
       const now = new Date();
-      const candidateAnchors: CredentialWindowAnchors = {
-        fiveHourAnchor: input.candidate.fiveHourWindowAnchor ?? null,
-        weeklyResetAt: input.candidate.weeklyWindowResetAt ?? null,
-      };
-      const decision = resolveRelayRateLimitCooldown(
-        bodyText,
-        cooldownSeconds,
-        env.RELAY_QUOTA_COOLDOWN_SECONDS,
-        now,
-        candidateAnchors,
-      );
-      const metaPatch = await usageCapMetaPatch(input.candidate, decision.cap, now);
-      // 报文带未来重置时刻时校准窗口状态列：1308 → 首用锚点（重置−5h），
-      // 1310 → 周窗口相位。过期时刻不回写（避免把旧窗口相位前滚）。
-      const calibrationReset = decision.cap?.resetAt
-        && decision.cap.resetAt.getTime() > now.getTime()
-        ? decision.cap.resetAt
-        : null;
-      await coolCredential(
-        input.candidate,
-        decision.cooldownSeconds,
-        formatUpstreamVendorError(response.status, bodyText),
-        decision.coolUntil,
-        metaPatch,
-        {
-          failureKind: decision.failureKind,
-          vendorCode: decision.vendorCode,
-          ...(calibrationReset && decision.cap?.kind === "five_hour"
-            ? { fiveHourAnchor: new Date(calibrationReset.getTime() - FIVE_HOUR_MS) }
-            : {}),
-          ...(calibrationReset && decision.cap?.kind === "weekly"
-            ? { weeklyResetAt: calibrationReset }
-            : {}),
-        },
-      );
+      const disposition = classifyUpstreamRateLimit(bodyText ?? "");
+      if (disposition === "fair_use") {
+        // 上游明确说使用模式不合规：停用等管理员确认，不换 Key 重放这次请求。
+        const vendor = extractUpstreamBusinessError(bodyText ?? "");
+        await autoDisableCredential(input.candidate, response.status, {
+          lastError: formatUpstreamVendorError(response.status, bodyText),
+          failureKind: "fair_use",
+          vendorCode: vendor?.code ?? null,
+        });
+        void notifyFairUseRestriction({
+          credentialId: input.candidate.credentialId,
+          credentialSuffix: input.candidate.credentialSuffix,
+          productLineId: input.candidate.productLineId,
+          vendorCode: vendor?.code ?? null,
+          vendorMessage: vendor?.message ?? null,
+          at: now,
+        });
+        retryable = false;
+        errorCode = "upstream_fair_use_restricted";
+      } else if (disposition === "model_busy") {
+        // 模型侧拥堵，换哪把 Key 都一样：不冷却这把 Key，也不去扫别的 Key。
+        await markCredentialUsed(input.candidate);
+        retryable = false;
+        errorCode = "upstream_model_busy";
+        retryAfterSeconds = RELAY_MODEL_BUSY_RETRY_AFTER_SECONDS;
+      } else if (disposition === "model_not_in_plan") {
+        // 这把 Key 的套餐没开放该模型，Key 本身是健康的：不冷却，允许换一把试。
+        await markCredentialUsed(input.candidate);
+        errorCode = "upstream_model_not_in_plan";
+      } else {
+        const candidateAnchors: CredentialWindowAnchors = {
+          fiveHourAnchor: input.candidate.fiveHourWindowAnchor ?? null,
+          weeklyResetAt: input.candidate.weeklyWindowResetAt ?? null,
+        };
+        const decision = resolveRelayRateLimitCooldown(
+          bodyText,
+          cooldownSeconds,
+          env.RELAY_QUOTA_COOLDOWN_SECONDS,
+          now,
+          candidateAnchors,
+        );
+        const metaPatch = await usageCapMetaPatch(input.candidate, decision.cap, now);
+        // 报文带未来重置时刻时校准窗口状态列：1308 → 首用锚点（重置−5h），
+        // 1310 → 周窗口相位。过期时刻不回写（避免把旧窗口相位前滚）。
+        const calibrationReset = decision.cap?.resetAt
+          && decision.cap.resetAt.getTime() > now.getTime()
+          ? decision.cap.resetAt
+          : null;
+        await coolCredential(
+          input.candidate,
+          decision.cooldownSeconds,
+          formatUpstreamVendorError(response.status, bodyText),
+          decision.coolUntil,
+          metaPatch,
+          {
+            failureKind: decision.failureKind,
+            vendorCode: decision.vendorCode,
+            ...(calibrationReset && decision.cap?.kind === "five_hour"
+              ? { fiveHourAnchor: new Date(calibrationReset.getTime() - FIVE_HOUR_MS) }
+              : {}),
+            ...(calibrationReset && decision.cap?.kind === "weekly"
+              ? { weeklyResetAt: calibrationReset }
+              : {}),
+          },
+        );
+      }
     } else if (response.status >= 500 && response.status <= 599) {
       await markCredentialFailure(
         input.candidate,
@@ -939,10 +1013,11 @@ export async function sendRelayUpstream(
   return result({
     response,
     kind: classification.kind,
-    retryable: classification.retryable,
+    retryable,
     status: response.status,
-    errorCode: classification.errorCode,
+    errorCode,
     errorMessage: classification.errorMessage,
+    retryAfterSeconds,
   });
 }
 

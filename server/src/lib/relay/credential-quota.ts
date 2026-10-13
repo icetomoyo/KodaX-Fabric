@@ -86,8 +86,15 @@ export function weeklyResetAt(now: Date): Date {
 export const FIVE_HOUR_COOL_RATIO = 0.85;
 export const WEEKLY_COOL_RATIO = 0.95;
 
+/** Fraction of each window's limit at which the ledger counts as exhausted. */
+export type CredentialQuotaRatios = {
+  fiveHour: number;
+  weekly: number;
+};
+
+/** A ratio of 1 or more turns the local line off: only the upstream reply decides. */
 function windowReached(used: number, limit: number | null, ratio: number): boolean {
-  return limit != null && used >= limit * ratio;
+  return limit != null && ratio < 1 && used >= limit * ratio;
 }
 
 export function evaluateCredentialQuota(
@@ -95,16 +102,17 @@ export function evaluateCredentialQuota(
   limits: CredentialQuotaLimits,
   now: Date,
   anchors?: CredentialWindowAnchors | null,
+  ratios: CredentialQuotaRatios = { fiveHour: FIVE_HOUR_COOL_RATIO, weekly: WEEKLY_COOL_RATIO },
 ): CredentialQuotaStatus {
   const fiveHourExhausted = windowReached(
     usage.fiveHourCredits,
     limits.fiveHourLimit,
-    FIVE_HOUR_COOL_RATIO,
+    ratios.fiveHour,
   );
   const weeklyExhausted = windowReached(
     usage.weeklyCredits,
     limits.weeklyLimit,
-    WEEKLY_COOL_RATIO,
+    ratios.weekly,
   );
   const resetCandidates: Date[] = [];
   // Anchored windows reset at their own boundary (anchor + 5h / learned phase);

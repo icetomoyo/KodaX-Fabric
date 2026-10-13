@@ -51,6 +51,15 @@ const envSchema = z.object({
   RELAY_QUOTA_COOLDOWN_SECONDS: z.coerce.number().int().min(1).max(86_400).default(1_800),
   RELAY_SAFEGUARD_RPM: z.coerce.number().int().min(1).default(60),
   RELAY_SAFEGUARD_MAX_CONCURRENCY: z.coerce.number().int().min(1).default(5),
+  // 渠道 Key 调度：每把 Key 最多挂几个员工、最多几个在途请求。
+  RELAY_KEY_MAX_MEMBERS: z.coerce.number().int().min(1).max(100).default(3),
+  RELAY_KEY_MAX_CONCURRENCY: z.coerce.number().int().min(1).max(1_000).default(5),
+  // 成员多久没调用就从 Key 上释放，以及清理任务多久跑一次。
+  RELAY_KEY_IDLE_RELEASE_SECONDS: z.coerce.number().int().min(60).max(604_800).default(1_800),
+  RELAY_KEY_IDLE_SWEEP_SECONDS: z.coerce.number().int().min(1).max(3_600).default(60),
+  // 借用线：非席位主人用到这个比例就让出这把 Key（1 表示不设借用线）。
+  RELAY_GUEST_FIVE_HOUR_RATIO: z.coerce.number().min(0.01).max(1).default(0.85),
+  RELAY_GUEST_WEEKLY_RATIO: z.coerce.number().min(0.01).max(1).default(0.95),
   QUOTA_TIMEZONE: z
     .string()
     .default("Asia/Shanghai")
@@ -77,7 +86,6 @@ const envSchema = z.object({
     .min(64)
     .default(1024),
   ALERT_CHECK_INTERVAL_SECONDS: z.coerce.number().int().min(10).default(60),
-  TIER_REBIND_INTERVAL_SECONDS: z.coerce.number().int().min(300).max(604_800).default(86_400),
   ALERT_COOLING_RATIO_THRESHOLD: z.coerce.number().min(0).max(1).default(0.3),
   ALERT_SILENCE_SECONDS: z.coerce.number().int().min(0).default(900),
   ALERT_WEBHOOK_URL: z

@@ -22,9 +22,9 @@ export default defineConfig({
   },
   webServer: [
     {
-      // 建库 → 重置 → 迁移 → seed → 起服，顺序确定；库/账号约定见 e2e/env.ts。
+      // 建库 → 重置 → 迁移 → seed → 调度夹具 → 起服，顺序确定；库/账号约定见 e2e/env.ts。
       command:
-        "npx tsx ../e2e/ensure-db.ts && npx tsx ../e2e/reset-db.ts && npm run db:migrate && npm run db:seed && npx tsx ../e2e/seed-org.ts && npx tsx src/index.ts",
+        "npx tsx ../e2e/ensure-db.ts && npx tsx ../e2e/reset-db.ts && npm run db:migrate && npm run db:seed && npx tsx ../e2e/seed-org.ts && npx tsx ../e2e/seed-scheduling.ts && npx tsx src/index.ts",
       cwd: "./server",
       env: { ...process.env, ...e2eServerEnv() },
       url: `${E2E.apiBaseUrl}/health`,

@@ -3,6 +3,7 @@ import { and, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../../db/client.js";
 import {
+  channelSeats,
   credentialBindingMembers,
   credentialBindings,
   departments,
@@ -15,11 +16,11 @@ import {
   teams,
   upstreamCredentials,
 } from "../../db/schema/index.js";
+import { env } from "../../config.js";
 import { effectiveCredentialStatus } from "../../lib/credential-status.js";
 import { snapshotRelayLiveLoad } from "../../lib/relay/credential-load.js";
 import {
   buildKeyBindingGraph,
-  usageTierForKeyBindingGraph,
   type KeyBindingCredentialBinding,
   type KeyBindingScopeType,
 } from "../../lib/key-binding-graph.js";
@@ -81,7 +82,6 @@ export async function adminKeyBindingRoutes(app: FastifyInstance) {
           departmentName: departments.name,
           status: employeeApiKeys.status,
           employeeName: employees.name,
-          usageTier: employees.usageTier,
           enterpriseId: employees.enterpriseId,
           enterpriseName: enterprises.name,
         })
@@ -107,10 +107,14 @@ export async function adminKeyBindingRoutes(app: FastifyInstance) {
           fiveHourWindowAnchor: upstreamCredentials.fiveHourWindowAnchor,
           weeklyWindowResetAt: upstreamCredentials.weeklyWindowResetAt,
           supportedProtocols: upstreamCredentials.supportedProtocols,
+          ownerEmployeeId: channelSeats.employeeId,
+          ownerName: employees.name,
         })
         .from(upstreamCredentials)
         .innerJoin(productLines, eq(upstreamCredentials.productLineId, productLines.id))
-        .innerJoin(providers, eq(productLines.providerId, providers.id)),
+        .innerJoin(providers, eq(productLines.providerId, providers.id))
+        .leftJoin(channelSeats, eq(channelSeats.credentialId, upstreamCredentials.id))
+        .leftJoin(employees, eq(employees.id, channelSeats.employeeId)),
       db
         .select({
           id: credentialBindings.id,
@@ -154,7 +158,6 @@ export async function adminKeyBindingRoutes(app: FastifyInstance) {
         teamId: number | null;
         teamName: string | null;
         teamIsDefault: boolean;
-        usageTier: ReturnType<typeof usageTierForKeyBindingGraph>;
       }
     >();
     for (const row of keyRows) {
@@ -170,7 +173,6 @@ export async function adminKeyBindingRoutes(app: FastifyInstance) {
         teamId: membership?.teamId ?? row.teamId,
         teamName: membership?.teamName ?? row.teamName,
         teamIsDefault: membership?.teamIsDefault ?? row.teamIsDefault ?? false,
-        usageTier: usageTierForKeyBindingGraph(row.usageTier),
       });
     }
 
@@ -217,6 +219,11 @@ export async function adminKeyBindingRoutes(app: FastifyInstance) {
             fiveHourAnchor: row.fiveHourWindowAnchor,
             weeklyResetAt: row.weeklyWindowResetAt,
           },
+          // 画布上的「额度冷却」与调度里借用者让出 Key 的借用线一致。
+          {
+            fiveHour: env.RELAY_GUEST_FIVE_HOUR_RATIO,
+            weekly: env.RELAY_GUEST_WEEKLY_RATIO,
+          },
         );
         const coolingKind = resolveGraphCoolingKind(status, quota);
         return {
@@ -236,6 +243,8 @@ export async function adminKeyBindingRoutes(app: FastifyInstance) {
           fiveHourLimit: quota.fiveHourLimit,
           weeklyLimit: quota.weeklyLimit,
           binding: bindingViewById.get(row.id) ?? null,
+          ownerEmployeeId: row.ownerEmployeeId,
+          ownerName: row.ownerName,
         };
       }),
       bindings: (() => {

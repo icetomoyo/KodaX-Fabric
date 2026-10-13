@@ -1,10 +1,8 @@
-import { resolveBindingScope } from "./relay/binding.js";
 import { isOpenPoolProvider } from "./relay/open-pool.js";
 import { credentialSupportsProtocol } from "./relay/routing.js";
 import type { CreditCoolingKind } from "./relay/credential-quota.js";
 import type { RelayProtocol } from "./relay/protocol.js";
 import { isRelayProtocol } from "./relay/protocol.js";
-import { DEFAULT_USAGE_TIER, type UsageTier } from "./usage-tier.js";
 
 const DEFAULT_TEAM_NODE_NAME = "默认团队";
 
@@ -18,7 +16,6 @@ export type KeyBindingEmployeeInput = {
   teamId: number | null;
   teamName: string | null;
   teamIsDefault?: boolean;
-  usageTier?: UsageTier;
 };
 
 export type KeyBindingVirtualKeyInput = {
@@ -59,6 +56,9 @@ export type KeyBindingCredentialInput = {
   fiveHourLimit?: number | null;
   weeklyLimit?: number | null;
   binding?: KeyBindingCredentialBinding | null;
+  /** 席位主人；管理员批量导入的 Key 没有主人。 */
+  ownerEmployeeId?: number | null;
+  ownerName?: string | null;
 };
 
 export type KeyBindingBindingInput = {
@@ -363,39 +363,12 @@ function collectChannels(
   return [...byId.values()].sort((a, b) => a.id - b.id);
 }
 
+/** An employee uses a bound Key exactly when they are a member of its binding. */
 function employeeMatchesBinding(
   employee: KeyBindingEmployeeInput,
   binding: KeyBindingBindingInput,
 ): boolean {
-  const scope = resolveBindingScope({
-    employeeId: employee.id,
-    usageTier: employee.usageTier ?? DEFAULT_USAGE_TIER,
-    teamId: employee.teamId,
-    departmentId: employee.departmentId,
-    enterpriseId: employee.enterpriseId,
-  });
-  if (scope?.scopeType !== binding.scopeType || scope.scopeId !== binding.scopeId) {
-    return false;
-  }
-  if (binding.scopeType === "enterprise") {
-    return (binding.memberEmployeeIds ?? []).includes(employee.id);
-  }
-  return true;
-}
-
-/**
- * Usage tier the canvas should draw for an employee.
- *
- * Always the committed `employees.usageTier`. Request-time
- * `effectiveUsageTier` may already have classified after the 7×24h
- * protection window, but that write happens on the next acquire or the
- * daily job. Drawing the preview hides the exclusive Key still in
- * `credential_bindings`.
- */
-export function usageTierForKeyBindingGraph(
-  stored: UsageTier | null | undefined,
-): UsageTier {
-  return stored ?? DEFAULT_USAGE_TIER;
+  return (binding.memberEmployeeIds ?? []).includes(employee.id);
 }
 
 /**
@@ -403,12 +376,10 @@ export function usageTierForKeyBindingGraph(
  * enterprise → department → named team → employee → virtual Key → upstream credential.
  * Default-team members hang on the department; the default team is not drawn.
  *
- * Virtual Key → credential edges follow credential_bindings, but only for
- * employees whose current usage tier would actually use that scope:
- * idle → none; heavy → employee (`dedicated`); standard → enterprise
- * (`enterprise_shared`, at most 5 employees per Key).
- * Self-hosted (`custom`) channels skip usage-tier binding: every virtual Key
- * on that channel connects to every protocol-compatible credential (`open_shared`).
+ * Virtual Key → credential edges follow the binding members: the seat owner
+ * on their own Key is drawn `dedicated`, anyone borrowing it `enterprise_shared`.
+ * Self-hosted (`custom`) channels keep no bindings: every virtual Key on that
+ * channel connects to every protocol-compatible credential (`open_shared`).
  * Unbound credentials stay in the graph with `bound: false`.
  */
 export function buildKeyBindingGraph(input: GraphInput): KeyBindingGraph {
@@ -473,7 +444,9 @@ export function buildKeyBindingGraph(input: GraphInput): KeyBindingGraph {
         continue;
       }
       if (!employeeMatchesBinding(employee, binding)) continue;
-      const kind = BINDING_EDGE_KIND[binding.scopeType];
+      const kind = credential.ownerEmployeeId === employee.id
+        ? "dedicated"
+        : BINDING_EDGE_KIND[binding.scopeType];
       useEdges.push({
         id: `use:${key.id}:${credential.id}:${kind}`,
         sourceType: "virtual_key",
@@ -551,12 +524,7 @@ export function buildKeyBindingGraph(input: GraphInput): KeyBindingGraph {
     credentials = credentials.filter((row) => keepCredentials.has(row.id));
   }
 
-  employees = uniqueById(employees)
-    .sort((a, b) => a.id - b.id)
-    .map((row) => ({
-      ...row,
-      usageTier: row.usageTier ?? DEFAULT_USAGE_TIER,
-    }));
+  employees = uniqueById(employees).sort((a, b) => a.id - b.id);
   keys = uniqueById(keys).sort((a, b) => a.id - b.id);
   credentials = uniqueById(credentials).sort((a, b) => a.id - b.id);
   const departments = collectDepartments(employees);

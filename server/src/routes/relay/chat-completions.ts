@@ -34,6 +34,7 @@ import {
   zhipuSensitiveContentError,
 } from "../../lib/relay/sensitive-words.js";
 import {
+  RELAY_RATE_LIMIT_MAX_HOPS,
   sendRelayUpstream,
   type RelayUpstreamAttemptKind,
   type RelayUpstreamAttemptResult,
@@ -190,6 +191,13 @@ function downstreamFailure(kind: RelayUpstreamAttemptKind): {
         type: "rate_limit_error",
         code: "upstream_rate_limited",
         message: "上游渠道繁忙，请稍后重试",
+      };
+    case "key_busy":
+      return {
+        status: 429,
+        type: "rate_limit_error",
+        code: "model_channels_busy",
+        message: "当前渠道并发已满，请稍后重试",
       };
     case "timeout":
       return {
@@ -522,6 +530,8 @@ export async function chatCompletionRoutes(app: FastifyInstance) {
         }
 
         const excludeCredentialIds = new Set<number>();
+        // 上游 429 最多换一次 Key；5xx、超时等故障仍按 RELAY_MAX_ATTEMPTS 重试。
+        let rateLimitHops = 0;
         let lastCandidate: RelayCandidate | null = null;
         let lastFailure: RelayUpstreamAttemptResult | null = null;
 
@@ -532,14 +542,14 @@ export async function chatCompletionRoutes(app: FastifyInstance) {
             principal.protocol,
             principal.productLineId,
             excludeCredentialIds,
-            principal.teamId,
           );
           const candidate = resolution.candidate;
           if (!candidate) {
             if (index === 0) {
               const boundUnavailable =
                 resolution.unavailableReason === "bound_channel_unavailable";
-              const cooling = resolution.unavailableReason === "cooling";
+              const busy = resolution.unavailableReason === "busy";
+              const cooling = busy || resolution.unavailableReason === "cooling";
               const unavailable = resolution.unavailableReason === "unavailable";
               const modelDenied = resolution.unavailableReason === "model_not_allowed";
               const httpStatus = modelDenied
@@ -553,17 +563,21 @@ export async function chatCompletionRoutes(app: FastifyInstance) {
                 ? "model_not_allowed"
                 : boundUnavailable
                   ? "bound_channel_unavailable"
-                  : cooling
-                    ? "model_channels_cooling"
-                    : unavailable
-                      ? "model_unavailable"
-                      : "model_not_found";
+                  : busy
+                    ? "model_channels_busy"
+                    : cooling
+                      ? "model_channels_cooling"
+                      : unavailable
+                        ? "model_unavailable"
+                        : "model_not_found";
               const errorMessage = modelDenied
                 ? "model not allowed"
                 : boundUnavailable
                   ? "当前 Key 绑定的上游渠道不可用"
-                  : cooling
-                    ? "该模型的上游渠道正在冷却，请稍后重试"
+                  : busy
+                    ? "当前渠道并发已满，请稍后重试"
+                    : cooling
+                      ? "该模型的上游渠道正在冷却，请稍后重试"
                     : unavailable
                       ? "该模型已配置，但当前没有可用的上游渠道"
                       : "当前 Key 绑定的上游渠道不支持该模型";
@@ -607,11 +621,14 @@ export async function chatCompletionRoutes(app: FastifyInstance) {
             requestId,
             signal: req.signal,
             virtualKeyId: principal.employeeApiKeyId,
+            employeeId: principal.employeeId,
           });
           activeAttempt = result;
 
           if (result.kind !== "success" || !result.response) {
-            const willRetry = result.retryable && hasNext && !req.signal.aborted;
+            const hopAllowed = result.kind !== "rate_limited" ||
+              rateLimitHops < RELAY_RATE_LIMIT_MAX_HOPS;
+            const willRetry = result.retryable && hopAllowed && hasNext && !req.signal.aborted;
             retryTrace.push(
               traceItem(
                 index + 1,
@@ -631,6 +648,7 @@ export async function chatCompletionRoutes(app: FastifyInstance) {
               activeAttempt = null;
             }
             if (willRetry) {
+              if (result.kind === "rate_limited") rateLimitHops += 1;
               excludeCredentialIds.add(candidate.credentialId);
               continue;
             }
@@ -971,7 +989,10 @@ export async function chatCompletionRoutes(app: FastifyInstance) {
         const mapped = downstreamFailure(failure?.kind ?? "upstream_error");
         const payload = openAiError(mapped.message, mapped.type, mapped.code);
         if (mapped.status === 429) {
-          reply.header("retry-after", String(env.RELAY_COOLDOWN_SECONDS));
+          reply.header(
+            "retry-after",
+            String(failure?.retryAfterSeconds ?? env.RELAY_COOLDOWN_SECONDS),
+          );
         }
         await finalizeAudit({
           candidate,

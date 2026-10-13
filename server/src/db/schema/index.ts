@@ -377,6 +377,8 @@ export const credentialBindingMembers = pgTable(
       .notNull()
       .references(() => productLines.id, { onDelete: "cascade", onUpdate: "no action" }),
     relayPoolKey: varchar("relay_pool_key", { length: 64 }).notNull().default(""),
+    /** 该成员最近一次经这把 Key 发起调用的时间；闲置释放按成员而不是按 Key 判断。 */
+    lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [

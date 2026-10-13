@@ -428,6 +428,13 @@
       "when": 1790215000000,
       "tag": "0060_employee_email",
       "breakpoints": true
+    },
+    {
+      "idx": 61,
+      "version": "7",
+      "when": 1790216000000,
+      "tag": "0061_affinity_key_binding",
+      "breakpoints": true
     }
   ]
 }

@@ -72,5 +72,9 @@ export function e2eServerEnv(): NodeJS.ProcessEnv {
     SEED_ADMIN_PASSWORD: E2E.admin.password,
     DINGTALK_APP_KEY: "",
     DINGTALK_APP_SECRET: "",
+    // 调度用例：告警发到 mock 上游；闲置清理每秒跑一次；同一员工会连续发很多请求。
+    ALERT_WEBHOOK_URL: `${E2E.mockUpstreamBaseUrl}/__control/alerts`,
+    RELAY_KEY_IDLE_SWEEP_SECONDS: "1",
+    RELAY_SAFEGUARD_RPM: "100000",
   };
 }

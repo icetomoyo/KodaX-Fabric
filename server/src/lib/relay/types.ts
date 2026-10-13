@@ -42,6 +42,8 @@ export type RelayCandidate = {
   /** Upstream window state columns, when available on the candidate. */
   fiveHourWindowAnchor?: Date | null;
   weeklyWindowResetAt?: Date | null;
+  /** Per-Key concurrency limit for bound Keys; absent means unlimited (open pool, support bot). */
+  maxConcurrency?: number | null;
 };
 
 export type RelayUsage = {

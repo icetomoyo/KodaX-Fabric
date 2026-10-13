@@ -1,12 +1,11 @@
 /**
  * In-process load tracking for upstream credentials.
  *
- * Scheduling prefers the credential with the fewest in-flight requests, then
- * the fewest observed tokens. Official upstream limits are usually token
- * budgets, not request counts, so a few huge completions must outweigh many
- * tiny ones. Request count remains a later tie-breaker. Counters live in
- * process memory: they reset on restart, which only affects tie-breaking,
- * and they assume a single relay instance.
+ * The in-flight count is the per-Key concurrency gate: binding refuses a Key
+ * that is already at its limit, and `tryBeginCredentialUse` takes the slot
+ * atomically right before the upstream call. It also feeds the quota
+ * estimate for requests that are still streaming. Counters live in process
+ * memory: they reset on restart and assume a single relay instance.
  *
  * Virtual-key hops are tracked for the admin binding graph. Afterglow is
  * display-only and never affects scheduling.
@@ -59,6 +58,7 @@ type HopCounter = LiveCounter & {
 };
 
 const inFlightByCredential = new Map<number, number>();
+const inFlightByEmployee = new Map<number, number>();
 const totalUsesByCredential = new Map<number, number>();
 const totalTokensByCredential = new Map<number, number>();
 const liveByCredential = new Map<number, LiveCounter>();
@@ -150,6 +150,11 @@ export function getCredentialLoad(credentialId: number): CredentialLoad {
   };
 }
 
+/** Upstream attempts this employee currently has in flight, across all Keys. */
+export function getEmployeeInFlight(employeeId: number): number {
+  return inFlightByEmployee.get(employeeId) ?? 0;
+}
+
 export function recordCredentialTokens(credentialId: number, tokens: number): void {
   const amount = Number.isFinite(tokens) ? Math.trunc(tokens) : 0;
   if (amount <= 0) return;
@@ -207,6 +212,7 @@ export function snapshotRelayLiveLoad(
 export function beginCredentialUse(
   credentialId: number,
   virtualKeyId?: number | null,
+  employeeId?: number | null,
 ): () => void {
   const now = Date.now();
   pruneLive(now, RELAY_LIVE_AFTERGLOW_MS);
@@ -224,6 +230,13 @@ export function beginCredentialUse(
     bumpLive(liveByVirtualKey, trackedKeyId);
     bumpHop(trackedKeyId, credentialId);
   }
+  const trackedEmployeeId = isPositiveId(employeeId) ? employeeId : null;
+  if (trackedEmployeeId != null) {
+    inFlightByEmployee.set(
+      trackedEmployeeId,
+      (inFlightByEmployee.get(trackedEmployeeId) ?? 0) + 1,
+    );
+  }
   let released = false;
   return () => {
     if (released) return;
@@ -240,5 +253,36 @@ export function beginCredentialUse(
       dropLive(liveByVirtualKey, trackedKeyId, endedAt);
       dropHop(trackedKeyId, credentialId, endedAt);
     }
+    if (trackedEmployeeId != null) {
+      const mine = inFlightByEmployee.get(trackedEmployeeId) ?? 0;
+      if (mine <= 1) {
+        inFlightByEmployee.delete(trackedEmployeeId);
+      } else {
+        inFlightByEmployee.set(trackedEmployeeId, mine - 1);
+      }
+    }
   };
+}
+
+export type CredentialUseOptions = {
+  virtualKeyId?: number | null;
+  employeeId?: number | null;
+  /** Refuse the attempt when the Key already has this many requests in flight. */
+  limit?: number | null;
+};
+
+/**
+ * Take one concurrency slot on a Key, or return null when it is full.
+ * The check and the increment run in the same synchronous turn, so a burst
+ * of concurrent requests cannot all pass a stale in-flight reading.
+ */
+export function tryBeginCredentialUse(
+  credentialId: number,
+  options: CredentialUseOptions = {},
+): (() => void) | null {
+  const limit = options.limit;
+  if (limit != null && (inFlightByCredential.get(credentialId) ?? 0) >= limit) {
+    return null;
+  }
+  return beginCredentialUse(credentialId, options.virtualKeyId, options.employeeId);
 }

@@ -103,9 +103,11 @@
 
         <section class="detail-block">
           <h3>绑定</h3>
+          <p>
+            席位主人：{{ selectedCredential.ownerName || "无（管理员导入的 Key）" }}
+          </p>
           <p v-if="selectedCredential.binding">
-            {{ bindingScopeLabel(selectedCredential.binding.scopeType) }}
-            · {{ selectedCredential.binding.scopeName || selectedCredential.binding.scopeId }}
+            当前使用企业：{{ selectedCredential.binding.scopeName || selectedCredential.binding.scopeId }}
           </p>
           <p v-else class="muted">当前没有可释放的绑定</p>
         </section>
@@ -134,7 +136,7 @@
           <ul v-else class="user-list">
             <li v-for="row in credentialUsers" :key="row.keyId">
               <strong>{{ row.employeeName }}</strong>
-              <span>{{ usageTierLabel(row.usageTier) }} · {{ row.keyName }}</span>
+              <span>{{ row.isOwner ? "本人 Key" : "借用" }} · {{ row.keyName }}</span>
             </li>
           </ul>
         </section>
@@ -192,8 +194,6 @@ type CanvasDepth = "enterprise" | "department" | "team";
 type CoolingKind = "five_hour" | "weekly" | "other";
 type CredentialLane = "bound" | "pending" | "cooling_5h" | "cooling_weekly" | "disabled";
 
-type UsageTier = "idle" | "standard" | "heavy";
-
 type GraphEmployee = {
   id: number;
   name: string;
@@ -204,7 +204,6 @@ type GraphEmployee = {
   teamId: number | null;
   teamName: string | null;
   teamIsDefault?: boolean;
-  usageTier?: UsageTier;
 };
 
 type GraphDepartment = {
@@ -260,6 +259,8 @@ type GraphCredential = {
   fiveHourLimit?: number | null;
   weeklyLimit?: number | null;
   binding?: GraphCredentialBinding | null;
+  ownerEmployeeId?: number | null;
+  ownerName?: string | null;
 };
 
 type GraphEdge = {
@@ -387,21 +388,22 @@ const credentialUsers = computed(() => {
   const credentialId = selectedCredential.value?.id;
   const source = graph.value;
   if (credentialId == null || !source) return [];
-  const keyIds = new Set(
+  // 席位主人用自己的 Key 画成 dedicated，其余连线都是借用。
+  const kindByKeyId = new Map(
     source.edges
       .filter((edge) => isUseEdgeKind(edge.kind) && edge.targetId === credentialId)
-      .map((edge) => edge.sourceId),
+      .map((edge) => [edge.sourceId, edge.kind]),
   );
   const employeesById = new Map(source.employees.map((row) => [row.id, row]));
   return source.virtualKeys
-    .filter((key) => keyIds.has(key.id))
+    .filter((key) => kindByKeyId.has(key.id))
     .map((key) => {
       const employee = employeesById.get(key.employeeId);
       return {
         keyId: key.id,
         keyName: key.name,
         employeeName: employee?.name ?? `员工 ${key.employeeId}`,
-        usageTier: employee?.usageTier ?? "standard",
+        isOwner: kindByKeyId.get(key.id) === "dedicated",
       };
     });
 });
@@ -462,19 +464,6 @@ function resourceTagType(lane: CredentialLane): "info" | "warning" | "danger" | 
   if (lane === "cooling_weekly" || lane === "cooling_5h") return "danger";
   if (lane === "disabled") return "info";
   return "success";
-}
-
-function bindingScopeLabel(scopeType: GraphCredentialBinding["scopeType"]): string {
-  if (scopeType === "employee") return "员工独占";
-  if (scopeType === "department") return "部门共享";
-  if (scopeType === "team") return "团队共享";
-  return "企业共享";
-}
-
-function usageTierLabel(tier: UsageTier): string {
-  if (tier === "idle") return "闲置用户";
-  if (tier === "heavy") return "重度用户";
-  return "标准用户";
 }
 
 function formatCreditAmount(value: number | undefined): string {
