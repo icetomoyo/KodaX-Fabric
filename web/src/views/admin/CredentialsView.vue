@@ -156,14 +156,6 @@
           <section class="detail-section">
             <div class="section-heading-row">
               <h4 class="section-heading">额度与绑定</h4>
-              <el-button
-                v-if="canWrite"
-                type="primary"
-                :loading="quotaSaving"
-                @click="saveQuotaLimits"
-              >
-                保存额度
-              </el-button>
             </div>
             <dl class="info-grid">
               <div class="info-item">
@@ -217,25 +209,7 @@
                 :status="usageProgressStatus(detailRow.weeklyCredits, detailRow.weeklyCreditLimit)"
               />
             </div>
-            <el-form v-if="canWrite" label-position="top" class="credential-form quota-edit-form">
-              <div class="quota-fields">
-                <el-form-item label="5 小时积分额度">
-                  <el-input
-                    v-model="quotaEditForm.fiveHourCreditLimit"
-                    placeholder="团队高级版 35000"
-                    clearable
-                  />
-                </el-form-item>
-                <el-form-item label="周积分额度">
-                  <el-input
-                    v-model="quotaEditForm.weeklyCreditLimit"
-                    placeholder="团队高级版 155000"
-                    clearable
-                  />
-                </el-form-item>
-              </div>
-              <p class="form-help">额度按智谱积分计量，可空非负数，允许小数；留空表示不限额。</p>
-            </el-form>
+            <p class="form-help">积分上限在「渠道管理 → 编辑模式」里按模式统一设置，渠道 KEY 不单独设置。</p>
           </section>
 
           <section class="detail-section">
@@ -389,6 +363,7 @@ type CredentialRow = {
   testModel?: string | null;
   defaultBaseUrl: string;
   baseUrlOverride: string | null;
+  /** 所在模式上统一设置的积分上限；渠道 KEY 不单独设置。 */
   fiveHourCreditLimit: number | null;
   weeklyCreditLimit: number | null;
   fiveHourCredits: number;
@@ -574,13 +549,6 @@ const testingIds = ref<Set<number>>(new Set());
 const batchTesting = ref(false);
 
 const batchTestProgress = reactive({ done: 0, total: 0 });
-
-const quotaEditForm = reactive({
-  fiveHourCreditLimit: "",
-  weeklyCreditLimit: "",
-});
-
-const quotaSaving = ref(false);
 
 const channels = computed<ChannelGroup[]>(() => {
   const grouped = new Map<number, CredentialRow[]>();
@@ -949,31 +917,6 @@ function formatQuotaPair(used: number, limit: number | null): string {
   return limit == null ? `${usedText} / 不限` : `${usedText} / ${formatCreditAmount(limit)} 积分`;
 }
 
-type ParsedCreditLimit =
-  | { ok: true; fiveHourCreditLimit: number | null; weeklyCreditLimit: number | null }
-  | { ok: false };
-
-function parseOptionalCreditLimit(raw: string): number | null | undefined {
-  const trimmed = raw.trim();
-  if (trimmed === "") return null;
-  if (!/^(?:0|[1-9]\d*)(?:\.\d+)?$/.test(trimmed)) return undefined;
-  const value = Number(trimmed);
-  if (!Number.isFinite(value) || value < 0) return undefined;
-  return value;
-}
-
-function parseQuotaFields(fiveHourRaw: string, weeklyRaw: string): ParsedCreditLimit {
-  const fiveHourCreditLimit = parseOptionalCreditLimit(fiveHourRaw);
-  const weeklyCreditLimit = parseOptionalCreditLimit(weeklyRaw);
-  if (fiveHourCreditLimit === undefined || weeklyCreditLimit === undefined) return { ok: false };
-  return { ok: true, fiveHourCreditLimit, weeklyCreditLimit };
-}
-
-function syncQuotaEditForm(row: CredentialRow) {
-  quotaEditForm.fiveHourCreditLimit = row.fiveHourCreditLimit == null ? "" : String(row.fiveHourCreditLimit);
-  quotaEditForm.weeklyCreditLimit = row.weeklyCreditLimit == null ? "" : String(row.weeklyCreditLimit);
-}
-
 function statusText(status: CredentialStatus): string {
   return {
     active: "启用",
@@ -1170,32 +1113,8 @@ async function setStatus(row: CredentialRow, status: "active" | "disabled") {
   }
 }
 
-async function saveQuotaLimits() {
-  const row = detailRow.value;
-  if (!canWrite.value || !row) return;
-  const quotas = parseQuotaFields(quotaEditForm.fiveHourCreditLimit, quotaEditForm.weeklyCreditLimit);
-  if (!quotas.ok) {
-    ElMessage.warning("额度须为非负数，允许小数，留空表示不限");
-    return;
-  }
-  quotaSaving.value = true;
-  try {
-    await http.patch(`/api/admin/credentials/${row.id}`, {
-      fiveHourCreditLimit: quotas.fiveHourCreditLimit,
-      weeklyCreditLimit: quotas.weeklyCreditLimit,
-    });
-    ElMessage.success("额度已更新");
-    await loadCredentials();
-  } catch (error) {
-    ElMessage.error(getErrorMessage(error, "额度更新失败"));
-  } finally {
-    quotaSaving.value = false;
-  }
-}
-
 function openKeyDetails(row: CredentialRow) {
   detailCredentialId.value = row.id;
-  syncQuotaEditForm(row);
   showKeyDetails.value = true;
 }
 
@@ -1442,14 +1361,6 @@ onMounted(refreshAll);
 .binding-badge.enterprise {
   background: #e0e7ff;
   color: #4338ca;
-}
-.quota-fields {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0 16px;
-}
-.quota-edit-form {
-  margin-top: 12px;
 }
 .quota-progress {
   display: grid;

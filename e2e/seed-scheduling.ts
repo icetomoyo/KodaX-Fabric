@@ -22,6 +22,7 @@ import {
   SCHED_EXTERNAL_ENTERPRISE,
   SCHED_PEOPLE,
   SCHED_POOLS,
+  SCHED_UI_PACKAGE,
   schedApiKey,
   schedSecret,
   type SchedDeptKey,
@@ -127,6 +128,9 @@ async function main() {
           seatCount: pool.keys.length,
           status: "active",
           testModel: "e2e-upstream-model",
+          fiveHourCreditLimit:
+            pool.fiveHourCreditLimit != null ? String(pool.fiveHourCreditLimit) : null,
+          weeklyCreditLimit: pool.weeklyCreditLimit != null ? String(pool.weeklyCreditLimit) : null,
         })
         .returning({ id: productLines.id });
 
@@ -143,10 +147,6 @@ async function main() {
             weight: 100,
             priority: 0,
             status: "active",
-            fiveHourCreditLimit:
-              keyDef.fiveHourCreditLimit != null ? String(keyDef.fiveHourCreditLimit) : null,
-            weeklyCreditLimit:
-              keyDef.weeklyCreditLimit != null ? String(keyDef.weeklyCreditLimit) : null,
           })
           .returning({ id: upstreamCredentials.id });
         if (keyDef.owner) {
@@ -175,6 +175,51 @@ async function main() {
       }
       summary[poolKey] = { productLineId: line.id, keys: pool.keys.length, users: pool.users.length };
     }
+
+    // 界面用例用的智谱套餐：停用的 Key，没有 API Key，不会产生任何上游调用。
+    await db
+      .insert(providers)
+      .values({
+        code: "glm",
+        name: SCHED_UI_PACKAGE.channelName,
+        defaultBaseUrl: "https://open.bigmodel.cn/api/coding/paas/v4",
+        authStyle: "bearer",
+        openaiCompatLevel: "full",
+        status: "active",
+      })
+      .onConflictDoNothing({ target: providers.code });
+    const [glm] = await db
+      .select({ id: providers.id })
+      .from(providers)
+      .where(eq(providers.code, "glm"))
+      .limit(1);
+    const [uiLine] = await db
+      .insert(productLines)
+      .values({
+        providerId: glm.id,
+        code: SCHED_UI_PACKAGE.code,
+        name: SCHED_UI_PACKAGE.name,
+        tag: "国内",
+        productType: "coding_plan",
+        configVersion: 1,
+        seatCount: SCHED_UI_PACKAGE.keys.length,
+        status: "active",
+      })
+      .returning({ id: productLines.id });
+    for (const keyDef of SCHED_UI_PACKAGE.keys) {
+      const secret = `sk-sched-ui-${keyDef.label}`;
+      await db.insert(upstreamCredentials).values({
+        productLineId: uiLine.id,
+        label: `调度-${keyDef.label}`,
+        secretEncrypted: encryptSecret(secret),
+        secretSuffix: secretSuffix(secret),
+        supportedProtocols: ["openai_chat"],
+        weight: 100,
+        priority: 0,
+        status: "disabled",
+      });
+    }
+    summary.uiPackage = { productLineId: uiLine.id, keys: SCHED_UI_PACKAGE.keys.length };
 
     console.log("[e2e] scheduling fixtures ready", {
       enterprise: mainEnterprise.id,

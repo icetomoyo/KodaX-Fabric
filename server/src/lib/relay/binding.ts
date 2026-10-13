@@ -42,6 +42,7 @@ import {
   effectiveWeeklyResetAt,
   evaluateCredentialQuota,
   getCredentialQuotaUsage,
+  packageCreditLimits,
   remainingQuotaFraction,
   withInFlightEstimate,
   type CredentialQuotaUsage,
@@ -158,6 +159,7 @@ type CredentialSnapshotRow = {
   defaultBaseUrl: string;
   baseUrlOverride: string | null;
   protocolConfigs: unknown;
+  /** 套餐上的积分上限；渠道 Key 自己不设。 */
   fiveHourCreditLimit: string | null;
   weeklyCreditLimit: string | null;
   fiveHourWindowAnchor: Date | null;
@@ -243,8 +245,8 @@ const credentialSnapshotSelect = {
   defaultBaseUrl: providers.defaultBaseUrl,
   baseUrlOverride: productLines.baseUrlOverride,
   protocolConfigs: productLines.protocolConfigs,
-  fiveHourCreditLimit: upstreamCredentials.fiveHourCreditLimit,
-  weeklyCreditLimit: upstreamCredentials.weeklyCreditLimit,
+  fiveHourCreditLimit: productLines.fiveHourCreditLimit,
+  weeklyCreditLimit: productLines.weeklyCreditLimit,
   fiveHourWindowAnchor: upstreamCredentials.fiveHourWindowAnchor,
   fiveHourWindowBaseCredits: upstreamCredentials.fiveHourWindowBaseCredits,
   weeklyWindowResetAt: upstreamCredentials.weeklyWindowResetAt,
@@ -513,10 +515,7 @@ function judgeKey(
   if (ctx.requestExclude.has(key.credentialId)) return { kind: "excluded" };
 
   const inFlight = getCredentialLoad(key.credentialId).inFlight;
-  const limits = {
-    fiveHourLimit: creditLimitNumber(key.fiveHourCreditLimit),
-    weeklyLimit: creditLimitNumber(key.weeklyCreditLimit),
-  };
+  const limits = packageCreditLimits(key);
   const usage = withInFlightEstimate(
     ledger ?? { fiveHourCredits: 0, weeklyCredits: 0 },
     inFlight,
@@ -960,10 +959,7 @@ async function acquireOpenPoolCredential(
   }> = [];
   const retryTimes: number[] = [];
   for (const snapshot of pool) {
-    const limits = {
-      fiveHourLimit: creditLimitNumber(snapshot.fiveHourCreditLimit),
-      weeklyLimit: creditLimitNumber(snapshot.weeklyCreditLimit),
-    };
+    const limits = packageCreditLimits(snapshot);
     const usage = withInFlightEstimate(
       usageMap.get(snapshot.credentialId) ?? { fiveHourCredits: 0, weeklyCredits: 0 },
       getCredentialLoad(snapshot.credentialId).inFlight,
@@ -1063,6 +1059,7 @@ function toBoundCredential(
     legacyAuthStyle: snapshot.legacyAuthStyle,
   });
   if (!upstreamConfig) return null;
+  const limits = packageCreditLimits(snapshot);
   return {
     credentialId: snapshot.credentialId,
     credentialSuffix: snapshot.credentialSuffix,
@@ -1082,19 +1079,13 @@ function toBoundCredential(
     authStyle: upstreamConfig.authStyle,
     supportedProtocols: snapshot.supportedProtocols,
     baseUrl: upstreamConfig.baseUrl,
-    fiveHourCreditLimit: creditLimitNumber(snapshot.fiveHourCreditLimit),
-    weeklyCreditLimit: creditLimitNumber(snapshot.weeklyCreditLimit),
+    fiveHourCreditLimit: limits.fiveHourLimit,
+    weeklyCreditLimit: limits.weeklyLimit,
     fiveHourWindowAnchor: snapshot.fiveHourWindowAnchor,
     fiveHourWindowBaseCredits: Number(snapshot.fiveHourWindowBaseCredits) || 0,
     weeklyWindowResetAt: effectiveWeeklyResetAt(snapshot),
     meta: snapshot.meta,
   };
-}
-
-function creditLimitNumber(value: string | null): number | null {
-  if (value == null) return null;
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
 }
 
 function supportsProtocol(

@@ -93,6 +93,8 @@ export async function adminProviderRoutes(app: FastifyInstance) {
         tag: productLines.tag,
         testModel: productLines.testModel,
         weeklyWindowResetAt: productLines.weeklyWindowResetAt,
+        fiveHourCreditLimit: productLines.fiveHourCreditLimit,
+        weeklyCreditLimit: productLines.weeklyCreditLimit,
         providerCode: providers.code,
         providerName: providers.name,
         defaultBaseUrl: providers.defaultBaseUrl,
@@ -463,6 +465,22 @@ export async function adminProviderRoutes(app: FastifyInstance) {
             ...(nextWeeklyWindowResetAt !== undefined
               ? { weeklyWindowResetAt: nextWeeklyWindowResetAt }
               : {}),
+            // 积分上限只在套餐上设置，对套餐下每把 Key 立即生效；同样只影响额度判断，
+            // 不参与 configVersion、不触发凭证健康重置。
+            ...(body.data.fiveHourCreditLimit !== undefined
+              ? {
+                fiveHourCreditLimit: body.data.fiveHourCreditLimit === null
+                  ? null
+                  : String(body.data.fiveHourCreditLimit),
+              }
+              : {}),
+            ...(body.data.weeklyCreditLimit !== undefined
+              ? {
+                weeklyCreditLimit: body.data.weeklyCreditLimit === null
+                  ? null
+                  : String(body.data.weeklyCreditLimit),
+              }
+              : {}),
             ...(updatingProtocolSurface
               ? { protocolConfigs: nextProtocolConfigs }
               : {}),
@@ -518,6 +536,12 @@ export async function adminProviderRoutes(app: FastifyInstance) {
               ...(nextWeeklyWindowResetAt !== undefined
                 ? { weeklyWindowResetAt: existing.weeklyWindowResetAt }
                 : {}),
+              ...(body.data.fiveHourCreditLimit !== undefined
+                ? { fiveHourCreditLimit: existing.fiveHourCreditLimit }
+                : {}),
+              ...(body.data.weeklyCreditLimit !== undefined
+                ? { weeklyCreditLimit: existing.weeklyCreditLimit }
+                : {}),
               ...(updatingProtocolSurface
                 ? {
                   supportedProtocols: protocolPlan.currentProtocols,
@@ -534,6 +558,12 @@ export async function adminProviderRoutes(app: FastifyInstance) {
               ...(body.data.testModel !== undefined ? { testModel: row.testModel } : {}),
               ...(nextWeeklyWindowResetAt !== undefined
                 ? { weeklyWindowResetAt: row.weeklyWindowResetAt }
+                : {}),
+              ...(body.data.fiveHourCreditLimit !== undefined
+                ? { fiveHourCreditLimit: row.fiveHourCreditLimit }
+                : {}),
+              ...(body.data.weeklyCreditLimit !== undefined
+                ? { weeklyCreditLimit: row.weeklyCreditLimit }
                 : {}),
               ...(updatingProtocolSurface
                 ? {

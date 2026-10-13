@@ -33,6 +33,7 @@ import {
   credentialWindowAnchors,
   evaluateCredentialQuota,
   getCredentialQuotaUsage,
+  packageCreditLimits,
   resolveGraphCoolingKind,
 } from "../../lib/relay/credential-quota.js";
 import {
@@ -103,8 +104,8 @@ export async function adminKeyBindingRoutes(app: FastifyInstance) {
           providerName: providers.name,
           status: upstreamCredentials.status,
           coolUntil: upstreamCredentials.coolUntil,
-          fiveHourCreditLimit: upstreamCredentials.fiveHourCreditLimit,
-          weeklyCreditLimit: upstreamCredentials.weeklyCreditLimit,
+          fiveHourCreditLimit: productLines.fiveHourCreditLimit,
+          weeklyCreditLimit: productLines.weeklyCreditLimit,
           fiveHourWindowAnchor: upstreamCredentials.fiveHourWindowAnchor,
           fiveHourWindowBaseCredits: upstreamCredentials.fiveHourWindowBaseCredits,
           weeklyWindowResetAt: upstreamCredentials.weeklyWindowResetAt,
@@ -205,10 +206,7 @@ export async function adminKeyBindingRoutes(app: FastifyInstance) {
         const usage = usageById.get(row.id) ?? { fiveHourCredits: 0, weeklyCredits: 0 };
         const quota = evaluateCredentialQuota(
           usage,
-          {
-            fiveHourLimit: creditLimitNumber(row.fiveHourCreditLimit),
-            weeklyLimit: creditLimitNumber(row.weeklyCreditLimit),
-          },
+          packageCreditLimits(row),
           now,
           credentialWindowAnchors(row),
           // 画布上的「额度冷却」与调度里借用者让出 Key 的借用线一致。
@@ -410,12 +408,6 @@ async function loadCredentialBindingViews(
     });
   }
   return views;
-}
-
-function creditLimitNumber(value: string | null): number | null {
-  if (value == null) return null;
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
 }
 
 function coolingUntilIso(

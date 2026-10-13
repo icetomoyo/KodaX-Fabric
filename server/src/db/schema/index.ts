@@ -267,6 +267,12 @@ export const productLines = pgTable(
      * 默认共用它；某把 Key 从上游 1310 回包学到的时刻优先于这里。
      */
     weeklyWindowResetAt: timestamp("weekly_window_reset_at", { withTimezone: true }),
+    /**
+     * 套餐下每把 Key 的积分上限（5 小时 / 每周），null 表示不限。
+     * 积分上限只在套餐上设置，渠道 Key 自己不设。
+     */
+    fiveHourCreditLimit: numeric("five_hour_credit_limit", { precision: 14, scale: 4 }),
+    weeklyCreditLimit: numeric("weekly_credit_limit", { precision: 14, scale: 4 }),
     relayPoolKey: varchar("relay_pool_key", { length: 64 }).notNull().default(""),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -302,8 +308,6 @@ export const upstreamCredentials = pgTable(
     errorCount: bigint("error_count", { mode: "number" }).notNull().default(0),
     lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
     meta: jsonb("meta"),
-    fiveHourCreditLimit: numeric("five_hour_credit_limit", { precision: 14, scale: 4 }),
-    weeklyCreditLimit: numeric("weekly_credit_limit", { precision: 14, scale: 4 }),
     /** 5h 窗口为「首用锚定的翻转窗口」：窗口起点，过期后由下一次成功调用重新锚定。 */
     fiveHourWindowAnchor: timestamp("five_hour_window_anchor", { withTimezone: true }),
     /** 窗口起点所在的整点小时桶里，窗口开始之前就已记下的积分；求和时扣掉。 */

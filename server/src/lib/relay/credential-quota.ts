@@ -31,6 +31,29 @@ export type CredentialQuotaLimits = {
   weeklyLimit: number | null;
 };
 
+/** Limit columns as stored on a package (product line). */
+export type PackageLimitColumns = {
+  fiveHourCreditLimit: string | number | null;
+  weeklyCreditLimit: string | number | null;
+};
+
+function storedCreditLimit(value: string | number | null | undefined): number | null {
+  if (value == null) return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+/**
+ * Credit limits are set once on the package; every Key under it is held to
+ * the same numbers. Keys carry no limits of their own.
+ */
+export function packageCreditLimits(row: PackageLimitColumns): CredentialQuotaLimits {
+  return {
+    fiveHourLimit: storedCreditLimit(row.fiveHourCreditLimit),
+    weeklyLimit: storedCreditLimit(row.weeklyCreditLimit),
+  };
+}
+
 export type CredentialQuotaStatus = {
   fiveHourCredits: number;
   weeklyCredits: number;

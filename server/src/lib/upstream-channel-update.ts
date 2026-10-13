@@ -45,6 +45,9 @@ export const upstreamChannelUpdateSchema = z
     testModel: z.string().trim().min(1).max(128).nullable().optional(),
     /** 套餐的周限额重置时刻（带时区的 ISO 时间）；null 表示清空。 */
     weeklyWindowResetAt: z.string().datetime({ offset: true }).nullable().optional(),
+    /** 套餐下每把 Key 的积分上限；null 表示不限。 */
+    fiveHourCreditLimit: z.number().nonnegative().finite().nullable().optional(),
+    weeklyCreditLimit: z.number().nonnegative().finite().nullable().optional(),
     supportedProtocols: configurableSupportedProtocolsSchema.optional(),
     protocolConfigs: customProtocolConfigsInputSchema.optional(),
   })

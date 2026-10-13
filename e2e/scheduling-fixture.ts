@@ -64,6 +64,7 @@ export const SCHED_PEOPLE = {
   ownerHome: person(26, "调度-回家主人", ["d1a1"]),
   ownerWin5: person(27, "调度-五小时主人", ["d1a1"]),
   ownerWeek: person(28, "调度-周窗口主人", ["d1a1"]),
+  ownerLimit: person(29, "调度-上限主人", ["d1a1"]),
 } as const satisfies Record<string, SchedPerson>;
 
 export type SchedPersonKey = keyof typeof SCHED_PEOPLE;
@@ -72,8 +73,6 @@ export type SchedKeyDef = {
   /** 渠道 Key 标签，也是明文后缀（4 个字符），用来在 mock 上游回显里认出是哪把 Key。 */
   label: string;
   owner?: SchedPersonKey;
-  fiveHourCreditLimit?: number;
-  weeklyCreditLimit?: number;
 };
 
 export type SchedPoolDef = {
@@ -81,6 +80,9 @@ export type SchedPoolDef = {
   keys: readonly SchedKeyDef[];
   /** 在这个池子里有 API Key 的人。 */
   users: readonly SchedPersonKey[];
+  /** 套餐上的积分上限，对套餐下每把 Key 生效；渠道 Key 自己不设上限。 */
+  fiveHourCreditLimit?: number;
+  weeklyCreditLimit?: number;
 };
 
 /**
@@ -116,10 +118,11 @@ export const SCHED_POOLS = {
   quota: {
     name: "调度E2E-额度",
     keys: [
-      { label: "qtao", owner: "ownerQuota", fiveHourCreditLimit: 100 },
+      { label: "qtao", owner: "ownerQuota" },
       { label: "qtaf", owner: "entMate" },
     ],
     users: ["ownerQuota", "guest1"],
+    fiveHourCreditLimit: 100,
   },
   ratelimit: {
     name: "调度E2E-限流",
@@ -159,17 +162,24 @@ export const SCHED_POOLS = {
   window5h: {
     name: "调度E2E-五小时",
     keys: [
-      { label: "w5ho", owner: "ownerWin5", fiveHourCreditLimit: 100 },
+      { label: "w5ho", owner: "ownerWin5" },
       { label: "w5hf", owner: "entMate" },
     ],
     users: ["guest1"],
+    fiveHourCreditLimit: 100,
   },
   weekly: {
     name: "调度E2E-周窗口",
     keys: [
-      { label: "wkyo", owner: "ownerWeek", weeklyCreditLimit: 100 },
+      { label: "wkyo", owner: "ownerWeek" },
       { label: "wkyf", owner: "entMate" },
     ],
+    users: ["guest1", "guest2"],
+    weeklyCreditLimit: 100,
+  },
+  limits: {
+    name: "调度E2E-上限",
+    keys: [{ label: "lmto", owner: "ownerLimit" }, { label: "lmtf", owner: "entMate" }],
     users: ["guest1", "guest2"],
   },
   homing: {
@@ -180,6 +190,17 @@ export const SCHED_POOLS = {
 } as const satisfies Record<string, SchedPoolDef>;
 
 export type SchedPoolKey = keyof typeof SCHED_POOLS;
+
+/**
+ * 界面用例用的智谱套餐：只在管理端「编辑模式」里改设置，不签发 API Key、不发起调用，
+ * 两把 Key 都是停用状态（智谱套餐的上游地址是写死的官方网关，绝不能真的打过去）。
+ */
+export const SCHED_UI_PACKAGE = {
+  channelName: "智谱",
+  code: "cn_sched_ui",
+  name: "调度E2E-GLM套餐",
+  keys: [{ label: "uik1" }, { label: "uik2" }],
+} as const;
 
 /** 渠道 Key 明文：mock 上游按 Bearer 认 Key，并在回复里回显。 */
 export function schedSecret(pool: SchedPoolKey, label: string): string {

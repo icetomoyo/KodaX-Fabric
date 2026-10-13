@@ -442,6 +442,13 @@
       "when": 1790217000000,
       "tag": "0062_quota_window_alignment",
       "breakpoints": true
+    },
+    {
+      "idx": 63,
+      "version": "7",
+      "when": 1790218000000,
+      "tag": "0063_package_credit_limits",
+      "breakpoints": true
     }
   ]
 }

@@ -13,6 +13,7 @@ import { E2E } from "./env.ts";
 import {
   SCHED_PEOPLE,
   SCHED_POOLS,
+  SCHED_UI_PACKAGE,
   schedApiKey,
   schedSecret,
   type SchedPersonKey,
@@ -56,6 +57,11 @@ import {
  * 23. 没学到自己重置时刻的 Key，周窗口没有跟随套餐上录入的周重置时间。
  * 24. 某把 Key 从上游 1310 回包学到的重置时刻，没有覆盖套餐的默认值。
  * 25. 管理员改了套餐的周重置时间后，Key 上以前学到的旧时刻还在生效。
+ * 26. 套餐上设了积分上限，套餐下的 Key 却仍然不限额（借用线不生效）。
+ * 27. 渠道 Key 还能单独设置上限，积分上限出现两处来源。
+ * 28. 在套餐上改了上限后，没有立即对套餐下所有 Key 生效。
+ * 29. 管理端显示的上限不是实际生效的上限。
+ * 30. 「编辑模式」对话框里填的积分上限没有真正保存，或者保存后重新打开看不到。
  */
 const ARTIFACT_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "artifacts");
 const MODEL = "e2e-upstream-model";
@@ -779,6 +785,160 @@ test.describe.serial("渠道 Key 调度", () => {
       keyLearnedResetAt: keyReset.toISOString(),
       otherKeyFollowsLine: learned.get("wkyf")?.nextWeeklyResetAt,
     };
+  });
+
+  test("积分上限只在套餐上设置，对套餐下所有 Key 立即生效", async () => {
+    const pool = "limits";
+    await waitOutHourBoundary();
+    const key = await credentialRow(pool, "lmto");
+    const headers = { Authorization: `Bearer ${await adminToken()}` };
+
+    type LimitView = {
+      label: string;
+      fiveHourCreditLimit: number | null;
+      weeklyCreditLimit: number | null;
+    };
+    const limitsByKey = async (): Promise<Record<string, Array<number | null>>> => {
+      const res = await api.get(`/api/admin/credentials?productLineId=${lineId(pool)}`, { headers });
+      const rows = ((await res.json()) as { data: LimitView[] }).data;
+      return Object.fromEntries(
+        rows.map((row) => [
+          row.label.replace(/^调度-/, ""),
+          [row.fiveHourCreditLimit, row.weeklyCreditLimit],
+        ]),
+      );
+    };
+    const setPackageLimits = async (limits: Record<string, number | null>) => {
+      const linesRes = await api.get("/api/admin/product-lines", { headers });
+      const line = ((await linesRes.json()) as { data: Array<{ id: number; configVersion: number }> })
+        .data.find((row) => row.id === lineId(pool));
+      const res = await api.patch(`/api/admin/product-lines/${lineId(pool)}`, {
+        headers,
+        data: { expectedConfigVersion: line!.configVersion, ...limits },
+      });
+      expect(res.status(), `保存套餐积分上限失败: ${await res.text()}`).toBe(200);
+    };
+
+    // 这把 Key 当前 5 小时窗口里已经用了 90 积分。
+    const thisHour = hourStartOf(new Date());
+    await sql`
+      update upstream_credentials set five_hour_window_anchor = ${thisHour} where id = ${key.id}
+    `;
+    await setHourBucket(key.id, thisHour, 90);
+
+    // 套餐没设上限：不限额。
+    expect(await limitsByKey()).toEqual({ lmto: [null, null], lmtf: [null, null] });
+    const unlimited = await call(pool, "guest1");
+    expect(unlimited.key, "没有上限时不受借用线约束").toBe("lmto");
+
+    // 在套餐上设上限：套餐下每把 Key 立即按它算（90 / 100 已过 85% 借用线）。
+    await setPackageLimits({ fiveHourCreditLimit: 100, weeklyCreditLimit: 1000 });
+    expect(await limitsByKey(), "套餐下每把 Key 都显示套餐的上限").toEqual({
+      lmto: [100, 1000],
+      lmtf: [100, 1000],
+    });
+    const limited = await call(pool, "guest1");
+    expect(limited.key, "套餐上限立即参与调度").toBe("lmtf");
+
+    // 渠道 Key 不能再单独设置上限。
+    const perKey = await api.patch(`/api/admin/credentials/${key.id}`, {
+      headers,
+      data: { fiveHourCreditLimit: 1000 },
+    });
+    expect(perKey.status(), "渠道 Key 的接口不再接受积分上限").toBe(400);
+    expect((await limitsByKey()).lmto, "被拒绝的请求不改变任何东西").toEqual([100, 1000]);
+
+    // 调高套餐上限：90 / 1000 只有 9%，这把 Key 又可以借了。
+    await setPackageLimits({ fiveHourCreditLimit: 1000 });
+    const raised = await call(pool, "guest2");
+    expect(raised.key, "调高后立即生效").toBe("lmto");
+
+    // 调低到 105：90 / 105 又过了借用线。
+    await setPackageLimits({ fiveHourCreditLimit: 105 });
+    const lowered = await call(pool, "guest2");
+    expect(lowered.key, "调低后立即生效").toBe("lmtf");
+
+    // 清空表示不限。
+    await setPackageLimits({ fiveHourCreditLimit: null, weeklyCreditLimit: null });
+    expect(await limitsByKey()).toEqual({ lmto: [null, null], lmtf: [null, null] });
+
+    report.limits = {
+      unlimited: unlimited.key,
+      afterPackageLimit: limited.key,
+      perKeyUpdateStatus: perKey.status(),
+      afterRaise: raised.key,
+      afterLower: lowered.key,
+    };
+  });
+
+  test("在「编辑模式」对话框里统一设置积分上限", async ({ page }) => {
+    const headers = { Authorization: `Bearer ${await adminToken()}` };
+    const [line] = await sql<Array<{ id: string }>>`
+      select id from product_lines where code = ${SCHED_UI_PACKAGE.code}
+    `;
+    const uiLineId = Number(line.id);
+    const keyLimits = async () => {
+      const res = await api.get(`/api/admin/credentials?productLineId=${uiLineId}`, { headers });
+      const rows = ((await res.json()) as {
+        data: Array<{
+          label: string;
+          fiveHourCreditLimit: number | null;
+          weeklyCreditLimit: number | null;
+        }>;
+      }).data;
+      return Object.fromEntries(
+        rows.map((row) => [
+          row.label.replace(/^调度-/, ""),
+          [row.fiveHourCreditLimit, row.weeklyCreditLimit],
+        ]),
+      );
+    };
+    expect(await keyLimits(), "保存前：套餐没设上限").toEqual({
+      uik1: [null, null],
+      uik2: [null, null],
+    });
+
+    // 管理员登录 → 渠道管理 → 智谱 → 套餐的「编辑」。
+    await page.goto("/");
+    await page.getByText("账户登录", { exact: true }).click();
+    await page.getByPlaceholder("11 位手机号").fill(E2E.admin.phone);
+    await page.getByPlaceholder("请输入密码").fill(E2E.admin.password);
+    await page.getByRole("button", { name: "登录", exact: true }).click();
+    await expect(page).toHaveURL(/\/admin/, { timeout: 15_000 });
+    await page.goto("/admin/temp-channels");
+    await page.locator(".item-card", { hasText: SCHED_UI_PACKAGE.channelName }).first().click();
+    const packageCard = page.locator(".item-card", { hasText: SCHED_UI_PACKAGE.name });
+    await expect(packageCard).toBeVisible({ timeout: 15_000 });
+
+    const openDialog = async () => {
+      await packageCard.getByRole("button", { name: "编辑" }).click();
+      const dialog = page.locator(".el-dialog", { hasText: "编辑模式" });
+      await expect(dialog).toBeVisible();
+      return dialog;
+    };
+    const fiveHourPlaceholder = "每把 KEY 的 5 小时上限，例如 35000";
+    const weeklyPlaceholder = "每把 KEY 的每周上限，例如 155000";
+
+    const dialog = await openDialog();
+    await dialog.getByPlaceholder(fiveHourPlaceholder).fill("35000");
+    await dialog.getByPlaceholder(weeklyPlaceholder).fill("155000");
+    mkdirSync(ARTIFACT_DIR, { recursive: true });
+    await dialog.screenshot({ path: resolve(ARTIFACT_DIR, "package-credit-limits.png") });
+    await dialog.getByRole("button", { name: "保存" }).click();
+    await expect(page.getByText("模式已更新")).toBeVisible();
+
+    const afterSave = await keyLimits();
+    expect(afterSave, "保存后该模式下所有 KEY 统一使用套餐的上限").toEqual({
+      uik1: [35000, 155000],
+      uik2: [35000, 155000],
+    });
+
+    // 重新打开能看到刚保存的值。
+    const reopened = await openDialog();
+    await expect(reopened.getByPlaceholder(fiveHourPlaceholder)).toHaveValue("35000");
+    await expect(reopened.getByPlaceholder(weeklyPlaceholder)).toHaveValue("155000");
+
+    report.packageLimitDialog = { afterSave, screenshot: "package-credit-limits.png" };
   });
 
   test("上游 429 按业务码分类：1313 停用并告警、1305 不冷却不换 Key、1308 最多换一次", async () => {

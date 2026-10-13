@@ -352,12 +352,33 @@
         >
           <el-input-number v-model="editPackageForm.seatCount" :min="0" :max="100000" controls-position="right" />
         </el-form-item>
+        <template v-if="editPackageForm.productType === 'coding_plan'">
+          <el-form-item label="5 小时积分">
+            <el-input
+              v-model="editPackageForm.fiveHourCreditLimit"
+              placeholder="每把 KEY 的 5 小时上限，例如 35000"
+              clearable
+            />
+          </el-form-item>
+          <el-form-item label="每周积分">
+            <el-input
+              v-model="editPackageForm.weeklyCreditLimit"
+              placeholder="每把 KEY 的每周上限，例如 155000"
+              clearable
+            />
+            <p class="form-hint">
+              该模式下每把 KEY 的积分上限，留空表示不限。保存后对该模式下所有 KEY 立即生效，
+              渠道 KEY 不单独设置。
+            </p>
+          </el-form-item>
+        </template>
         <el-form-item v-if="editPackageForm.productType === 'coding_plan'" label="周重置时间">
           <el-date-picker
             v-model="editPackageForm.weeklyWindowResetAt"
             type="datetime"
             format="YYYY-MM-DD HH:mm"
             placeholder="控制台显示的周限额重置时间"
+            style="width: 100%"
             clearable
           />
           <p class="form-hint">
@@ -597,6 +618,9 @@ type PackageRow = {
   configVersion: number;
   /** 套餐的周限额重置时刻（ISO），未录入为 null。 */
   weeklyWindowResetAt: string | null;
+  /** 该模式下每把 KEY 的积分上限，null 表示不限。 */
+  fiveHourCreditLimit: number | null;
+  weeklyCreditLimit: number | null;
 };
 
 type SeatRow = {
@@ -684,6 +708,8 @@ const editPackageForm = reactive({
   seatCount: 0,
   status: "active" as "active" | "disabled",
   weeklyWindowResetAt: null as Date | null,
+  fiveHourCreditLimit: "",
+  weeklyCreditLimit: "",
 });
 const editPackageOriginal = reactive({
   name: "",
@@ -691,6 +717,8 @@ const editPackageOriginal = reactive({
   seatCount: 0,
   status: "active" as "active" | "disabled",
   weeklyWindowResetAt: null as string | null,
+  fiveHourCreditLimit: null as number | null,
+  weeklyCreditLimit: null as number | null,
 });
 const editSeatForm = reactive({
   id: 0,
@@ -931,6 +959,8 @@ async function refresh() {
         status: string;
         configVersion?: number;
         weeklyWindowResetAt?: string | null;
+        fiveHourCreditLimit?: string | number | null;
+        weeklyCreditLimit?: string | number | null;
       }) => ({
           id: row.id,
           providerId: row.providerId,
@@ -943,6 +973,8 @@ async function refresh() {
           status: row.status,
           configVersion: Number(row.configVersion) || 1,
           weeklyWindowResetAt: row.weeklyWindowResetAt ?? null,
+          fiveHourCreditLimit: storedCreditLimit(row.fiveHourCreditLimit),
+          weeklyCreditLimit: storedCreditLimit(row.weeklyCreditLimit),
         }))
       : [];
     seats.value = Array.isArray(seatRes.data.data)
@@ -1152,6 +1184,22 @@ async function savePackage() {
   }
 }
 
+/** 接口返回的积分上限是定点小数字符串。 */
+function storedCreditLimit(value: string | number | null | undefined): number | null {
+  if (value == null) return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+/** 空串 → null（不限）；非法输入 → undefined。 */
+function parseCreditLimitInput(raw: string): number | null | undefined {
+  const trimmed = raw.trim();
+  if (trimmed === "") return null;
+  if (!/^(?:0|[1-9]\d*)(?:\.\d+)?$/.test(trimmed)) return undefined;
+  const value = Number(trimmed);
+  return Number.isFinite(value) && value >= 0 ? value : undefined;
+}
+
 function openEditPackage(pkg: PackageRow) {
   selectedPackageId.value = pkg.id;
   editPackageForm.id = pkg.id;
@@ -1166,6 +1214,10 @@ function openEditPackage(pkg: PackageRow) {
     ? new Date(pkg.weeklyWindowResetAt)
     : null;
   editPackageOriginal.weeklyWindowResetAt = pkg.weeklyWindowResetAt;
+  editPackageForm.fiveHourCreditLimit = pkg.fiveHourCreditLimit == null ? "" : String(pkg.fiveHourCreditLimit);
+  editPackageForm.weeklyCreditLimit = pkg.weeklyCreditLimit == null ? "" : String(pkg.weeklyCreditLimit);
+  editPackageOriginal.fiveHourCreditLimit = pkg.fiveHourCreditLimit;
+  editPackageOriginal.weeklyCreditLimit = pkg.weeklyCreditLimit;
   editPackageOriginal.name = pkg.name;
   editPackageOriginal.tag = pkg.tag;
   editPackageOriginal.seatCount = pkg.seatCount;
@@ -1206,6 +1258,18 @@ async function saveEditPackage() {
       : null;
     if ((nextReset?.getTime() ?? null) !== previousMs) {
       payload.weeklyWindowResetAt = nextReset ? nextReset.toISOString() : null;
+    }
+    const fiveHourLimit = parseCreditLimitInput(editPackageForm.fiveHourCreditLimit);
+    const weeklyLimit = parseCreditLimitInput(editPackageForm.weeklyCreditLimit);
+    if (fiveHourLimit === undefined || weeklyLimit === undefined) {
+      ElMessage.warning("积分上限须为非负数，留空表示不限");
+      return;
+    }
+    if (fiveHourLimit !== editPackageOriginal.fiveHourCreditLimit) {
+      payload.fiveHourCreditLimit = fiveHourLimit;
+    }
+    if (weeklyLimit !== editPackageOriginal.weeklyCreditLimit) {
+      payload.weeklyCreditLimit = weeklyLimit;
     }
   }
   if (Object.keys(payload).length === 1) {

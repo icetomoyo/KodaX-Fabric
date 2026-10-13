@@ -22,6 +22,7 @@ import {
   effectiveWeeklyResetAt,
   fiveHourBaseCreditsBeforeSql,
   getCredentialQuotaUsage,
+  packageCreditLimits,
   nextFiveHourResetAt,
   nextWeeklyResetAt,
   type CredentialWindowAnchors,
@@ -73,20 +74,6 @@ type CredentialTestResult = UpstreamConnectionTestResult;
 const RECENT_WINDOW_MS = 24 * 60 * 60 * 1_000;
 
 const supportedProtocolsSchema = configurableSupportedProtocolsSchema;
-
-const creditLimitSchema = z.number().nonnegative().finite();
-const optionalNullableCreditLimitSchema = creditLimitSchema.nullable().optional();
-
-function parseStoredCreditLimit(value: string | null): number | null {
-  if (value == null) return null;
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
-function serializeCreditLimit(value: number | null | undefined): string | null {
-  if (value == null) return null;
-  return String(value);
-}
 
 type CredentialBindingView = {
   scopeType: "employee" | "team" | "enterprise" | "department";
@@ -650,8 +637,6 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
         coolUntil: upstreamCredentials.coolUntil,
         weight: upstreamCredentials.weight,
         supportedProtocols: upstreamCredentials.supportedProtocols,
-        fiveHourCreditLimit: upstreamCredentials.fiveHourCreditLimit,
-        weeklyCreditLimit: upstreamCredentials.weeklyCreditLimit,
         fiveHourWindowAnchor: upstreamCredentials.fiveHourWindowAnchor,
         fiveHourWindowBaseCredits: upstreamCredentials.fiveHourWindowBaseCredits,
         weeklyWindowResetAt: upstreamCredentials.weeklyWindowResetAt,
@@ -739,6 +724,8 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
         },
         credentials: effectiveStatuses.map((row) => {
           const usage = usageById.get(row.id) ?? { fiveHourCredits: 0, weeklyCredits: 0 };
+          // 积分上限只在套餐上设置，套餐下每把 Key 都按它算。
+          const limits = packageCreditLimits(located.productLine);
           return {
             id: row.id,
             label: row.label,
@@ -748,8 +735,8 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
             effectiveStatus: row.effectiveStatus,
             weight: row.weight,
             supportedProtocols: row.supportedProtocols,
-            fiveHourCreditLimit: parseStoredCreditLimit(row.fiveHourCreditLimit),
-            weeklyCreditLimit: parseStoredCreditLimit(row.weeklyCreditLimit),
+            fiveHourCreditLimit: limits.fiveHourLimit,
+            weeklyCreditLimit: limits.weeklyLimit,
             fiveHourCredits: usage.fiveHourCredits,
             weeklyCredits: usage.weeklyCredits,
             nextFiveHourResetAt: nextFiveHourResetAt(row.fiveHourWindowAnchor, now),
@@ -795,8 +782,8 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
         errorCount: upstreamCredentials.errorCount,
         lastUsedAt: upstreamCredentials.lastUsedAt,
         meta: upstreamCredentials.meta,
-        fiveHourCreditLimit: upstreamCredentials.fiveHourCreditLimit,
-        weeklyCreditLimit: upstreamCredentials.weeklyCreditLimit,
+        fiveHourCreditLimit: productLines.fiveHourCreditLimit,
+        weeklyCreditLimit: productLines.weeklyCreditLimit,
         fiveHourWindowAnchor: upstreamCredentials.fiveHourWindowAnchor,
         fiveHourWindowBaseCredits: upstreamCredentials.fiveHourWindowBaseCredits,
         weeklyWindowResetAt: upstreamCredentials.weeklyWindowResetAt,
@@ -903,13 +890,15 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
         const connectedNames: string[] = [];
         pushUniqueName(connectedNames, binding?.scopeName);
         for (const name of connectedNamesById.get(row.id) ?? []) pushUniqueName(connectedNames, name);
+        // 积分上限来自套餐，套餐下每把 Key 相同。
+        const limits = packageCreditLimits(row);
         return {
           ...row,
           recentWindowHours: 24,
           recentSuccessCount: recentById.get(row.id)?.recentSuccessCount ?? 0,
           recentErrorCount: recentById.get(row.id)?.recentErrorCount ?? 0,
-          fiveHourCreditLimit: parseStoredCreditLimit(row.fiveHourCreditLimit),
-          weeklyCreditLimit: parseStoredCreditLimit(row.weeklyCreditLimit),
+          fiveHourCreditLimit: limits.fiveHourLimit,
+          weeklyCreditLimit: limits.weeklyLimit,
           fiveHourCredits: usage.fiveHourCredits,
           weeklyCredits: usage.weeklyCredits,
           // 5h：窗口进行中 → 锚点+5h；已过期/未锚定 → null（满血，下次调用起算）。
@@ -943,8 +932,6 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
           supportedProtocols: supportedProtocolsSchema.optional(),
           weight: z.number().int().min(0).max(10000).default(100),
           priority: z.number().int().default(0),
-          fiveHourCreditLimit: optionalNullableCreditLimitSchema,
-          weeklyCreditLimit: optionalNullableCreditLimitSchema,
           meta: z.record(z.unknown()).optional(),
         })
         .safeParse(req.body);
@@ -1033,8 +1020,6 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
             supportedProtocols: protocolResolution.protocols,
             weight: body.data.weight,
             priority: body.data.priority,
-            fiveHourCreditLimit: serializeCreditLimit(body.data.fiveHourCreditLimit),
-            weeklyCreditLimit: serializeCreditLimit(body.data.weeklyCreditLimit),
             meta: body.data.meta,
             status: "active",
           })
@@ -1045,8 +1030,6 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
             supportedProtocols: upstreamCredentials.supportedProtocols,
             productLineId: upstreamCredentials.productLineId,
             status: upstreamCredentials.status,
-            fiveHourCreditLimit: upstreamCredentials.fiveHourCreditLimit,
-            weeklyCreditLimit: upstreamCredentials.weeklyCreditLimit,
           });
 
         await tx.insert(opsAuditLogs).values({
@@ -1058,20 +1041,11 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
             label: row.label,
             productLineId: row.productLineId,
             supportedProtocols: row.supportedProtocols,
-            fiveHourCreditLimit: parseStoredCreditLimit(row.fiveHourCreditLimit),
-            weeklyCreditLimit: parseStoredCreditLimit(row.weeklyCreditLimit),
           },
           ip: req.ip,
         });
 
-        return {
-          kind: "created",
-          row: {
-            ...row,
-            fiveHourCreditLimit: parseStoredCreditLimit(row.fiveHourCreditLimit),
-            weeklyCreditLimit: parseStoredCreditLimit(row.weeklyCreditLimit),
-          },
-        } as const;
+        return { kind: "created", row } as const;
       });
 
       if (result.kind === "product_line_not_found") {
@@ -1155,8 +1129,6 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
             .enum(["active", "disabled", "auto_disabled", "cooling"])
             .optional(),
           coolUntil: z.string().datetime().nullable().optional(),
-          fiveHourCreditLimit: optionalNullableCreditLimitSchema,
-          weeklyCreditLimit: optionalNullableCreditLimitSchema,
           meta: z.record(z.unknown()).nullable().optional(),
         })
         .strict()
@@ -1227,12 +1199,6 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
           patch.lastError = null;
           patch.lastErrorAt = null;
         }
-        if (body.data.fiveHourCreditLimit !== undefined) {
-          patch.fiveHourCreditLimit = serializeCreditLimit(body.data.fiveHourCreditLimit);
-        }
-        if (body.data.weeklyCreditLimit !== undefined) {
-          patch.weeklyCreditLimit = serializeCreditLimit(body.data.weeklyCreditLimit);
-        }
 
         if (body.data.secret !== undefined) {
           const targetCredentials = await tx
@@ -1281,8 +1247,6 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
             secretSuffix: upstreamCredentials.secretSuffix,
             supportedProtocols: upstreamCredentials.supportedProtocols,
             productLineId: upstreamCredentials.productLineId,
-            fiveHourCreditLimit: upstreamCredentials.fiveHourCreditLimit,
-            weeklyCreditLimit: upstreamCredentials.weeklyCreditLimit,
           });
         if (!row) return { kind: "not_found" } as const;
 
@@ -1299,14 +1263,7 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
           ip: req.ip,
         });
 
-        return {
-          kind: "updated",
-          row: {
-            ...row,
-            fiveHourCreditLimit: parseStoredCreditLimit(row.fiveHourCreditLimit),
-            weeklyCreditLimit: parseStoredCreditLimit(row.weeklyCreditLimit),
-          },
-        } as const;
+        return { kind: "updated", row } as const;
       });
 
       if (result.kind === "not_found") {
