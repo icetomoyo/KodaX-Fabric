@@ -41,6 +41,7 @@ import {
  * 13. 待办点过去不是对应的处理页面，或者没带上是哪条渠道。
  * 14. 没有待办时页面没有明确说「一切正常」。
  * 15. 日志存储空间那一块被挤掉了。
+ * 16. 用量分析从有失败的多天区间切到「今天」后一直转圈（图表更新抛错，页面卡在加载中）。
  */
 const ARTIFACT_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "artifacts");
 const HOUR_MS = 3_600_000;
@@ -596,10 +597,44 @@ test.describe.serial("超管工作台", () => {
     await attention.getByText(`「${SCHED_POOLS.quota.name}」5 小时积分已用 90%`).click();
     await expect(page).toHaveURL(new RegExp(`/admin/keys-board\\?channelId=${lineId("quota")}$`));
 
+    const pageErrors: string[] = [];
+    page.on("pageerror", (error) => pageErrors.push(error.message));
+    page.on("console", (message) => {
+      if (message.type() === "error") pageErrors.push(message.text());
+    });
+    const loadingMask = page.locator(".charts-page > .el-loading-mask");
+    // 测试库里前几天没有调用。给多天区间的趋势补上失败数，
+    // 这样切到没有失败的「今天」时，调用趋势图要从两条线变回一条。
+    await page.route("**/api/admin/overview/analytics**", async (route) => {
+      const url = new URL(route.request().url());
+      const response = await route.fetch();
+      const body = (await response.json()) as {
+        data: { trend: Array<{ requestCount: number; errorCount: number }> };
+      };
+      if (url.searchParams.get("from") !== url.searchParams.get("to")) {
+        for (const row of body.data.trend) {
+          row.requestCount += 20;
+          row.errorCount += 3;
+        }
+      }
+      await route.fulfill({ response, json: body });
+    });
+
     await page.goto("/admin");
     await page.getByTestId("today-usage").getByRole("button", { name: "今日排行" }).click();
     await expect(page).toHaveURL(/\/admin\/usage\?range=today$/);
     await expect(page.getByText("组织消耗")).toBeVisible();
+    await expect(loadingMask, "「今天」要能加载完，不能一直转圈").toBeHidden();
+    await expect(page.getByText(/· 小时$/)).toBeVisible();
+
+    // 在页面上来回切范围。
+    await page.getByText("近 7 天", { exact: true }).click();
+    await expect(page.getByText(/· 日$/)).toBeVisible();
+    await expect(loadingMask).toBeHidden();
+    await page.getByText("今天", { exact: true }).click();
+    await expect(page.getByText(/· 小时$/)).toBeVisible();
+    await expect(loadingMask, "从别的范围切到「今天」同样要加载完").toBeHidden();
+    expect(pageErrors).toEqual([]);
   });
 
   test("页面：没有待办时明确显示一切正常", async ({ page }) => {

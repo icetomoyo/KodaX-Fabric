@@ -321,7 +321,8 @@ const requestTrendOption = computed<EChartsCoreOption>(() => {
   const trend = data.value?.trend ?? [];
   const hasErrors = trend.some((row) => (Number(row.errorCount) || 0) > 0);
   return {
-    color: hasErrors ? ["#0f766e", "#dc2626"] : ["#0f766e"],
+    // 色板长度保持不变：vue-echarts 发现数组变短会按组件替换，而 color 不是组件，ECharts 会直接抛错。
+    color: ["#0f766e", "#dc2626"],
     tooltip: { trigger: "axis", confine: true },
     legend: { top: 0 },
     grid: { left: 12, right: 16, bottom: 8, top: 36, containLabel: true },
