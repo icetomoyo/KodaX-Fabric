@@ -361,7 +361,7 @@ async function invokeOverrideCompletion(
         Accept: "application/json",
         "Content-Type": "application/json",
         Authorization: `Bearer ${apiKey}`,
-        "User-Agent": "TokenHub/0.1 support-bot",
+        "User-Agent": "KodaX-Fabric/TokenHub",
       },
       body: JSON.stringify(completionBody(messages, tools)),
       signal: controller.signal,

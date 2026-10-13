@@ -697,7 +697,7 @@ export function buildRelayUpstreamHeaders(
   const headers = new Headers({
     Accept: "application/json",
     "Content-Type": "application/json",
-    "User-Agent": "TokenHub/0.1 relay",
+    "User-Agent": "KodaX-Fabric/TokenHub",
   });
 
   const authStyle = input.authStyle.trim().toLowerCase();
