@@ -15,6 +15,7 @@
       >
         <el-menu-item index="/me">工作台</el-menu-item>
         <el-menu-item index="/me/keys">API Key</el-menu-item>
+        <el-menu-item index="/me/tidal-key">潮汐KEY</el-menu-item>
         <el-menu-item index="/me/models">模型列表</el-menu-item>
         <el-menu-item index="/me/logs">调用记录</el-menu-item>
         <el-menu-item index="/me/profile">个人中心</el-menu-item>

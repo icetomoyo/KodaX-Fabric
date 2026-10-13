@@ -78,6 +78,8 @@ export const OPS_AUDIT_ACTION_LABELS: Record<string, string> = {
   "tidal.grant.update": "修改潮汐授权",
   "tidal.grant.revoke": "撤销潮汐授权",
   "tidal.key.create": "创建潮汐KEY",
+  "tidal.application.approve": "通过潮汐申请",
+  "tidal.application.reject": "驳回潮汐申请",
 };
 
 export const OPS_AUDIT_TARGET_LABELS: Record<string, string> = {

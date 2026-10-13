@@ -6,6 +6,7 @@ import {
   productLines,
   providers,
   sensitiveWordHits,
+  tidalApplications,
   tidalGrants,
   upstreamCredentials,
 } from "../db/schema/index.js";
@@ -281,7 +282,7 @@ function creditItem(
 
 export type AttentionInput = {
   keyPool: KeyPoolSummary;
-  tidal: { enabled: boolean; grants: { expiringSoon: number } };
+  tidal: { enabled: boolean; pendingApplications: number; grants: { expiringSoon: number } };
   storage: Pick<RequestContextStorageReport, "disk" | "logs">;
   today: { requests: number; upstreamErrors: number };
   timeZone: string;
@@ -369,6 +370,16 @@ export function buildAttention(input: AttentionInput): AttentionItem[] {
       title: `日志磁盘约 ${daysLeft} 天后写满`,
       detail: `${disk ? `剩余 ${formatBytes(disk.freeBytes)}，` : ""}按近 7 天日均增长估算`,
       to: "#log-storage",
+    });
+  }
+
+  if (input.tidal.pendingApplications > 0) {
+    items.push({
+      key: "tidal-applications",
+      level: "warn",
+      title: `${input.tidal.pendingApplications} 个潮汐申请待审核`,
+      detail: "员工申请了潮汐KEY，通过后按申请的到期时间可用",
+      to: "/admin/tidal",
     });
   }
 
@@ -468,7 +479,7 @@ export async function loadWorkbenchOps(
   now: Date,
   today: { start: Date; endExclusive: Date },
 ) {
-  const [keyPool, seatRow, seatCapacityRow, grantRows, hitRows, settings, storage] =
+  const [keyPool, seatRow, seatCapacityRow, grantRows, pendingRow, hitRows, settings, storage] =
     await Promise.all([
       loadKeyPool(now),
       db
@@ -485,6 +496,11 @@ export async function loadWorkbenchOps(
         .from(productLines)
         .then((rows) => rows[0]),
       db.select({ expiresAt: tidalGrants.expiresAt }).from(tidalGrants),
+      db
+        .select({ n: sql<number>`count(*)::int` })
+        .from(tidalApplications)
+        .where(eq(tidalApplications.status, "pending"))
+        .then((rows) => rows[0]),
       db
         .select({
           action: sensitiveWordHits.action,
@@ -531,6 +547,7 @@ export async function loadWorkbenchOps(
       windowStart: settings.windowStart,
       windowEnd: settings.windowEnd,
       inFlight: tidalInFlight,
+      pendingApplications: Number(pendingRow?.n ?? 0),
       grants: { total: grantRows.length, expired, expiringSoon },
     },
     sensitive: { detectToday: hits("detect"), interceptToday: hits("intercept") },

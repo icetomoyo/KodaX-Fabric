@@ -57,6 +57,11 @@ export const bindingScopeTypeEnum = pgEnum("binding_scope_type", [
 export const usageTierEnum = pgEnum("usage_tier", ["idle", "standard", "heavy"]);
 /** bound：挂在一把渠道 Key 上；tidal：潮汐KEY，每次请求从闲置的渠道 Key 里挑。 */
 export const apiKeyModeEnum = pgEnum("api_key_mode", ["bound", "tidal"]);
+export const tidalApplicationStatusEnum = pgEnum("tidal_application_status", [
+  "pending",
+  "approved",
+  "rejected",
+]);
 
 export const enterprises = pgTable(
   "enterprises",
@@ -250,6 +255,38 @@ export const tidalGrants = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [uniqueIndex("tidal_grants_employee_uidx").on(t.employeeId)],
+);
+
+/**
+ * 员工对潮汐授权的申请。超级管理员通过后，按 requestedExpiresAt 写入 tidal_grants；
+ * 一人同时只能有一条待审核的申请，审核过的留作记录。
+ */
+export const tidalApplications = pgTable(
+  "tidal_applications",
+  {
+    id: bigint("id", { mode: "number" }).generatedAlwaysAsIdentity().primaryKey(),
+    employeeId: bigint("employee_id", { mode: "number" })
+      .notNull()
+      .references(() => employees.id, { onDelete: "cascade", onUpdate: "no action" }),
+    /** 员工申请用到什么时候；通过后就是授权的到期时间。 */
+    requestedExpiresAt: timestamp("requested_expires_at", { withTimezone: true }).notNull(),
+    reason: varchar("reason", { length: 200 }),
+    status: tidalApplicationStatusEnum("status").notNull().default("pending"),
+    reviewedBy: bigint("reviewed_by", { mode: "number" }),
+    reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
+    reviewNote: varchar("review_note", { length: 200 }),
+    /** 通过时给的额度，留作记录。 */
+    maxConcurrency: integer("max_concurrency"),
+    rpmLimit: integer("rpm_limit"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("tidal_applications_pending_employee_uidx")
+      .on(t.employeeId)
+      .where(sql`${t.status} = 'pending'`),
+    index("tidal_applications_status_created_idx").on(t.status, t.createdAt),
+  ],
 );
 
 export const providers = pgTable(

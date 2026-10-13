@@ -124,6 +124,18 @@ export function tidalWindowLabel(
   return `${settings.windowStart}–${settings.windowEnd}（${timeZone}）`;
 }
 
+/** 潮汐KEY 走 relay：超级管理员账号和没有企业的账号本来就不能调用，授权给他们没有意义。 */
+export function canHoldTidalGrant(
+  employee: { status: string; role: string; enterpriseId: number | null } | null | undefined,
+): boolean {
+  return (
+    employee != null &&
+    employee.status === "active" &&
+    employee.role !== "admin" &&
+    employee.enterpriseId != null
+  );
+}
+
 export type ActiveTidalGrant = {
   id: number;
   maxConcurrency: number;

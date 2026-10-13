@@ -33,7 +33,7 @@ import {
  *   td06                  主人是别的企业的员工
  *
  * 潮汐调度可能出错的方式（每条对应下面一个断言）：
- *  1. 没授权的员工能看到潮汐相关字段，或者能建出潮汐KEY。
+ *  1. 没授权的员工能从 Key 列表接口看到潮汐授权的字段，或者能建出潮汐KEY。
  *  2. 企业管理员（非超级管理员）能读写潮汐调度的设置和授权。
  *  3. 授权后员工看不到授权信息、建不出潮汐KEY；或者一个人能建出第二把。
  *  4. 授权、改额度、撤销没有留下运维审计。
@@ -56,8 +56,27 @@ import {
  * 21. 授权到期后潮汐KEY 仍可用，或者仍出现在员工的列表里。
  * 22. 撤销授权后潮汐KEY 仍可用，或者没有被删除。
  * 23. 管理端没有「潮汐调度」页，或者被授权的人没显示在名单里。
- * 24. 被授权员工的页面上没有潮汐KEY；没授权员工的页面上出现了潮汐KEY。
+ * 24. 被授权员工的「潮汐KEY」页上没有潮汐KEY；没授权员工的页面上出现了潮汐KEY 或
+ *     「创建潮汐KEY」（没授权的人只该看到申请入口）。
  * 25. 管理端「新增授权」对话框里按姓名或手机号搜不到员工，没法在界面上完成授权。
+ *
+ * 申请与审核（员工申请、超级管理员审核）可能出错的方式：
+ * 26. 潮汐没开启时员工也能看到申请入口，或者能提交申请。
+ * 27. 没填到期时间、到期时间在过去的申请也能提交。
+ * 28. 同一个人能同时挂两条待审核的申请；已经有有效授权的人还能再申请。
+ * 29. 超级管理员账号也能申请（批了也用不了）。
+ * 30. 企业管理员能看到或审核申请（只有超级管理员能审）。
+ * 31. 通过后授权的到期时间不是员工申请的那个；并发上限、每分钟请求不是审核时填的。
+ * 32. 通过后员工仍然建不出潮汐KEY，或者建出来的 KEY 不能用。
+ * 33. 驳回后却生成了授权；员工看不到驳回理由；驳回后不能重新申请。
+ * 34. 一条申请能被审核两次（重复通过，或者驳回后又通过）。
+ * 35. 申请里的到期时间在审核时已经过了，仍然能通过（生成一条立刻失效的授权）。
+ * 36. 以前的授权已到期的人再次申请并通过后，授权没有续上，或者原来的潮汐KEY 没恢复。
+ * 37. 审核通过、驳回没有留下运维审计。
+ * 38. 待审核的申请没有出现在超管工作台的待办里。
+ * 39. 管理端页面没有「查看申请」，或者待审核的申请不显示、在界面上通过不了。
+ * 40. 员工的「潮汐KEY」页没有申请入口；提交后看不到「待审核」。
+ * 41. 员工菜单里没有单独的「潮汐KEY」；或者潮汐的内容还混在「API Key」页里。
  */
 const ARTIFACT_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "artifacts");
 const MODEL = "e2e-upstream-model";
@@ -347,6 +366,52 @@ async function createTidalKey(person: SchedPersonKey): Promise<APIResponse> {
       productLineId: tidalLineId,
       tidal: true,
     },
+  });
+}
+
+type Application = {
+  id: number;
+  status: "pending" | "approved" | "rejected";
+  requestedExpiresAt: string;
+  reason: string | null;
+  reviewNote: string | null;
+};
+
+type MyApplication = { available: boolean; granted: boolean; application: Application | null };
+
+async function myApplication(person: SchedPersonKey): Promise<MyApplication> {
+  const res = await api.get("/api/me/tidal-application", { headers: await personHeaders(person) });
+  expect(res.status()).toBe(200);
+  return ((await res.json()) as { data: MyApplication }).data;
+}
+
+async function apply(
+  person: SchedPersonKey,
+  data: { expiresAt?: string; reason?: string },
+): Promise<APIResponse> {
+  return api.post("/api/me/tidal-application", { headers: await personHeaders(person), data });
+}
+
+async function applications(status: "pending" | "all") {
+  const res = await api.get("/api/admin/tidal/applications", {
+    headers: await adminHeaders(),
+    params: { status },
+  });
+  expect(res.status()).toBe(200);
+  return (await res.json()) as {
+    data: Array<Application & { employeeName: string }>;
+    pendingCount: number;
+  };
+}
+
+async function review(
+  id: number,
+  action: "approve" | "reject",
+  data: Record<string, unknown>,
+): Promise<APIResponse> {
+  return api.post(`/api/admin/tidal/applications/${id}/${action}`, {
+    headers: await adminHeaders(),
+    data,
   });
 }
 
@@ -745,11 +810,20 @@ test.describe.serial("潮汐调度", () => {
     const userPage = await userContext.newPage();
     await uiLogin(userPage, SCHED_PEOPLE.tdUser.phone, SCHED_LOGIN_PASSWORD);
     await expect(userPage).toHaveURL(/\/me/, { timeout: 15_000 });
-    await userPage.goto("/me/keys");
-    const userBoard = userPage.locator(".key-board");
-    await expect(userBoard.getByRole("heading", { name: "潮汐KEY" })).toBeVisible();
-    await expect(userBoard.getByText("并发上限 12")).toBeVisible();
+    // 41：潮汐KEY 有自己的菜单和页面。
+    await userPage.locator(".aside-menu").getByText("潮汐KEY", { exact: true }).click();
+    await expect(userPage).toHaveURL(/\/me\/tidal-key$/);
+    const userBoard = userPage.locator(".tidal-board");
+    await expect(userBoard.getByTestId("tidal-max-concurrency")).toHaveText("12");
+    await expect(userBoard.locator(".key-row"), "被授权的人在这里看到自己的潮汐KEY").toHaveCount(1);
+    await expect(userPage.locator(".tidal-head").getByText("开放中")).toBeVisible();
+    // 状态标签有个放大的入场动画，放完再截图。
+    await userPage.waitForTimeout(400);
     await userPage.screenshot({ path: resolve(ARTIFACT_DIR, "tidal-employee.png"), fullPage: true });
+    // 「API Key」页只剩普通 Key；账号名里带「潮汐」两个字，所以只看 Key 列表这一块。
+    await userPage.goto("/me/keys");
+    await expect(userPage.locator(".key-board .key-row").first()).toBeVisible();
+    await expect(userPage.locator(".key-board").getByText("潮汐")).toHaveCount(0);
     await userContext.close();
 
     const plainContext = await browser.newContext();
@@ -757,10 +831,15 @@ test.describe.serial("潮汐调度", () => {
     await uiLogin(plainPage, SCHED_PEOPLE.tdPlain.phone, SCHED_LOGIN_PASSWORD);
     await expect(plainPage).toHaveURL(/\/me/, { timeout: 15_000 });
     await plainPage.goto("/me/keys");
-    // 等自己的 Key 列表渲染出来再断言；账号名里带「潮汐」两个字，所以只看 Key 列表这一块。
+    // 等自己的 Key 列表渲染出来再断言。
     const plainBoard = plainPage.locator(".key-board");
     await expect(plainBoard.locator(".key-row").first()).toBeVisible();
     await expect(plainBoard.getByText("潮汐")).toHaveCount(0);
+    // 没授权的人在「潮汐KEY」页只看到申请入口，看不到潮汐KEY 本身。
+    await plainPage.goto("/me/tidal-key");
+    await expect(plainPage.getByTestId("tidal-apply")).toBeVisible();
+    await expect(plainPage.getByRole("button", { name: "创建潮汐KEY" })).toHaveCount(0);
+    await expect(plainPage.locator(".tidal-board .key-row")).toHaveCount(0);
     await plainContext.close();
 
     report.ui = {
@@ -807,6 +886,282 @@ test.describe.serial("潮汐调度", () => {
       revokedStatus: afterRevoke.status,
       tidalKeysLeft: remaining,
       opsAudit: actions,
+    };
+  });
+
+  test("申请与审核：员工带到期时间申请，超级管理员通过后按申请的时间可用，驳回不生成授权", async () => {
+    const admin = await adminHeaders();
+    const hoursFromNow = (hours: number) => new Date(Date.now() + hours * HOUR_MS).toISOString();
+
+    // 26：总开关关着时没有申请入口，也提交不了。
+    await putSettings({ enabled: false });
+    expect((await myApplication("tdPlain")).available, "没开启时不给申请入口").toBe(false);
+    const whileOff = await apply("tdPlain", { expiresAt: hoursFromNow(2) });
+    expect(whileOff.status()).toBe(400);
+    expect(((await whileOff.json()) as { code?: string }).code).toBe("tidal_disabled");
+
+    await putSettings({});
+    expect(await myApplication("tdPlain")).toMatchObject({
+      available: true,
+      granted: false,
+      application: null,
+    });
+
+    // 27：到期时间必填，且必须晚于现在。
+    expect((await apply("tdPlain", { reason: "没填到期时间" })).status()).toBe(400);
+    expect((await apply("tdPlain", { expiresAt: hoursFromNow(-1) })).status()).toBe(400);
+
+    // 29：超级管理员账号不能申请。
+    const adminApply = await api.post("/api/me/tidal-application", {
+      headers: admin,
+      data: { expiresAt: hoursFromNow(2) },
+    });
+    expect(adminApply.status()).toBe(400);
+    expect(((await adminApply.json()) as { code?: string }).code).toBe("tidal_application_ineligible");
+
+    // 提交申请；28：待审核期间不能再提交。
+    const plainExpiry = hoursFromNow(2);
+    const submitted = await apply("tdPlain", { expiresAt: plainExpiry, reason: "夜间回归测试" });
+    expect(submitted.status(), "员工提交申请").toBe(200);
+    const duplicate = await apply("tdPlain", { expiresAt: hoursFromNow(3) });
+    expect(duplicate.status(), "待审核期间不能重复申请").toBe(409);
+    expect(((await duplicate.json()) as { code?: string }).code).toBe("tidal_application_pending");
+    const pendingView = await myApplication("tdPlain");
+    expect(pendingView.application).toMatchObject({
+      status: "pending",
+      requestedExpiresAt: plainExpiry,
+      reason: "夜间回归测试",
+    });
+    const plainApplicationId = pendingView.application!.id;
+
+    // 30：企业管理员看不到也审不了。
+    const orgAdmin = await personHeaders("tdOrgAdmin");
+    expect([
+      (await api.get("/api/admin/tidal/applications", { headers: orgAdmin })).status(),
+      (
+        await api.post(`/api/admin/tidal/applications/${plainApplicationId}/approve`, {
+          headers: orgAdmin,
+          data: { maxConcurrency: 6, rpmLimit: 120 },
+        })
+      ).status(),
+      (
+        await api.post(`/api/admin/tidal/applications/${plainApplicationId}/reject`, {
+          headers: orgAdmin,
+          data: {},
+        })
+      ).status(),
+    ]).toEqual([403, 403, 403]);
+
+    // 超级管理员看到待审核的申请；38：工作台待办里也有。
+    const pendingList = await applications("pending");
+    expect(pendingList.data.find((row) => row.id === plainApplicationId)).toMatchObject({
+      employeeName: SCHED_PEOPLE.tdPlain.name,
+      requestedExpiresAt: plainExpiry,
+      reason: "夜间回归测试",
+      status: "pending",
+    });
+    expect(pendingList.pendingCount).toBe(pendingList.data.length);
+    const workbench = (await (await api.get("/api/admin/overview", { headers: admin })).json()) as {
+      data: { attention: Array<{ key: string; title: string; to: string }> };
+    };
+    expect(workbench.data.attention.find((item) => item.key === "tidal-applications")).toMatchObject({
+      title: `${pendingList.pendingCount} 个潮汐申请待审核`,
+      to: "/admin/tidal",
+    });
+
+    // 33、34：驳回不生成授权，员工看得到理由，申请不能再审第二次，但可以重新申请。
+    expect((await apply("tdUser", { expiresAt: hoursFromNow(1) })).status()).toBe(200);
+    const userApplicationId = (await myApplication("tdUser")).application!.id;
+    const rejected = await review(userApplicationId, "reject", { reviewNote: "先用普通 Key" });
+    expect(rejected.status()).toBe(200);
+    const [{ n: userGrants }] = await sql<Array<{ n: number }>>`
+      select count(*)::int n from tidal_grants where employee_id = ${employeeId("tdUser")}
+    `;
+    expect(userGrants, "驳回不生成授权").toBe(0);
+    expect((await myApplication("tdUser")).application).toMatchObject({
+      status: "rejected",
+      reviewNote: "先用普通 Key",
+    });
+    const reviewTwice = [
+      (await review(userApplicationId, "reject", {})).status(),
+      (await review(userApplicationId, "approve", { maxConcurrency: 6, rpmLimit: 120 })).status(),
+    ];
+    expect(reviewTwice, "已审核的申请不能再审").toEqual([409, 409]);
+    const userExpiry = hoursFromNow(5);
+    expect((await apply("tdUser", { expiresAt: userExpiry })).status(), "驳回后可以重新申请").toBe(200);
+
+    // 35：审核时申请的到期时间已经过了，不能通过。
+    expect((await apply("tdOrgAdmin", { expiresAt: hoursFromNow(1) })).status()).toBe(200);
+    const staleId = (await myApplication("tdOrgAdmin")).application!.id;
+    await sql`
+      update tidal_applications set requested_expires_at = ${new Date(Date.now() - 60_000)}
+      where id = ${staleId}
+    `;
+    const stale = await review(staleId, "approve", { maxConcurrency: 6, rpmLimit: 120 });
+    expect(stale.status()).toBe(400);
+    expect(((await stale.json()) as { code?: string }).code).toBe("tidal_application_expired");
+    expect((await review(staleId, "reject", { reviewNote: "申请的时间已过" })).status()).toBe(200);
+
+    // 31：通过后按申请的到期时间生成授权，额度是审核时填的。
+    const approved = await review(plainApplicationId, "approve", { maxConcurrency: 6, rpmLimit: 120 });
+    expect(approved.status(), "超级管理员通过申请").toBe(200);
+    const [grant] = await sql<
+      Array<{ max_concurrency: number; rpm_limit: number; expires_at: Date; note: string | null }>
+    >`
+      select max_concurrency, rpm_limit, expires_at, note
+      from tidal_grants where employee_id = ${employeeId("tdPlain")}
+    `;
+    expect(grant).toMatchObject({ max_concurrency: 6, rpm_limit: 120, note: "夜间回归测试" });
+    expect(grant.expires_at.toISOString(), "到期时间就是员工申请的那个").toBe(plainExpiry);
+    expect(
+      (await review(plainApplicationId, "approve", { maxConcurrency: 6, rpmLimit: 120 })).status(),
+      "同一条申请不能通过两次",
+    ).toBe(409);
+    expect(await myApplication("tdPlain")).toMatchObject({
+      granted: true,
+      application: { status: "approved" },
+    });
+
+    // 32：通过后员工建得出潮汐KEY，并且能用。
+    const keysAfter = await myKeys("tdPlain");
+    expect(keysAfter.body.tidal).toMatchObject({ maxConcurrency: 6, rpmLimit: 120, expiresAt: plainExpiry });
+    const createdKey = await createTidalKey("tdPlain");
+    expect(createdKey.status(), "通过后能建潮汐KEY").toBe(200);
+    const plainKey = ((await createdKey.json()) as { data: { key: string } }).data.key;
+    const firstCall = await relay(plainKey, "apply");
+    expect(firstCall.status, "申请通过后潮汐KEY 可用").toBe(200);
+
+    // 28：已有有效授权时不能再申请。
+    const whileGranted = await apply("tdPlain", { expiresAt: hoursFromNow(8) });
+    expect(whileGranted.status()).toBe(409);
+    expect(((await whileGranted.json()) as { code?: string }).code).toBe("tidal_grant_exists");
+
+    // 36：授权到期后重新申请，通过后续在同一条授权上，原来的 KEY 恢复可用。
+    await sql`
+      update tidal_grants set expires_at = ${new Date(Date.now() - 60_000)}
+      where employee_id = ${employeeId("tdPlain")}
+    `;
+    expect((await relay(plainKey, "apply")).status, "到期后 KEY 失效").toBe(401);
+    expect((await myApplication("tdPlain")).granted).toBe(false);
+    const renewExpiry = hoursFromNow(3);
+    expect((await apply("tdPlain", { expiresAt: renewExpiry })).status(), "到期后可以再申请").toBe(200);
+    const renewId = (await myApplication("tdPlain")).application!.id;
+    expect((await review(renewId, "approve", { maxConcurrency: 8, rpmLimit: 200 })).status()).toBe(200);
+    const renewed = await sql<Array<{ max_concurrency: number; expires_at: Date }>>`
+      select max_concurrency, expires_at from tidal_grants where employee_id = ${employeeId("tdPlain")}
+    `;
+    expect(renewed.length, "一个人始终只有一条授权").toBe(1);
+    expect(renewed[0].max_concurrency).toBe(8);
+    expect(renewed[0].expires_at.toISOString()).toBe(renewExpiry);
+    expect((await relay(plainKey, "apply")).status, "续上后原来的 KEY 恢复可用").toBe(200);
+
+    // 37
+    const actions = await opsAuditActions();
+    expect(actions).toEqual(
+      expect.arrayContaining(["tidal.application.approve", "tidal.application.reject"]),
+    );
+
+    report.applications = {
+      disabledStatus: whileOff.status(),
+      duplicateStatus: duplicate.status(),
+      rejected: { grants: userGrants, reviewTwice },
+      staleApproveStatus: stale.status(),
+      approved: { requestedExpiresAt: plainExpiry, grantExpiresAt: grant.expires_at.toISOString() },
+      renewed: { requestedExpiresAt: renewExpiry, grantExpiresAt: renewed[0].expires_at.toISOString() },
+      whileGrantedStatus: whileGranted.status(),
+      pendingForUi: { employee: SCHED_PEOPLE.tdUser.name, requestedExpiresAt: userExpiry },
+    };
+  });
+
+  test("界面：管理端「查看申请」里通过申请，员工在 Key 页提交申请", async ({ browser }) => {
+    mkdirSync(ARTIFACT_DIR, { recursive: true });
+    const applicant = SCHED_PEOPLE.tdUser;
+    const [pending] = await sql<Array<{ id: string; requested_expires_at: Date }>>`
+      select id, requested_expires_at from tidal_applications
+      where employee_id = ${employeeId("tdUser")} and status = 'pending'
+    `;
+    expect(pending, "上一条用例给 tdUser 留了一条待审核的申请").toBeTruthy();
+
+    // 39
+    const adminContext = await browser.newContext({ viewport: { width: 1440, height: 1500 } });
+    const adminPage = await adminContext.newPage();
+    await uiLogin(adminPage, E2E.admin.phone, E2E.admin.password);
+    await expect(adminPage).toHaveURL(/\/admin/, { timeout: 15_000 });
+    await adminPage.goto("/admin/tidal");
+    await adminPage.getByRole("button", { name: "查看申请" }).click();
+    const listDialog = adminPage.locator(".el-dialog", { hasText: "潮汐申请" });
+    await expect(listDialog).toBeVisible();
+    const row = listDialog.getByRole("row", { name: new RegExp(applicant.name) });
+    await expect(row).toBeVisible();
+    await expect(row.getByText("待审核")).toBeVisible();
+    // 等对话框的淡入动画放完再截图。
+    await adminPage.waitForTimeout(500);
+    await adminPage.screenshot({ path: resolve(ARTIFACT_DIR, "tidal-applications-admin.png") });
+    await row.getByRole("button", { name: "通过" }).click();
+    const approveDialog = adminPage.locator(".el-dialog", { hasText: "通过申请" });
+    await expect(approveDialog).toBeVisible();
+    await approveDialog.getByRole("button", { name: "确定" }).click();
+    await expect(row, "通过后不再是待审核").toHaveCount(0);
+    await listDialog.getByRole("button", { name: "关闭", exact: true }).click();
+    await expect(
+      adminPage.locator(".el-card", { hasText: "授权名单" }).getByRole("row", { name: new RegExp(applicant.name) }),
+      "通过后出现在授权名单里",
+    ).toBeVisible();
+    const [uiGrant] = await sql<Array<{ expires_at: Date }>>`
+      select expires_at from tidal_grants where employee_id = ${employeeId("tdUser")}
+    `;
+    expect(uiGrant.expires_at.toISOString()).toBe(pending.requested_expires_at.toISOString());
+    await adminContext.close();
+
+    // 40：企业管理员也是普通使用者，走管理台里的「潮汐KEY」页申请。
+    await sql`delete from tidal_applications where employee_id = ${employeeId("tdOrgAdmin")}`;
+    const userContext = await browser.newContext();
+    const userPage = await userContext.newPage();
+    await uiLogin(userPage, SCHED_PEOPLE.tdOrgAdmin.phone, SCHED_LOGIN_PASSWORD);
+    await expect(userPage).toHaveURL(/\/admin/, { timeout: 15_000 });
+    await userPage.locator(".aside-menu").getByText("潮汐KEY", { exact: true }).click();
+    await expect(userPage).toHaveURL(/\/admin\/tidal-key$/);
+    const entry = userPage.getByTestId("tidal-apply");
+    await expect(entry).toBeVisible();
+    await entry.getByRole("button", { name: "申请潮汐KEY" }).click();
+    const applyDialog = userPage.locator(".el-dialog", { hasText: "申请潮汐KEY" });
+    await expect(applyDialog).toBeVisible();
+    // 不选到期时间提交不了。
+    await applyDialog.getByRole("button", { name: "提交申请" }).click();
+    await expect(userPage.getByText("请选择到期时间")).toBeVisible();
+    await applyDialog.getByPlaceholder("选择到期时间").click();
+    await userPage.locator(".el-picker-panel__shortcut", { hasText: "7 天后" }).click();
+    // 点快捷项就选定并收起面板。
+    await expect(applyDialog.getByPlaceholder("选择到期时间")).not.toHaveValue("");
+    await applyDialog.getByPlaceholder("例如：Agent 夜间回归测试").fill("界面申请");
+    const beforeSubmit = Date.now();
+    await applyDialog.getByRole("button", { name: "提交申请" }).click();
+    await expect(userPage.locator(".tidal-head").getByText("待审核")).toBeVisible();
+    await expect(entry.getByText("等待管理员审核")).toBeVisible();
+    await expect(entry.getByRole("button", { name: "申请潮汐KEY" })).toHaveCount(0);
+    // 等对话框收起、提示消失再截图。
+    await expect(applyDialog).toBeHidden();
+    await expect(userPage.locator(".el-message")).toHaveCount(0, { timeout: 10_000 });
+    await userPage.screenshot({ path: resolve(ARTIFACT_DIR, "tidal-apply-employee.png"), fullPage: true });
+    const [uiApplication] = await sql<
+      Array<{ status: string; reason: string | null; requested_expires_at: Date }>
+    >`
+      select status, reason, requested_expires_at from tidal_applications
+      where employee_id = ${employeeId("tdOrgAdmin")}
+    `;
+    expect(uiApplication).toMatchObject({ status: "pending", reason: "界面申请" });
+    const sevenDays = 7 * 24 * HOUR_MS;
+    const requestedMs = uiApplication.requested_expires_at.getTime();
+    expect(Math.abs(requestedMs - (beforeSubmit + sevenDays)), "到期时间是选的 7 天后").toBeLessThan(120_000);
+    await userContext.close();
+
+    report.applicationsUi = {
+      screenshots: ["tidal-applications-admin.png", "tidal-apply-employee.png"],
+      approvedInDialog: { employee: applicant.name, grantExpiresAt: uiGrant.expires_at.toISOString() },
+      submittedInPage: {
+        employee: SCHED_PEOPLE.tdOrgAdmin.name,
+        requestedExpiresAt: uiApplication.requested_expires_at.toISOString(),
+      },
     };
   });
 });

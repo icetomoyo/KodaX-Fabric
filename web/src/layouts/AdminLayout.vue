@@ -22,6 +22,7 @@
         <el-menu-item v-if="auth.isSuperAdmin" index="/admin/enterprises">企业管理</el-menu-item>
         <el-menu-item v-if="auth.isOrgAdmin || auth.isDeptAdmin" index="/admin/enterprises">部门管理</el-menu-item>
         <el-menu-item v-if="auth.isOrgAdmin || auth.isDeptAdmin" index="/admin/keys">API Key</el-menu-item>
+        <el-menu-item v-if="auth.isOrgAdmin || auth.isDeptAdmin" index="/admin/tidal-key">潮汐KEY</el-menu-item>
         <el-menu-item v-if="auth.isOrgAdmin || auth.isDeptAdmin" index="/admin/models">模型列表</el-menu-item>
         <el-menu-item v-if="auth.isOrgAdmin || auth.isDeptAdmin" index="/admin/my-logs">调用记录</el-menu-item>
         <el-sub-menu v-if="auth.isSuperAdmin" index="upstream">

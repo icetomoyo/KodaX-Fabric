@@ -51,6 +51,11 @@ export const router = createRouter({
           component: () => import("@/views/me/KeysView.vue"),
         },
         {
+          path: "tidal-key",
+          name: "me-tidal-key",
+          component: () => import("@/views/me/TidalKeyView.vue"),
+        },
+        {
           path: "models",
           name: "me-models",
           component: () => import("@/views/me/ModelsView.vue"),
@@ -100,6 +105,12 @@ export const router = createRouter({
           path: "keys",
           name: "admin-keys",
           component: () => import("@/views/me/KeysView.vue"),
+          meta: { roles: ["org_admin", "dept_admin"] },
+        },
+        {
+          path: "tidal-key",
+          name: "admin-tidal-key",
+          component: () => import("@/views/me/TidalKeyView.vue"),
           meta: { roles: ["org_admin", "dept_admin"] },
         },
         {

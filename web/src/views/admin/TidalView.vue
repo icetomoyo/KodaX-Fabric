@@ -130,7 +130,12 @@
       <template #header>
         <div class="card-head">
           <span>授权名单</span>
-          <el-button type="primary" @click="openCreate">新增授权</el-button>
+          <div class="head-actions">
+            <el-badge :value="pendingCount" :hidden="pendingCount === 0">
+              <el-button @click="openApplications">查看申请</el-button>
+            </el-badge>
+            <el-button type="primary" @click="openCreate">新增授权</el-button>
+          </div>
         </div>
       </template>
       <el-table :data="grants" v-loading="grantsLoading" empty-text="还没有给任何人授权">
@@ -224,6 +229,92 @@
         <el-button type="primary" :loading="submitting" @click="submitGrant">确定</el-button>
       </template>
     </el-dialog>
+
+    <el-dialog v-model="applicationsVisible" title="潮汐申请" width="1100px" append-to-body>
+      <div class="applications-bar">
+        <el-radio-group v-model="applicationFilter" @change="loadApplications">
+          <el-radio-button value="pending">待审核</el-radio-button>
+          <el-radio-button value="all">全部</el-radio-button>
+        </el-radio-group>
+        <span class="muted">通过后按员工申请的到期时间生成授权，员工就能在「潮汐KEY」页创建潮汐KEY。</span>
+      </div>
+      <el-table
+        :data="applications"
+        v-loading="applicationsLoading"
+        :empty-text="applicationFilter === 'pending' ? '没有待审核的申请' : '还没有人申请'"
+      >
+        <el-table-column label="员工" min-width="120" prop="employeeName" />
+        <el-table-column prop="employeePhone" label="手机" width="120" />
+        <el-table-column label="企业" min-width="110">
+          <template #default="{ row }">{{ row.enterpriseName || "—" }}</template>
+        </el-table-column>
+        <el-table-column label="申请用到" width="175">
+          <template #default="{ row }">
+            {{ formatTime(row.requestedExpiresAt) }}
+            <el-tag
+              v-if="row.status === 'pending' && isPast(row.requestedExpiresAt)"
+              type="info"
+              effect="plain"
+              size="small"
+            >
+              已过
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="申请说明" min-width="130" show-overflow-tooltip>
+          <template #default="{ row }">{{ row.reason || "—" }}</template>
+        </el-table-column>
+        <el-table-column label="申请时间" width="175">
+          <template #default="{ row }">{{ formatTime(row.createdAt) }}</template>
+        </el-table-column>
+        <el-table-column label="状态" width="90">
+          <template #default="{ row }">
+            <el-tooltip
+              :content="`驳回理由：${row.reviewNote}`"
+              :disabled="row.status !== 'rejected' || !row.reviewNote"
+              placement="top"
+            >
+              <el-tag :type="applicationStatus(row.status).type" effect="light" size="small">
+                {{ applicationStatus(row.status).text }}
+              </el-tag>
+            </el-tooltip>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="120">
+          <template #default="{ row }">
+            <template v-if="row.status === 'pending'">
+              <el-button link type="primary" @click="openApprove(row)">通过</el-button>
+              <el-button link type="danger" @click="rejectApplication(row)">驳回</el-button>
+            </template>
+            <span v-else class="muted">{{ row.reviewedByName || "—" }}</span>
+          </template>
+        </el-table-column>
+      </el-table>
+      <template #footer>
+        <el-button @click="applicationsVisible = false">关闭</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="approveVisible" title="通过申请" width="460px" append-to-body>
+      <el-form v-if="approving" label-width="110px" @submit.prevent>
+        <el-form-item label="员工">
+          <el-input :model-value="approving.employeeName" disabled />
+        </el-form-item>
+        <el-form-item label="到期时间">
+          <el-input :model-value="formatTime(approving.requestedExpiresAt)" disabled />
+        </el-form-item>
+        <el-form-item label="并发上限" required>
+          <el-input-number v-model="approveForm.maxConcurrency" :min="1" :max="200" controls-position="right" />
+        </el-form-item>
+        <el-form-item label="每分钟请求" required>
+          <el-input-number v-model="approveForm.rpmLimit" :min="1" :max="100000" controls-position="right" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="approveVisible = false">取消</el-button>
+        <el-button type="primary" :loading="reviewing" @click="submitApprove">确定</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -264,6 +355,29 @@ type Grant = {
   note: string | null;
   key: { id: number; keyPrefix: string; lastUsedAt: string | null } | null;
   inFlight: number;
+};
+
+type Application = {
+  id: number;
+  employeeId: number;
+  employeeName: string;
+  employeePhone: string;
+  enterpriseName: string | null;
+  requestedExpiresAt: string;
+  reason: string | null;
+  status: "pending" | "approved" | "rejected";
+  reviewNote: string | null;
+  reviewedByName: string | null;
+  createdAt: string;
+};
+
+const APPLICATION_STATUS: Record<
+  Application["status"],
+  { type: "warning" | "success" | "info"; text: string }
+> = {
+  pending: { type: "warning", text: "待审核" },
+  approved: { type: "success", text: "已通过" },
+  rejected: { type: "info", text: "已驳回" },
 };
 
 type Overview = {
@@ -337,6 +451,16 @@ const grantForm = reactive({
   expiresAt: null as Date | null,
   note: "",
 });
+
+const applicationsVisible = ref(false);
+const applicationsLoading = ref(false);
+const applicationFilter = ref<"pending" | "all">("pending");
+const applications = ref<Application[]>([]);
+const pendingCount = ref(0);
+const approveVisible = ref(false);
+const approving = ref<Application | null>(null);
+const reviewing = ref(false);
+const approveForm = reactive({ maxConcurrency: 20, rpmLimit: 600 });
 
 const statusTag = computed<{ type: "success" | "warning" | "info"; text: string }>(() => {
   if (!savedEnabled.value) return { type: "info", text: "未开启" };
@@ -457,6 +581,88 @@ async function loadGrants() {
   }
 }
 
+function applicationStatus(status: Application["status"]) {
+  return APPLICATION_STATUS[status];
+}
+
+function isPast(value: string): boolean {
+  return new Date(value).getTime() <= Date.now();
+}
+
+async function loadApplications() {
+  applicationsLoading.value = true;
+  try {
+    const { data } = await http.get("/api/admin/tidal/applications", {
+      params: { status: applicationFilter.value },
+    });
+    applications.value = data.data;
+    pendingCount.value = data.pendingCount;
+  } catch (error) {
+    ElMessage.error(errorMessage(error, "加载申请失败"));
+  } finally {
+    applicationsLoading.value = false;
+  }
+}
+
+function openApplications() {
+  applicationFilter.value = "pending";
+  applicationsVisible.value = true;
+  void loadApplications();
+}
+
+function openApprove(row: Application) {
+  approving.value = row;
+  Object.assign(approveForm, { maxConcurrency: 20, rpmLimit: 600 });
+  approveVisible.value = true;
+}
+
+async function submitApprove() {
+  if (!approving.value) return;
+  reviewing.value = true;
+  try {
+    await http.post(`/api/admin/tidal/applications/${approving.value.id}/approve`, {
+      maxConcurrency: approveForm.maxConcurrency,
+      rpmLimit: approveForm.rpmLimit,
+    });
+    ElMessage.success("已通过，员工可在「潮汐KEY」页创建潮汐KEY");
+    approveVisible.value = false;
+    await Promise.all([loadApplications(), loadGrants()]);
+  } catch (error) {
+    ElMessage.error(errorMessage(error, "操作失败"));
+    await loadApplications();
+  } finally {
+    reviewing.value = false;
+  }
+}
+
+async function rejectApplication(row: Application) {
+  let reviewNote = "";
+  try {
+    const result = await ElMessageBox.prompt(
+      `驳回「${row.employeeName}」的潮汐申请？理由会显示给员工，可以不填。`,
+      "驳回申请",
+      {
+        confirmButtonText: "驳回",
+        cancelButtonText: "取消",
+        inputPlaceholder: "驳回理由",
+        inputValidator: (value) => (value ?? "").length <= 200 || "理由最多 200 个字",
+      },
+    );
+    reviewNote = (result.value ?? "").trim();
+  } catch {
+    return;
+  }
+  try {
+    await http.post(`/api/admin/tidal/applications/${row.id}/reject`, {
+      reviewNote: reviewNote || null,
+    });
+    ElMessage.success("已驳回");
+  } catch (error) {
+    ElMessage.error(errorMessage(error, "操作失败"));
+  }
+  await loadApplications();
+}
+
 /** 带上部门，重名的人能分得开。 */
 function employeeOptionLabel(item: EmployeeOption): string {
   const base = `${item.name}（${item.phone}）`;
@@ -526,7 +732,7 @@ async function submitGrant() {
       ElMessage.success("授权已更新");
     } else {
       await http.post("/api/admin/tidal/grants", { employeeId: grantForm.employeeId, ...payload });
-      ElMessage.success("已授权，员工可在「API Key」页创建潮汐KEY");
+      ElMessage.success("已授权，员工可在「潮汐KEY」页创建潮汐KEY");
     }
     dialogVisible.value = false;
     await loadGrants();
@@ -560,6 +766,7 @@ onMounted(() => {
   void loadSettings();
   void loadOverview();
   void loadGrants();
+  void loadApplications();
 });
 </script>
 
@@ -606,6 +813,19 @@ onMounted(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
+}
+
+.head-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.applications-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
 }
 
 .stat-row {

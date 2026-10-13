@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import { and, desc, eq, gte, inArray, sql } from "drizzle-orm";
+import { and, count, desc, eq, gte, inArray, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { z } from "zod";
 import { env } from "../../config.js";
@@ -12,6 +12,7 @@ import {
   productLines,
   providers,
   requestAudits,
+  tidalApplications,
   tidalGrants,
   upstreamCredentials,
 } from "../../db/schema/index.js";
@@ -28,6 +29,7 @@ import { isOpenPoolProvider } from "../../lib/relay/open-pool.js";
 import { DEFAULT_RELAY_PROTOCOL } from "../../lib/relay/protocol.js";
 import { previewTidalPool } from "../../lib/relay/tidal-pool.js";
 import {
+  canHoldTidalGrant,
   isTidalWindowOpen,
   loadTidalSettings,
   saveTidalSettings,
@@ -58,6 +60,18 @@ const updateGrantSchema = z
   .refine((value) => Object.values(value).some((item) => item !== undefined));
 
 const idParamSchema = z.object({ id: z.coerce.number().int().positive() });
+
+const applicationListSchema = z.object({ status: z.enum(["pending", "all"]).default("pending") });
+
+/** 到期时间用员工申请的那个，审核时只定额度。 */
+const approveApplicationSchema = z.object({
+  maxConcurrency: grantLimitsSchema.maxConcurrency,
+  rpmLimit: grantLimitsSchema.rpmLimit,
+});
+
+const rejectApplicationSchema = z.object({
+  reviewNote: z.string().trim().max(200).nullable().optional(),
+});
 
 /** A new expiry must lie in the future; null and undefined pass through. */
 function parseExpiry(value: string | null | undefined): Date | null | undefined | "past" {
@@ -175,13 +189,7 @@ export async function adminTidalRoutes(app: FastifyInstance) {
       .from(employees)
       .where(eq(employees.id, body.data.employeeId))
       .limit(1);
-    // 潮汐KEY 走 relay：超级管理员账号和没有企业的账号本来就不能调用。
-    if (
-      !target ||
-      target.status !== "active" ||
-      target.role === "admin" ||
-      target.enterpriseId == null
-    ) {
+    if (!target || !canHoldTidalGrant(target)) {
       return reply.code(400).send({
         success: false,
         code: "tidal_grant_target_invalid",
@@ -307,6 +315,202 @@ export async function adminTidalRoutes(app: FastifyInstance) {
         maxConcurrency: revoked.grant.maxConcurrency,
         rpmLimit: revoked.grant.rpmLimit,
         deletedKeys: revoked.keys,
+      },
+      ip: req.ip,
+    });
+    return { success: true };
+  });
+
+  /** 员工提交的潮汐申请；默认只看待审核的。 */
+  app.get("/api/admin/tidal/applications", async (req, reply) => {
+    const query = applicationListSchema.safeParse(req.query);
+    if (!query.success) {
+      return reply.code(400).send({ success: false, message: "参数无效" });
+    }
+    const reviewer = alias(employees, "reviewer");
+    const [rows, pending] = await Promise.all([
+      db
+        .select({
+          id: tidalApplications.id,
+          employeeId: tidalApplications.employeeId,
+          employeeName: employees.name,
+          employeePhone: employees.phone,
+          employeeDept: employees.dept,
+          enterpriseName: enterprises.name,
+          requestedExpiresAt: tidalApplications.requestedExpiresAt,
+          reason: tidalApplications.reason,
+          status: tidalApplications.status,
+          reviewNote: tidalApplications.reviewNote,
+          reviewedByName: reviewer.name,
+          reviewedAt: tidalApplications.reviewedAt,
+          maxConcurrency: tidalApplications.maxConcurrency,
+          rpmLimit: tidalApplications.rpmLimit,
+          createdAt: tidalApplications.createdAt,
+        })
+        .from(tidalApplications)
+        .innerJoin(employees, eq(employees.id, tidalApplications.employeeId))
+        .leftJoin(enterprises, eq(enterprises.id, employees.enterpriseId))
+        .leftJoin(reviewer, eq(reviewer.id, tidalApplications.reviewedBy))
+        .where(query.data.status === "pending" ? eq(tidalApplications.status, "pending") : undefined)
+        .orderBy(desc(tidalApplications.id))
+        .limit(200),
+      db
+        .select({ n: count() })
+        .from(tidalApplications)
+        .where(eq(tidalApplications.status, "pending"))
+        .then((result) => result[0]),
+    ]);
+    return { success: true, data: rows, pendingCount: pending?.n ?? 0 };
+  });
+
+  app.post("/api/admin/tidal/applications/:id/approve", async (req, reply) => {
+    const params = idParamSchema.safeParse(req.params);
+    const body = approveApplicationSchema.safeParse(req.body);
+    if (!params.success || !body.success) {
+      return reply.code(400).send({ success: false, message: "参数无效" });
+    }
+
+    const result = await db.transaction(async (tx) => {
+      const [application] = await tx
+        .select()
+        .from(tidalApplications)
+        .where(eq(tidalApplications.id, params.data.id))
+        .for("update")
+        .limit(1);
+      if (!application) return { outcome: "not_found" } as const;
+      if (application.status !== "pending") return { outcome: "reviewed" } as const;
+      const now = new Date();
+      if (application.requestedExpiresAt.getTime() <= now.getTime()) {
+        return { outcome: "expired" } as const;
+      }
+      const [target] = await tx
+        .select({
+          id: employees.id,
+          name: employees.name,
+          role: employees.role,
+          status: employees.status,
+          enterpriseId: employees.enterpriseId,
+        })
+        .from(employees)
+        .where(eq(employees.id, application.employeeId))
+        .limit(1);
+      if (!target || !canHoldTidalGrant(target)) return { outcome: "target_invalid" } as const;
+
+      // 一人一条授权：以前的授权（多半已到期）直接续在原来那条上，原来的潮汐KEY 跟着恢复。
+      const limits = {
+        maxConcurrency: body.data.maxConcurrency,
+        rpmLimit: body.data.rpmLimit,
+        expiresAt: application.requestedExpiresAt,
+        note: application.reason,
+        grantedBy: req.employeeId,
+      };
+      const [grant] = await tx
+        .insert(tidalGrants)
+        .values({ employeeId: target.id, ...limits })
+        .onConflictDoUpdate({
+          target: tidalGrants.employeeId,
+          set: { ...limits, updatedAt: now },
+        })
+        .returning();
+      await tx
+        .update(tidalApplications)
+        .set({
+          status: "approved",
+          reviewedBy: req.employeeId,
+          reviewedAt: now,
+          maxConcurrency: body.data.maxConcurrency,
+          rpmLimit: body.data.rpmLimit,
+          updatedAt: now,
+        })
+        .where(eq(tidalApplications.id, application.id));
+      return { outcome: "approved", application, target, grant: grant! } as const;
+    });
+
+    if (result.outcome === "not_found") {
+      return reply.code(404).send({ success: false, message: "申请不存在" });
+    }
+    if (result.outcome === "reviewed") {
+      return reply.code(409).send({
+        success: false,
+        code: "tidal_application_reviewed",
+        message: "这条申请已经审核过了",
+      });
+    }
+    if (result.outcome === "expired") {
+      return reply.code(400).send({
+        success: false,
+        code: "tidal_application_expired",
+        message: "申请的到期时间已经过了，请驳回后让员工重新申请",
+      });
+    }
+    if (result.outcome === "target_invalid") {
+      return reply.code(400).send({
+        success: false,
+        code: "tidal_grant_target_invalid",
+        message: "只能授权给已加入企业的在职员工",
+      });
+    }
+
+    await writeOpsAudit({
+      actorEmployeeId: req.employeeId,
+      action: "tidal.application.approve",
+      targetType: "employee",
+      targetId: String(result.target.id),
+      detail: {
+        employeeName: result.target.name,
+        applicationId: result.application.id,
+        maxConcurrency: result.grant.maxConcurrency,
+        rpmLimit: result.grant.rpmLimit,
+        expiresAt: result.grant.expiresAt,
+        reason: result.application.reason,
+      },
+      ip: req.ip,
+    });
+    return { success: true, data: result.grant };
+  });
+
+  app.post("/api/admin/tidal/applications/:id/reject", async (req, reply) => {
+    const params = idParamSchema.safeParse(req.params);
+    const body = rejectApplicationSchema.safeParse(req.body ?? {});
+    if (!params.success || !body.success) {
+      return reply.code(400).send({ success: false, message: "参数无效" });
+    }
+
+    const now = new Date();
+    const [rejected] = await db
+      .update(tidalApplications)
+      .set({
+        status: "rejected",
+        reviewedBy: req.employeeId,
+        reviewedAt: now,
+        reviewNote: body.data.reviewNote || null,
+        updatedAt: now,
+      })
+      .where(and(eq(tidalApplications.id, params.data.id), eq(tidalApplications.status, "pending")))
+      .returning();
+    if (!rejected) {
+      const [existing] = await db
+        .select({ id: tidalApplications.id })
+        .from(tidalApplications)
+        .where(eq(tidalApplications.id, params.data.id))
+        .limit(1);
+      if (!existing) return reply.code(404).send({ success: false, message: "申请不存在" });
+      return reply.code(409).send({
+        success: false,
+        code: "tidal_application_reviewed",
+        message: "这条申请已经审核过了",
+      });
+    }
+
+    await writeOpsAudit({
+      actorEmployeeId: req.employeeId,
+      action: "tidal.application.reject",
+      targetType: "employee",
+      targetId: String(rejected.employeeId),
+      detail: {
+        applicationId: rejected.id,
+        requestedExpiresAt: rejected.requestedExpiresAt,
+        reviewNote: rejected.reviewNote,
       },
       ip: req.ip,
     });

@@ -4,6 +4,7 @@ import { env } from "./config.js";
 import { healthRoutes } from "./routes/health.js";
 import { authRoutes } from "./routes/auth.js";
 import { meRoutes } from "./routes/me.js";
+import { meTidalRoutes } from "./routes/me-tidal.js";
 import { supportRoutes } from "./routes/support.js";
 import { adminUserRoutes } from "./routes/admin/users.js";
 import { adminEnterpriseRoutes } from "./routes/admin/enterprises.js";
@@ -43,6 +44,7 @@ export async function buildApp() {
   await app.register(healthRoutes);
   await app.register(authRoutes);
   await app.register(meRoutes);
+  await app.register(meTidalRoutes);
   await app.register(supportRoutes);
   await app.register(adminUserRoutes);
   await app.register(adminEnterpriseRoutes);

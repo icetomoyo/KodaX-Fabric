@@ -94,62 +94,6 @@
             </el-button>
           </div>
         </section>
-
-        <!-- 只有被授权的员工会拿到 tidal，没授权的人这里什么都不渲染。 -->
-        <section v-if="tidal" class="dept-section">
-          <h3 class="dept-title">
-            潮汐KEY
-            <el-tag :type="tidalStatus.type" effect="light" size="small">{{ tidalStatus.text }}</el-tag>
-          </h3>
-          <p class="tidal-desc">
-            用于大并发的 Agent 测试：只在开放时段可用，请求会铺到闲置的渠道 Key 上。
-            开放时段 {{ tidalWindowText }} · 并发上限 {{ tidal.maxConcurrency }} ·
-            每分钟最多 {{ tidal.rpmLimit }} 次 ·
-            {{ tidal.expiresAt ? `授权到 ${formatTime(tidal.expiresAt)}` : "授权长期有效" }}
-          </p>
-          <div v-if="tidalKey" class="key-row">
-            <span class="proto-label">{{ tidalKey.name || "潮汐KEY" }}</span>
-            <code class="key-text" :title="displayKey(tidalKey)">{{ displayKey(tidalKey) }}</code>
-            <el-button
-              class="row-action"
-              link
-              type="warning"
-              :loading="regeneratingId === tidalKey.id"
-              @click="regenerateKey(tidalKey)"
-            >
-              更新
-            </el-button>
-            <el-button
-              class="row-action"
-              link
-              type="primary"
-              :disabled="!tidalKey.key"
-              :loading="copyingId === tidalKey.id"
-              @click="copyKey(tidalKey)"
-            >
-              复制
-            </el-button>
-            <el-button
-              class="row-action"
-              link
-              type="danger"
-              :loading="deletingId === tidalKey.id"
-              @click="removeKey(tidalKey)"
-            >
-              删除
-            </el-button>
-          </div>
-          <el-button
-            v-else
-            type="primary"
-            plain
-            :disabled="!hasDepartment"
-            :loading="creatingTidal"
-            @click="createTidalKey"
-          >
-            创建潮汐KEY
-          </el-button>
-        </section>
       </div>
 
       <el-dialog v-model="showCreate" title="新增 Key" width="440px" @closed="resetCreate">
@@ -188,20 +132,19 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
-import { ElMessage, ElMessageBox } from "element-plus";
+import { ElMessage } from "element-plus";
 import { http } from "@/api/http";
 import { copyText } from "@/lib/clipboard";
 import {
   relayProtocolOptions,
   type RelayProtocol,
 } from "@/views/relay-protocol";
-
-type OrgDepartment = {
-  id: number;
-  name: string;
-  path?: string;
-  teamId: number;
-};
+import {
+  getErrorMessage,
+  loadMyDepartments,
+  useApiKeyActions,
+  type OrgDepartment,
+} from "./api-key-actions";
 
 type KeyRow = {
   id: number;
@@ -220,24 +163,11 @@ type KeyRow = {
   status: string;
   createdAt: string;
   lastUsedAt?: string | null;
-  /** 潮汐KEY；普通 Key 没有这个字段。 */
+  /** 潮汐KEY；普通 Key 没有这个字段。潮汐KEY 在单独的页面里管理。 */
   tidal?: boolean;
 };
 
 type KeyRowView = KeyRow & { deletable: boolean };
-
-/** 潮汐授权；只有被授权的员工，接口才会返回这一段。 */
-type TidalInfo = {
-  maxConcurrency: number;
-  rpmLimit: number;
-  expiresAt: string | null;
-  hasKey: boolean;
-  enabled: boolean;
-  windowStart: string;
-  windowEnd: string;
-  windowOpen: boolean;
-  timezone: string;
-};
 
 type DepartmentGroup = {
   key: string;
@@ -260,35 +190,13 @@ const departments = ref<OrgDepartment[]>([]);
 const hasDepartment = computed(() => departments.value.length > 0);
 
 const keys = ref<KeyRow[]>([]);
-const tidal = ref<TidalInfo | null>(null);
-const tidalKey = ref<KeyRow | null>(null);
-const creatingTidal = ref(false);
-
-const tidalStatus = computed<{ type: "success" | "warning" | "info"; text: string }>(() => {
-  if (!tidal.value?.enabled) return { type: "info", text: "暂未开启" };
-  return tidal.value.windowOpen
-    ? { type: "success", text: "开放中" }
-    : { type: "warning", text: "未到开放时段" };
-});
-
-const tidalWindowText = computed(() => {
-  const info = tidal.value;
-  if (!info) return "";
-  if (info.windowStart === info.windowEnd) return "全天";
-  return `${info.windowStart}–${info.windowEnd}（${info.timezone}）`;
-});
-
-function formatTime(value: string): string {
-  return new Date(value).toLocaleString("zh-CN", { hour12: false });
-}
 const loading = ref(false);
 const showKeys = ref(false);
 const showCreate = ref(false);
 const creating = ref(false);
 const createForm = ref({ name: "", departmentId: null as number | null });
-const deletingId = ref<number | null>(null);
-const copyingId = ref<number | null>(null);
-const regeneratingId = ref<number | null>(null);
+const { deletingId, copyingId, regeneratingId, copyKey, regenerateKey, removeKey } =
+  useApiKeyActions(loadKeys);
 
 function protocolOrder(protocol: RelayProtocol): number {
   return relayProtocolOptions.findIndex((option) => option.value === protocol);
@@ -325,14 +233,6 @@ const groups = computed<DepartmentGroup[]>(() => {
       };
     });
 });
-
-function getErrorMessage(error: unknown, fallback: string): string {
-  const responseMessage = (error as { response?: { data?: { message?: unknown } } })
-    ?.response?.data?.message;
-  if (typeof responseMessage === "string") return responseMessage;
-  if (error instanceof Error && error.message) return error.message;
-  return fallback;
-}
 
 function keyStatusLabel(status: string) {
   return status === "active" ? "正常" : status === "revoked" ? "已吊销" : status;
@@ -385,27 +285,6 @@ async function createKey() {
   }
 }
 
-async function loadDepartments() {
-  try {
-    const { data } = await http.get("/api/me/org");
-    if (data.success && Array.isArray(data.data?.departments) && data.data.departments.length > 0) {
-      departments.value = data.data.departments;
-      return;
-    }
-    const teams = Array.isArray(data.data?.teams) ? data.data.teams : [];
-    departments.value = teams
-      .filter((team: { isDefault?: boolean }) => team.isDefault !== false)
-      .map((team: { id: number; departmentId?: number; departmentName?: string; name: string }) => ({
-        id: team.departmentId ?? team.id,
-        name: team.departmentName ?? team.name,
-        path: team.departmentName ?? team.name,
-        teamId: team.id,
-      }));
-  } catch {
-    departments.value = [];
-  }
-}
-
 async function provisionKeys() {
   try {
     await http.post("/api/me/api-keys/provision");
@@ -418,35 +297,14 @@ async function loadKeys() {
   const { data } = await http.get("/api/me/api-keys");
   if (!data.success) return;
   const rows: KeyRow[] = Array.isArray(data.data) ? data.data : [];
-  // 潮汐KEY 单独一块，不算进部门分组（否则会影响「同部门最后一把不能删」的判断）。
+  // 潮汐KEY 在「潮汐KEY」页，不算进部门分组（否则会影响「同部门最后一把不能删」的判断）。
   keys.value = rows.filter((row) => !row.tidal);
-  tidalKey.value = rows.find((row) => row.tidal) ?? null;
-  tidal.value = data.tidal ?? null;
-}
-
-async function createTidalKey() {
-  const department = departments.value[0];
-  if (!department) return;
-  creatingTidal.value = true;
-  try {
-    await http.post("/api/me/api-keys", {
-      name: "潮汐KEY",
-      departmentId: department.id,
-      tidal: true,
-    });
-    ElMessage.success("已创建潮汐KEY");
-    await loadKeys();
-  } catch (error) {
-    ElMessage.error(getErrorMessage(error, "创建失败"));
-  } finally {
-    creatingTidal.value = false;
-  }
 }
 
 async function load() {
   loading.value = true;
   try {
-    await loadDepartments();
+    departments.value = await loadMyDepartments();
     await provisionKeys();
     await loadKeys();
   } catch (error) {
@@ -471,95 +329,6 @@ async function copyBaseUrl() {
 
 async function copyProtocolUrl(row: (typeof apiProtocolRows)[number]) {
   await copyValue("完整路径", row.fullUrl);
-}
-
-async function copyKey(row: KeyRow) {
-  if (!row.key) return;
-  copyingId.value = row.id;
-  try {
-    const copied = await copyText(row.key);
-    if (copied) {
-      ElMessage.success("API Key 已复制");
-    } else {
-      ElMessage.error("复制失败，请手动选中 Key 文本复制");
-    }
-  } finally {
-    copyingId.value = null;
-  }
-}
-
-async function regenerateKey(row: KeyRow) {
-  try {
-    await ElMessageBox.confirm(
-      `确认更新「${row.name || "API Key"}」的 API Key（${row.keyPrefix}••••）？更新后立即换发新 Key，旧 Key 马上失效，正在使用的客户端需要改用新 Key。`,
-      "更新 API Key",
-      {
-        type: "warning",
-        confirmButtonText: "更新",
-        cancelButtonText: "取消",
-      },
-    );
-  } catch {
-    return;
-  }
-
-  regeneratingId.value = row.id;
-  try {
-    await http.post(`/api/me/api-keys/${row.id}/regenerate`);
-    ElMessage.success("API Key 已更新");
-    await loadKeys();
-  } catch (error) {
-    ElMessage.error(getErrorMessage(error, "更新失败"));
-  } finally {
-    regeneratingId.value = null;
-  }
-}
-
-async function removeKey(row: KeyRow) {
-  const keyName = row.name.trim();
-
-  try {
-    await ElMessageBox.confirm(
-      `确认删除 API Key「${keyName}」（${row.keyPrefix}••••）？删除后不可恢复，使用该 Key 的客户端将立即失效。`,
-      "删除 API Key",
-      {
-        type: "warning",
-        confirmButtonText: "继续",
-        cancelButtonText: "取消",
-        confirmButtonClass: "el-button--danger",
-      },
-    );
-  } catch {
-    return;
-  }
-
-  try {
-    await ElMessageBox.prompt(
-      `删除不可恢复。请再次输入 Key 名称「${keyName}」以完成二次确认。`,
-      "二次确认删除",
-      {
-        inputPlaceholder: "请输入 Key 名称",
-        inputValidator: (value) =>
-          value?.trim() === keyName ? true : "输入内容与 Key 名称不一致",
-        confirmButtonText: "确认删除",
-        cancelButtonText: "取消",
-        confirmButtonClass: "el-button--danger",
-      },
-    );
-  } catch {
-    return;
-  }
-
-  deletingId.value = row.id;
-  try {
-    await http.delete(`/api/me/api-keys/${row.id}`);
-    ElMessage.success("已删除");
-    await loadKeys();
-  } catch (error) {
-    ElMessage.error(getErrorMessage(error, "删除失败"));
-  } finally {
-    deletingId.value = null;
-  }
 }
 
 onMounted(load);
@@ -622,13 +391,6 @@ onMounted(load);
   font-size: 15px;
   font-weight: 600;
   color: var(--el-text-color-primary);
-}
-
-.tidal-desc {
-  margin: 0 0 12px;
-  font-size: 13px;
-  line-height: 1.6;
-  color: var(--el-text-color-secondary);
 }
 
 .key-row {
