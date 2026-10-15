@@ -463,6 +463,13 @@
       "when": 1791900000000,
       "tag": "0065_tidal_applications",
       "breakpoints": true
+    },
+    {
+      "idx": 66,
+      "version": "7",
+      "when": 1791990000000,
+      "tag": "0066_package_monthly_credit_limit",
+      "breakpoints": true
     }
   ]
 }

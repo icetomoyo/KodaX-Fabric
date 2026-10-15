@@ -69,6 +69,7 @@ export type TidalSkipReason =
   | "foreign"
   | "in_use"
   | "weekly_line"
+  | "monthly_line"
   | "five_hour_line"
   | "busy";
 
@@ -147,6 +148,7 @@ export function judgeTidalKey(input: {
   );
   const weeklyRatio = ratioOf(usage.weeklyCredits, limits.weeklyLimit);
   const fiveHourRatio = ratioOf(usage.fiveHourCredits, limits.fiveHourLimit);
+  const monthlyRatio = ratioOf(usage.monthlyCredits ?? 0, limits.monthlyLimit ?? null);
   const skip = (reason: TidalSkipReason): TidalKeyState => ({
     usable: false,
     reason,
@@ -169,6 +171,8 @@ export function judgeTidalKey(input: {
   // 有成员就是有人在用（成员闲置 30 分钟才释放）：潮汐让开。
   if (key.memberCount > 0) return skip("in_use");
   if (weeklyRatio >= settings.weeklyLine) return skip("weekly_line");
+  // 月额度和周额度一样是长窗口，沿用周用量线。
+  if (monthlyRatio >= settings.weeklyLine) return skip("monthly_line");
   if (fiveHourRatio >= settings.fiveHourLine) return skip("five_hour_line");
   if (
     getTidalInFlight(key.credentialId) >= settings.perKeyConcurrency ||

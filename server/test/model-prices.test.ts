@@ -15,6 +15,7 @@ const {
   collectCatalogModels,
   collectDiscoveredModels,
   groupDiscoveredModelsByChannel,
+  groupOfficialProviderCatalogs,
   isDeepseekClientModelAllowed,
   isGlmClientModelAllowed,
   lastUsedAtForCatalogModel,
@@ -137,9 +138,55 @@ test("channel model groups use only that channel's discovered Key list", () => {
       { id: 3, name: "公司qwen3.8-27b", models: ["qwen38-27b"] },
       { id: 4, name: "DeepSeek", models: ["deepseek-flash"] },
       { id: 1, name: "GLM", models: ["glm-5.3", "glm-5.3-flash"] },
-      { id: 2, name: "GLM（国际版）", models: [] },
+      { id: 2, name: "GLM（国际版）", models: ["glm-5.3", "glm-5.3-flash"] },
     ],
   );
+});
+
+test("model price channels are the three vendors, not GLM-50 packages", () => {
+  const grouped = groupOfficialProviderCatalogs([
+    { id: 2, code: "custom", name: "自定义" },
+    { id: 4, code: "huoshan", name: "火山方舟" },
+    { id: 1, code: "glm", name: "智谱" },
+    { id: 3, code: "deepseek", name: "深度求索" },
+  ]);
+  assert.deepEqual(
+    grouped.map((channel) => ({ id: channel.id, name: channel.name, code: channel.providerCode })),
+    [
+      { id: 1, name: "智谱", code: "glm" },
+      { id: 3, name: "深度求索", code: "deepseek" },
+      { id: 4, name: "火山方舟", code: "huoshan" },
+    ],
+  );
+  assert.deepEqual(grouped[0]?.models, ["glm-5.3", "glm-5.3-flash"]);
+  assert.ok(grouped[2]?.models.includes("glm-5.3"));
+  assert.ok(grouped[2]?.models.includes("minimax-m3"));
+  assert.ok(grouped[2]?.models.includes("kimi-k2.7-code"));
+  assert.ok(grouped[2]?.models.includes("doubao-embedding-vision"));
+  assert.equal(grouped[2]?.models.length, 12);
+  assert.equal(grouped[2]?.models.includes("doubao-seedream-5-0-pro"), false);
+  assert.equal(grouped[2]?.models.includes("kimi-k3"), false);
+  assert.equal(grouped[2]?.models.includes("glm-latest"), false);
+});
+
+test("Huoshan catalog is the hand-entered Agent Plan list, not Key discovery", () => {
+  const grouped = groupDiscoveredModelsByChannel([
+    {
+      productLineId: 8,
+      productLineName: "Agent Plan",
+      productLineCode: "hs_test",
+      providerName: "火山方舟",
+      providerCode: "huoshan",
+      meta: null,
+    },
+  ]);
+  assert.equal(grouped.length, 1);
+  assert.ok(grouped[0]?.models.includes("glm-5.3"));
+  assert.ok(grouped[0]?.models.includes("minimax-m3"));
+  assert.ok(grouped[0]?.models.includes("kimi-k2.7-code"));
+  assert.ok(grouped[0]?.models.includes("doubao-embedding-vision"));
+  assert.equal(grouped[0]?.models.includes("kimi-k3"), false);
+  assert.equal(grouped[0]?.models.includes("doubao-seedream-5-0-pro"), false);
 });
 
 test("Zhipu coding-plan aliases collapse to glm-5.3 and glm-5.3-flash", () => {
@@ -184,26 +231,28 @@ test("Zhipu relay whitelist accepts glm-5.3 and glm-5.3-flash", () => {
 });
 
 test("catalog rows attach built-in GLM credit rates and leave custom models unmetered", () => {
-  const glm = toCatalogModelEntry("glm-5.3", new Date("2026-08-30T00:00:00.000Z"));
-  assert.equal(glm.seenInLast30Days, true);
+  const glm = toCatalogModelEntry("glm-5.3");
+  assert.equal(glm.kind, "纯文本");
   assert.deepEqual(glm.creditRate, {
     promptCreditsPer10k: "6.9",
     cacheHitCreditsPer10k: "1.7",
     completionCreditsPer10k: "24",
   });
 
-  const flash = toCatalogModelEntry("glm-5.3-flash", null);
-  assert.equal(flash.seenInLast30Days, false);
+  const flash = toCatalogModelEntry("glm-5.3-flash");
+  assert.equal(flash.kind, "多模态");
   assert.deepEqual(flash.creditRate, {
     promptCreditsPer10k: "2.3",
     cacheHitCreditsPer10k: "0.56",
     completionCreditsPer10k: "8",
   });
-  assert.deepEqual(glm.tags, ["文本"]);
-  assert.deepEqual(flash.tags, ["文本", "图片", "视频", "文件"]);
-  assert.deepEqual(toCatalogModelEntry("glm-5.3-flashx", null).tags, flash.tags);
+  assert.equal(toCatalogModelEntry("glm-5.3-flashx").kind, "多模态");
+  assert.equal(toCatalogModelEntry("huoshan/glm-5.3-flash", "huoshan").kind, "多模态");
+  assert.equal(toCatalogModelEntry("huoshan/deepseek-v4-flash", "huoshan").kind, "纯文本");
+  assert.equal(toCatalogModelEntry("huoshan/kimi-k2.7-code", "huoshan").kind, "纯文本");
+  assert.equal(toCatalogModelEntry("huoshan/doubao-embedding-vision", "huoshan").kind, "向量");
 
-  const custom = toCatalogModelEntry("qwen38-27b", null);
+  const custom = toCatalogModelEntry("qwen38-27b");
   assert.equal(custom.creditRate, null);
 });
 

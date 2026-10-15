@@ -1,21 +1,13 @@
 import type { FastifyInstance } from "fastify";
-import { eq, gte, sql } from "drizzle-orm";
-import { env } from "../../config.js";
 import { db } from "../../db/client.js";
+import { providers } from "../../db/schema/index.js";
 import {
-  productLines,
-  providers,
-  requestAudits,
-  upstreamCredentials,
-} from "../../db/schema/index.js";
-import {
-  catalogModelTags,
-  groupDiscoveredModelsByChannel,
-  lastUsedAtForCatalogModel,
-  type CatalogModelTag,
+  catalogModelKind,
+  groupOfficialProviderCatalogs,
+  isHuoshanProvider,
+  type CatalogModelKind,
 } from "../../lib/discovered-models.js";
-import { addCalendarDays, quotaDayAt, zonedDayStart } from "../../lib/quota-time.js";
-import { defaultCreditRateFor, type ModelCreditRate } from "../../lib/relay/credit-cost.js";
+import { creditRateFor, type ModelCreditRate } from "../../lib/relay/credit-cost.js";
 import {
   requireRoles,
   requireSession,
@@ -26,39 +18,18 @@ export async function adminModelPriceRoutes(app: FastifyInstance) {
   app.addHook("preHandler", requireRoles("admin"));
 
   app.get("/api/admin/model-prices", async () => {
-    const today = quotaDayAt(new Date(), env.QUOTA_TIMEZONE);
-    const since = zonedDayStart(addCalendarDays(today, -29), env.QUOTA_TIMEZONE);
-    const lastUsedAt = sql<Date | null>`max(${requestAudits.createdAt})`;
+    const providerRows = await db
+      .select({
+        id: providers.id,
+        code: providers.code,
+        name: providers.name,
+      })
+      .from(providers);
 
-    const [usedModels, channelRows] = await Promise.all([
-      db
-        .select({
-          model: requestAudits.clientModel,
-          lastUsedAt,
-        })
-        .from(requestAudits)
-        .where(gte(requestAudits.createdAt, since))
-        .groupBy(requestAudits.clientModel)
-        .orderBy(requestAudits.clientModel),
-      db
-        .select({
-          productLineId: productLines.id,
-          productLineName: productLines.name,
-          productLineCode: productLines.code,
-          providerName: providers.name,
-          providerCode: providers.code,
-          meta: upstreamCredentials.meta,
-        })
-        .from(productLines)
-        .innerJoin(providers, eq(productLines.providerId, providers.id))
-        .leftJoin(upstreamCredentials, eq(upstreamCredentials.productLineId, productLines.id)),
-    ]);
-
-    const usedByName = new Map(usedModels.map((row) => [row.model, row.lastUsedAt]));
-    const channels = groupDiscoveredModelsByChannel(channelRows).map((channel) => ({
+    const channels = groupOfficialProviderCatalogs(providerRows).map((channel) => ({
       ...channel,
       models: channel.models.map((model) =>
-        toCatalogModelEntry(model, lastUsedAtForCatalogModel(model, usedByName)),
+        toCatalogModelEntry(catalogCallName(channel.providerCode, model), channel.providerCode),
       ),
     }));
 
@@ -71,21 +42,24 @@ export async function adminModelPriceRoutes(app: FastifyInstance) {
 
 export type CatalogModelEntry = {
   model: string;
-  lastUsedAt: Date | null;
-  seenInLast30Days: boolean;
+  kind: CatalogModelKind;
   creditRate: ModelCreditRate | null;
-  tags: CatalogModelTag[];
 };
+
+/** Client call name shown on the model list, e.g. huoshan/glm-5.3. */
+export function catalogCallName(providerCode: string, model: string): string {
+  if (model.includes("/")) return model;
+  if (isHuoshanProvider(providerCode)) return `huoshan/${model}`;
+  return model;
+}
 
 export function toCatalogModelEntry(
   model: string,
-  lastUsedAt: Date | null,
+  providerCode?: string | null,
 ): CatalogModelEntry {
   return {
     model,
-    lastUsedAt,
-    seenInLast30Days: lastUsedAt != null,
-    creditRate: defaultCreditRateFor(model),
-    tags: catalogModelTags(model),
+    kind: catalogModelKind(model, providerCode),
+    creditRate: creditRateFor(model, providerCode),
   };
 }

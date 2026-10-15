@@ -6,6 +6,7 @@ import type { UpstreamUsageCapKind } from "../glm-error-codes.js";
 const HOUR_MS = 3_600_000;
 const FIVE_HOUR_BUCKETS = 5;
 const WEEK_MS = 7 * 24 * HOUR_MS;
+const UTC_PLUS_8_MS = 8 * HOUR_MS;
 
 /**
  * Last-resort 7-day window for a Key that has neither learned its own reset
@@ -24,17 +25,22 @@ export type CredentialQuotaUsage = {
   weeklyCredits: number;
   fiveHourRequests?: number;
   weeklyRequests?: number;
+  /** Only summed for Keys whose package sets a monthly limit. */
+  monthlyCredits?: number;
+  monthlyRequests?: number;
 };
 
 export type CredentialQuotaLimits = {
   fiveHourLimit: number | null;
   weeklyLimit: number | null;
+  monthlyLimit?: number | null;
 };
 
 /** Limit columns as stored on a package (product line). */
 export type PackageLimitColumns = {
   fiveHourCreditLimit: string | number | null;
   weeklyCreditLimit: string | number | null;
+  monthlyCreditLimit?: string | number | null;
 };
 
 function storedCreditLimit(value: string | number | null | undefined): number | null {
@@ -51,6 +57,7 @@ export function packageCreditLimits(row: PackageLimitColumns): CredentialQuotaLi
   return {
     fiveHourLimit: storedCreditLimit(row.fiveHourCreditLimit),
     weeklyLimit: storedCreditLimit(row.weeklyCreditLimit),
+    monthlyLimit: storedCreditLimit(row.monthlyCreditLimit),
   };
 }
 
@@ -59,8 +66,11 @@ export type CredentialQuotaStatus = {
   weeklyCredits: number;
   fiveHourLimit: number | null;
   weeklyLimit: number | null;
+  monthlyCredits: number;
+  monthlyLimit: number | null;
   fiveHourExhausted: boolean;
   weeklyExhausted: boolean;
+  monthlyExhausted: boolean;
   exhausted: boolean;
   exhaustedUntil: Date | null;
 };
@@ -113,6 +123,8 @@ export const WEEKLY_COOL_RATIO = 0.95;
 export type CredentialQuotaRatios = {
   fiveHour: number;
   weekly: number;
+  /** Defaults to the weekly ratio: both are long windows that cool for days. */
+  monthly?: number;
 };
 
 /** A ratio of 1 or more turns the local line off: only the upstream reply decides. */
@@ -137,6 +149,13 @@ export function evaluateCredentialQuota(
     limits.weeklyLimit,
     ratios.weekly,
   );
+  const monthlyCredits = usage.monthlyCredits ?? 0;
+  const monthlyLimit = limits.monthlyLimit ?? null;
+  const monthlyExhausted = windowReached(
+    monthlyCredits,
+    monthlyLimit,
+    ratios.monthly ?? ratios.weekly,
+  );
   const resetCandidates: Date[] = [];
   // Anchored windows reset at their own boundary (anchor + 5h / learned phase);
   // unanchored Keys keep the legacy UTC-hour / epoch-aligned fallbacks.
@@ -145,6 +164,9 @@ export function evaluateCredentialQuota(
   }
   if (weeklyExhausted) {
     resetCandidates.push(nextWeeklyResetAt(anchors?.weeklyResetAt ?? null, now));
+  }
+  if (monthlyExhausted) {
+    resetCandidates.push(monthlyWindowBounds(anchors?.monthlyResetAt ?? null, now).end);
   }
   const exhaustedUntil = resetCandidates.reduce<Date | null>((latest, candidate) => {
     if (!latest || candidate.getTime() > latest.getTime()) return candidate;
@@ -156,24 +178,30 @@ export function evaluateCredentialQuota(
     weeklyCredits: usage.weeklyCredits,
     fiveHourLimit: limits.fiveHourLimit,
     weeklyLimit: limits.weeklyLimit,
+    monthlyCredits,
+    monthlyLimit,
     fiveHourExhausted,
     weeklyExhausted,
-    exhausted: fiveHourExhausted || weeklyExhausted,
+    monthlyExhausted,
+    exhausted: fiveHourExhausted || weeklyExhausted || monthlyExhausted,
     exhaustedUntil,
   };
 }
 
+/** A monthly cap shares the weekly lane: both are long windows that cool for days. */
 export function creditCoolingKind(
-  quota: Pick<CredentialQuotaStatus, "fiveHourExhausted" | "weeklyExhausted">,
+  quota: Pick<CredentialQuotaStatus, "fiveHourExhausted" | "weeklyExhausted">
+    & Partial<Pick<CredentialQuotaStatus, "monthlyExhausted">>,
 ): Exclude<CreditCoolingKind, "other"> | null {
-  if (quota.weeklyExhausted) return "weekly";
+  if (quota.weeklyExhausted || quota.monthlyExhausted) return "weekly";
   if (quota.fiveHourExhausted) return "five_hour";
   return null;
 }
 
 export function resolveGraphCoolingKind(
   status: "active" | "disabled" | "auto_disabled" | "cooling",
-  quota: Pick<CredentialQuotaStatus, "fiveHourExhausted" | "weeklyExhausted">,
+  quota: Pick<CredentialQuotaStatus, "fiveHourExhausted" | "weeklyExhausted">
+    & Partial<Pick<CredentialQuotaStatus, "monthlyExhausted">>,
 ): CreditCoolingKind | null {
   return creditCoolingKind(quota) ?? (status === "cooling" ? "other" : null);
 }
@@ -202,6 +230,9 @@ export function withInFlightEstimate(
     ...usage,
     fiveHourCredits: usage.fiveHourCredits + estimate,
     weeklyCredits: usage.weeklyCredits + estimate,
+    ...(usage.monthlyCredits === undefined
+      ? {}
+      : { monthlyCredits: usage.monthlyCredits + estimate }),
   };
 }
 
@@ -210,7 +241,7 @@ export function withInFlightEstimate(
  * windows. Keys without limits return 1 (no quota pressure at all).
  */
 export function remainingQuotaFraction(
-  usage: Pick<CredentialQuotaUsage, "fiveHourCredits" | "weeklyCredits">,
+  usage: Pick<CredentialQuotaUsage, "fiveHourCredits" | "weeklyCredits" | "monthlyCredits">,
   limits: CredentialQuotaLimits,
 ): number {
   const fractions: number[] = [];
@@ -219,6 +250,9 @@ export function remainingQuotaFraction(
   }
   if (limits.weeklyLimit != null && limits.weeklyLimit > 0) {
     fractions.push(1 - usage.weeklyCredits / limits.weeklyLimit);
+  }
+  if (limits.monthlyLimit != null && limits.monthlyLimit > 0) {
+    fractions.push(1 - (usage.monthlyCredits ?? 0) / limits.monthlyLimit);
   }
   if (fractions.length === 0) return 1;
   return Math.max(0, Math.min(1, Math.min(...fractions)));
@@ -246,6 +280,10 @@ export type CredentialWindowAnchors = {
    */
   fiveHourBaseCredits?: number;
   weeklyResetAt: Date | null;
+  /** True when the package sets a monthly limit; only then is the month summed. */
+  trackMonthly?: boolean;
+  /** Package's monthly reset instant; null falls back to the 1st, 00:00 Beijing time. */
+  monthlyResetAt?: Date | null;
 };
 
 /** Window columns as selected from a Key and its package (product line). */
@@ -256,6 +294,9 @@ export type CredentialWindowColumns = {
   weeklyWindowResetAt: Date | null;
   /** Set on the package; every Key under it shares it by default. */
   lineWeeklyWindowResetAt?: Date | null;
+  /** Package monthly limit; the monthly window is tracked only when it is set. */
+  monthlyCreditLimit?: string | number | null;
+  lineMonthlyWindowResetAt?: Date | null;
 };
 
 /** The weekly reset instant a Key actually follows: its own, else its package's. */
@@ -271,6 +312,8 @@ export function credentialWindowAnchors(row: CredentialWindowColumns): Credentia
     fiveHourAnchor: row.fiveHourWindowAnchor,
     fiveHourBaseCredits: Number.isFinite(base) && base > 0 ? base : 0,
     weeklyResetAt: effectiveWeeklyResetAt(row),
+    trackMonthly: storedCreditLimit(row.monthlyCreditLimit) != null,
+    monthlyResetAt: row.lineMonthlyWindowResetAt ?? null,
   };
 }
 
@@ -354,6 +397,55 @@ export function nextWeeklyResetAt(weeklyResetAt: Date | null, now: Date): Date {
   return new Date(weeklyWindowStart(weeklyResetAt, now).getTime() + WEEK_MS);
 }
 
+/** 2026-01-01 00:00 Beijing time: the default monthly phase (the 1st of each month). */
+const MONTHLY_DEFAULT_RESET = new Date("2025-12-31T16:00:00.000Z");
+
+/**
+ * `at` moved by whole calendar months in Beijing time. A day past the target
+ * month's end clamps to its last day (Jan 31 → Feb 28 → Mar 31), always
+ * measured from `at` itself so the phase never drifts.
+ */
+export function addBeijingMonths(at: Date, months: number): Date {
+  const local = new Date(at.getTime() + UTC_PLUS_8_MS);
+  const year = local.getUTCFullYear();
+  const month = local.getUTCMonth() + months;
+  const lastDay = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+  const shifted = Date.UTC(
+    year,
+    month,
+    Math.min(local.getUTCDate(), lastDay),
+    local.getUTCHours(),
+    local.getUTCMinutes(),
+    local.getUTCSeconds(),
+    local.getUTCMilliseconds(),
+  );
+  return new Date(shifted - UTC_PLUS_8_MS);
+}
+
+/**
+ * Monthly window `[start, end)` containing `now`. Volcano Ark resets on the
+ * subscription day each month; the package stores one such instant and it
+ * rolls by calendar months. Without one, the window is the Beijing calendar month.
+ */
+export function monthlyWindowBounds(
+  monthlyResetAt: Date | null,
+  now: Date,
+): { start: Date; end: Date } {
+  const base = monthlyResetAt && Number.isFinite(monthlyResetAt.getTime())
+    ? monthlyResetAt
+    : MONTHLY_DEFAULT_RESET;
+  const localBase = new Date(base.getTime() + UTC_PLUS_8_MS);
+  const localNow = new Date(now.getTime() + UTC_PLUS_8_MS);
+  let months = (localNow.getUTCFullYear() - localBase.getUTCFullYear()) * 12
+    + (localNow.getUTCMonth() - localBase.getUTCMonth());
+  if (addBeijingMonths(base, months).getTime() > now.getTime()) months -= 1;
+  if (addBeijingMonths(base, months + 1).getTime() <= now.getTime()) months += 1;
+  return {
+    start: addBeijingMonths(base, months),
+    end: addBeijingMonths(base, months + 1),
+  };
+}
+
 /**
  * Evidence that a Key was drained outside this relay: the upstream says the
  * window is exhausted while our ledger is far below the limit, so the gap
@@ -418,7 +510,7 @@ export function aggregateCredentialUsage(
   const usage = new Map<number, CredentialQuotaUsage>();
   const startsById = new Map<
     number,
-    { fiveHour: Date | null; fiveHourBase: number; weekly: Date }
+    { fiveHour: Date | null; fiveHourBase: number; weekly: Date; monthly: Date | null }
   >();
   for (const id of credentialIds) {
     const anchors = anchorsById?.get(id) ?? null;
@@ -431,6 +523,9 @@ export function aggregateCredentialUsage(
           : fiveHourWindowStart(now),
       fiveHourBase: fiveHourWindow ? Math.max(0, anchors?.fiveHourBaseCredits ?? 0) : 0,
       weekly: weeklyWindowStart(anchors?.weeklyResetAt ?? null, now),
+      monthly: anchors?.trackMonthly
+        ? monthlyWindowBounds(anchors.monthlyResetAt ?? null, now).start
+        : null,
     });
     usage.set(id, {
       fiveHourTokens: 0,
@@ -438,6 +533,7 @@ export function aggregateCredentialUsage(
       weeklyCredits: 0,
       fiveHourRequests: 0,
       weeklyRequests: 0,
+      ...(anchors?.trackMonthly ? { monthlyCredits: 0, monthlyRequests: 0 } : {}),
     });
   }
 
@@ -455,6 +551,10 @@ export function aggregateCredentialUsage(
     if (hourMs >= starts.weekly.getTime()) {
       target.weeklyCredits += credits;
       target.weeklyRequests = (target.weeklyRequests ?? 0) + (Number(row.requestCount) || 0);
+    }
+    if (starts.monthly != null && hourMs >= starts.monthly.getTime()) {
+      target.monthlyCredits = (target.monthlyCredits ?? 0) + credits;
+      target.monthlyRequests = (target.monthlyRequests ?? 0) + (Number(row.requestCount) || 0);
     }
   }
   for (const [id, starts] of startsById) {
@@ -489,6 +589,10 @@ export async function getCredentialQuotaUsage(
     }
     if (anchors?.weeklyResetAt) {
       const start = weeklyWindowStart(anchors.weeklyResetAt, now);
+      if (start.getTime() < rangeStart.getTime()) rangeStart = start;
+    }
+    if (anchors?.trackMonthly) {
+      const start = monthlyWindowBounds(anchors.monthlyResetAt ?? null, now).start;
       if (start.getTime() < rangeStart.getTime()) rangeStart = start;
     }
   }

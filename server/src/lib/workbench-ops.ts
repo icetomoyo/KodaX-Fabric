@@ -410,6 +410,8 @@ async function loadKeyPool(now: Date): Promise<KeyPoolSummary> {
         fiveHourCreditLimit: productLines.fiveHourCreditLimit,
         weeklyCreditLimit: productLines.weeklyCreditLimit,
         lineWeeklyWindowResetAt: productLines.weeklyWindowResetAt,
+        monthlyCreditLimit: productLines.monthlyCreditLimit,
+        lineMonthlyWindowResetAt: productLines.monthlyWindowResetAt,
       })
       .from(productLines)
       .innerJoin(providers, eq(productLines.providerId, providers.id))
@@ -433,6 +435,8 @@ async function loadKeyPool(now: Date): Promise<KeyPoolSummary> {
   const windowRows = keyRows.map((key) => ({
     ...key,
     lineWeeklyWindowResetAt: lineById.get(key.productLineId)?.lineWeeklyWindowResetAt ?? null,
+    monthlyCreditLimit: lineById.get(key.productLineId)?.monthlyCreditLimit ?? null,
+    lineMonthlyWindowResetAt: lineById.get(key.productLineId)?.lineMonthlyWindowResetAt ?? null,
   }));
   const anchorsById = new Map<number, CredentialWindowAnchors>(
     windowRows.map((key) => [key.id, credentialWindowAnchors(key)]),

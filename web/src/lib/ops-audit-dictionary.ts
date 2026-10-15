@@ -185,6 +185,7 @@ const OPS_AUDIT_VALUE_LABELS: Record<string, string> = {
   glm: "GLM",
   kimi: "Kimi",
   deepseek: "DeepSeek",
+  huoshan: "火山方舟",
   minimax: "MiniMax",
   "[updated]": "已更新",
 };

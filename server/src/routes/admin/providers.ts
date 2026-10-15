@@ -93,8 +93,10 @@ export async function adminProviderRoutes(app: FastifyInstance) {
         tag: productLines.tag,
         testModel: productLines.testModel,
         weeklyWindowResetAt: productLines.weeklyWindowResetAt,
+        monthlyWindowResetAt: productLines.monthlyWindowResetAt,
         fiveHourCreditLimit: productLines.fiveHourCreditLimit,
         weeklyCreditLimit: productLines.weeklyCreditLimit,
+        monthlyCreditLimit: productLines.monthlyCreditLimit,
         providerCode: providers.code,
         providerName: providers.name,
         defaultBaseUrl: providers.defaultBaseUrl,
@@ -452,6 +454,11 @@ export async function adminProviderRoutes(app: FastifyInstance) {
         const weeklyWindowResetChanged = nextWeeklyWindowResetAt !== undefined &&
           (nextWeeklyWindowResetAt?.getTime() ?? null) !==
             (existing.weeklyWindowResetAt?.getTime() ?? null);
+        const nextMonthlyWindowResetAt = body.data.monthlyWindowResetAt === undefined
+          ? undefined
+          : body.data.monthlyWindowResetAt === null
+            ? null
+            : new Date(body.data.monthlyWindowResetAt);
         const [row] = await tx
           .update(productLines)
           .set({
@@ -464,6 +471,9 @@ export async function adminProviderRoutes(app: FastifyInstance) {
             ...(body.data.testModel !== undefined ? { testModel: body.data.testModel } : {}),
             ...(nextWeeklyWindowResetAt !== undefined
               ? { weeklyWindowResetAt: nextWeeklyWindowResetAt }
+              : {}),
+            ...(nextMonthlyWindowResetAt !== undefined
+              ? { monthlyWindowResetAt: nextMonthlyWindowResetAt }
               : {}),
             // 积分上限只在套餐上设置，对套餐下每把 Key 立即生效；同样只影响额度判断，
             // 不参与 configVersion、不触发凭证健康重置。
@@ -479,6 +489,13 @@ export async function adminProviderRoutes(app: FastifyInstance) {
                 weeklyCreditLimit: body.data.weeklyCreditLimit === null
                   ? null
                   : String(body.data.weeklyCreditLimit),
+              }
+              : {}),
+            ...(body.data.monthlyCreditLimit !== undefined
+              ? {
+                monthlyCreditLimit: body.data.monthlyCreditLimit === null
+                  ? null
+                  : String(body.data.monthlyCreditLimit),
               }
               : {}),
             ...(updatingProtocolSurface
@@ -542,6 +559,12 @@ export async function adminProviderRoutes(app: FastifyInstance) {
               ...(body.data.weeklyCreditLimit !== undefined
                 ? { weeklyCreditLimit: existing.weeklyCreditLimit }
                 : {}),
+              ...(body.data.monthlyCreditLimit !== undefined
+                ? { monthlyCreditLimit: existing.monthlyCreditLimit }
+                : {}),
+              ...(nextMonthlyWindowResetAt !== undefined
+                ? { monthlyWindowResetAt: existing.monthlyWindowResetAt }
+                : {}),
               ...(updatingProtocolSurface
                 ? {
                   supportedProtocols: protocolPlan.currentProtocols,
@@ -564,6 +587,12 @@ export async function adminProviderRoutes(app: FastifyInstance) {
                 : {}),
               ...(body.data.weeklyCreditLimit !== undefined
                 ? { weeklyCreditLimit: row.weeklyCreditLimit }
+                : {}),
+              ...(body.data.monthlyCreditLimit !== undefined
+                ? { monthlyCreditLimit: row.monthlyCreditLimit }
+                : {}),
+              ...(nextMonthlyWindowResetAt !== undefined
+                ? { monthlyWindowResetAt: row.monthlyWindowResetAt }
                 : {}),
               ...(updatingProtocolSurface
                 ? {

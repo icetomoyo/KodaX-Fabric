@@ -10,7 +10,7 @@ import { RELAY_PROTOCOLS, type RelayProtocol } from "./relay/protocol.js";
 import { configurableSupportedProtocolsSchema } from "./upstream-channel-update.js";
 import type { ProductLineProtocolConfigs } from "./upstream-protocol-config.js";
 
-export const CHANNEL_CREATE_PROVIDERS = ["glm", "deepseek", "haizhi"] as const;
+export const CHANNEL_CREATE_PROVIDERS = ["glm", "deepseek", "huoshan", "haizhi"] as const;
 export const CHANNEL_CREATE_VARIANTS = ["domestic", "international"] as const;
 export const CHANNEL_TAG_MAX_LENGTH = 32;
 
@@ -36,6 +36,10 @@ export function allocateInternationalProductLineCode(): string {
 
 export function allocateDeepseekProductLineCode(): string {
   return `ds_${randomBytes(8).toString("hex")}`;
+}
+
+export function allocateHuoshanProductLineCode(): string {
+  return `hs_${randomBytes(8).toString("hex")}`;
 }
 
 export type UpstreamChannelCreatePlan =
@@ -142,6 +146,33 @@ export function planUpstreamChannelCreate(input: unknown): UpstreamChannelCreate
     };
   }
 
+  if (body.provider === "huoshan") {
+    const template = getProviderTemplate("huoshan");
+    const line = template?.baseUrls[0];
+    if (!template || !line) return { kind: "provider_unsupported" };
+    const resolution = resolveTemplateProtocolConfigs(template, line.productLineCode, protocols);
+    if (!resolution.ok) {
+      return {
+        kind: "protocol_unsupported",
+        unsupportedProtocols: resolution.unsupportedProtocols,
+      };
+    }
+    return {
+      kind: "accepted",
+      name,
+      tag,
+      seatCount,
+      status,
+      protocols,
+      protocolConfigs: resolution.configs,
+      productType: body.productType === "api" ? "api" : "coding_plan",
+      providerCode: template.code,
+      providerName: template.name,
+      testModel,
+      allocateCode: allocateHuoshanProductLineCode,
+    };
+  }
+
   if (body.provider !== "glm") return { kind: "provider_unsupported" };
   if (body.variant !== "domestic" && body.variant !== "international") {
     return { kind: "provider_unsupported" };
@@ -193,7 +224,7 @@ export function channelCreateError(kind: Exclude<UpstreamChannelCreatePlan["kind
     case "test_model_invalid":
       return { status: 400, message: "测试模型最多 128 个字符" };
     case "provider_unsupported":
-      return { status: 400, message: "目前只支持智谱、DeepSeek 或海致集团" };
+      return { status: 400, message: "目前只支持智谱、DeepSeek、火山方舟或海致集团" };
     case "custom_configs_required":
       return { status: 400, message: "请填写上游地址" };
     case "protocol_unsupported":

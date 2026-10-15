@@ -395,7 +395,7 @@ type ProviderBaseUrl = {
   protocolConfigs?: RelayProtocolConfigs;
 };
 
-type ProviderTemplateCode = "glm" | "deepseek";
+type ProviderTemplateCode = "glm" | "deepseek" | "huoshan";
 
 type ConfiguredProductLine = {
   id: number;
@@ -530,7 +530,7 @@ const detailCredentialId = ref<number | null>(null);
 const createFormProtocolConfigs = ref<RelayProtocolConfigs>({});
 
 const createForm = reactive({
-  provider: "glm" as "glm" | "deepseek" | "haizhi",
+  provider: "glm" as "glm" | "deepseek" | "huoshan" | "haizhi",
   variant: "domestic" as "domestic" | "international",
   name: "",
   tag: "",
@@ -985,8 +985,8 @@ function defaultCustomProtocolConfigs(): RelayProtocolConfigs {
 }
 
 /** 各供应商新建渠道时的协议默认值：glm 官方线路三种全开，其余先只开 openai_chat。 */
-function defaultProtocolsForProvider(provider: "glm" | "deepseek" | "haizhi"): RelayProtocol[] {
-  return provider === "glm"
+function defaultProtocolsForProvider(provider: "glm" | "deepseek" | "huoshan" | "haizhi"): RelayProtocol[] {
+  return provider === "glm" || provider === "huoshan"
     ? ["anthropic_messages", "openai_chat", "openai_responses"]
     : ["openai_chat"];
 }

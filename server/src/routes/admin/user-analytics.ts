@@ -11,7 +11,7 @@ import {
 } from "../../db/schema/index.js";
 import {
   computeRequestCredits,
-  defaultCreditRateFor,
+  creditRateFor,
   isPeakHour,
 } from "../../lib/relay/credit-cost.js";
 import {
@@ -252,6 +252,7 @@ export async function loadSelectedUser(employeeId: number, day: string) {
         completionTokens: requestAudits.completionTokens,
         cacheReadTokens: requestAudits.cacheReadTokens,
         clientModel: requestAudits.clientModel,
+        providerCode: requestAudits.providerCode,
         startedAt: requestAudits.startedAt,
         requestCredits: requestAudits.requestCredits,
         createdAt: requestAudits.createdAt,
@@ -328,7 +329,7 @@ export async function loadSelectedUser(employeeId: number, day: string) {
           completionTokens: row.completionTokens ?? 0,
           cacheReadTokens: row.cacheReadTokens ?? 0,
         },
-        defaultCreditRateFor(row.clientModel),
+        creditRateFor(row.clientModel, row.providerCode),
         startedAt,
         row.createdAt,
       );

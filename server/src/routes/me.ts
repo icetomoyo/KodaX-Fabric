@@ -38,8 +38,9 @@ import {
   RELAY_PROTOCOLS,
   type RelayProtocol,
 } from "../lib/relay/protocol.js";
-import { catalogModelTags, groupDiscoveredModelsByChannel } from "../lib/discovered-models.js";
+import { catalogModelKind, groupDiscoveredModelsByChannel } from "../lib/discovered-models.js";
 import { catalogModelsForProvider } from "../lib/relay/client-model.js";
+import { creditRateFor } from "../lib/relay/credit-cost.js";
 import {
   isEmployeeSubmittedCredentialMeta,
   issueEmployeeSubmitTestProof,
@@ -156,6 +157,14 @@ async function loadOwnedSeat(employeeId: number, seatId: number) {
   return seat ?? null;
 }
 
+function catalogModelEntry(canonicalId: string, upstreamModel: string, providerCode: string) {
+  return {
+    model: canonicalId,
+    kind: catalogModelKind(upstreamModel, providerCode),
+    creditRate: creditRateFor(canonicalId, providerCode),
+  };
+}
+
 /** 「模型列表」页的渠道+模型目录，/api/me/models 与 /api/me/log-models 共用。 */
 async function meModelChannels(employeeId: number) {
   const accessible = await getEmployeeUpstreamChannels(employeeId);
@@ -191,20 +200,20 @@ async function meModelChannels(employeeId: number) {
   return accessible.map((channel) => {
     const catalog = catalogModelsForProvider(channel.providerCode);
     const models = catalog.length > 0
-      ? catalog.map((item) => ({
-          model: item.canonicalId,
-          alias: item.alias,
-          tags: catalogModelTags(item.upstreamModel),
-        }))
+      ? catalog.map((item) => catalogModelEntry(
+          item.canonicalId,
+          item.upstreamModel,
+          channel.providerCode,
+        ))
       : [...new Set(
           channel.memberProductLineIds.flatMap((id) => groupedById.get(id)?.models ?? []),
         )]
           .sort((left, right) => left.localeCompare(right))
-          .map((model) => ({
-            model: `${channel.providerCode}/${model}`,
-            alias: model,
-            tags: catalogModelTags(model),
-          }));
+          .map((model) => catalogModelEntry(
+            `${channel.providerCode}/${model}`,
+            model,
+            channel.providerCode,
+          ));
     return {
       id: channel.productLineId,
       name: channel.productLineName,
@@ -224,9 +233,8 @@ async function meLogModelVariants(employeeId: number, model: string): Promise<st
   const variants = new Set<string>([model]);
   for (const channel of await meModelChannels(employeeId)) {
     for (const item of channel.models) {
-      const entry = typeof item === "string" ? { model: item, alias: null } : item;
-      if (entry.model === model && entry.alias) variants.add(entry.alias);
-      if (entry.alias === model) variants.add(entry.model);
+      const entry = typeof item === "string" ? { model: item } : item;
+      if (entry.model === model) variants.add(entry.model);
     }
   }
   return [...variants];
@@ -1593,13 +1601,11 @@ export async function meRoutes(app: FastifyInstance) {
   // 模型筛选项：与「模型列表」页(/api/me/models)同源，列表里有多少就显示多少
   app.get("/api/me/log-models", async (req) => {
     const channels = await meModelChannels(meId(req));
-    const byModel = new Map<string, { model: string; alias: string | null; variants: string[] }>();
+    const byModel = new Map<string, { model: string; variants: string[] }>();
     for (const channel of channels) {
       for (const item of channel.models) {
         const model = typeof item === "string" ? item : item.model;
-        const alias = typeof item === "string" ? null : (item.alias ?? null);
-        const entry = byModel.get(model) ?? { model, alias, variants: [model] };
-        if (alias && !entry.variants.includes(alias)) entry.variants.push(alias);
+        const entry = byModel.get(model) ?? { model, variants: [model] };
         byModel.set(model, entry);
       }
     }

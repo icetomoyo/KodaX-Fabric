@@ -80,6 +80,39 @@ test("DeepSeek create plan uses official API endpoints and is always api", () =>
   assert.match(plan.allocateCode(), /^ds_[0-9a-f]{16}$/);
 });
 
+test("Huoshan Agent Plan create plan copies official Ark plan endpoints", () => {
+  const plan = planUpstreamChannelCreate({
+    name: "Agent-Medium",
+    tag: "",
+    seatCount: 20,
+    status: "active",
+    supportedProtocols: ["anthropic_messages", "openai_chat", "openai_responses"],
+    provider: "huoshan",
+  });
+  assert.equal(plan.kind, "accepted");
+  if (plan.kind !== "accepted") return;
+  assert.equal(plan.providerCode, "huoshan");
+  assert.equal(plan.providerName, "火山方舟");
+  assert.equal(plan.productType, "coding_plan");
+  assert.equal(plan.protocolConfigs.openai_chat?.baseUrl, "https://ark.cn-beijing.volces.com/api/plan/v3");
+  assert.equal(plan.protocolConfigs.anthropic_messages?.baseUrl, "https://ark.cn-beijing.volces.com/api/plan");
+  assert.equal(plan.protocolConfigs.openai_responses?.baseUrl, "https://ark.cn-beijing.volces.com/api/plan/v3");
+  assert.match(plan.allocateCode(), /^hs_[0-9a-f]{16}$/);
+
+  const apiPlan = planUpstreamChannelCreate({
+    name: "后付费",
+    tag: "",
+    seatCount: 0,
+    status: "active",
+    supportedProtocols: ["openai_chat"],
+    provider: "huoshan",
+    productType: "api",
+  });
+  assert.equal(apiPlan.kind, "accepted");
+  if (apiPlan.kind !== "accepted") return;
+  assert.equal(apiPlan.productType, "api");
+});
+
 test("haizhi self-hosted create plan requires an upstream URL and has no GLM line", () => {
   const missing = planUpstreamChannelCreate({
     ...domesticConfigs,

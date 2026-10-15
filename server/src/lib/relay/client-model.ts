@@ -1,3 +1,5 @@
+import { HUOSHAN_ALLOWED_MODELS } from "./credit-cost.js";
+
 export const MODEL_PREFIXES = ["glm", "deepseek", "huoshan", "haizhi"] as const;
 export type ModelPrefix = (typeof MODEL_PREFIXES)[number];
 
@@ -31,6 +33,13 @@ export const CLIENT_MODEL_CATALOG: readonly CatalogClientModel[] = [
     canonicalId: "deepseek/deepseek-flash",
     alias: "deepseek-flash",
   },
+  ...HUOSHAN_ALLOWED_MODELS.map((upstreamModel) => ({
+    prefix: "huoshan" as const,
+    providerCode: "huoshan",
+    upstreamModel,
+    canonicalId: `huoshan/${upstreamModel}`,
+    alias: `huoshan/${upstreamModel}`,
+  })),
 ];
 
 export type ParsedClientModel =

@@ -335,6 +335,13 @@ export const productLines = pgTable(
      */
     fiveHourCreditLimit: numeric("five_hour_credit_limit", { precision: 14, scale: 4 }),
     weeklyCreditLimit: numeric("weekly_credit_limit", { precision: 14, scale: 4 }),
+    /** 每月积分上限，null 表示不限（火山方舟 Agent Plan 有月额度）。 */
+    monthlyCreditLimit: numeric("monthly_credit_limit", { precision: 14, scale: 4 }),
+    /**
+     * 月额度重置时刻（订阅月的任意一次重置点，按自然月滚动，北京时间）。
+     * 为空时按北京时间每月 1 日 0 点重置。
+     */
+    monthlyWindowResetAt: timestamp("monthly_window_reset_at", { withTimezone: true }),
     relayPoolKey: varchar("relay_pool_key", { length: 64 }).notNull().default(""),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),

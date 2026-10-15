@@ -101,10 +101,12 @@ export type BoundCredential = {
   baseUrl: string;
   fiveHourCreditLimit: number | null;
   weeklyCreditLimit: number | null;
+  monthlyCreditLimit: number | null;
   fiveHourWindowAnchor: Date | null;
   fiveHourWindowBaseCredits: number;
   /** The weekly reset instant the Key follows: its own, else its package's. */
   weeklyWindowResetAt: Date | null;
+  monthlyWindowResetAt: Date | null;
   meta: unknown;
 };
 
@@ -162,10 +164,12 @@ type CredentialSnapshotRow = {
   /** 套餐上的积分上限；渠道 Key 自己不设。 */
   fiveHourCreditLimit: string | null;
   weeklyCreditLimit: string | null;
+  monthlyCreditLimit: string | null;
   fiveHourWindowAnchor: Date | null;
   fiveHourWindowBaseCredits: string;
   weeklyWindowResetAt: Date | null;
   lineWeeklyWindowResetAt: Date | null;
+  lineMonthlyWindowResetAt: Date | null;
   meta: unknown;
 };
 
@@ -247,10 +251,12 @@ const credentialSnapshotSelect = {
   protocolConfigs: productLines.protocolConfigs,
   fiveHourCreditLimit: productLines.fiveHourCreditLimit,
   weeklyCreditLimit: productLines.weeklyCreditLimit,
+  monthlyCreditLimit: productLines.monthlyCreditLimit,
   fiveHourWindowAnchor: upstreamCredentials.fiveHourWindowAnchor,
   fiveHourWindowBaseCredits: upstreamCredentials.fiveHourWindowBaseCredits,
   weeklyWindowResetAt: upstreamCredentials.weeklyWindowResetAt,
   lineWeeklyWindowResetAt: productLines.weeklyWindowResetAt,
+  lineMonthlyWindowResetAt: productLines.monthlyWindowResetAt,
   meta: upstreamCredentials.meta,
 };
 
@@ -1081,9 +1087,11 @@ export function toBoundCredential(
     baseUrl: upstreamConfig.baseUrl,
     fiveHourCreditLimit: limits.fiveHourLimit,
     weeklyCreditLimit: limits.weeklyLimit,
+    monthlyCreditLimit: limits.monthlyLimit ?? null,
     fiveHourWindowAnchor: snapshot.fiveHourWindowAnchor,
     fiveHourWindowBaseCredits: Number(snapshot.fiveHourWindowBaseCredits) || 0,
     weeklyWindowResetAt: effectiveWeeklyResetAt(snapshot),
+    monthlyWindowResetAt: snapshot.lineMonthlyWindowResetAt,
     meta: snapshot.meta,
   };
 }

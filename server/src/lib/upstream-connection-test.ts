@@ -97,6 +97,7 @@ export function resolveUpstreamTestModel(
   if (discovered) return discovered;
   if (providerCode === "glm") return GLM_TEXT_CATALOG_MODEL;
   if (providerCode === "deepseek") return "deepseek-chat";
+  if (providerCode === "huoshan") return "doubao-seed-2.0-mini";
   throw new Error("无法确定测试模型");
 }
 

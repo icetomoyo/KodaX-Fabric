@@ -329,6 +329,7 @@ type SkipReason =
   | "foreign"
   | "in_use"
   | "weekly_line"
+  | "monthly_line"
   | "five_hour_line"
   | "busy";
 
@@ -405,6 +406,7 @@ type Overview = {
 const SKIP_LABELS: Array<[SkipReason, string]> = [
   ["in_use", "有人在用"],
   ["weekly_line", "周用量越线"],
+  ["monthly_line", "月用量越线"],
   ["five_hour_line", "5 小时越线"],
   ["busy", "并发已满"],
   ["cooling", "冷却中"],

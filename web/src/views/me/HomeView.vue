@@ -349,6 +349,7 @@ const providerNames: Record<string, string> = {
   glm: "智谱/GLM",
   kimi: "月之暗面/Kimi",
   deepseek: "深度求索/DeepSeek",
+  huoshan: "火山方舟/Agent Plan",
   minimax: "MiniMax",
 };
 

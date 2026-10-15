@@ -661,10 +661,17 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
 
     const now = new Date();
     const lineWeeklyWindowResetAt = located.productLine.weeklyWindowResetAt;
+    const lineMonthlyWindowResetAt = located.productLine.monthlyWindowResetAt;
+    const monthlyCreditLimit = located.productLine.monthlyCreditLimit;
     const summaryAnchorsById = new Map<number, CredentialWindowAnchors>(
       credentialRows.map((row) => [
         row.id,
-        credentialWindowAnchors({ ...row, lineWeeklyWindowResetAt }),
+        credentialWindowAnchors({
+          ...row,
+          lineWeeklyWindowResetAt,
+          monthlyCreditLimit,
+          lineMonthlyWindowResetAt,
+        }),
       ]),
     );
     const [usageById, bindingById] = await Promise.all([
@@ -737,8 +744,10 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
             supportedProtocols: row.supportedProtocols,
             fiveHourCreditLimit: limits.fiveHourLimit,
             weeklyCreditLimit: limits.weeklyLimit,
+            monthlyCreditLimit: limits.monthlyLimit ?? null,
             fiveHourCredits: usage.fiveHourCredits,
             weeklyCredits: usage.weeklyCredits,
+            monthlyCredits: usage.monthlyCredits ?? 0,
             nextFiveHourResetAt: nextFiveHourResetAt(row.fiveHourWindowAnchor, now),
             nextWeeklyResetAt: nextWeeklyResetAt(
               effectiveWeeklyResetAt({ ...row, lineWeeklyWindowResetAt }),
@@ -784,10 +793,12 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
         meta: upstreamCredentials.meta,
         fiveHourCreditLimit: productLines.fiveHourCreditLimit,
         weeklyCreditLimit: productLines.weeklyCreditLimit,
+        monthlyCreditLimit: productLines.monthlyCreditLimit,
         fiveHourWindowAnchor: upstreamCredentials.fiveHourWindowAnchor,
         fiveHourWindowBaseCredits: upstreamCredentials.fiveHourWindowBaseCredits,
         weeklyWindowResetAt: upstreamCredentials.weeklyWindowResetAt,
         lineWeeklyWindowResetAt: productLines.weeklyWindowResetAt,
+        lineMonthlyWindowResetAt: productLines.monthlyWindowResetAt,
         lastFailureKind: upstreamCredentials.lastFailureKind,
         lastVendorCode: upstreamCredentials.lastVendorCode,
         createdAt: upstreamCredentials.createdAt,
@@ -899,8 +910,10 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
           recentErrorCount: recentById.get(row.id)?.recentErrorCount ?? 0,
           fiveHourCreditLimit: limits.fiveHourLimit,
           weeklyCreditLimit: limits.weeklyLimit,
+          monthlyCreditLimit: limits.monthlyLimit ?? null,
           fiveHourCredits: usage.fiveHourCredits,
           weeklyCredits: usage.weeklyCredits,
+          monthlyCredits: usage.monthlyCredits ?? 0,
           // 5h：窗口进行中 → 锚点+5h；已过期/未锚定 → null（满血，下次调用起算）。
           nextFiveHourResetAt: nextFiveHourResetAt(row.fiveHourWindowAnchor, now),
           // 周窗口：Key 自己学到的时刻优先，其次是套餐上录入的时间，滚到下一期；

@@ -18,6 +18,7 @@ import {
   fiveHourBaseCreditsNowSql,
   fiveHourResetAt,
   getCredentialQuotaUsage,
+  monthlyWindowBounds,
   nextWeeklyResetAt,
   type CredentialWindowAnchors,
 } from "./credential-quota.js";
@@ -421,8 +422,16 @@ function usageCapResetAt(
     return activeFiveHourWindow(windows?.fiveHourAnchor ?? null, now)?.end
       ?? fiveHourResetAt(now);
   }
-  // monthly has no dedicated Hub window; reuse the 7-day boundary as a
-  // conservative bound. Live monthly replies so far always include resetAt.
+  // A package with a monthly limit knows its month boundary; otherwise
+  // monthly reuses the 7-day boundary as a conservative bound.
+  if (cap.kind === "monthly" && windows?.trackMonthly) {
+    return new Date(
+      Math.min(
+        monthlyWindowBounds(windows.monthlyResetAt ?? null, now).end.getTime(),
+        now.getTime() + MAX_USAGE_CAP_COOLDOWN_MS,
+      ),
+    );
+  }
   if (cap.kind === "weekly" || cap.kind === "monthly") {
     return new Date(
       Math.min(
@@ -537,7 +546,9 @@ async function usageCapMetaPatch(
     ? (candidate.fiveHourCreditLimit ?? null)
     : cap.kind === "weekly"
       ? (candidate.weeklyCreditLimit ?? null)
-      : null;
+      : cap.kind === "monthly"
+        ? (candidate.monthlyCreditLimit ?? null)
+        : null;
   if (limit != null) {
     const usage = await getCredentialQuotaUsage(
       [candidate.credentialId],
@@ -547,7 +558,9 @@ async function usageCapMetaPatch(
     const local = usage.get(candidate.credentialId);
     const localCredits = cap.kind === "five_hour"
       ? (local?.fiveHourCredits ?? 0)
-      : (local?.weeklyCredits ?? 0);
+      : cap.kind === "monthly"
+        ? (local?.monthlyCredits ?? 0)
+        : (local?.weeklyCredits ?? 0);
     const observation = externalDrainObservation({
       kind: cap.kind,
       localCredits,
@@ -576,6 +589,8 @@ function credentialAnchorsFromCandidate(
         fiveHourAnchor: candidate.fiveHourWindowAnchor ?? null,
         fiveHourBaseCredits: candidate.fiveHourWindowBaseCredits ?? 0,
         weeklyResetAt: candidate.weeklyWindowResetAt ?? null,
+        trackMonthly: candidate.monthlyCreditLimit != null,
+        monthlyResetAt: candidate.monthlyWindowResetAt ?? null,
       },
     ],
   ]);
@@ -1010,6 +1025,8 @@ export async function sendRelayUpstream(
         const candidateAnchors: CredentialWindowAnchors = {
           fiveHourAnchor: input.candidate.fiveHourWindowAnchor ?? null,
           weeklyResetAt: input.candidate.weeklyWindowResetAt ?? null,
+          trackMonthly: input.candidate.monthlyCreditLimit != null,
+          monthlyResetAt: input.candidate.monthlyWindowResetAt ?? null,
         };
         const decision = resolveRelayRateLimitCooldown(
           bodyText,

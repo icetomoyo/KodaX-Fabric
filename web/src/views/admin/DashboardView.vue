@@ -231,6 +231,7 @@ const PROVIDER_META: Record<string, { label: string; color: string }> = {
   glm: { label: "智谱/GLM", color: "#2563eb" },
   kimi: { label: "月之暗面/Kimi", color: "#7c3aed" },
   deepseek: { label: "深度求索/DeepSeek", color: "#0891b2" },
+  huoshan: { label: "火山方舟/Agent Plan", color: "#f97316" },
   minimax: { label: "MiniMax", color: "#ea580c" },
 };
 

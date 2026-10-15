@@ -24,7 +24,10 @@
             <p class="muted" v-if="currentChannel?.providerCode === 'glm'">
               {{ catalog.length }} 个模型。积分按每 1 万 Token 计；文本归到 glm-5.3，多模态归到 glm-5.3-flash
             </p>
-            <p class="muted" v-else>{{ catalog.length }} 个模型。自定义渠道不按智谱积分计量</p>
+            <p class="muted" v-else-if="currentChannel?.providerCode === 'huoshan'">
+              {{ catalog.length }} 个模型。调用名形如 huoshan/glm-5.3；AFP 按每 1 万 Token 计，无闲时折扣。仅 Agent Plan 支持的文本与向量化模型。
+            </p>
+            <p class="muted" v-else>{{ catalog.length }} 个模型。积分按每 1 万 Token 计</p>
           </div>
         </div>
 
@@ -34,26 +37,18 @@
           type="info"
           :closable="false"
           show-icon
-          title="该渠道还没有发现模型"
+          title="该渠道还没有录入模型"
         />
 
-        <el-table :data="pagedCatalog" stripe empty-text="该渠道暂无已发现模型">
-          <el-table-column label="模型" min-width="280">
+        <el-table :data="pagedCatalog" stripe empty-text="该渠道暂无模型">
+          <el-table-column label="模型名称" min-width="280">
             <template #default="{ row }">
-              <div class="model-cell">
-                <span class="model-name" :title="row.model">{{ row.model }}</span>
-                <span v-if="row.tags?.length" class="capability-tags">
-                  <el-tag
-                    v-for="tag in row.tags"
-                    :key="tag"
-                    size="small"
-                    effect="plain"
-                    type="info"
-                  >
-                    {{ tag }}
-                  </el-tag>
-                </span>
-              </div>
+              <span class="model-name" :title="row.model">{{ row.model }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="模型类型" width="108">
+            <template #default="{ row }">
+              <span class="model-kind">{{ row.kind || "—" }}</span>
             </template>
           </el-table-column>
           <el-table-column label="积分消耗（每 1 万 Token）" align="center">
@@ -61,7 +56,7 @@
               <template #default="{ row }">
                 <span v-if="row.creditRate" class="credit-cell">
                   <b>{{ row.creditRate.promptCreditsPer10k }}</b>
-                  <small>非高峰 {{ formatOffPeak(row.creditRate.promptCreditsPer10k) }}</small>
+                  <small v-if="row.creditRate.offPeakDiscount !== false">非高峰 {{ formatOffPeak(row.creditRate.promptCreditsPer10k) }}</small>
                 </span>
                 <span v-else class="credit-empty">—</span>
               </template>
@@ -70,7 +65,7 @@
               <template #default="{ row }">
                 <span v-if="row.creditRate" class="credit-cell">
                   <b>{{ row.creditRate.cacheHitCreditsPer10k }}</b>
-                  <small>非高峰 {{ formatOffPeak(row.creditRate.cacheHitCreditsPer10k) }}</small>
+                  <small v-if="row.creditRate.offPeakDiscount !== false">非高峰 {{ formatOffPeak(row.creditRate.cacheHitCreditsPer10k) }}</small>
                 </span>
                 <span v-else class="credit-empty">—</span>
               </template>
@@ -79,16 +74,11 @@
               <template #default="{ row }">
                 <span v-if="row.creditRate" class="credit-cell">
                   <b>{{ row.creditRate.completionCreditsPer10k }}</b>
-                  <small>非高峰 {{ formatOffPeak(row.creditRate.completionCreditsPer10k) }}</small>
+                  <small v-if="row.creditRate.offPeakDiscount !== false">非高峰 {{ formatOffPeak(row.creditRate.completionCreditsPer10k) }}</small>
                 </span>
                 <span v-else class="credit-empty">—</span>
               </template>
             </el-table-column>
-          </el-table-column>
-          <el-table-column label="最近使用" min-width="180">
-            <template #default="{ row }">
-              {{ formatDateTime(row.lastUsedAt) }}
-            </template>
           </el-table-column>
         </el-table>
         <div class="pager">
@@ -109,21 +99,19 @@
 import { computed, onMounted, ref, watch } from "vue";
 import { ElMessage } from "element-plus";
 import { http } from "@/api/http";
-import { formatDateTime } from "@/lib/date-time";
 import { useTablePage } from "@/lib/table-page";
 
 type CreditRate = {
   promptCreditsPer10k: string;
   cacheHitCreditsPer10k: string;
   completionCreditsPer10k: string;
+  offPeakDiscount?: boolean;
 };
 
 type ChannelModel = {
   model: string;
-  lastUsedAt: string | null;
-  seenInLast30Days: boolean;
+  kind?: string;
   creditRate: CreditRate | null;
-  tags?: string[];
 };
 
 function formatOffPeak(value: string): string {
@@ -301,24 +289,16 @@ onMounted(load);
   margin-bottom: 12px;
 }
 
-.model-cell {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-
 .model-name {
+  color: #0f172a;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 13px;
   font-weight: 600;
 }
 
-.capability-tags {
-  display: inline-flex;
-  flex-wrap: wrap;
-  gap: 4px;
+.model-kind {
+  color: #334155;
+  font-size: 13px;
 }
 
 .credit-cell {

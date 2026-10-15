@@ -9,6 +9,8 @@ export interface ModelCreditRate {
   promptCreditsPer10k: string;
   cacheHitCreditsPer10k: string;
   completionCreditsPer10k: string;
+  /** False when the vendor bills the same at all hours (Volcano Ark). Absent means the Zhipu peak rule applies. */
+  offPeakDiscount?: boolean;
 }
 
 export type CreditRateSource = "custom" | "default";
@@ -36,6 +38,81 @@ const GLM_DEFAULT_CREDIT_RATE: ModelCreditRate = {
   cacheHitCreditsPer10k: "1.7",
   completionCreditsPer10k: "24",
 };
+
+/** Volcano Ark provider code; also the model prefix (`huoshan/<model>`). */
+const HUOSHAN_PROVIDER_CODE = "huoshan";
+
+/**
+ * Volcano Ark Agent Plan (enterprise) AFP coefficients per 10k tokens.
+ * Official table: https://www.volcengine.com/docs/82379/2516283
+ * AFP = (input tokens × input + output tokens × output) / 10,000. Cached input
+ * has no separate rate and there is no off-peak discount.
+ * Hub only exposes the Agent Plan models below. glm-latest,
+ * kimi-k2.8-preview, kimi-k3, image / video / audio / Harness stay omitted.
+ * Text rows use the 输入不含音频 coefficient.
+ */
+const HUOSHAN_TEXT_RATES: ReadonlyArray<readonly [model: string, input: string, output: string]> = [
+  ["doubao-seed-2.0-mini", "0.25", "0.25"],
+  ["deepseek-v4-flash", "0.5", "0.5"],
+  ["doubao-seed-2.1-lite", "0.5", "0.5"],
+  ["glm-5.3-flash", "0.5", "0.5"],
+  ["doubao-seed-evolving", "2.5", "2.5"],
+  ["minimax-m3", "2.5", "2.5"],
+  ["doubao-seed-2.1-pro", "2.5", "2.5"],
+  ["deepseek-v4.1-flash", "2.5", "2.5"],
+  ["kimi-k2.7-code", "4.5", "4.5"],
+  ["glm-5.3", "4.5", "4.5"],
+  ["deepseek-v4-pro", "5.5", "5.5"],
+];
+
+const HUOSHAN_EMBEDDING_RATES: ReadonlyArray<readonly [model: string, input: string, output: string]> = [
+  ["doubao-embedding-vision", "0.5", "0.5"],
+];
+
+const HUOSHAN_CREDIT_RATES = new Map<string, ModelCreditRate>(
+  [...HUOSHAN_TEXT_RATES, ...HUOSHAN_EMBEDDING_RATES].map(([model, input, output]) => [
+    model,
+    {
+      promptCreditsPer10k: input,
+      cacheHitCreditsPer10k: input,
+      completionCreditsPer10k: output,
+      offPeakDiscount: false,
+    },
+  ]),
+);
+
+/** Volcano Ark text-generation models the relay accepts. */
+export const HUOSHAN_TEXT_MODELS: readonly string[] = HUOSHAN_TEXT_RATES.map(([model]) => model);
+
+/** Volcano Ark embedding models the relay accepts. */
+export const HUOSHAN_EMBEDDING_MODELS: readonly string[] = HUOSHAN_EMBEDDING_RATES.map(([model]) => model);
+
+/** Agent Plan text + embedding; glm-latest / kimi-k2.8 / kimi-k3 stay blocked. */
+export const HUOSHAN_ALLOWED_MODELS: readonly string[] = [
+  ...HUOSHAN_TEXT_MODELS,
+  ...HUOSHAN_EMBEDDING_MODELS,
+];
+
+function stripModelPrefix(model: string): { prefix: string | null; name: string } {
+  const normalized = model.trim().toLowerCase();
+  const slash = normalized.lastIndexOf("/");
+  return slash === -1
+    ? { prefix: null, name: normalized }
+    : { prefix: normalized.slice(0, normalized.indexOf("/")), name: normalized.slice(slash + 1) };
+}
+
+/**
+ * Built-in credit coefficients. The same model name bills differently per
+ * vendor (glm-5.3 is 4.5 on Volcano Ark, 6.9 on Zhipu), so the provider that
+ * served the request decides; a `huoshan/` prefix on the model counts too.
+ */
+export function creditRateFor(clientModel: string, providerCode?: string | null): ModelCreditRate | null {
+  const { prefix, name } = stripModelPrefix(clientModel);
+  if (providerCode === HUOSHAN_PROVIDER_CODE || prefix === HUOSHAN_PROVIDER_CODE) {
+    return HUOSHAN_CREDIT_RATES.get(name) ?? null;
+  }
+  return defaultCreditRateFor(clientModel);
+}
 
 /**
  * Built-in Zhipu coding-plan credit coefficients.
@@ -255,8 +332,9 @@ export function computeRequestCreditBreakdown(
   const completion = toSafeTokens(usage.completionTokens);
   const cacheRead = Math.min(prompt, toSafeTokens(usage.cacheReadTokens));
   const uncached = prompt - cacheRead;
-  const inputMultiplier = peakMultiplierAt(startedAt);
-  const outputMultiplier = intervalPeakMultiplier(startedAt, endedAt);
+  const flatRate = rate.offPeakDiscount === false;
+  const inputMultiplier = flatRate ? 1 : peakMultiplierAt(startedAt);
+  const outputMultiplier = flatRate ? 1 : intervalPeakMultiplier(startedAt, endedAt);
   const inputRaw = uncached * toRate(rate.promptCreditsPer10k) / 10_000 * inputMultiplier;
   const cacheRaw = cacheRead * toRate(rate.cacheHitCreditsPer10k) / 10_000 * inputMultiplier;
   const outputRaw = completion * toRate(rate.completionCreditsPer10k) / 10_000 * outputMultiplier;
@@ -282,7 +360,10 @@ export function computeRequestCredits(
   return computeRequestCreditBreakdown(usage, rate, startedAt, endedAt).total;
 }
 
-/** Metering lookup uses the built-in coding-plan table. */
-export async function getModelCreditRate(clientModel: string): Promise<ModelCreditRate | null> {
-  return defaultCreditRateFor(clientModel);
+/** Metering lookup uses the built-in coding-plan tables. */
+export async function getModelCreditRate(
+  clientModel: string,
+  providerCode?: string | null,
+): Promise<ModelCreditRate | null> {
+  return creditRateFor(clientModel, providerCode);
 }

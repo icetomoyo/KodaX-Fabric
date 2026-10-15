@@ -24,7 +24,7 @@ import {
 } from "../../lib/quota-time.js";
 import {
   computeRequestCreditBreakdown,
-  defaultCreditRateFor,
+  creditRateFor,
   requestCreditDiscount,
   tokenBreakdownFromUsage,
 } from "../../lib/relay/credit-cost.js";
@@ -58,11 +58,12 @@ function consumptionFor(row: {
   totalTokens: number | null;
   cacheReadTokens: number | null;
   clientModel: string;
+  providerCode: string | null;
   createdAt: Date;
   startedAt: Date | null;
   requestCredits: string | null;
 }) {
-  const rate = defaultCreditRateFor(row.clientModel);
+  const rate = creditRateFor(row.clientModel, row.providerCode);
   // 与结算同口径：按 [startedAt, createdAt] 区间加权；旧行没有 started_at 时回退为按结束时刻估算
   const startedAt = row.startedAt ?? row.createdAt;
   const creditBreakdown = computeRequestCreditBreakdown(
@@ -78,7 +79,9 @@ function consumptionFor(row: {
   const settledCredits = row.requestCredits != null ? Number(row.requestCredits) : null;
   return {
     tokenBreakdown: tokenBreakdownFromUsage(row),
-    creditDiscount: rate ? requestCreditDiscount(startedAt, row.createdAt) : null,
+    creditDiscount: rate && rate.offPeakDiscount !== false
+      ? requestCreditDiscount(startedAt, row.createdAt)
+      : null,
     creditBreakdown:
       settledCredits != null && Number.isFinite(settledCredits)
         ? { ...creditBreakdown, total: settledCredits }

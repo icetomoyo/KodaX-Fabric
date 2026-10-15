@@ -119,7 +119,9 @@ export async function writeRelayAudit(input: RelayAuditInput): Promise<void> {
   const quotaDay = quotaDayAt(now, env.QUOTA_TIMEZONE);
   const credentialId = input.candidate?.credentialId;
   const shouldRecordHourly = input.status === "success" && totalTokens > 0 && credentialId != null;
-  const creditRate = shouldRecordHourly ? await getModelCreditRate(input.clientModel) : null;
+  const creditRate = shouldRecordHourly
+    ? await getModelCreditRate(input.clientModel, input.candidate?.providerCode)
+    : null;
   const requestCredits = shouldRecordHourly
     ? computeRequestCredits(
       {

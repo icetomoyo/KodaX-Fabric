@@ -5,7 +5,7 @@ import {
   type ProtocolUpstreamConfig,
 } from "./upstream-protocol-config.js";
 
-export type ProviderTemplateCode = "glm" | "deepseek";
+export type ProviderTemplateCode = "glm" | "deepseek" | "huoshan";
 
 /** Catch-all provider for administrator-defined upstreams that are not official templates. */
 export const CUSTOM_PROVIDER_CODE = "custom" as const;
@@ -144,6 +144,41 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
     ],
     defaultLabel: "深度求索/DeepSeek",
     color: "#0891b2",
+  },
+  {
+    code: "huoshan",
+    name: "火山方舟",
+    modelName: "Agent Plan",
+    shortName: "方舟",
+    description: "火山方舟 Agent Plan，支持 Anthropic Message、OpenAI Chat Completion 与 OpenAI Response。请使用套餐专属 Base URL，避免打到后付费 /api/v3。",
+    authStyle: "bearer",
+    defaultProtocols: ["anthropic_messages", "openai_chat", "openai_responses"],
+    baseUrls: [
+      {
+        label: "Agent Plan",
+        url: "https://ark.cn-beijing.volces.com/api/plan/v3",
+        host: "ark.cn-beijing.volces.com",
+        productLineCode: "api",
+        productLineName: "Agent Plan",
+        productType: "coding_plan",
+        protocolConfigs: {
+          anthropic_messages: {
+            baseUrl: "https://ark.cn-beijing.volces.com/api/plan",
+            authStyle: "x-api-key",
+          },
+          openai_chat: {
+            baseUrl: "https://ark.cn-beijing.volces.com/api/plan/v3",
+            authStyle: "bearer",
+          },
+          openai_responses: {
+            baseUrl: "https://ark.cn-beijing.volces.com/api/plan/v3",
+            authStyle: "bearer",
+          },
+        },
+      },
+    ],
+    defaultLabel: "火山方舟/Agent Plan",
+    color: "#f97316",
   },
 ];
 

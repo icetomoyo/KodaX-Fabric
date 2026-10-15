@@ -202,7 +202,7 @@
     </section>
 
     <el-dialog v-model="showCreateChannel" title="新增渠道" width="560px" destroy-on-close>
-      <p class="muted dialog-lead">先选厂商。智谱可挂套餐和充值，DeepSeek 只有充值，自建网关填自己的上游地址。</p>
+      <p class="muted dialog-lead">先选厂商。智谱和火山方舟可挂套餐和充值，DeepSeek 只有充值，自建网关填自己的上游地址。</p>
       <div class="provider-grid">
         <button
           v-for="option in channelOptions"
@@ -366,9 +366,16 @@
               placeholder="每把 KEY 的每周上限，例如 155000"
               clearable
             />
+          </el-form-item>
+          <el-form-item label="每月积分">
+            <el-input
+              v-model="editPackageForm.monthlyCreditLimit"
+              placeholder="每把 KEY 的每月上限，例如 1000000"
+              clearable
+            />
             <p class="form-hint">
               该模式下每把 KEY 的积分上限，留空表示不限。保存后对该模式下所有 KEY 立即生效，
-              渠道 KEY 不单独设置。
+              渠道 KEY 不单独设置。火山方舟 Agent Plan 支持的模型按 AFP 计入这三档；图片、视频、语音、Harness 不开放。
             </p>
           </el-form-item>
         </template>
@@ -385,6 +392,16 @@
             填控制台显示的任意一次周限额重置时间，之后按每 7 天滚动。同一模式下的 KEY 共用；
             保存后各 KEY 之前从上游学到的时间会清空，统一跟随这里。
           </p>
+        </el-form-item>
+        <el-form-item v-if="editPackageForm.productType === 'coding_plan'" label="月重置时间">
+          <el-date-picker
+            v-model="editPackageForm.monthlyWindowResetAt"
+            type="datetime"
+            format="YYYY-MM-DD HH:mm"
+            placeholder="订阅月重置时间，留空为北京时间每月 1 日 0 点"
+            style="width: 100%"
+            clearable
+          />
         </el-form-item>
         <el-form-item label="状态">
           <el-radio-group v-model="editPackageForm.status">
@@ -539,7 +556,7 @@ import { formatDateTime } from "@/lib/date-time";
 import { useTablePage } from "@/lib/table-page";
 
 type ProductType = "api" | "coding_plan";
-type ChannelTemplateCode = "glm" | "deepseek" | "haizhi";
+type ChannelTemplateCode = "glm" | "deepseek" | "huoshan" | "haizhi";
 type CustomProtocol = "openai_chat" | "anthropic_messages" | "openai_responses";
 
 const CHANNEL_OPTIONS: Array<{
@@ -562,6 +579,13 @@ const CHANNEL_OPTIONS: Array<{
     name: "深度求索",
     hint: "仅充值",
     defaultBaseUrl: "https://api.deepseek.com",
+  },
+  {
+    code: "huoshan",
+    title: "火山方舟 / Agent Plan",
+    name: "火山方舟",
+    hint: "支持套餐和充值",
+    defaultBaseUrl: "https://ark.cn-beijing.volces.com/api/plan/v3",
   },
   {
     code: "haizhi",
@@ -621,6 +645,8 @@ type PackageRow = {
   /** 该模式下每把 KEY 的积分上限，null 表示不限。 */
   fiveHourCreditLimit: number | null;
   weeklyCreditLimit: number | null;
+  monthlyCreditLimit: number | null;
+  monthlyWindowResetAt: string | null;
 };
 
 type SeatRow = {
@@ -708,8 +734,10 @@ const editPackageForm = reactive({
   seatCount: 0,
   status: "active" as "active" | "disabled",
   weeklyWindowResetAt: null as Date | null,
+  monthlyWindowResetAt: null as Date | null,
   fiveHourCreditLimit: "",
   weeklyCreditLimit: "",
+  monthlyCreditLimit: "",
 });
 const editPackageOriginal = reactive({
   name: "",
@@ -717,8 +745,10 @@ const editPackageOriginal = reactive({
   seatCount: 0,
   status: "active" as "active" | "disabled",
   weeklyWindowResetAt: null as string | null,
+  monthlyWindowResetAt: null as string | null,
   fiveHourCreditLimit: null as number | null,
   weeklyCreditLimit: null as number | null,
+  monthlyCreditLimit: null as number | null,
 });
 const editSeatForm = reactive({
   id: 0,
@@ -753,7 +783,7 @@ const channelOptions = computed(() =>
 );
 
 const selectedChannelAllowsCodingPlan = computed(
-  () => selectedChannel.value?.code === "glm",
+  () => selectedChannel.value?.code === "glm" || selectedChannel.value?.code === "huoshan",
 );
 
 const packagesOfChannel = computed(() =>
@@ -959,8 +989,10 @@ async function refresh() {
         status: string;
         configVersion?: number;
         weeklyWindowResetAt?: string | null;
+        monthlyWindowResetAt?: string | null;
         fiveHourCreditLimit?: string | number | null;
         weeklyCreditLimit?: string | number | null;
+        monthlyCreditLimit?: string | number | null;
       }) => ({
           id: row.id,
           providerId: row.providerId,
@@ -973,8 +1005,10 @@ async function refresh() {
           status: row.status,
           configVersion: Number(row.configVersion) || 1,
           weeklyWindowResetAt: row.weeklyWindowResetAt ?? null,
+          monthlyWindowResetAt: row.monthlyWindowResetAt ?? null,
           fiveHourCreditLimit: storedCreditLimit(row.fiveHourCreditLimit),
           weeklyCreditLimit: storedCreditLimit(row.weeklyCreditLimit),
+          monthlyCreditLimit: storedCreditLimit(row.monthlyCreditLimit),
         }))
       : [];
     seats.value = Array.isArray(seatRes.data.data)
@@ -1108,8 +1142,8 @@ function openCreatePackage() {
     return;
   }
   const code = selectedChannel.value.code;
-  if (code !== "glm" && code !== "deepseek" && code !== "haizhi") {
-    ElMessage.warning("目前只支持给智谱、DeepSeek 或自建网关新增模式");
+  if (code !== "glm" && code !== "deepseek" && code !== "huoshan" && code !== "haizhi") {
+    ElMessage.warning("目前只支持给智谱、DeepSeek、火山方舟或自建网关新增模式");
     return;
   }
   packageForm.productType = selectedChannelAllowsCodingPlan.value ? "coding_plan" : "api";
@@ -1134,8 +1168,8 @@ async function savePackage() {
     return;
   }
   const provider = selectedChannel.value?.code;
-  if (provider !== "glm" && provider !== "deepseek" && provider !== "haizhi") {
-    ElMessage.warning("目前只支持给智谱、DeepSeek 或自建网关新增模式");
+  if (provider !== "glm" && provider !== "deepseek" && provider !== "huoshan" && provider !== "haizhi") {
+    ElMessage.warning("目前只支持给智谱、DeepSeek、火山方舟或自建网关新增模式");
     return;
   }
   const customBaseUrl = provider === "haizhi" ? normalizeUpstreamBaseUrl(packageForm.baseUrl) : null;
@@ -1214,10 +1248,16 @@ function openEditPackage(pkg: PackageRow) {
     ? new Date(pkg.weeklyWindowResetAt)
     : null;
   editPackageOriginal.weeklyWindowResetAt = pkg.weeklyWindowResetAt;
+  editPackageForm.monthlyWindowResetAt = pkg.monthlyWindowResetAt
+    ? new Date(pkg.monthlyWindowResetAt)
+    : null;
+  editPackageOriginal.monthlyWindowResetAt = pkg.monthlyWindowResetAt;
   editPackageForm.fiveHourCreditLimit = pkg.fiveHourCreditLimit == null ? "" : String(pkg.fiveHourCreditLimit);
   editPackageForm.weeklyCreditLimit = pkg.weeklyCreditLimit == null ? "" : String(pkg.weeklyCreditLimit);
+  editPackageForm.monthlyCreditLimit = pkg.monthlyCreditLimit == null ? "" : String(pkg.monthlyCreditLimit);
   editPackageOriginal.fiveHourCreditLimit = pkg.fiveHourCreditLimit;
   editPackageOriginal.weeklyCreditLimit = pkg.weeklyCreditLimit;
+  editPackageOriginal.monthlyCreditLimit = pkg.monthlyCreditLimit;
   editPackageOriginal.name = pkg.name;
   editPackageOriginal.tag = pkg.tag;
   editPackageOriginal.seatCount = pkg.seatCount;
@@ -1261,7 +1301,8 @@ async function saveEditPackage() {
     }
     const fiveHourLimit = parseCreditLimitInput(editPackageForm.fiveHourCreditLimit);
     const weeklyLimit = parseCreditLimitInput(editPackageForm.weeklyCreditLimit);
-    if (fiveHourLimit === undefined || weeklyLimit === undefined) {
+    const monthlyLimit = parseCreditLimitInput(editPackageForm.monthlyCreditLimit);
+    if (fiveHourLimit === undefined || weeklyLimit === undefined || monthlyLimit === undefined) {
       ElMessage.warning("积分上限须为非负数，留空表示不限");
       return;
     }
@@ -1270,6 +1311,16 @@ async function saveEditPackage() {
     }
     if (weeklyLimit !== editPackageOriginal.weeklyCreditLimit) {
       payload.weeklyCreditLimit = weeklyLimit;
+    }
+    if (monthlyLimit !== editPackageOriginal.monthlyCreditLimit) {
+      payload.monthlyCreditLimit = monthlyLimit;
+    }
+    const nextMonthlyReset = editPackageForm.monthlyWindowResetAt;
+    const previousMonthlyMs = editPackageOriginal.monthlyWindowResetAt
+      ? new Date(editPackageOriginal.monthlyWindowResetAt).getTime()
+      : null;
+    if ((nextMonthlyReset?.getTime() ?? null) !== previousMonthlyMs) {
+      payload.monthlyWindowResetAt = nextMonthlyReset ? nextMonthlyReset.toISOString() : null;
     }
   }
   if (Object.keys(payload).length === 1) {

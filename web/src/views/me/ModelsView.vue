@@ -21,8 +21,30 @@
         <div class="models-head">
           <div>
             <h3 class="models-title">{{ currentChannel ? channelLabel(currentChannel) : "模型" }}</h3>
-            <p class="muted">{{ catalog.length }} 个模型</p>
+            <p class="muted" v-if="currentChannel?.providerCode === 'glm'">
+              {{ catalogHintCount }} 个模型。积分按每 1 万 Token 计；文本归到 glm-5.3，多模态归到 glm-5.3-flash
+            </p>
+            <p class="muted" v-else-if="currentChannel?.providerCode === 'huoshan'">
+              {{ catalogHintCount }} 个模型。调用名形如 huoshan/glm-5.3；AFP 按每 1 万 Token 计，无闲时折扣。仅 Agent Plan 支持的文本与向量化模型。
+            </p>
+            <p class="muted" v-else>{{ catalogHintCount }} 个模型。积分按每 1 万 Token 计</p>
           </div>
+          <el-form :inline="true" class="filters" @submit.prevent>
+            <el-form-item>
+              <el-input
+                v-model="nameQuery"
+                class="name-filter"
+                clearable
+                placeholder="模型名称"
+                style="width: 220px"
+              />
+            </el-form-item>
+            <el-form-item>
+              <el-select v-model="kindFilter" class="kind-filter" clearable placeholder="模型类型" style="width: 140px">
+                <el-option v-for="kind in kindOptions" :key="kind" :label="kind" :value="kind" />
+              </el-select>
+            </el-form-item>
+          </el-form>
         </div>
 
         <el-alert
@@ -34,42 +56,48 @@
           title="该渠道还没有从上游带回模型"
         />
 
-        <el-table :data="pagedCatalog" stripe empty-text="该渠道暂无可用模型">
+        <el-table :data="pagedCatalog" stripe :empty-text="emptyText">
           <el-table-column label="模型名称" min-width="280">
             <template #default="{ row }">
               <div class="model-cell">
-                <button type="button" class="model-id" :title="row.model" @click="copyModel(row.model)">
-                  {{ row.model }}
-                </button>
+                <span class="model-name" :title="row.model">{{ row.model }}</span>
                 <el-button class="copy-btn" link type="primary" @click="copyModel(row.model)">复制</el-button>
               </div>
             </template>
           </el-table-column>
-          <el-table-column label="别称" min-width="200">
+          <el-table-column label="模型类型" width="108">
             <template #default="{ row }">
-              <div v-if="row.alias" class="model-cell">
-                <button type="button" class="model-id" :title="row.alias" @click="copyModel(row.alias)">
-                  {{ row.alias }}
-                </button>
-                <el-button class="copy-btn" link type="primary" @click="copyModel(row.alias)">复制</el-button>
-              </div>
-              <span v-else class="muted">—</span>
+              <span class="model-kind">{{ row.kind || "—" }}</span>
             </template>
           </el-table-column>
-          <el-table-column label="能力" min-width="200">
-            <template #default="{ row }">
-              <span v-if="row.tags?.length" class="capability-tags">
-                <el-tag
-                  v-for="tag in row.tags"
-                  :key="tag"
-                  size="small"
-                  effect="plain"
-                  :class="tagClass(tag)"
-                >
-                  {{ tag }}
-                </el-tag>
-              </span>
-            </template>
+          <el-table-column label="积分消耗（每 1 万 Token）" align="center">
+            <el-table-column label="Input" min-width="110" align="right">
+              <template #default="{ row }">
+                <span v-if="row.creditRate" class="credit-cell">
+                  <b>{{ row.creditRate.promptCreditsPer10k }}</b>
+                  <small v-if="row.creditRate.offPeakDiscount !== false">非高峰 {{ formatOffPeak(row.creditRate.promptCreditsPer10k) }}</small>
+                </span>
+                <span v-else class="credit-empty">—</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="Cached Input" min-width="130" align="right">
+              <template #default="{ row }">
+                <span v-if="row.creditRate" class="credit-cell">
+                  <b>{{ row.creditRate.cacheHitCreditsPer10k }}</b>
+                  <small v-if="row.creditRate.offPeakDiscount !== false">非高峰 {{ formatOffPeak(row.creditRate.cacheHitCreditsPer10k) }}</small>
+                </span>
+                <span v-else class="credit-empty">—</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="Output" min-width="110" align="right">
+              <template #default="{ row }">
+                <span v-if="row.creditRate" class="credit-cell">
+                  <b>{{ row.creditRate.completionCreditsPer10k }}</b>
+                  <small v-if="row.creditRate.offPeakDiscount !== false">非高峰 {{ formatOffPeak(row.creditRate.completionCreditsPer10k) }}</small>
+                </span>
+                <span v-else class="credit-empty">—</span>
+              </template>
+            </el-table-column>
           </el-table-column>
         </el-table>
         <div class="pager">
@@ -93,10 +121,17 @@ import { http } from "@/api/http";
 import { copyText } from "@/lib/clipboard";
 import { useTablePage } from "@/lib/table-page";
 
+type CreditRate = {
+  promptCreditsPer10k: string;
+  cacheHitCreditsPer10k: string;
+  completionCreditsPer10k: string;
+  offPeakDiscount?: boolean;
+};
+
 type CatalogModel = {
   model: string;
-  alias?: string;
-  tags?: string[];
+  kind?: string;
+  creditRate: CreditRate | null;
 };
 
 type CatalogChannel = {
@@ -108,6 +143,13 @@ type CatalogChannel = {
   models: Array<string | CatalogModel>;
 };
 
+function formatOffPeak(value: string): string {
+  const half = Number(value) / 2;
+  if (!Number.isFinite(half)) return "—";
+  if (Number.isInteger(half)) return String(half);
+  return half.toFixed(2).replace(/0+$/, "").replace(/\.$/, "");
+}
+
 const loading = ref(false);
 const channels = ref<CatalogChannel[]>([]);
 const selectedChannelId = ref<number | null>(null);
@@ -118,24 +160,51 @@ const currentChannel = computed(() =>
 
 const catalog = computed(() =>
   (currentChannel.value?.models ?? []).map((item) =>
-    typeof item === "string" ? { model: item } : item,
+    typeof item === "string" ? { model: item, creditRate: null } : item,
   ),
 );
+
+const KIND_ORDER = ["纯文本", "多模态", "向量", "排序"] as const;
+const nameQuery = ref("");
+const kindFilter = ref("");
+
+const kindOptions = computed(() => {
+  const present = new Set(
+    catalog.value.flatMap((row) => (row.kind ? [row.kind] : [])),
+  );
+  return KIND_ORDER.filter((kind) => present.has(kind));
+});
+
+const filteredCatalog = computed(() => {
+  const query = nameQuery.value.trim().toLowerCase();
+  const kind = kindFilter.value;
+  return catalog.value.filter((row) => {
+    if (query && !row.model.toLowerCase().includes(query)) return false;
+    if (kind && row.kind !== kind) return false;
+    return true;
+  });
+});
+
+const catalogHintCount = computed(() => filteredCatalog.value.length);
+const emptyText = computed(() => {
+  if (!currentChannel.value) return "该渠道暂无可用模型";
+  if (catalog.value.length && !filteredCatalog.value.length) return "没有符合筛选条件的模型";
+  return "该渠道暂无可用模型";
+});
+
 const {
   page: catalogPage,
   paged: pagedCatalog,
   total: catalogTotal,
   pageSize: catalogPageSize,
   resetPage: resetCatalogPage,
-} = useTablePage(catalog);
-watch(selectedChannelId, resetCatalogPage);
-
-function tagClass(tag: string): string {
-  if (tag === "图片") return "tag-image";
-  if (tag === "视频") return "tag-video";
-  if (tag === "文件") return "tag-file";
-  return "tag-text";
-}
+} = useTablePage(filteredCatalog);
+watch([selectedChannelId, nameQuery, kindFilter], resetCatalogPage);
+watch(kindOptions, (options) => {
+  if (kindFilter.value && !options.includes(kindFilter.value as (typeof KIND_ORDER)[number])) {
+    kindFilter.value = "";
+  }
+});
 
 function channelLabel(channel: Pick<CatalogChannel, "providerName" | "name">): string {
   const company = channel.providerName.trim();
@@ -272,7 +341,25 @@ onMounted(load);
 }
 
 .models-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
   margin-bottom: 8px;
+}
+
+.filters {
+  flex-shrink: 0;
+  margin: 0;
+}
+
+.filters :deep(.el-form-item) {
+  margin-bottom: 0;
+  margin-right: 8px;
+}
+
+.filters :deep(.el-form-item:last-child) {
+  margin-right: 0;
 }
 
 .models-title {
@@ -298,85 +385,69 @@ onMounted(load);
   align-items: center;
   gap: 8px;
   min-width: 0;
+  max-width: 100%;
 }
 
-.model-id {
-  flex: 0 0 18ch;
-  width: 18ch;
+.model-name {
+  flex: 0 1 auto;
+  min-width: 0;
   overflow: hidden;
-  margin: 0;
-  padding: 0;
-  border: 0;
-  background: transparent;
   color: #0f172a;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 13px;
   font-weight: 600;
-  text-align: left;
   text-overflow: ellipsis;
   white-space: nowrap;
-  cursor: pointer;
 }
 
 .copy-btn {
   flex-shrink: 0;
 }
 
-.capability-tags {
-  display: inline-flex;
-  flex-wrap: nowrap;
-  gap: 4px;
-  margin-left: 100px;
+.model-kind {
+  color: #334155;
+  font-size: 13px;
 }
 
-.capability-tags :deep(.el-tag.tag-text) {
-  --el-tag-bg-color: #eff6ff;
-  --el-tag-border-color: #bfdbfe;
-  --el-tag-text-color: #1d4ed8;
-}
-
-.capability-tags :deep(.el-tag.tag-image) {
-  --el-tag-bg-color: #ecfdf5;
-  --el-tag-border-color: #a7f3d0;
-  --el-tag-text-color: #047857;
-}
-
-.capability-tags :deep(.el-tag.tag-video) {
-  --el-tag-bg-color: #fff7ed;
-  --el-tag-border-color: #fed7aa;
-  --el-tag-text-color: #c2410c;
-}
-
-.capability-tags :deep(.el-tag.tag-file) {
-  --el-tag-bg-color: #f5f3ff;
-  --el-tag-border-color: #ddd6fe;
-  --el-tag-text-color: #6d28d9;
-}
-
-.model-id:hover {
-  color: #2563eb;
-}
-
-.mono-num {
-  color: #0f172a;
+.credit-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
   font-variant-numeric: tabular-nums;
-  font-weight: 600;
 }
 
-@media (max-width: 720px) {
+.credit-cell b {
+  color: #0f172a;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.credit-cell small {
+  color: #94a3b8;
+  font-size: 11px;
+  font-weight: 400;
+}
+
+.credit-empty {
+  color: #94a3b8;
+}
+
+@media (max-width: 900px) {
   .split {
     flex-direction: column;
+    min-height: 0;
   }
 
   .channel-pane {
     width: auto;
   }
 
-  .model-cell {
-    flex-wrap: wrap;
+  .models-head {
+    flex-direction: column;
   }
 
-  .capability-tags {
+  .model-cell {
     flex-wrap: wrap;
   }
 }
