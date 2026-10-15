@@ -138,10 +138,11 @@ import { sliceTablePage } from "@/lib/table-page";
 
 const PAGE_SIZES = [10, 20, 50];
 
+/** Token 套餐只给百分比，used / limit / remaining 为 null。 */
 type QuotaWindow = {
-  used: number;
-  limit: number;
-  remaining: number;
+  used: number | null;
+  limit: number | null;
+  remaining: number | null;
   percentage: number;
   resetAt: string | null;
 };
@@ -335,7 +336,8 @@ function onSortChange(payload: { prop: string; order: "ascending" | "descending"
 
 function fetchQuota(refresh: boolean) {
   return refresh
-    ? http.post<OfficialQuotaResponse>("/api/admin/credentials/official-quota/refresh", null, {
+    // 带 JSON 体：axios 对 null 体会发 x-www-form-urlencoded，Fastify 直接回 415。
+    ? http.post<OfficialQuotaResponse>("/api/admin/credentials/official-quota/refresh", {}, {
         timeout: 180_000,
       })
     : http.get<OfficialQuotaResponse>("/api/admin/credentials/official-quota");

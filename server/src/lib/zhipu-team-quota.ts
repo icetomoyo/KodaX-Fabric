@@ -5,10 +5,14 @@ const ZHIPU_TEAM_QUOTA_URL =
 const FIVE_HOUR_UNIT = 3;
 const WEEKLY_UNIT = 6;
 
+/**
+ * 积分套餐（CREDIT_LIMIT）给出已用量 / 上限 / 剩余；Token 套餐（TOKENS_LIMIT）只给百分比，
+ * 这三项为 null。窗口还没开始时没有 nextResetTime。
+ */
 export type QuotaWindow = {
-  used: number;
-  limit: number;
-  remaining: number;
+  used: number | null;
+  limit: number | null;
+  remaining: number | null;
   percentage: number;
   resetAt: string | null;
 };
@@ -16,6 +20,9 @@ export type QuotaWindow = {
 export type ZhipuTeamQuotaResult =
   | { ok: true; level: string; fiveHour: QuotaWindow | null; weekly: QuotaWindow | null }
   | { ok: false; message: string };
+
+/** TIME_LIMIT 是联网搜索等工具的调用次数，不是额度窗口。 */
+const QUOTA_LIMIT_TYPES = ["CREDIT_LIMIT", "TOKENS_LIMIT"] as const;
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -34,18 +41,13 @@ function asTrimmedString(value: unknown): string | null {
 }
 
 function parseQuotaWindow(row: Record<string, unknown>): QuotaWindow | null {
-  const used = asFiniteNumber(row.currentValue);
-  const limit = asFiniteNumber(row.usage);
-  const remaining = asFiniteNumber(row.remaining);
   const percentage = asFiniteNumber(row.percentage);
-  if (used == null || limit == null || remaining == null || percentage == null) {
-    return null;
-  }
+  if (percentage == null) return null;
   const resetMs = asFiniteNumber(row.nextResetTime);
   return {
-    used,
-    limit,
-    remaining,
+    used: asFiniteNumber(row.currentValue),
+    limit: asFiniteNumber(row.usage),
+    remaining: asFiniteNumber(row.remaining),
     percentage,
     resetAt: resetMs == null ? null : new Date(resetMs).toISOString(),
   };
@@ -58,13 +60,15 @@ function parseWindows(limits: unknown): {
   let fiveHour: QuotaWindow | null = null;
   let weekly: QuotaWindow | null = null;
   if (!Array.isArray(limits)) return { fiveHour, weekly };
-  for (const item of limits) {
-    const row = asRecord(item);
-    if (!row || row.type !== "CREDIT_LIMIT") continue;
-    const unit = asFiniteNumber(row.unit);
-    const window = parseQuotaWindow(row);
-    if (unit === FIVE_HOUR_UNIT && fiveHour == null) fiveHour = window;
-    else if (unit === WEEKLY_UNIT && weekly == null) weekly = window;
+  const rows = limits.map(asRecord).filter((row): row is Record<string, unknown> => row != null);
+  // 两种都有时以 CREDIT_LIMIT 为准，它带具体积分。
+  for (const type of QUOTA_LIMIT_TYPES) {
+    for (const row of rows) {
+      if (row.type !== type) continue;
+      const unit = asFiniteNumber(row.unit);
+      if (unit === FIVE_HOUR_UNIT && fiveHour == null) fiveHour = parseQuotaWindow(row);
+      else if (unit === WEEKLY_UNIT && weekly == null) weekly = parseQuotaWindow(row);
+    }
   }
   return { fiveHour, weekly };
 }

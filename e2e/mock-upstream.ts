@@ -8,6 +8,9 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
  * 调度用例通过 /__control/* 编排它：按渠道 Key（Bearer 明文）指定返回
  * 成功 / 挂起 / 指定状态码与报文，并读回每把 Key 被谁打过、同时在途多少。
  * 没有编排过的 Key 一律按成功处理，其他用例不受影响。
+ *
+ * 智谱官方额度查询（GET /api/monitor/usage/quota/limit）按 Authorization 里的 Key 明文
+ * 回 /__control/quota 编排好的报文；没编排的 Key 回 404。
  */
 const PORT = 3311;
 const USAGE = { prompt_tokens: 12, completion_tokens: 34, total_tokens: 46 };
@@ -26,6 +29,7 @@ type Behavior =
 type HitLog = { seq: number; secret: string; model: string; marker: string | null; at: string };
 
 const behaviors = new Map<string, Behavior>();
+const quotaBodies = new Map<string, unknown>();
 const heldBySecret = new Map<string, Array<() => void>>();
 const inFlight = new Map<string, number>();
 const maxInFlight = new Map<string, number>();
@@ -38,6 +42,7 @@ function resetControl(): void {
     for (const release of waiters) release();
   }
   behaviors.clear();
+  quotaBodies.clear();
   heldBySecret.clear();
   inFlight.clear();
   maxInFlight.clear();
@@ -138,6 +143,16 @@ async function handleControl(req: IncomingMessage, res: ServerResponse, url: str
     sendJson(res, 200, { ok: true });
     return;
   }
+  if (req.method === "POST" && url === "/__control/quota") {
+    const body = JSON.parse((await readRaw(req)) || "{}") as { secret?: string; body?: unknown };
+    if (!body.secret || body.body === undefined) {
+      sendJson(res, 400, { ok: false, message: "secret 和 body 必填" });
+      return;
+    }
+    quotaBodies.set(body.secret, body.body);
+    sendJson(res, 200, { ok: true });
+    return;
+  }
   if (req.method === "POST" && url === "/__control/release") {
     const body = JSON.parse((await readRaw(req)) || "{}") as { secret?: string };
     const secrets = body.secret ? [body.secret] : [...heldBySecret.keys()];
@@ -235,6 +250,12 @@ const server = createServer((req, res) => {
     }
     if (req.method === "GET" && (url === "/" || url === "/health")) {
       sendJson(res, 200, { ok: true, service: "e2e-mock-upstream" });
+      return;
+    }
+    if (req.method === "GET" && url.startsWith("/api/monitor/usage/quota/limit")) {
+      const quota = quotaBodies.get(headerValue(req, "authorization"));
+      if (quota === undefined) sendJson(res, 404, { success: false, msg: "mock: 未编排的 Key" });
+      else sendJson(res, 200, quota);
       return;
     }
     if (req.method === "GET" && url.endsWith("/models")) {
