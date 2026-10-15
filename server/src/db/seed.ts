@@ -4,6 +4,7 @@ import { db, sql } from "./client.js";
 import { employees, systemSettings } from "./schema/index.js";
 import { getDefaultEnterpriseId } from "../lib/enterprise.js";
 import { hashPassword } from "../lib/password.js";
+import { ensureRegisteredProviders } from "../lib/ensure-channel-providers.js";
 
 /** 仅种子管理员账号；供应商/凭证/路由等由管理员在后台录入，不做演示数据。 */
 async function seedAdmin() {
@@ -58,6 +59,7 @@ async function main() {
   await getDefaultEnterpriseId();
   await seedAdmin();
   await seedMinimalSystemConfig();
+  await ensureRegisteredProviders();
   await sql.end({ timeout: 5 });
   console.log("Seed complete (users + minimal system config only)");
 }

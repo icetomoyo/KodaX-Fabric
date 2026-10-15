@@ -6,11 +6,11 @@ import { E2E_ORG } from "./org-fixture.ts";
  * 核心业务闭环 E2E：
  * 使用 seed 组织（海致集团 → E2E子企业甲 → E2E部门）→
  * 员工自行注册并加入部门（部门默认团队自动承载）→
- * 建 haizhi 自建渠道（配置测试模型）→ 员工测试+提交渠道 KEY → 员工创建 API Key →
+ * 建 GLM 国内套餐（配置测试模型，上游经 rewrite 打到 mock）→ 员工测试+提交渠道 KEY → 员工创建 API Key →
  * 通过 relay 调用 mock 上游 → 员工与管理员在页面上都能看到这次调用的 tokens 与积分。
  * 全程走真实 HTTP（经 vite 代理进真实 server），上游为本机 mock，可离线重复执行。
  */
-const CLIENT_MODEL = "e2e-glm";
+const CLIENT_MODEL = "glm-5.3";
 const UPSTREAM_MODEL = "e2e-upstream-model";
 const UPSTREAM_SECRET = "sk-e2e-mock-secret";
 const EMPLOYEE = { name: "E2E员工", phone: "13800000002", password: "E2eEmp@2026" };
@@ -98,18 +98,16 @@ test.describe.serial("核心闭环：渠道 → 席位 → 员工 Key → relay 
       employeeId: created[0].id,
     });
 
-    // 3. 渠道：haizhi 自建，上游指向本机 mock（3311），并配置测试模型——
-    //    自建渠道的「测试渠道 KEY」全靠这个模型名才能做连通性测试。
+    // 3. 渠道：GLM 国内套餐。官方地址由 rewrite-upstream-fetch 打到本机 mock（3311）。
     const channel = await postJson(request, "/api/admin/product-lines", admin, {
-      provider: "haizhi",
-      name: "E2E自建渠道",
+      provider: "glm",
+      variant: "domestic",
+      name: "E2E GLM 渠道",
       tag: "E2E",
       seatCount: 1,
       status: "active",
       supportedProtocols: ["openai_chat"],
-      protocolConfigs: {
-        openai_chat: { baseUrl: `${E2E.mockUpstreamBaseUrl}/v1`, authStyle: "bearer" },
-      },
+      productType: "coding_plan",
       testModel: UPSTREAM_MODEL,
     });
     expect(channel.testModel, "创建响应应带回测试模型").toBe(UPSTREAM_MODEL);
@@ -128,7 +126,7 @@ test.describe.serial("核心闭环：渠道 → 席位 → 员工 Key → relay 
     });
 
     // 6. 员工测试渠道 KEY → 拿 proof → 提交。
-    //    本用例验证 testModel 打通了自建渠道的连通性测试（此前此处必然 400）。
+    //    本用例验证 testModel 打通了连通性测试。
     const employee = await loginToken(request, EMPLOYEE.phone, EMPLOYEE.password);
     const testResult = await postJson(request, "/api/me/upstream-credentials/test", employee, {
       seatId: seat.id,

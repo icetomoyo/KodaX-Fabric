@@ -118,7 +118,7 @@ export type SchedPoolDef = {
 };
 
 /**
- * 每个场景独占一条渠道（= 一个调度池），互不影响。
+ * 每个场景一条智谱套餐。智谱是一个调度池，用例开跑前只启用自己那条套餐，互不影响。
  * 渠道 Key 按数组顺序入库，ID 递增；同分时调度取 ID 小的。
  *
  * 席位套餐的池子里每把 Key 都有席位主人。只有充值模式（管理员直接添加 Key）
@@ -261,7 +261,7 @@ export const SCHED_POOLS = {
 export type SchedPoolKey = keyof typeof SCHED_POOLS;
 
 /**
- * 界面用例用的智谱套餐：只在管理端「编辑模式」里改设置，不签发 API Key、不发起调用，
+ * 界面用例用的智谱套餐：只在管理端「编辑产品」里改设置，不签发 API Key、不发起调用，
  * 两把 Key 都是停用状态（智谱套餐的上游地址是写死的官方网关，绝不能真的打过去）。
  */
 export const SCHED_UI_PACKAGE = {
@@ -270,6 +270,14 @@ export const SCHED_UI_PACKAGE = {
   name: "调度E2E-GLM套餐",
   keys: [{ label: "uik1" }, { label: "uik2" }],
 } as const;
+
+/** 调度用例统一走智谱渠道，用它目录里的模型。 */
+export const SCHED_MODEL = "glm-5.3";
+
+/** 场景套餐的产品代码，前缀与智谱国内版生成的产品代码一致。 */
+export function schedLineCode(pool: SchedPoolKey): string {
+  return `cn_sched_${pool.toLowerCase()}`;
+}
 
 /** 渠道 Key 明文：mock 上游按 Bearer 认 Key，并在回复里回显。 */
 export function schedSecret(pool: SchedPoolKey, label: string): string {

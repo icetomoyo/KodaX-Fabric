@@ -73,7 +73,6 @@ import {
   resolveProtocolUpstreamConfig,
 } from "../lib/upstream-protocol-config.js";
 import { actingEmployeeId } from "../lib/act-as.js";
-import { isOpenPoolProvider } from "../lib/relay/open-pool.js";
 import {
   findActiveTidalGrant,
   isTidalWindowOpen,
@@ -971,10 +970,9 @@ export async function meRoutes(app: FastifyInstance) {
         const channels = await getEmployeeUpstreamChannels(meId(req), tx, {
           lockForCreate: true,
         });
-        // 潮汐KEY 没指定渠道时落在席位套餐的调度池上，不落到自建渠道。
+        // 潮汐KEY 没指定渠道时落在席位套餐的调度池上。
         channel = (body.data.tidal === true
-          ? channels.find((item) => item.productType === "coding_plan") ??
-            channels.find((item) => !isOpenPoolProvider(item.providerCode))
+          ? channels.find((item) => item.productType === "coding_plan") ?? channels[0]
           : channels[0]) ?? null;
       }
       if (!channel) {
@@ -989,10 +987,6 @@ export async function meRoutes(app: FastifyInstance) {
 
       const tidal = body.data.tidal === true;
       if (tidal) {
-        // 自建渠道没有席位和闲置额度可言，潮汐KEY 只建在席位套餐的调度池上。
-        if (isOpenPoolProvider(channel.providerCode)) {
-          return { outcome: "tidal_channel_unsupported" } as const;
-        }
         // 员工行锁已在上面拿到：同一个人并发建两把时，第二个请求在这里看得到第一把。
         const [existingTidal] = await tx
           .select({ id: employeeApiKeys.id })
@@ -1068,13 +1062,6 @@ export async function meRoutes(app: FastifyInstance) {
         success: false,
         code: "tidal_key_exists",
         message: "已有一把潮汐KEY，可在列表里重置",
-      });
-    }
-    if (result.outcome === "tidal_channel_unsupported") {
-      return reply.code(400).send({
-        success: false,
-        code: "tidal_channel_unsupported",
-        message: "所选渠道不支持潮汐KEY",
       });
     }
     if (result.outcome === "forbidden") {

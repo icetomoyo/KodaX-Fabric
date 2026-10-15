@@ -25,7 +25,6 @@ import {
   snapshotRelayLiveLoad,
   snapshotTidalInFlight,
 } from "../../lib/relay/credential-load.js";
-import { isOpenPoolProvider } from "../../lib/relay/open-pool.js";
 import { DEFAULT_RELAY_PROTOCOL } from "../../lib/relay/protocol.js";
 import { previewTidalPool } from "../../lib/relay/tidal-pool.js";
 import {
@@ -524,7 +523,6 @@ export async function adminTidalRoutes(app: FastifyInstance) {
         id: productLines.id,
         name: productLines.name,
         relayPoolKey: productLines.relayPoolKey,
-        providerCode: providers.code,
       })
       .from(productLines)
       .innerJoin(providers, eq(providers.id, productLines.providerId))
@@ -538,7 +536,6 @@ export async function adminTidalRoutes(app: FastifyInstance) {
     }> = [];
     const seen = new Set<string>();
     for (const line of lines) {
-      if (isOpenPoolProvider(line.providerCode)) continue;
       const pool = await loadRelayPool(line.id);
       if (!pool || seen.has(pool.key)) continue;
       seen.add(pool.key);

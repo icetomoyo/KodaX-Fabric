@@ -46,10 +46,11 @@ import {
   type UpstreamConnectionTestResult,
 } from "../../lib/upstream-connection-test.js";
 import {
-  getProviderTemplate,
-  PROVIDER_TEMPLATES,
-  resolveTemplateProtocolConfigs,
-} from "../../lib/provider-templates.js";
+  findChannelPlugin,
+  resolveChannelVariant,
+  resolveVariantProtocolConfigs,
+  variantProtocols,
+} from "../../channels/index.js";
 import {
   RELAY_PROTOCOLS,
   type RelayProtocol,
@@ -226,21 +227,18 @@ async function initializeEmptyTemplateChannelProtocolConfigs(
     return { kind: "unchanged", productLine: input.productLine };
   }
 
-  const template = getProviderTemplate(input.providerCode);
-  if (!template) {
+  const plugin = findChannelPlugin(input.providerCode);
+  if (!plugin) {
     return { kind: "unchanged", productLine: input.productLine };
   }
+  const variant = resolveChannelVariant(plugin, input.productLine.protocolConfigs);
   const targetProtocols = input.requestedProtocols
     ?? input.fallbackProtocols
-    ?? template.defaultProtocols;
+    ?? variantProtocols(variant);
   if (!targetProtocols.length) {
     return { kind: "unchanged", productLine: input.productLine };
   }
-  const resolution = resolveTemplateProtocolConfigs(
-    template,
-    input.productLine.code,
-    targetProtocols,
-  );
+  const resolution = resolveVariantProtocolConfigs(variant, targetProtocols);
   if (!resolution.ok) {
     return {
       kind: "protocol_unsupported",
@@ -371,6 +369,8 @@ async function testCredentialConnection(
     env.RELAY_QUOTA_COOLDOWN_SECONDS,
     now,
     credentialWindowAnchors(credential),
+    credential.providerCode,
+    result.httpStatus ?? undefined,
   );
   const shouldCool = !result.ok
     && (result.httpStatus === 429 || cooldown.quotaExhausted || cooldown.cap != null);
@@ -489,35 +489,6 @@ async function testCredentialConnection(
 export async function adminCredentialRoutes(app: FastifyInstance) {
   app.addHook("preHandler", requireSession);
   app.addHook("preHandler", requireRoles("admin"));
-
-  app.get("/api/admin/credential-templates", async () => {
-    const providerRows = await db.select().from(providers);
-    const lineRows = await db.select().from(productLines);
-
-    return {
-      success: true,
-      data: PROVIDER_TEMPLATES.map((template) => {
-        const provider = providerRows.find((item) => item.code === template.code);
-        const lines = provider
-          ? lineRows.filter((item) => item.providerId === provider.id)
-          : [];
-        return {
-          ...template,
-          configured: Boolean(provider),
-          providerId: provider?.id ?? null,
-          productLines: lines.map((line) => ({
-            id: line.id,
-            code: line.code,
-            name: line.name,
-            baseUrl: line.baseUrlOverride || provider?.defaultBaseUrl,
-            protocolConfigs: line.protocolConfigs,
-            configVersion: line.configVersion,
-            status: line.status,
-          })),
-        };
-      }),
-    };
-  });
 
   app.get("/api/admin/credential-submissions", async (req, reply) => {
     const query = z

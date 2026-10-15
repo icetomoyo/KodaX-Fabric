@@ -86,7 +86,7 @@
       <el-main
         :class="{
           'is-canvas': route.path === '/admin/key-bindings' || route.path === '/admin/keys-board',
-          'is-fill': route.path === '/admin/user-analytics',
+          'is-fill': route.path === '/admin/user-analytics' || route.path === '/admin/temp-channels',
         }"
       >
         <router-view />

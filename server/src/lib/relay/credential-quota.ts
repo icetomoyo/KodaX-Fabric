@@ -1,7 +1,7 @@
 import { and, gte, inArray, sql, type SQL } from "drizzle-orm";
 import { db } from "../../db/client.js";
 import { credentialUsageHourly } from "../../db/schema/index.js";
-import type { UpstreamUsageCapKind } from "../glm-error-codes.js";
+import type { UpstreamUsageCapKind } from "../upstream-error.js";
 
 const HOUR_MS = 3_600_000;
 const FIVE_HOUR_BUCKETS = 5;

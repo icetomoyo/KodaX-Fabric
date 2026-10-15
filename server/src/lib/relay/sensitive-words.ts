@@ -1,7 +1,6 @@
 import { eq, sql } from "drizzle-orm";
 import { db } from "../../db/client.js";
 import { sensitiveWordHits, systemSettings } from "../../db/schema/index.js";
-import { lookupGlmErrorCatalog } from "../glm-error-codes.js";
 import { redis } from "../../redis.js";
 import type { RelayProtocol } from "./protocol.js";
 
@@ -124,11 +123,10 @@ export function zhipuSensitiveContentError(): {
   code: string;
   message: string;
 } {
-  const entry = lookupGlmErrorCatalog(ZHIPU_SENSITIVE_CONTENT_CODE);
   return {
-    httpStatus: entry?.httpStatus ?? 400,
+    httpStatus: 400,
     code: ZHIPU_SENSITIVE_CONTENT_CODE,
-    message: entry?.message ?? ZHIPU_SENSITIVE_CONTENT_MESSAGE,
+    message: ZHIPU_SENSITIVE_CONTENT_MESSAGE,
   };
 }
 

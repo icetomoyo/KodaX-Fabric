@@ -10,11 +10,14 @@ import {
 } from "@playwright/test";
 import postgres from "postgres";
 import { E2E } from "./env.ts";
+import { isolateChannelPool } from "./pool-isolation.ts";
 import {
+  SCHED_MODEL,
   SCHED_PEOPLE,
   SCHED_POOLS,
   SCHED_UI_PACKAGE,
   schedApiKey,
+  schedLineCode,
   schedSecret,
   type SchedPersonKey,
   type SchedPoolKey,
@@ -25,8 +28,8 @@ import {
  * 释放、席位主人保护、上游 429 按业务码分类处理。
  *
  * 全程走真实 HTTP 进真实 server，上游是本机可编排的 mock（按 Bearer 认 Key、
- * 回显是哪把 Key 应答）。每个场景独占一条渠道（一个调度池）。夹具见
- * seed-scheduling.ts，全是刚注册的新账号：旧逻辑下新账号 7 天内独占一把 Key，
+ * 回显是哪把 Key 应答）。每个场景一条智谱套餐，开跑前只启用这一条，独占智谱的调度池。
+ * 夹具见 seed-scheduling.ts，全是刚注册的新账号：旧逻辑下新账号 7 天内独占一把 Key，
  * 这里它们必须能共享，顺带证明档位已不参与调度。
  *
  * 调度可能出错的方式（每条对应下面一个断言）：
@@ -64,14 +67,14 @@ import {
  * 27. 渠道 Key 还能单独设置上限，积分上限出现两处来源。
  * 28. 在套餐上改了上限后，没有立即对套餐下所有 Key 生效。
  * 29. 管理端显示的上限不是实际生效的上限。
- * 30. 「编辑模式」对话框里填的积分上限没有真正保存，或者保存后重新打开看不到。
+ * 30. 「编辑产品」对话框里填的积分上限没有真正保存，或者保存后重新打开看不到。
  * 31. 所有 Key 都限流、请求最终失败时，retry-after 不是真实的恢复时间（以前固定 5 分钟）。
  * 32. 试满尝试次数而池里还有别的 Key 时，retry-after 仍是 5 分钟，客户端白等。
  * 33. 套餐到期 / 失效（1309、1314、1315）的 Key 只是冷却，到点又被选中再失败一次，
  *     而不是停用并告警；或者这次请求没有换 Key 重发。
  */
 const ARTIFACT_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "artifacts");
-const MODEL = "e2e-upstream-model";
+const MODEL = SCHED_MODEL;
 
 type CallResult = {
   marker: string;
@@ -107,6 +110,14 @@ function lineId(pool: SchedPoolKey): number {
   const id = lineIds.get(pool);
   if (id == null) throw new Error(`夹具缺少渠道 ${pool}`);
   return id;
+}
+
+let restorePool: (() => Promise<void>) | null = null;
+
+/** 只启用这个场景的套餐、清掉智谱池里的绑定，用例结束后放回原样。 */
+async function usePool<P extends SchedPoolKey>(pool: P): Promise<P> {
+  restorePool = await isolateChannelPool(sql, "glm", [lineId(pool)]);
+  return pool;
 }
 
 function employeeId(person: SchedPersonKey): number {
@@ -375,10 +386,10 @@ test.describe.serial("渠道 Key 调度", () => {
     sql = postgres(E2E.databaseUrl, { max: 2 });
 
     const lines = await sql<Array<{ id: string; code: string }>>`
-      select id, code from product_lines where code like 'hz_sched_%'
+      select id, code from product_lines where code like 'cn_sched_%'
     `;
     for (const pool of Object.keys(SCHED_POOLS) as SchedPoolKey[]) {
-      const row = lines.find((line) => line.code === `hz_sched_${pool.toLowerCase()}`);
+      const row = lines.find((line) => line.code === schedLineCode(pool));
       if (row) lineIds.set(pool, Number(row.id));
     }
     const people = await sql<Array<{ id: string; phone: string }>>`
@@ -400,6 +411,11 @@ test.describe.serial("渠道 Key 调度", () => {
     await mockControl("reset", {});
   });
 
+  test.afterEach(async () => {
+    await restorePool?.();
+    restorePool = null;
+  });
+
   test.afterAll(async () => {
     mkdirSync(ARTIFACT_DIR, { recursive: true });
     writeFileSync(
@@ -412,7 +428,7 @@ test.describe.serial("渠道 Key 调度", () => {
   });
 
   test("亲和度：本人 > 同组 > 同部门 > 同一级部门 > 同企业", async () => {
-    const pool = "affinity";
+    const pool = await usePool("affinity");
     const ladder = ["self", "leaf", "sub0", "fst0", "ent0"];
 
     // 每拿到一把就把它停用，逼调度往下一级找。
@@ -468,7 +484,7 @@ test.describe.serial("渠道 Key 调度", () => {
   });
 
   test("每把 Key 最多 3 人；主人回来时让出最久没用的借用者", async ({ request }) => {
-    const pool = "capacity";
+    const pool = await usePool("capacity");
 
     for (const guest of ["guest1", "guest2", "guest3"] as const) {
       const result = await call(pool, guest);
@@ -537,7 +553,7 @@ test.describe.serial("渠道 Key 调度", () => {
   });
 
   test("每把 Key 最多 9 并发、单人 3 路：超额 429 且不解绑", async () => {
-    const pool = "burst";
+    const pool = await usePool("burst");
     await setBehavior(pool, "bsto", { type: "hold" });
     await setBehavior(pool, "bstf", { type: "hold" });
     const pending: Array<Promise<CallResult>> = [];
@@ -602,7 +618,7 @@ test.describe.serial("渠道 Key 调度", () => {
   });
 
   test("借用者和主人都用到上游真的限额；1308 冷却到重置时刻并换 Key 完成请求", async () => {
-    const pool = "quota";
+    const pool = await usePool("quota");
     const ownerKey = await credentialRow(pool, "qtao");
 
     const guestBefore = await call(pool, "guest1");
@@ -678,7 +694,7 @@ test.describe.serial("渠道 Key 调度", () => {
   });
 
   test("5 小时窗口：开头不满一小时的用量要计入，窗口开始前同一小时的旧用量不计入", async () => {
-    const pool = "window5h";
+    const pool = await usePool("window5h");
     await waitOutHourBoundary();
     const key = await credentialRow(pool, "w5ho");
     const thisHour = hourStartOf(new Date());
@@ -732,7 +748,7 @@ test.describe.serial("渠道 Key 调度", () => {
   });
 
   test("周窗口：默认跟随套餐的周重置时间，Key 自己从上游学到的时刻优先", async () => {
-    const pool = "weekly";
+    const pool = await usePool("weekly");
     const key = await credentialRow(pool, "wkyo");
     const token = await adminToken();
     const headers = { Authorization: `Bearer ${token}` };
@@ -766,6 +782,9 @@ test.describe.serial("渠道 Key 调度", () => {
     expect(byKeyPhase.get("wkyo")?.weeklyCredits, "按 Key 自己的周相位，96 积分在本周内").toBe(96);
     const affinity = await call(pool, "guest1");
     expect(affinity.key, "本地不因周用量让出，按亲和度仍用这把 Key").toBe("wkyo");
+    // 这次 glm-5.3 调用按真实系数计了积分，记在当前小时。
+    const callCredits = (await listCredentials()).get("wkyo")!.weeklyCredits - 96;
+    expect(callCredits, "调用应计入这把 Key 的账本").toBeGreaterThan(0);
 
     // 管理员在套餐上录入周重置时间：本周窗口 1 小时前才开始 → 那 96 积分属于上一周。
     const lineReset = new Date(Math.floor((Date.now() - HOUR_MS + WEEK_MS) / 1_000) * 1_000);
@@ -785,7 +804,8 @@ test.describe.serial("渠道 Key 调度", () => {
     expect(afterSave.weekly_window_reset_at, "套餐时间更新后，Key 上学到的旧时刻要清掉").toBeNull();
 
     const followsLine = await listCredentials();
-    expect(followsLine.get("wkyo")?.weeklyCredits, "那 96 积分不在套餐的本周窗口里").toBe(0);
+    expect(followsLine.get("wkyo")?.weeklyCredits, "那 96 积分不在套餐的本周窗口里，只剩刚才那次调用")
+      .toBeCloseTo(callCredits, 4);
     expect(followsLine.get("wkyo")?.weeklyResetEstimated).toBe(false);
     expect(new Date(followsLine.get("wkyf")!.nextWeeklyResetAt).getTime(), "没学到相位的 Key 跟随套餐").toBe(
       lineReset.getTime(),
@@ -823,7 +843,7 @@ test.describe.serial("渠道 Key 调度", () => {
   });
 
   test("积分上限只在套餐上设置，对套餐下所有 Key 立即生效", async () => {
-    const pool = "limits";
+    const pool = await usePool("limits");
     await waitOutHourBoundary();
     const key = await credentialRow(pool, "lmto");
     const headers = { Authorization: `Bearer ${await adminToken()}` };
@@ -905,7 +925,7 @@ test.describe.serial("渠道 Key 调度", () => {
     };
   });
 
-  test("在「编辑模式」对话框里统一设置积分上限", async ({ page }) => {
+  test("在「编辑产品」对话框里统一设置积分上限", async ({ page }) => {
     const headers = { Authorization: `Bearer ${await adminToken()}` };
     const [line] = await sql<Array<{ id: string }>>`
       select id from product_lines where code = ${SCHED_UI_PACKAGE.code}
@@ -946,7 +966,7 @@ test.describe.serial("渠道 Key 调度", () => {
 
     const openDialog = async () => {
       await packageCard.getByRole("button", { name: "编辑" }).click();
-      const dialog = page.locator(".el-dialog", { hasText: "编辑模式" });
+      const dialog = page.locator(".el-dialog", { hasText: "编辑产品" });
       await expect(dialog).toBeVisible();
       return dialog;
     };
@@ -959,10 +979,10 @@ test.describe.serial("渠道 Key 调度", () => {
     mkdirSync(ARTIFACT_DIR, { recursive: true });
     await dialog.screenshot({ path: resolve(ARTIFACT_DIR, "package-credit-limits.png") });
     await dialog.getByRole("button", { name: "保存" }).click();
-    await expect(page.getByText("模式已更新")).toBeVisible();
+    await expect(page.getByText("产品已更新")).toBeVisible();
 
     const afterSave = await keyLimits();
-    expect(afterSave, "保存后该模式下所有 KEY 统一使用套餐的上限").toEqual({
+    expect(afterSave, "保存后该产品下所有 KEY 统一使用套餐的上限").toEqual({
       uik1: [35000, 155000],
       uik2: [35000, 155000],
     });
@@ -976,7 +996,7 @@ test.describe.serial("渠道 Key 调度", () => {
   });
 
   test("上游 429 按业务码分类：1313 停用告警并换 Key、1305 不冷却不换 Key、1308 一直换到有 Key 能用", async () => {
-    const pool = "ratelimit";
+    const pool = await usePool("ratelimit");
 
     // 1313 公平使用风控：Key 停用、告警，这次请求换一把 Key 完成。
     await setBehavior(pool, "rl01", { type: "status", status: 429, body: FAIR_USE_BODY });
@@ -1048,7 +1068,7 @@ test.describe.serial("渠道 Key 调度", () => {
   });
 
   test("试满尝试次数而池里还有 Key：429 的 retry-after 很短，重试就能换到别的 Key", async () => {
-    const pool = "attempts";
+    const pool = await usePool("attempts");
     const resetAt = new Date(Date.now() + 2 * 3_600_000);
     for (const label of ["at01", "at02", "at03", "at04", "at05"]) {
       await setBehavior(pool, label, { type: "status", status: 429, body: fiveHourCapBody(resetAt) });
@@ -1072,7 +1092,7 @@ test.describe.serial("渠道 Key 调度", () => {
   });
 
   test("套餐到期（1309）：Key 停用并告警，这次请求换 Key 完成", async () => {
-    const pool = "planExpired";
+    const pool = await usePool("planExpired");
     await setBehavior(pool, "ex01", { type: "status", status: 429, body: PLAN_EXPIRED_BODY });
     const result = await call(pool, "guest1");
     expect(result.status, "套餐到期的 Key 不能让员工的请求失败").toBe(200);
@@ -1102,7 +1122,7 @@ test.describe.serial("渠道 Key 调度", () => {
   });
 
   test("1311 模型未开放：不换 Key、不冷却，明确告诉调用方模型不支持", async () => {
-    const pool = "planDenied";
+    const pool = await usePool("planDenied");
     await setBehavior(pool, "pd01", { type: "status", status: 429, body: PLAN_DENIED_BODY });
     const result = await call(pool, "guest1");
     expect(result.status, "模型名不对不是限流，不能回 429 让客户端一直重试").toBe(404);
@@ -1129,7 +1149,7 @@ test.describe.serial("渠道 Key 调度", () => {
   });
 
   test("模型拥堵以 HTTP 529 返回时同样不换 Key、不动 Key 状态", async () => {
-    const pool = "overload";
+    const pool = await usePool("overload");
     await setBehavior(pool, "ov01", { type: "status", status: 529, body: MODEL_BUSY_BODY });
     const result = await call(pool, "guest1");
     expect(result.status, "模型拥堵统一按 429 还给调用方").toBe(429);
@@ -1144,7 +1164,7 @@ test.describe.serial("渠道 Key 调度", () => {
   });
 
   test("上游 5xx 仍按原来的次数换 Key 重试", async () => {
-    const pool = "serverError";
+    const pool = await usePool("serverError");
     const failure = { type: "status", status: 500, body: { error: { message: "mock 500" } } } as const;
     await setBehavior(pool, "se01", failure);
     await setBehavior(pool, "se02", failure);
@@ -1156,8 +1176,11 @@ test.describe.serial("渠道 Key 调度", () => {
   });
 
   test("成员 30 分钟没调用就释放；最后一人走后 Key 回池", async () => {
-    const pool = "idle";
-    const poolKey = `line:${lineId(pool)}`;
+    const pool = await usePool("idle");
+    const [poolRow] = await sql<Array<{ relay_pool_key: string }>>`
+      select relay_pool_key from product_lines where id = ${lineId(pool)}
+    `;
+    const poolKey = poolRow.relay_pool_key;
     expect((await call(pool, "ownerIdle")).key).toBe("idlo");
     expect((await call(pool, "guest1")).key).toBe("idlo");
     expect(await membersByKey(pool)).toEqual({ idlo: ["guest1", "ownerIdle"] });
@@ -1195,7 +1218,7 @@ test.describe.serial("渠道 Key 调度", () => {
   });
 
   test("企业隔离：别的企业员工名下的 Key 不能借", async () => {
-    const pool = "isolation";
+    const pool = await usePool("isolation");
     const outsider = await call(pool, "outsider");
     expect(outsider.key, "外部企业的人用自己名下的 Key").toBe("isox");
     const guest = await call(pool, "guest1");
@@ -1222,7 +1245,7 @@ test.describe.serial("渠道 Key 调度", () => {
   });
 
   test("充值模式的 Key 没有主人：都能用，但一把 Key 不同时挂两家企业的人", async () => {
-    const pool = "recharge";
+    const pool = await usePool("recharge");
     const first = await call(pool, "outsider");
     expect(first.key, "没有主人的 Key 谁都能用，同分取 ID 小的").toBe("rc01");
     const second = await call(pool, "guest1");
@@ -1233,7 +1256,7 @@ test.describe.serial("渠道 Key 调度", () => {
   });
 
   test("主人的 Key 冷却期间借别人的，冷却结束后回到自己的 Key", async () => {
-    const pool = "homing";
+    const pool = await usePool("homing");
     expect((await call(pool, "ownerHome")).key).toBe("homo");
 
     const resetAt = new Date(Date.now() + 2 * 3_600_000);

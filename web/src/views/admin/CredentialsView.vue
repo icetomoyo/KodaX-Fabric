@@ -209,7 +209,7 @@
                 :status="usageProgressStatus(detailRow.weeklyCredits, detailRow.weeklyCreditLimit)"
               />
             </div>
-            <p class="form-help">积分上限在「渠道管理 → 编辑模式」里按模式统一设置，渠道 KEY 不单独设置。</p>
+            <p class="form-help">积分上限在「渠道管理 → 编辑产品」里按产品统一设置，渠道 KEY 不单独设置。</p>
           </section>
 
           <section class="detail-section">
@@ -285,7 +285,7 @@ import { ElMessage, ElMessageBox } from "element-plus";
 
 import { http } from "@/api/http";
 
-import { channelDisplayName, formatChannelName } from "@/lib/channel-display";
+import { channelDisplayName } from "@/lib/channel-display";
 
 import { formatDateTime } from "@/lib/date-time";
 
@@ -363,7 +363,7 @@ type CredentialRow = {
   testModel?: string | null;
   defaultBaseUrl: string;
   baseUrlOverride: string | null;
-  /** 所在模式上统一设置的积分上限；渠道 KEY 不单独设置。 */
+  /** 所在产品上统一设置的积分上限；渠道 KEY 不单独设置。 */
   fiveHourCreditLimit: number | null;
   weeklyCreditLimit: number | null;
   fiveHourCredits: number;
@@ -387,26 +387,6 @@ type CredentialRow = {
   } | null;
 };
 
-type ProviderBaseUrl = {
-  label: string;
-  url: string;
-  productLineCode: string;
-  productLineName: string;
-  protocolConfigs?: RelayProtocolConfigs;
-};
-
-type ProviderTemplateCode = "glm" | "deepseek" | "huoshan";
-
-type ConfiguredProductLine = {
-  id: number;
-  code: string;
-  name: string;
-  status: ChannelStatus;
-  baseUrl?: string;
-  protocolConfigs?: RelayProtocolConfigs;
-  configVersion?: number;
-};
-
 type ListedProductLine = {
   id: number;
   code: string;
@@ -422,22 +402,6 @@ type ListedProductLine = {
   seatCount: number;
   tag: string;
   testModel?: string | null;
-};
-
-type ProviderTemplate = {
-  code: ProviderTemplateCode;
-  /** 公司名称 */
-  name: string;
-  /** 模型品牌名 */
-  modelName: string;
-  shortName: string;
-  description?: string;
-  baseUrls: ProviderBaseUrl[];
-  authStyle?: RelayAuthStyle;
-  defaultProtocols: RelayProtocol[];
-  defaultLabel: string;
-  color: string;
-  productLines?: ConfiguredProductLine[];
 };
 
 type ChannelGroup = {
@@ -509,8 +473,6 @@ const rows = ref<CredentialRow[]>([]);
 
 const listedProductLines = ref<ListedProductLine[]>([]);
 
-const templates = ref<ProviderTemplate[]>([]);
-
 const loading = ref(false);
 
 const selectedProductLineId = ref<number | null>(null);
@@ -530,7 +492,7 @@ const detailCredentialId = ref<number | null>(null);
 const createFormProtocolConfigs = ref<RelayProtocolConfigs>({});
 
 const createForm = reactive({
-  provider: "glm" as "glm" | "deepseek" | "huoshan" | "haizhi",
+  provider: "glm" as "glm" | "deepseek" | "huoshan",
   variant: "domestic" as "domestic" | "international",
   name: "",
   tag: "",
@@ -955,20 +917,10 @@ async function loadCredentials() {
   }
 }
 
-async function loadMeta() {
-  const templateResponse = await http.get("/api/admin/credential-templates");
-  if (templateResponse.data.success) {
-    // Only Zhipu/GLM is available for new channels; guard against stale backends.
-    templates.value = (templateResponse.data.data as ProviderTemplate[]).filter(
-      (template) => template.code === "glm",
-    );
-  }
-}
-
 async function refreshAll() {
   loading.value = true;
   try {
-    await Promise.all([loadCredentials(), loadMeta()]);
+    await loadCredentials();
   } catch (error) {
     ElMessage.error(getErrorMessage(error, "加载上游渠道失败"));
   } finally {
@@ -985,7 +937,7 @@ function defaultCustomProtocolConfigs(): RelayProtocolConfigs {
 }
 
 /** 各供应商新建渠道时的协议默认值：glm 官方线路三种全开，其余先只开 openai_chat。 */
-function defaultProtocolsForProvider(provider: "glm" | "deepseek" | "huoshan" | "haizhi"): RelayProtocol[] {
+function defaultProtocolsForProvider(provider: "glm" | "deepseek" | "huoshan"): RelayProtocol[] {
   return provider === "glm" || provider === "huoshan"
     ? ["anthropic_messages", "openai_chat", "openai_responses"]
     : ["openai_chat"];

@@ -28,8 +28,10 @@ import { adminStorageRoutes } from "./routes/admin/storage.js";
 import { adminTidalRoutes } from "./routes/admin/tidal.js";
 import { chatCompletionRoutes } from "./routes/relay/chat-completions.js";
 import { anthropicMessageRoutes } from "./routes/relay/anthropic-messages.js";
+import { ensureRegisteredProviders } from "./lib/ensure-channel-providers.js";
 
 export async function buildApp() {
+  await ensureRegisteredProviders();
   const app = Fastify({
     logger: true,
     trustProxy: true,

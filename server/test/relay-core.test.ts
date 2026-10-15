@@ -28,14 +28,28 @@ const {
   resolveRelayRateLimitCooldown,
   sanitizeRelayUpstreamForwardHeaders,
 } = await import("../src/lib/relay/upstream.js");
+
+type CooldownArgs = Parameters<typeof resolveRelayRateLimitCooldown>;
+
+function glmRateLimitCooldown(
+  bodyText: CooldownArgs[0],
+  defaultCooldownSeconds: CooldownArgs[1],
+  quotaCooldownSeconds: CooldownArgs[2],
+  now?: CooldownArgs[3],
+  windows?: CooldownArgs[4],
+) {
+  return resolveRelayRateLimitCooldown(
+    bodyText, defaultCooldownSeconds, quotaCooldownSeconds, now, windows, "glm",
+  );
+}
 const { extractAnyRelayApiKey, extractRelayApiKey } = await import(
   "../src/middleware/api-key.js"
 );
 const { fiveHourResetAt, weeklyResetAt } = await import(
   "../src/lib/relay/credential-quota.js"
 );
-const { getProviderTemplate, PROVIDER_TEMPLATES } = await import(
-  "../src/lib/provider-templates.js"
+const { findChannelPlugin, listChannelPlugins } = await import(
+  "../src/channels/index.js"
 );
 const { buildRelayBaseUrl } = await import("../src/routes/me.js");
 
@@ -66,9 +80,9 @@ function candidate(
   };
 }
 
-test("upstream channel templates do not expose Anthropic as a provider option", () => {
-  assert.equal(getProviderTemplate("anthropic"), undefined);
-  assert.equal(PROVIDER_TEMPLATES.some((template) => template.code === "anthropic"), false);
+test("channel plugins do not expose Anthropic as a provider option", () => {
+  assert.equal(findChannelPlugin("anthropic"), undefined);
+  assert.equal(listChannelPlugins().some((plugin) => plugin.code === "anthropic"), false);
 });
 
 test("relay base URL uses the proxy-facing host instead of the API listener port", async () => {
@@ -335,7 +349,7 @@ test("protocol operation URLs preserve base paths and avoid duplicate Anthropic 
 });
 
 test("429 with GLM 1113 body uses a long quota cooldown", () => {
-  const stringCode = resolveRelayRateLimitCooldown(
+  const stringCode = glmRateLimitCooldown(
     JSON.stringify({
       error: { code: "1113", message: "余额不足或无可用资源包,请充值" },
     }),
@@ -346,7 +360,7 @@ test("429 with GLM 1113 body uses a long quota cooldown", () => {
   assert.equal(stringCode.cooldownSeconds, 1800);
   assert.equal(stringCode.lastError, "HTTP 429：上游余额不足，凭证已长时间冷却");
 
-  const numericCode = resolveRelayRateLimitCooldown(
+  const numericCode = glmRateLimitCooldown(
     JSON.stringify({ error: { code: 1113, message: "账户欠费" } }),
     60,
     1800,
@@ -359,7 +373,7 @@ test("429 with GLM 5-hour usage cap cools until the upstream reset instant", () 
   // Real upstream reply: employee-submitted keys may be drained outside the
   // relay, so the 429 body is the authoritative quota signal.
   const now = new Date("2026-09-20T07:00:00.000Z"); // 15:00 Asia/Shanghai
-  const decision = resolveRelayRateLimitCooldown(
+  const decision = glmRateLimitCooldown(
     JSON.stringify({
       error: {
         code: "1308",
@@ -379,7 +393,7 @@ test("429 with GLM 5-hour usage cap cools until the upstream reset instant", () 
 
 test("429 with GLM 7-day usage cap cools until the upstream reset instant", () => {
   const now = new Date("2026-09-20T07:33:36.000Z");
-  const decision = resolveRelayRateLimitCooldown(
+  const decision = glmRateLimitCooldown(
     JSON.stringify({
       error: {
         code: "1310",
@@ -398,7 +412,7 @@ test("429 with GLM 7-day usage cap cools until the upstream reset instant", () =
 
 test("429 usage cap is detected inside the Anthropic and Responses envelopes", () => {
   const now = new Date("2026-09-20T07:30:00.000Z");
-  const anthropic = resolveRelayRateLimitCooldown(
+  const anthropic = glmRateLimitCooldown(
     JSON.stringify({
       type: "error",
       error: {
@@ -416,7 +430,7 @@ test("429 usage cap is detected inside the Anthropic and Responses envelopes", (
   assert.equal(anthropic.quotaExhausted, true);
   assert.deepEqual(anthropic.coolUntil, new Date("2026-09-21T09:49:49.000Z"));
 
-  const responses = resolveRelayRateLimitCooldown(
+  const responses = glmRateLimitCooldown(
     JSON.stringify({
       error: {
         code: "rate_limit_exceeded",
@@ -437,7 +451,7 @@ test("429 usage cap is detected inside the Anthropic and Responses envelopes", (
 test("429 usage cap is detected inside the real 1308 5-hour envelopes", () => {
   // Verbatim upstream replies from keys whose 5-hour window is exhausted:
   // Chat/Responses observed 2026-09-20, Anthropic 2026-09-17 (threq_53895b1e…).
-  const chat = resolveRelayRateLimitCooldown(
+  const chat = glmRateLimitCooldown(
     JSON.stringify({
       error: {
         code: "1308",
@@ -456,7 +470,7 @@ test("429 usage cap is detected inside the real 1308 5-hour envelopes", () => {
   });
   assert.deepEqual(chat.coolUntil, new Date("2026-09-20T07:32:01.000Z"));
 
-  const responses = resolveRelayRateLimitCooldown(
+  const responses = glmRateLimitCooldown(
     JSON.stringify({
       error: {
         code: "rate_limit_exceeded",
@@ -473,7 +487,7 @@ test("429 usage cap is detected inside the real 1308 5-hour envelopes", () => {
   assert.equal(responses.quotaExhausted, true);
   assert.deepEqual(responses.coolUntil, new Date("2026-09-20T07:32:01.000Z"));
 
-  const anthropic = resolveRelayRateLimitCooldown(
+  const anthropic = glmRateLimitCooldown(
     JSON.stringify({
       type: "error",
       error: {
@@ -494,7 +508,7 @@ test("429 usage cap is detected inside the real 1308 5-hour envelopes", () => {
 
 test("429 usage cap without a reset time falls back to the window boundary", () => {
   const now = new Date("2026-09-20T07:00:00.000Z");
-  const fiveHour = resolveRelayRateLimitCooldown(
+  const fiveHour = glmRateLimitCooldown(
     JSON.stringify({ error: { code: "1316", message: "已达到 5 小时使用上限" } }),
     60,
     1800,
@@ -503,7 +517,7 @@ test("429 usage cap without a reset time falls back to the window boundary", () 
   assert.equal(fiveHour.quotaExhausted, true);
   assert.deepEqual(fiveHour.coolUntil, fiveHourResetAt(now));
 
-  const weekly = resolveRelayRateLimitCooldown(
+  const weekly = glmRateLimitCooldown(
     JSON.stringify({ error: { code: "1310", message: "已达到 7 天使用上限" } }),
     60,
     1800,
@@ -512,7 +526,7 @@ test("429 usage cap without a reset time falls back to the window boundary", () 
   assert.equal(weekly.quotaExhausted, true);
   assert.deepEqual(weekly.coolUntil, weeklyResetAt(now));
 
-  const balance = resolveRelayRateLimitCooldown(
+  const balance = glmRateLimitCooldown(
     JSON.stringify({ error: { code: "1113", message: "您的账户已欠费，请充值后重试" } }),
     60,
     1800,
@@ -526,7 +540,7 @@ test("429 usage cap without a reset time falls back to the window boundary", () 
 test("429 usage cap without a reset time falls back to the learned per-key phase", () => {
   const now = new Date("2026-09-20T07:33:36.000Z");
   // 报文没有时间戳时，用该 Key 的周窗口相位列（weekly_window_reset_at）。
-  const decision = resolveRelayRateLimitCooldown(
+  const decision = glmRateLimitCooldown(
     JSON.stringify({ error: { code: "1310", message: "已达到 7 天使用上限" } }),
     60,
     1800,
@@ -538,7 +552,7 @@ test("429 usage cap without a reset time falls back to the learned per-key phase
   assert.deepEqual(decision.cap, { kind: "weekly", resetAt: null });
 
   // 没学到相位时仍回退共享的周窗口边界。
-  const unlearned = resolveRelayRateLimitCooldown(
+  const unlearned = glmRateLimitCooldown(
     JSON.stringify({ error: { code: "1310", message: "已达到 7 天使用上限" } }),
     60,
     1800,
@@ -551,7 +565,7 @@ test("429 usage cap without a reset time falls back to the learned per-key phase
 test("429 five-hour cap without a reset time uses the first-use anchor boundary", () => {
   const now = new Date("2026-09-22T04:30:00.000Z");
   // 1 点首用锚定 → 无时刻 1308 冷到锚点+5h（06:00），而不是下一个整点。
-  const anchored = resolveRelayRateLimitCooldown(
+  const anchored = glmRateLimitCooldown(
     JSON.stringify({ error: { code: "1316", message: "已达到 5 小时使用上限" } }),
     60,
     1800,
@@ -562,7 +576,7 @@ test("429 five-hour cap without a reset time uses the first-use anchor boundary"
   assert.deepEqual(anchored.coolUntil, new Date("2026-09-22T06:00:00.000Z"));
 
   // 未锚定的 Key 回退下一个 UTC 整点（旧滚动模型兜底）。
-  const unanchored = resolveRelayRateLimitCooldown(
+  const unanchored = glmRateLimitCooldown(
     JSON.stringify({ error: { code: "1316", message: "已达到 5 小时使用上限" } }),
     60,
     1800,
@@ -572,7 +586,7 @@ test("429 five-hour cap without a reset time uses the first-use anchor boundary"
   assert.deepEqual(unanchored.coolUntil, fiveHourResetAt(now));
 
   // 锚点已过期（窗口早就翻转）→ 同样回退整点，不把旧窗口前滚。
-  const staleAnchor = resolveRelayRateLimitCooldown(
+  const staleAnchor = glmRateLimitCooldown(
     JSON.stringify({ error: { code: "1316", message: "已达到 5 小时使用上限" } }),
     60,
     1800,
@@ -584,7 +598,7 @@ test("429 five-hour cap without a reset time uses the first-use anchor boundary"
 
 test("cooldown decisions carry the vendor code and structured failure kind", () => {
   const now = new Date("2026-09-20T07:00:00.000Z");
-  const cap = resolveRelayRateLimitCooldown(
+  const cap = glmRateLimitCooldown(
     JSON.stringify({
       error: {
         code: "1308",
@@ -598,7 +612,7 @@ test("cooldown decisions carry the vendor code and structured failure kind", () 
   assert.equal(cap.vendorCode, "1308");
   assert.equal(cap.failureKind, "five_hour_cap");
 
-  const weekly = resolveRelayRateLimitCooldown(
+  const weekly = glmRateLimitCooldown(
     JSON.stringify({ error: { code: "1310", message: "已达到 7 天使用上限" } }),
     60,
     1800,
@@ -607,7 +621,7 @@ test("cooldown decisions carry the vendor code and structured failure kind", () 
   assert.equal(weekly.vendorCode, "1310");
   assert.equal(weekly.failureKind, "weekly_cap");
 
-  const rateLimit = resolveRelayRateLimitCooldown(
+  const rateLimit = glmRateLimitCooldown(
     JSON.stringify({ error: { code: "1302", message: "您的账户已达到速率限制，请您控制请求频率" } }),
     60,
     1800,
@@ -615,7 +629,7 @@ test("cooldown decisions carry the vendor code and structured failure kind", () 
   assert.equal(rateLimit.vendorCode, "1302");
   assert.equal(rateLimit.failureKind, "rate_limit");
 
-  const nonJson = resolveRelayRateLimitCooldown("rate limited, retry later", 60, 1800);
+  const nonJson = glmRateLimitCooldown("rate limited, retry later", 60, 1800);
   assert.equal(nonJson.vendorCode, null);
   assert.equal(nonJson.failureKind, "rate_limit");
 });
@@ -624,7 +638,7 @@ test("429 usage cap with an already-elapsed reset time keeps the short cooldown"
   // 14:50 打满、报文写 15:32:01 恢复；15:32:03 才落到 Hub 时，报文里的
   // 重置时刻已过期。前滚窗口会把 Key 冷到 20:32，所以只走 60 秒短冷却。
   const now = new Date("2026-09-20T07:32:03.000Z");
-  const decision = resolveRelayRateLimitCooldown(
+  const decision = glmRateLimitCooldown(
     JSON.stringify({
       error: {
         code: "1308",
@@ -648,7 +662,7 @@ test("429 usage cap with an already-elapsed reset time keeps the short cooldown"
 });
 
 test("429 with an expired GLM Coding Plan subscription takes the long quota cooldown", () => {
-  const decision = resolveRelayRateLimitCooldown(
+  const decision = glmRateLimitCooldown(
     JSON.stringify({
       error: {
         code: "1309",
@@ -666,7 +680,7 @@ test("429 with an expired GLM Coding Plan subscription takes the long quota cool
 });
 
 test("429 with ordinary rate-limit body keeps the short cooldown", () => {
-  const decision = resolveRelayRateLimitCooldown(
+  const decision = glmRateLimitCooldown(
     JSON.stringify({
       error: { code: "1302", message: "您的账户已达到速率限制，请您控制请求频率" },
     }),
@@ -679,7 +693,7 @@ test("429 with ordinary rate-limit body keeps the short cooldown", () => {
 });
 
 test("429 with non-JSON body keeps the short cooldown", () => {
-  const decision = resolveRelayRateLimitCooldown("rate limited, retry later", 60, 1800);
+  const decision = glmRateLimitCooldown("rate limited, retry later", 60, 1800);
   assert.equal(decision.quotaExhausted, false);
   assert.equal(decision.cooldownSeconds, 60);
   assert.equal(decision.lastError, "HTTP 429：上游限流，凭证已进入冷却");

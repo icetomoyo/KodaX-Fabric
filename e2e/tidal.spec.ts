@@ -11,10 +11,13 @@ import {
 } from "@playwright/test";
 import postgres from "postgres";
 import { E2E } from "./env.ts";
+import { isolateChannelPool } from "./pool-isolation.ts";
 import {
   SCHED_LOGIN_PASSWORD,
+  SCHED_MODEL,
   SCHED_PEOPLE,
   schedApiKey,
+  schedLineCode,
   schedSecret,
   type SchedPersonKey,
 } from "./scheduling-fixture.ts";
@@ -79,7 +82,7 @@ import {
  * 41. 员工菜单里没有单独的「潮汐KEY」；或者潮汐的内容还混在「API Key」页里。
  */
 const ARTIFACT_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "artifacts");
-const MODEL = "e2e-upstream-model";
+const MODEL = SCHED_MODEL;
 const POOL = "tidal";
 const HOUR_MS = 3_600_000;
 
@@ -112,6 +115,7 @@ type TidalSettings = {
 
 let api: APIRequestContext;
 let sql: postgres.Sql;
+let restorePool: (() => Promise<void>) | null = null;
 let markerSeq = 0;
 let tidalLineId = 0;
 let tidalKey = "";
@@ -438,10 +442,12 @@ test.describe.serial("潮汐调度", () => {
     sql = postgres(E2E.databaseUrl, { max: 2 });
 
     const [line] = await sql<Array<{ id: string }>>`
-      select id from product_lines where code = 'hz_sched_tidal'
+      select id from product_lines where code = ${schedLineCode(POOL)}
     `;
     expect(line, "seed-scheduling 应写入潮汐渠道").toBeTruthy();
     tidalLineId = Number(line.id);
+    // 智谱是一个调度池：只启用潮汐这条套餐，潮汐请求只会铺到它的 8 把 Key 上。
+    restorePool = await isolateChannelPool(sql, "glm", [tidalLineId]);
     const people = await sql<Array<{ id: string; phone: string }>>`
       select id, phone from employees where phone like '1390000%'
     `;
@@ -474,6 +480,7 @@ test.describe.serial("潮汐调度", () => {
   test.afterAll(async () => {
     mkdirSync(ARTIFACT_DIR, { recursive: true });
     writeFileSync(resolve(ARTIFACT_DIR, "tidal.json"), `${JSON.stringify(report, null, 2)}\n`);
+    await restorePool?.();
     await mockControl("reset", {});
     await api?.dispose();
     await sql?.end({ timeout: 5 });
@@ -779,7 +786,8 @@ test.describe.serial("潮汐调度", () => {
     await expect(adminPage.getByText(SCHED_PEOPLE.tdUser.name).first()).toBeVisible();
     // 规则和运行情况都加载完再截图：状态是「开放中」，潮汐池里能看到各档可借的 Key。
     await expect(adminPage.locator(".page-head").getByText("开放中")).toBeVisible();
-    await expect(adminPage.getByRole("row", { name: /调度E2E-潮汐/ })).toBeVisible();
+    // 一个渠道一个池：潮汐池按渠道名展示，不是套餐名。
+    await expect(adminPage.getByRole("row", { name: /GLM/ })).toBeVisible();
     await expect(adminPage.locator(".stat strong").first()).not.toHaveText("0");
     await adminPage.waitForTimeout(500);
     await adminPage.screenshot({ path: resolve(ARTIFACT_DIR, "tidal-admin.png"), fullPage: true });

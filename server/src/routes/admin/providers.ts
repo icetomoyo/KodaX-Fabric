@@ -14,15 +14,13 @@ import {
 import { writeOpsAudit } from "../../lib/ops-audit.js";
 import { SEAT_COUNT_BELOW_REGISTERED_MESSAGE } from "../../lib/channel-seats.js";
 import {
-  mergeCustomProtocolConfigs,
-  resolveCustomProtocolConfigs,
-} from "../../lib/custom-channel.js";
-import {
-  getProviderTemplate,
-  isSelfHostedProvider,
-  resolveTemplateOptionForStoredChannel,
-  resolveTemplateProtocolConfigs,
-} from "../../lib/provider-templates.js";
+  findChannelPlugin,
+  listChannelPlugins,
+  resolveChannelVariant,
+  resolveVariantProtocolConfigs,
+  variantBaseUrl,
+} from "../../channels/index.js";
+import { channelPoolKey } from "../../lib/relay/channel-pool.js";
 import {
   channelCreateError,
   planUpstreamChannelCreate,
@@ -47,8 +45,28 @@ export async function adminProviderRoutes(app: FastifyInstance) {
   app.addHook("preHandler", requireSession);
   app.addHook("preHandler", requireRoles("admin"));
 
+  app.get("/api/admin/channel-types", async () => {
+    return {
+      success: true,
+      data: listChannelPlugins().map((plugin) => ({
+        code: plugin.code,
+        title: plugin.meta.title,
+        company: plugin.meta.company,
+        color: plugin.meta.color,
+        productLabel: plugin.meta.productLabel,
+        modelPrefix: plugin.code,
+        productType: plugin.productType,
+        models: {
+          allowlist: [...plugin.models.allowlist],
+          testModel: plugin.models.testModel,
+        },
+      })),
+    };
+  });
+
   app.get("/api/admin/providers", async () => {
-    const rows = await db.select().from(providers).orderBy(asc(providers.id));
+    const plugins = listChannelPlugins();
+    const rows = await db.select().from(providers);
     const lines = await db
       .select({
         id: productLines.id,
@@ -68,10 +86,15 @@ export async function adminProviderRoutes(app: FastifyInstance) {
       .from(productLines)
       .orderBy(asc(productLines.id));
 
-    const data = rows.map((p) => ({
-      ...p,
-      productLines: lines.filter((l) => l.providerId === p.id),
-    }));
+    const byCode = new Map(rows.map((row) => [row.code, row]));
+    const data = plugins.flatMap((plugin) => {
+      const row = byCode.get(plugin.code);
+      if (!row) return [];
+      return [{
+        ...row,
+        productLines: lines.filter((line) => line.providerId === row.id),
+      }];
+    });
 
     return { success: true, data };
   });
@@ -149,6 +172,7 @@ export async function adminProviderRoutes(app: FastifyInstance) {
             productType: "api",
             allowAutoRoute: true,
             status: "active",
+            relayPoolKey: channelPoolKey(row.code),
           });
         }
 
@@ -190,16 +214,17 @@ export async function adminProviderRoutes(app: FastifyInstance) {
             .where(eq(providers.code, plan.providerCode))
             .limit(1);
           if (!provider) {
-            const template = getProviderTemplate(plan.providerCode);
+            const plugin = findChannelPlugin(plan.providerCode);
+            const defaultVariant = plugin?.variants[0];
             [provider] = await tx
               .insert(providers)
               .values({
                 code: plan.providerCode,
                 name: plan.providerName,
-                defaultBaseUrl: template?.baseUrls[0]?.url
-                  ?? Object.values(plan.protocolConfigs)[0]?.baseUrl
-                  ?? "https://example.invalid",
-                authStyle: template?.authStyle ?? "bearer",
+                defaultBaseUrl: (defaultVariant && variantBaseUrl(defaultVariant))
+                  || Object.values(plan.protocolConfigs)[0]?.baseUrl
+                  || "https://example.invalid",
+                authStyle: "bearer",
                 openaiCompatLevel: "full",
                 status: "active",
               })
@@ -230,6 +255,7 @@ export async function adminProviderRoutes(app: FastifyInstance) {
                 seatCount: plan.seatCount,
                 status: plan.status,
                 testModel: plan.testModel,
+                relayPoolKey: channelPoolKey(plan.providerCode),
               })
               .onConflictDoNothing({
                 target: [productLines.providerId, productLines.code],
@@ -248,7 +274,7 @@ export async function adminProviderRoutes(app: FastifyInstance) {
               name: plan.name,
               tag: plan.tag,
               providerCode: plan.providerCode,
-              variant: plan.providerCode === "glm" ? "domestic" : plan.providerCode,
+              variant: plan.variantCode,
               seatCount: plan.seatCount,
               status: plan.status,
               supportedProtocols: plan.protocols,
@@ -344,25 +370,12 @@ export async function adminProviderRoutes(app: FastifyInstance) {
         const updatingProtocolSurface = body.data.supportedProtocols !== undefined
           || body.data.protocolConfigs !== undefined;
         if (updatingProtocolSurface) {
-          const template = getProviderTemplate(provider.code);
+          const plugin = findChannelPlugin(provider.code);
           let resolution;
-          if (template) {
-            const option = resolveTemplateOptionForStoredChannel(
-              template,
-              existing.code,
-              existing.protocolConfigs,
-            );
-            resolution = resolveTemplateProtocolConfigs(
-              template,
-              option?.productLineCode ?? existing.code,
-              protocolPlan.nextProtocols,
-            );
-          } else if (isSelfHostedProvider(provider.code)) {
-            resolution = resolveCustomProtocolConfigs(
-              mergeCustomProtocolConfigs(
-                existing.protocolConfigs,
-                body.data.protocolConfigs,
-              ),
+          if (plugin) {
+            const variant = resolveChannelVariant(plugin, existing.protocolConfigs);
+            resolution = resolveVariantProtocolConfigs(
+              variant,
               protocolPlan.nextProtocols,
             );
           } else {

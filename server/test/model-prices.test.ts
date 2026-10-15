@@ -16,8 +16,7 @@ const {
   collectDiscoveredModels,
   groupDiscoveredModelsByChannel,
   groupOfficialProviderCatalogs,
-  isDeepseekClientModelAllowed,
-  isGlmClientModelAllowed,
+  isProviderClientModelAllowed,
   lastUsedAtForCatalogModel,
   parseDiscoveredModels,
   toCatalogModelName,
@@ -116,14 +115,6 @@ test("channel model groups use only that channel's discovered Key list", () => {
       meta: null,
     },
     {
-      productLineId: 3,
-      productLineName: "公司qwen3.8-27b",
-      productLineCode: "c_custom",
-      providerName: "自定义",
-      providerCode: "custom",
-      meta: { discoveredModels: ["qwen38-27b"] },
-    },
-    {
       productLineId: 4,
       productLineName: "DeepSeek",
       productLineCode: "api",
@@ -135,7 +126,6 @@ test("channel model groups use only that channel's discovered Key list", () => {
   assert.deepEqual(
     grouped.map((channel) => ({ id: channel.id, name: channel.name, models: channel.models })),
     [
-      { id: 3, name: "公司qwen3.8-27b", models: ["qwen38-27b"] },
       { id: 4, name: "DeepSeek", models: ["deepseek-flash"] },
       { id: 1, name: "GLM", models: ["glm-5.3", "glm-5.3-flash"] },
       { id: 2, name: "GLM（国际版）", models: ["glm-5.3", "glm-5.3-flash"] },
@@ -145,7 +135,6 @@ test("channel model groups use only that channel's discovered Key list", () => {
 
 test("model price channels are the three vendors, not GLM-50 packages", () => {
   const grouped = groupOfficialProviderCatalogs([
-    { id: 2, code: "custom", name: "自定义" },
     { id: 4, code: "huoshan", name: "火山方舟" },
     { id: 1, code: "glm", name: "智谱" },
     { id: 3, code: "deepseek", name: "深度求索" },
@@ -213,21 +202,21 @@ test("Zhipu coding-plan aliases collapse to glm-5.3 and glm-5.3-flash", () => {
 });
 
 test("Zhipu relay whitelist accepts glm-5.3 and glm-5.3-flash", () => {
-  assert.equal(isGlmClientModelAllowed("glm-5.3"), true);
-  assert.equal(isGlmClientModelAllowed("glm/glm-5.3"), true);
-  assert.equal(isGlmClientModelAllowed("glm/glm-5.3-flash"), true);
-  assert.equal(isGlmClientModelAllowed("GLM-5.3-FLASH"), true);
-  assert.equal(isGlmClientModelAllowed("glm-5.3-flashx"), false);
-  assert.equal(isGlmClientModelAllowed(" GLM-5.3-FLASHX "), false);
-  assert.equal(isGlmClientModelAllowed(" glm-5.3 "), true);
-  assert.equal(isGlmClientModelAllowed("glm-4.6"), false);
-  assert.equal(isGlmClientModelAllowed("glm-5.2"), false);
-  assert.equal(isGlmClientModelAllowed("glm-4.7-flash"), false);
-  assert.equal(isGlmClientModelAllowed("qwen38-27b"), false);
-  assert.equal(isDeepseekClientModelAllowed("deepseek-flash"), true);
-  assert.equal(isDeepseekClientModelAllowed("DeepSeek-Flash"), true);
-  assert.equal(isDeepseekClientModelAllowed("deepseek-v4-flash"), false);
-  assert.equal(isDeepseekClientModelAllowed("deepseek-chat"), false);
+  assert.equal(isProviderClientModelAllowed("glm", "glm-5.3"), true);
+  assert.equal(isProviderClientModelAllowed("glm", "glm/glm-5.3"), true);
+  assert.equal(isProviderClientModelAllowed("glm", "glm/glm-5.3-flash"), true);
+  assert.equal(isProviderClientModelAllowed("glm", "GLM-5.3-FLASH"), true);
+  assert.equal(isProviderClientModelAllowed("glm", "glm-5.3-flashx"), false);
+  assert.equal(isProviderClientModelAllowed("glm", " GLM-5.3-FLASHX "), false);
+  assert.equal(isProviderClientModelAllowed("glm", " glm-5.3 "), true);
+  assert.equal(isProviderClientModelAllowed("glm", "glm-4.6"), false);
+  assert.equal(isProviderClientModelAllowed("glm", "glm-5.2"), false);
+  assert.equal(isProviderClientModelAllowed("glm", "glm-4.7-flash"), false);
+  assert.equal(isProviderClientModelAllowed("glm", "qwen38-27b"), false);
+  assert.equal(isProviderClientModelAllowed("deepseek", "deepseek-flash"), true);
+  assert.equal(isProviderClientModelAllowed("deepseek", "DeepSeek-Flash"), true);
+  assert.equal(isProviderClientModelAllowed("deepseek", "deepseek-v4-flash"), false);
+  assert.equal(isProviderClientModelAllowed("deepseek", "deepseek-chat"), false);
 });
 
 test("catalog rows attach built-in GLM credit rates and leave custom models unmetered", () => {

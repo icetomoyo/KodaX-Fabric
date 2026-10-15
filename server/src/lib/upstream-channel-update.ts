@@ -22,7 +22,7 @@ const protocolUpstreamConfigInputSchema = z.object({
   authStyle: z.enum(UPSTREAM_AUTH_STYLES),
 });
 
-const customProtocolConfigsInputSchema = z.object({
+const protocolConfigsInputSchema = z.object({
   openai_chat: protocolUpstreamConfigInputSchema.optional(),
   anthropic_messages: protocolUpstreamConfigInputSchema.optional(),
 }).strict();
@@ -58,7 +58,7 @@ export const upstreamChannelUpdateSchema = z
     zhipuProjectId: z.string().trim().max(64).nullable().optional()
       .transform((value) => (value === "" ? null : value)),
     supportedProtocols: configurableSupportedProtocolsSchema.optional(),
-    protocolConfigs: customProtocolConfigsInputSchema.optional(),
+    protocolConfigs: protocolConfigsInputSchema.optional(),
   })
   .strict()
   .refine((value) => Object.keys(value).some((key) => key !== "expectedConfigVersion"), {

@@ -9,11 +9,13 @@ process.env.CREDENTIAL_ENCRYPT_KEY ??= "unit-test-credential-secret";
 
 const {
   extractUpstreamBusinessError,
-  extractUpstreamUsageCap,
   formatUpstreamVendorError,
-  lookupGlmErrorCatalog,
   resolveLoggedError,
-} = await import("../src/lib/glm-error-codes.js");
+} = await import("../src/lib/upstream-error.js");
+const {
+  extractUpstreamUsageCap,
+  lookupGlmErrorCatalog,
+} = await import("../src/channels/glm/error-codes.js");
 const { buildErrorLogListQuery, adminErrorLogRoutes } = await import(
   "../src/routes/admin/error-logs.js"
 );

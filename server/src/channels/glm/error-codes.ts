@@ -4,6 +4,15 @@
  * 1316 / 1317 仍是文档里「主账号余额不足、无法超额按量」的变体：
  * 推理打满 5 小时 / 7 天走的是 1308 / 1310，不是这两码。
  */
+import {
+  extractUpstreamBusinessError,
+  parseUsageCapResetAt,
+  type UpstreamRateLimitDisposition,
+  type UpstreamUsageCap,
+  type UpstreamUsageCapKind,
+} from "../../lib/upstream-error.js";
+import type { CooldownDecision } from "../types.js";
+
 export type GlmErrorCatalogEntry = {
   code: string | null;
   httpStatus: number;
@@ -60,23 +69,6 @@ export function lookupGlmErrorCatalog(code: string | null | undefined): GlmError
   return BY_CODE.get(code) ?? null;
 }
 
-export function normalizeErrorCode(value: unknown): string | null {
-  if (typeof value === "number" && Number.isFinite(value)) return String(Math.trunc(value));
-  if (typeof value !== "string") return null;
-  const trimmed = value.trim();
-  return trimmed ? trimmed.slice(0, 64) : null;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
-
-function asMessage(value: unknown): string | null {
-  if (typeof value !== "string") return null;
-  const trimmed = value.trim();
-  return trimmed ? trimmed.slice(0, 4000) : null;
-}
-
 /**
  * Business codes that mean the Key is out of quota / subscription, not RPM.
  * 1308 / 1310 are the live coding-plan 5-hour / 7-day caps (not 1316 / 1317).
@@ -124,12 +116,6 @@ const QUOTA_EXHAUSTED_MESSAGE_MARKERS = [
  *   按「模型不支持」回给调用方。
  * - key_limited：其余（额度用尽、账户限速、无法识别），冷却这把 Key。
  */
-export type UpstreamRateLimitDisposition =
-  | "fair_use"
-  | "plan_expired"
-  | "model_busy"
-  | "model_not_in_plan"
-  | "key_limited";
 
 /** Responses 协议的报文没有业务码，只能靠中文兜底。 */
 const RATE_LIMIT_DISPOSITION_RULES: ReadonlyArray<{
@@ -157,24 +143,6 @@ export function classifyUpstreamRateLimit(payload: unknown): UpstreamRateLimitDi
     if (extracted.message?.includes(rule.marker)) return rule.disposition;
   }
   return "key_limited";
-}
-
-export type UpstreamUsageCapKind = "five_hour" | "weekly" | "monthly" | "other";
-
-export type UpstreamUsageCap = {
-  kind: UpstreamUsageCapKind;
-  /** Reset instant parsed from the upstream message (Asia/Shanghai wall time), if present. */
-  resetAt: Date | null;
-};
-
-const USAGE_CAP_RESET_TIME = /(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})/;
-
-/** Zhipu reports limit reset times in Asia/Shanghai wall time. */
-export function parseUsageCapResetAt(message: string): Date | null {
-  const match = USAGE_CAP_RESET_TIME.exec(message);
-  if (!match) return null;
-  const parsed = new Date(`${match[1]}T${match[2]}+08:00`);
-  return Number.isFinite(parsed.getTime()) ? parsed : null;
 }
 
 function classifyUsageCapKind(
@@ -218,57 +186,9 @@ export function extractUpstreamUsageCap(payload: unknown): UpstreamUsageCap | nu
   };
 }
 
-/** True when an upstream JSON envelope reports quota/balance exhaustion. */
-/** 从上游响应信封取出原文业务码和错误信息，不改写。 */
-export function extractUpstreamBusinessError(payload: unknown): { code: string | null; message: string | null } | null {
-  let value = payload;
-  if (typeof value === "string") {
-    const trimmed = value.trim();
-    if (!trimmed) return null;
-    if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) {
-      return { code: null, message: trimmed.slice(0, 4000) };
-    }
-    try {
-      value = JSON.parse(trimmed);
-    } catch {
-      return { code: null, message: trimmed.slice(0, 4000) };
-    }
-  }
-  if (!isRecord(value)) return null;
-  const error = isRecord(value.error) ? value.error : value;
-  const nestedType = normalizeErrorCode(error.type);
-  const code = normalizeErrorCode(error.code)
-    ?? (nestedType && nestedType !== "error" ? nestedType : null);
-  const message = asMessage(error.message);
-  if (!code && !message) return null;
-  return { code, message };
-}
-
-/** Hub 冷却文案之外，健康检查展示渠道原文。 */
-export function formatUpstreamVendorError(
-  status: number | null,
-  raw: string | null,
-): string {
-  const text = raw?.trim() ?? "";
-  if (!text) return status != null ? `HTTP ${status}` : "上游错误";
-  const extracted = extractUpstreamBusinessError(text);
-  if (extracted?.message) {
-    return extracted.code ? `[${extracted.code}] ${extracted.message}` : extracted.message;
-  }
-  return text.slice(0, 1_000);
-}
-
-export function resolveLoggedError(input: {
-  httpStatus?: number | null;
-  upstreamStatus?: number | null;
-  errorCode?: string | null;
-  errorMessage?: string | null;
-  upstreamPayload?: unknown;
-}): { code: string | null; httpStatus: number | null; message: string | null } {
-  const extracted = extractUpstreamBusinessError(input.upstreamPayload);
+export function classifyGlmError(_status: number, body: string): CooldownDecision {
   return {
-    code: extracted?.code ?? normalizeErrorCode(input.errorCode),
-    httpStatus: input.upstreamStatus ?? input.httpStatus ?? null,
-    message: extracted?.message ?? asMessage(input.errorMessage),
+    rateLimitDisposition: classifyUpstreamRateLimit(body),
+    usageCap: extractUpstreamUsageCap(body),
   };
 }

@@ -317,7 +317,6 @@ function syncLive() {
       && kind !== "team_shared"
       && kind !== "department_shared"
       && kind !== "enterprise_shared"
-      && kind !== "open_shared"
     ) {
       continue;
     }

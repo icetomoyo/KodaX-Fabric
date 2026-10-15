@@ -1,53 +1,25 @@
-import { clientModelUpstreamName } from "./relay/client-model.js";
-import {
-  HUOSHAN_ALLOWED_MODELS,
-  HUOSHAN_EMBEDDING_MODELS,
-} from "./relay/credit-cost.js";
+import { findChannelPlugin, listChannelPlugins, type ChannelPlugin } from "../channels/index.js";
+import type { CatalogModelTag as PluginCatalogModelTag } from "../channels/types.js";
+import { clientModelUpstreamName, inferChannelCode } from "./relay/client-model.js";
 
 function uniqueSorted(values: string[]): string[] {
   return [...new Set(values)].sort((left, right) => left.localeCompare(right));
 }
 
-/** Current Zhipu coding-plan text model; historical text names fold here. */
-export const GLM_TEXT_CATALOG_MODEL = "glm-5.3";
-/** Current Zhipu coding-plan multimodal model; flash / turbo / 4.7 / *flashx fold here. */
-export const GLM_MULTIMODAL_CATALOG_MODEL = "glm-5.3-flash";
-
-export const GLM_CATALOG_MODELS = [
-  GLM_TEXT_CATALOG_MODEL,
-  GLM_MULTIMODAL_CATALOG_MODEL,
-] as const;
-
 /** Official input modalities shown on the model list. FlashX is not on Coding Plan yet. */
-export type CatalogModelTag = "文本" | "图片" | "视频" | "文件" | "音频" | "向量化";
+export type CatalogModelTag = PluginCatalogModelTag;
 
-/** 智谱定价表顺序：图片、视频、文件、文本。 */
-const GLM_FLASH_MODALITIES: readonly CatalogModelTag[] = ["图片", "视频", "文件", "文本"];
-
-/** 方舟 foundation `input_modalities`，展示顺序与智谱定价表一致。 */
-const HUOSHAN_MODALITIES: Readonly<Record<string, readonly CatalogModelTag[]>> = {
-  "doubao-seed-2.0-mini": ["图片", "视频", "音频", "文本"],
-  "deepseek-v4-flash": ["文本"],
-  "doubao-seed-2.1-lite": ["图片", "视频", "音频", "文本"],
-  "glm-5.3-flash": ["图片", "视频", "文本"],
-  "doubao-seed-evolving": ["图片", "视频", "文本"],
-  "doubao-seed-2.1-pro": ["图片", "视频", "文本"],
-  "deepseek-v4.1-flash": ["图片", "视频", "文本"],
-  "deepseek-v4-pro": ["文本"],
-  "doubao-embedding-vision": ["图片", "视频", "文本"],
-};
+/** Channel of a model name without a known provider: fold to the catalog name, then match its alias. */
+export function inferModelChannel(model: string): ChannelPlugin | undefined {
+  return findChannelPlugin(inferChannelCode(toCatalogModelName(model)) ?? "");
+}
 
 export function catalogModelTags(model: string, providerCode?: string | null): CatalogModelTag[] {
   const upstream = clientModelUpstreamName(model);
-  if (isHuoshanProvider(providerCode ?? "")) {
-    const listed = HUOSHAN_MODALITIES[upstream];
-    if (listed) return [...listed];
-    return (HUOSHAN_ALLOWED_MODELS as readonly string[]).includes(upstream) ? ["文本"] : [];
-  }
-  const name = toCatalogModelName(upstream);
-  if (name === GLM_TEXT_CATALOG_MODEL) return ["文本"];
-  if (name === GLM_MULTIMODAL_CATALOG_MODEL) return [...GLM_FLASH_MODALITIES];
-  return [];
+  const named = findChannelPlugin(providerCode ?? "");
+  if (named) return [...(named.models.tags?.(upstream) ?? [])];
+  const inferred = inferModelChannel(upstream);
+  return [...(inferred?.models.tags?.(toCatalogModelName(upstream)) ?? [])];
 }
 
 /** 管理端模型列表的单一类型：纯文本 / 多模态 / 向量 / 排序。 */
@@ -57,7 +29,9 @@ const MULTIMODAL_TAGS = new Set<CatalogModelTag>(["图片", "视频", "音频", 
 
 export function catalogModelKind(model: string, providerCode?: string | null): CatalogModelKind {
   const upstream = clientModelUpstreamName(model);
-  if ((HUOSHAN_EMBEDDING_MODELS as readonly string[]).includes(upstream)) return "向量";
+  for (const plugin of listChannelPlugins()) {
+    if (plugin.models.embeddingModels?.includes(upstream)) return "向量";
+  }
   if (/(?:^|[-_/])(?:re)?rank(?:er|ing)?(?:$|[-_/])/i.test(upstream) || upstream.includes("排序")) {
     return "排序";
   }
@@ -66,87 +40,32 @@ export function catalogModelKind(model: string, providerCode?: string | null): C
   return "纯文本";
 }
 
-const GLM_CODING_PLAN_MODEL = /^glm-(\d+(?:\.\d+)?)(?:-air|-turbo|-flashx?)*$/i;
-
-/** Current DeepSeek catalog model; other deepseek-* names fold here. */
-export const DEEPSEEK_FLASH_CATALOG_MODEL = "deepseek-flash";
-export const DEEPSEEK_CATALOG_MODELS = [DEEPSEEK_FLASH_CATALOG_MODEL] as const;
-
 /**
  * Catalog name used on the model-price and employee model lists.
- * Zhipu coding-plan text transfers to glm-5.3; Flash / Turbo / GLM-4.7
- * and *flashx names transfer to glm-5.3-flash (FlashX is not on Coding Plan).
- * DeepSeek names transfer to deepseek-flash. OCR and other product lines
- * stay as returned.
+ * Plugins fold historical aliases onto current catalog entries; unknown
+ * names stay as returned.
  */
 export function toCatalogModelName(model: string): string {
   const raw = model.trim();
   const name = clientModelUpstreamName(raw);
-  if (GLM_CODING_PLAN_MODEL.test(name)) {
-    if (name.includes("flash") || name.includes("turbo") || name === "glm-4.7") {
-      return GLM_MULTIMODAL_CATALOG_MODEL;
-    }
-    return GLM_TEXT_CATALOG_MODEL;
+  for (const plugin of listChannelPlugins()) {
+    const mapped = plugin.models.toCatalogName?.(name);
+    if (mapped) return mapped;
   }
-  if (name.startsWith("deepseek")) return DEEPSEEK_FLASH_CATALOG_MODEL;
   return raw;
 }
 
-const GLM_PROVIDER_CODE = "glm";
-const DEEPSEEK_PROVIDER_CODE = "deepseek";
-const HUOSHAN_PROVIDER_CODE = "huoshan";
-
-export function isGlmProvider(providerCode: string): boolean {
-  return providerCode === GLM_PROVIDER_CODE;
-}
-
-export function isDeepseekProvider(providerCode: string): boolean {
-  return providerCode === DEEPSEEK_PROVIDER_CODE;
-}
-
-export function isHuoshanProvider(providerCode: string): boolean {
-  return providerCode === HUOSHAN_PROVIDER_CODE;
-}
-
-/** Relay allow-list for Zhipu Keys. Other names are rejected. */
-export function isGlmClientModelAllowed(model: string): boolean {
-  const name = clientModelUpstreamName(model);
-  return (GLM_CATALOG_MODELS as readonly string[]).includes(name);
-}
-
-/** Relay allow-list for DeepSeek Keys. Other names are rejected. */
-export function isDeepseekClientModelAllowed(model: string): boolean {
-  return clientModelUpstreamName(model) === DEEPSEEK_FLASH_CATALOG_MODEL;
-}
-
-/** Relay allow-list for Volcano Ark Agent Plan Keys. Other names are rejected. */
-export function isHuoshanClientModelAllowed(model: string): boolean {
-  return (HUOSHAN_ALLOWED_MODELS as readonly string[]).includes(clientModelUpstreamName(model));
-}
-
-export function glmProviderBlocksClientModel(providerCode: string, clientModel: string): boolean {
-  return isGlmProvider(providerCode) && !isGlmClientModelAllowed(clientModel);
-}
-
-export function deepseekProviderBlocksClientModel(providerCode: string, clientModel: string): boolean {
-  return isDeepseekProvider(providerCode) && !isDeepseekClientModelAllowed(clientModel);
-}
-
-export function huoshanProviderBlocksClientModel(providerCode: string, clientModel: string): boolean {
-  return isHuoshanProvider(providerCode) && !isHuoshanClientModelAllowed(clientModel);
+/** Relay allow-list: a named channel rejects names outside its catalog. */
+export function isProviderClientModelAllowed(providerCode: string, model: string): boolean {
+  const plugin = findChannelPlugin(providerCode);
+  if (!plugin) return true;
+  return plugin.models.allowlist.includes(clientModelUpstreamName(model));
 }
 
 export function providerBlocksClientModel(providerCode: string, clientModel: string): boolean {
-  return glmProviderBlocksClientModel(providerCode, clientModel)
-    || deepseekProviderBlocksClientModel(providerCode, clientModel)
-    || huoshanProviderBlocksClientModel(providerCode, clientModel);
-}
-
-export function isProviderClientModelAllowed(providerCode: string, model: string): boolean {
-  if (isGlmProvider(providerCode)) return isGlmClientModelAllowed(model);
-  if (isDeepseekProvider(providerCode)) return isDeepseekClientModelAllowed(model);
-  if (isHuoshanProvider(providerCode)) return isHuoshanClientModelAllowed(model);
-  return true;
+  const plugin = findChannelPlugin(providerCode);
+  if (!plugin) return false;
+  return !isProviderClientModelAllowed(providerCode, clientModel);
 }
 
 function normalizeModelList(value: unknown): string[] {
@@ -174,7 +93,7 @@ export function collectDiscoveredModels(metas: readonly unknown[]): string[] {
   return uniqueSorted(metas.flatMap((meta) => parseDiscoveredModels(meta)));
 }
 
-/** Discovered Key models after Zhipu coding-plan aliases collapse. */
+/** Discovered Key models after catalog aliases collapse. */
 export function collectCatalogModels(metas: readonly unknown[]): string[] {
   return uniqueSorted(collectDiscoveredModels(metas).map(toCatalogModelName));
 }
@@ -213,25 +132,20 @@ export type ChannelModelGroup = {
 };
 
 function officialCatalogModels(providerCode: string): readonly string[] {
-  if (isGlmProvider(providerCode)) return GLM_CATALOG_MODELS;
-  if (isDeepseekProvider(providerCode)) return DEEPSEEK_CATALOG_MODELS;
-  if (isHuoshanProvider(providerCode)) return HUOSHAN_ALLOWED_MODELS;
-  return [];
+  return findChannelPlugin(providerCode)?.models.allowlist ?? [];
 }
 
-/** 模型列表左侧渠道：智谱 / 深度求索 / 火山方舟，与「上游渠道」页同一层，不按 GLM-50 套餐拆。 */
-const MODEL_PRICE_PROVIDER_ORDER = ["glm", "deepseek", "huoshan"] as const;
-
+/** 模型列表左侧渠道：与「上游渠道」页同一层，不按套餐拆。 */
 export function groupOfficialProviderCatalogs(
   providerRows: ReadonlyArray<{ id: number; code: string; name: string }>,
 ): ChannelModelGroup[] {
   const byCode = new Map(providerRows.map((row) => [row.code, row]));
-  return MODEL_PRICE_PROVIDER_ORDER.flatMap((code) => {
-    const provider = byCode.get(code);
+  return listChannelPlugins().flatMap((plugin) => {
+    const provider = byCode.get(plugin.code);
     if (!provider) return [];
-    const catalog = officialCatalogModels(code);
+    const catalog = officialCatalogModels(plugin.code);
     if (catalog.length === 0) return [];
-    const name = provider.name.trim() || code;
+    const name = provider.name.trim() || plugin.code;
     return [{
       id: provider.id,
       name,
@@ -278,4 +192,3 @@ export function groupDiscoveredModelsByChannel(rows: ChannelModelSource[]): Chan
     })
     .sort((left, right) => left.name.localeCompare(right.name, "zh-CN"));
 }
-

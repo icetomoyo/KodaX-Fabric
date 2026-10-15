@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import {
-  allocateDomesticProductLineCode,
-  planUpstreamChannelCreate,
-} from "../src/lib/upstream-channel-create.js";
-import { resolveTemplateOptionForStoredChannel } from "../src/lib/provider-templates.js";
-import { getProviderTemplate } from "../src/lib/provider-templates.js";
+import Fastify from "fastify";
+import { findChannelPlugin, listChannelPlugins, resolveChannelVariant } from "../src/channels/index.js";
+import { planUpstreamChannelCreate } from "../src/lib/upstream-channel-create.js";
+
+process.env.DATABASE_URL ??= "postgresql://test:test@127.0.0.1:5432/test";
+process.env.REDIS_URL ??= "redis://127.0.0.1:6379/15";
+process.env.JWT_SECRET ??= "unit-test-jwt-secret";
+process.env.CREDENTIAL_ENCRYPT_KEY ??= "unit-test-credential-secret";
 
 const domesticConfigs = {
   productLineId: 1,
@@ -33,7 +35,7 @@ test("domestic GLM create plan copies official China endpoints and unique codes"
   for (const code of codes) assert.match(code, /^cn_[0-9a-f]{16}$/);
 });
 
-test("GLM create plan can record an API account instead of a coding-plan package", () => {
+test("GLM create plan always records a coding-plan package", () => {
   const plan = planUpstreamChannelCreate({
     ...domesticConfigs,
     productType: "api",
@@ -41,7 +43,7 @@ test("GLM create plan can record an API account instead of a coding-plan package
   });
   assert.equal(plan.kind, "accepted");
   if (plan.kind !== "accepted") return;
-  assert.equal(plan.productType, "api");
+  assert.equal(plan.productType, "coding_plan");
   assert.equal(plan.seatCount, 0);
 });
 
@@ -110,30 +112,18 @@ test("Huoshan Agent Plan create plan copies official Ark plan endpoints", () => 
   });
   assert.equal(apiPlan.kind, "accepted");
   if (apiPlan.kind !== "accepted") return;
-  assert.equal(apiPlan.productType, "api");
+  assert.equal(apiPlan.productType, "coding_plan");
 });
 
-test("haizhi self-hosted create plan requires an upstream URL and has no GLM line", () => {
-  const missing = planUpstreamChannelCreate({
-    ...domesticConfigs,
-    provider: "haizhi",
-  });
-  assert.equal(missing.kind, "custom_configs_required");
-
-  const plan = planUpstreamChannelCreate({
-    ...domesticConfigs,
-    provider: "haizhi",
-    protocolConfigs: {
-      openai_chat: { baseUrl: "http://10.10.20.10:8080/v1", authStyle: "bearer" },
-      anthropic_messages: { baseUrl: "http://10.10.20.10:8080/v1", authStyle: "x-api-key" },
-    },
-  });
-  assert.equal(plan.kind, "accepted");
-  if (plan.kind !== "accepted") return;
-  assert.equal(plan.providerCode, "haizhi");
-  assert.equal(plan.providerName, "海致集团");
-  assert.equal(plan.productType, "api");
-  assert.match(plan.allocateCode(), /^hz_[0-9a-f]{16}$/);
+test("create plan rejects the removed self-hosted providers", () => {
+  assert.equal(
+    planUpstreamChannelCreate({ ...domesticConfigs, provider: "haizhi" }).kind,
+    "provider_unsupported",
+  );
+  assert.equal(
+    planUpstreamChannelCreate({ ...domesticConfigs, provider: "custom" }).kind,
+    "provider_unsupported",
+  );
 });
 
 // testModel 失败方式（先于实现编写）：
@@ -141,45 +131,27 @@ test("haizhi self-hosted create plan requires an upstream URL and has no GLM lin
 // 2. 带前后空白的合法值 → trim 后进 plan。
 // 3. 超过 128 字符 → 拒绝（test_model_invalid）。
 // 4. 非字符串（数字、对象）→ 拒绝。
-// 5. glm / deepseek 传 testModel 同样接受（解析链统一，前端只在自建渠道暴露输入）。
-test("create plan accepts an optional per-channel test model for self-hosted lines", () => {
-  const base = {
-    ...domesticConfigs,
-    provider: "haizhi" as const,
-    supportedProtocols: ["openai_chat" as const],
-    protocolConfigs: {
-      openai_chat: { baseUrl: "http://10.10.20.10:8080/v1", authStyle: "bearer" },
-    },
-  };
-
-  const omitted = planUpstreamChannelCreate(base);
+test("create plan accepts an optional per-channel test model", () => {
+  const omitted = planUpstreamChannelCreate(domesticConfigs);
   assert.equal(omitted.kind, "accepted");
   if (omitted.kind !== "accepted") return;
   assert.equal(omitted.testModel, null);
 
-  const blank = planUpstreamChannelCreate({ ...base, testModel: "   " });
+  const blank = planUpstreamChannelCreate({ ...domesticConfigs, testModel: "   " });
   assert.equal(blank.kind, "accepted");
   if (blank.kind !== "accepted") return;
   assert.equal(blank.testModel, null);
 
-  const trimmed = planUpstreamChannelCreate({ ...base, testModel: "  glm-4.5-air  " });
+  const trimmed = planUpstreamChannelCreate({ ...domesticConfigs, testModel: "  glm-4.5-air  " });
   assert.equal(trimmed.kind, "accepted");
   if (trimmed.kind !== "accepted") return;
   assert.equal(trimmed.testModel, "glm-4.5-air");
 
-  const oversized = planUpstreamChannelCreate({ ...base, testModel: "m".repeat(129) });
+  const oversized = planUpstreamChannelCreate({ ...domesticConfigs, testModel: "m".repeat(129) });
   assert.equal(oversized.kind, "test_model_invalid");
 
-  const wrongType = planUpstreamChannelCreate({ ...base, testModel: 42 });
+  const wrongType = planUpstreamChannelCreate({ ...domesticConfigs, testModel: 42 });
   assert.equal(wrongType.kind, "test_model_invalid");
-
-  const glmWithModel = planUpstreamChannelCreate({
-    ...domesticConfigs,
-    testModel: "glm-4.5-air",
-  });
-  assert.equal(glmWithModel.kind, "accepted");
-  if (glmWithModel.kind !== "accepted") return;
-  assert.equal(glmWithModel.testModel, "glm-4.5-air");
 });
 
 test("GLM create plan rejects the old custom line", () => {
@@ -188,7 +160,6 @@ test("GLM create plan rejects the old custom line", () => {
     variant: "custom",
   });
   assert.equal(plan.kind, "provider_unsupported");
-  assert.match(allocateDomesticProductLineCode(), /^cn_/);
 });
 
 test("create plan treats an empty request body as name_required", () => {
@@ -197,18 +168,61 @@ test("create plan treats an empty request body as name_required", () => {
 });
 
 test("stored GLM channels with unique codes still resolve to 国内版 or 国际版 by URL", () => {
-  const template = getProviderTemplate("glm");
-  assert.ok(template);
-  const domestic = resolveTemplateOptionForStoredChannel(
-    template,
-    "cn_abcd",
+  const plugin = findChannelPlugin("glm");
+  assert.ok(plugin);
+  const domestic = resolveChannelVariant(
+    plugin,
     { openai_chat: { baseUrl: "https://open.bigmodel.cn/api/coding/paas/v4", authStyle: "bearer" } },
   );
-  assert.equal(domestic?.label, "国内版");
-  const intl = resolveTemplateOptionForStoredChannel(
-    template,
-    "cn_efgh",
+  assert.equal(domestic.label, "国内版");
+  const intl = resolveChannelVariant(
+    plugin,
     { openai_chat: { baseUrl: "https://api.z.ai/api/coding/paas/v4", authStyle: "bearer" } },
   );
-  assert.equal(intl?.label, "国际版");
+  assert.equal(intl.label, "国际版");
+});
+
+test("GET /api/admin/channel-types lists the three channel plugins", async () => {
+  const { adminProviderRoutes } = await import("../src/routes/admin/providers.js");
+  const app = Fastify();
+  app.addHook("onRequest", async (req: { session?: { role: string }; employeeId?: number }) => {
+    req.session = {
+      sub: "1",
+      role: "admin",
+      phone: "13800000001",
+      name: "Admin",
+      mustChangePassword: false,
+      enterpriseId: null,
+    } as never;
+    req.employeeId = 1;
+  });
+  await app.register(adminProviderRoutes);
+  await app.ready();
+  try {
+    const response = await app.inject({ method: "GET", url: "/api/admin/channel-types" });
+    assert.equal(response.statusCode, 200);
+    const body = response.json() as {
+      success: boolean;
+      data: Array<{
+        code: string;
+        title: string;
+        company: string;
+        productType: string;
+        models: { allowlist: string[]; testModel: string };
+      }>;
+    };
+    assert.equal(body.success, true);
+    assert.deepEqual(
+      body.data.map((row) => ({ code: row.code, productType: row.productType })),
+      listChannelPlugins().map((plugin) => ({
+        code: plugin.code,
+        productType: plugin.productType,
+      })),
+    );
+    assert.equal(body.data[0]?.models.testModel, "glm-5.3");
+    assert.equal(body.data[1]?.models.testModel, "deepseek-chat");
+    assert.equal(body.data[2]?.models.testModel, "doubao-seed-2.0-mini");
+  } finally {
+    await app.close();
+  }
 });

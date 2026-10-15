@@ -15,8 +15,8 @@ import {
   parseProductLineProtocolConfigs,
 } from "./upstream-protocol-config.js";
 import {
+  channelPoolKey,
   pooledProductLineDisplayName,
-  relayPoolKeyForLine,
 } from "./relay/channel-pool.js";
 
 export type EmployeeUpstreamChannel = {
@@ -71,12 +71,7 @@ function compareStableText(left: string, right: string): number {
 }
 
 function poolKeyOf(row: UpstreamChannelCredentialMetadataRow): string {
-  if (row.relayPoolKey) return row.relayPoolKey;
-  return relayPoolKeyForLine({
-    id: row.productLineId,
-    providerCode: row.providerCode,
-    productType: row.productType,
-  });
+  return row.relayPoolKey || channelPoolKey(row.providerCode);
 }
 
 type ChannelAccumulator = {
@@ -186,8 +181,6 @@ export async function getEmployeeUpstreamChannels(
     const [line] = await executor
       .select({
         id: productLines.id,
-        relayPoolKey: productLines.relayPoolKey,
-        productType: productLines.productType,
         providerCode: providers.code,
       })
       .from(productLines)
@@ -195,14 +188,7 @@ export async function getEmployeeUpstreamChannels(
       .where(eq(productLines.id, options.productLineId))
       .limit(1);
     if (!line) return [];
-    poolFilter = eq(
-      productLines.relayPoolKey,
-      line.relayPoolKey || relayPoolKeyForLine({
-        id: line.id,
-        providerCode: line.providerCode,
-        productType: line.productType,
-      }),
-    );
+    poolFilter = eq(providers.code, channelPoolKey(line.providerCode));
   }
 
   const rowsQuery = executor

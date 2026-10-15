@@ -179,9 +179,8 @@ type BindingKind =
   | "dedicated"
   | "team_shared"
   | "department_shared"
-  | "enterprise_shared"
-  | "open_shared";
-type UseBindingKind = "dedicated" | "team_shared" | "department_shared" | "enterprise_shared" | "open_shared";
+  | "enterprise_shared";
+type UseBindingKind = "dedicated" | "team_shared" | "department_shared" | "enterprise_shared";
 type NodeKind =
   | "enterprise"
   | "department"
@@ -445,9 +444,6 @@ function useEdgeStyle(kind: BindingKind): Record<string, string | number | undef
   if (kind === "enterprise_shared") {
     return { stroke: "#4338ca", strokeWidth: 1.5, strokeDasharray: "2 4" };
   }
-  if (kind === "open_shared") {
-    return { stroke: "#059669", strokeWidth: 1.5 };
-  }
   return { stroke: "#94a3b8", strokeWidth: 1.5 };
 }
 
@@ -482,8 +478,7 @@ function isUseEdgeKind(kind: BindingKind): kind is UseBindingKind {
     kind === "dedicated" ||
     kind === "team_shared" ||
     kind === "department_shared" ||
-    kind === "enterprise_shared" ||
-    kind === "open_shared"
+    kind === "enterprise_shared"
   );
 }
 
@@ -491,8 +486,7 @@ function isScheduledUseKind(kind: BindingKind): boolean {
   return (
     kind === "dedicated" ||
     kind === "department_shared" ||
-    kind === "enterprise_shared" ||
-    kind === "open_shared"
+    kind === "enterprise_shared"
   );
 }
 

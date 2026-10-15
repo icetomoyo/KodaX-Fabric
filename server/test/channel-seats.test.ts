@@ -267,12 +267,12 @@ test("submitable channels shrink to seated product lines", () => {
     },
     {
       id: 2,
-      name: "自定义",
-      code: "custom",
+      name: "DeepSeek",
+      code: "api",
       productType: "api" as const,
       status: "active",
-      providerCode: "custom",
-      providerName: "自定义",
+      providerCode: "deepseek",
+      providerName: "深度求索",
       providerStatus: "active",
     },
   ];

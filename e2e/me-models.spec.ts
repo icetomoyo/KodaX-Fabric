@@ -79,7 +79,7 @@ test("员工模型列表展示模型类型与积分消耗，名称可复制", as
   await page.goto("/me/models");
   await expect(page.getByRole("columnheader", { name: "模型名称" })).toBeVisible();
   await expect(page.getByRole("columnheader", { name: "模型类型" })).toBeVisible();
-  await expect(page.getByRole("columnheader", { name: "Input" })).toBeVisible();
+  await expect(page.getByRole("columnheader", { name: "Input", exact: true })).toBeVisible();
   await expect(page.getByRole("columnheader", { name: "Cached Input" })).toBeVisible();
   await expect(page.getByRole("columnheader", { name: "Output" })).toBeVisible();
   await expect(page.getByRole("columnheader", { name: "上下文" })).toHaveCount(0);

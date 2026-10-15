@@ -15,8 +15,8 @@ import {
   getCredentialLoad,
 } from "./credential-load.js";
 import {
-  findActiveProductLineIdByProviderCode,
   loadRelayPool,
+  loadRelayPoolByProviderCode,
   resolveRelayUpstreamConfig,
 } from "./channel-pool.js";
 import { catalogModelsForProvider, parseClientModel } from "./client-model.js";
@@ -28,7 +28,6 @@ import type { RelayProtocol } from "./protocol.js";
 import type {
   RelayCandidate,
 } from "./types.js";
-import { isOpenPoolProvider } from "./open-pool.js";
 import { isValidRelayProductLineId } from "./types.js";
 import { acquireTidalCredential, type TidalRequest } from "./tidal-pool.js";
 import { RELAY_KEY_BUSY_RETRY_AFTER_SECONDS } from "./upstream.js";
@@ -506,23 +505,14 @@ export async function resolveRelayBoundCandidate(
   tidal?: TidalRequest | null,
 ): Promise<RelayBoundCandidateResolution> {
   const parsed = parseClientModel(clientModel);
-  const routedProductLineId = parsed.kind === "legacy"
-    ? productLineId
-    : await findActiveProductLineIdByProviderCode(parsed.providerCode);
   const upstreamModel = parsed.upstreamModel;
-
-  if (!isValidRelayProductLineId(routedProductLineId)) {
-    return {
-      candidate: null,
-      unavailableReason: parsed.kind === "legacy" ? "bound_channel_unavailable" : "model_not_allowed",
-      retryAfterSeconds: null,
-    };
-  }
-  const pool = await loadRelayPool(routedProductLineId);
+  const pool = parsed.kind === "legacy"
+    ? await loadRelayPool(productLineId)
+    : await loadRelayPoolByProviderCode(parsed.providerCode);
   if (!pool || pool.activeProductLineIds.length === 0) {
     return {
       candidate: null,
-      unavailableReason: "bound_channel_unavailable",
+      unavailableReason: parsed.kind === "legacy" ? "bound_channel_unavailable" : "model_not_allowed",
       retryAfterSeconds: null,
     };
   }
@@ -535,8 +525,7 @@ export async function resolveRelayBoundCandidate(
   }
 
   // 潮汐KEY 不走绑定：每次请求从池里挑一把闲置的 Key 并直接占住并发位。
-  // 自建渠道（开放池）本来就没有绑定和并发上限，潮汐KEY 在那里按普通请求处理。
-  if (tidal && !isOpenPoolProvider(pool.providerCode)) {
+  if (tidal) {
     const acquired = await acquireTidalCredential({
       employeeId,
       pool,
@@ -566,7 +555,7 @@ export async function resolveRelayBoundCandidate(
 
   const acquired = await acquireBoundCredential({
     employeeId,
-    productLineId: routedProductLineId,
+    productLineId,
     protocol,
     pool,
     excludeCredentialIds,
@@ -582,11 +571,8 @@ export async function resolveRelayBoundCandidate(
     protocol,
   );
   if (resolved.candidate) {
-    // Bound Keys are shared by a few employees and capped per Key; open pools are not.
-    resolved.candidate.maxConcurrency = acquired.openPool ? null : env.RELAY_KEY_MAX_CONCURRENCY;
-    resolved.candidate.maxMemberConcurrency = acquired.openPool
-      ? null
-      : env.RELAY_KEY_MEMBER_CONCURRENCY;
+    resolved.candidate.maxConcurrency = env.RELAY_KEY_MAX_CONCURRENCY;
+    resolved.candidate.maxMemberConcurrency = env.RELAY_KEY_MEMBER_CONCURRENCY;
   }
   return resolved;
 }

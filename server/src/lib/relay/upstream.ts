@@ -3,13 +3,12 @@ import { env } from "../../config.js";
 import { db } from "../../db/client.js";
 import { upstreamCredentials } from "../../db/schema/index.js";
 import { decryptSecret } from "../crypto-secret.js";
+import { classifyChannelError } from "../../channels/index.js";
 import {
-  classifyUpstreamRateLimit,
   extractUpstreamBusinessError,
-  extractUpstreamUsageCap,
   formatUpstreamVendorError,
   type UpstreamUsageCap,
-} from "../glm-error-codes.js";
+} from "../upstream-error.js";
 import {
   FIVE_HOUR_MS,
   activeFiveHourWindow,
@@ -353,7 +352,7 @@ async function autoDisableCredential(
       lastError: reason.lastError.slice(0, 1_000),
       lastErrorAt: now,
       lastFailureKind: reason.failureKind.slice(0, 32),
-      lastVendorCode: reason.vendorCode ? reason.vendorCode.slice(0, 16) : null,
+      lastVendorCode: reason.vendorCode ? reason.vendorCode.slice(0, 64) : null,
       lastUsedAt: now,
       updatedAt: now,
     })
@@ -452,11 +451,13 @@ export function resolveRelayRateLimitCooldown(
   quotaCooldownSeconds: number,
   now: Date = new Date(),
   windows?: CredentialWindowAnchors | null,
+  providerCode?: string | null,
+  status = 429,
 ): RelayRateLimitCooldownDecision {
   if (bodyText) {
     const parsed = parseJsonValue(bodyText);
     if (parsed !== undefined) {
-      const cap = extractUpstreamUsageCap(parsed);
+      const cap = classifyChannelError(providerCode ?? undefined, status, bodyText)?.usageCap ?? null;
       const vendorCode = extractUpstreamBusinessError(parsed)?.code ?? null;
       const failureKind = rateLimitFailureKind(cap);
       if (cap) {
@@ -574,7 +575,7 @@ async function usageCapMetaPatch(
   return Object.keys(patch).length > 0 ? patch : null;
 }
 
-/** Window columns for the candidate, when it came through the bound/open-pool path. */
+/** Window columns for the candidate, when it came through the bound path. */
 function credentialAnchorsFromCandidate(
   candidate: RelayCandidate,
 ): Map<number, CredentialWindowAnchors> | null {
@@ -643,7 +644,7 @@ async function coolCredential(
       ...(options
         ? {
             lastFailureKind: options.failureKind.slice(0, 32),
-            lastVendorCode: options.vendorCode ? options.vendorCode.slice(0, 16) : null,
+            lastVendorCode: options.vendorCode ? options.vendorCode.slice(0, 64) : null,
             // 校准只在报文带了未来重置时刻时写入；过期时刻不回写锚点/相位。
             // 上游给的重置时刻就是这个窗口的终点，起点直接采用（不取本地较晚的那个）：
             // 本地起点偏晚时，窗口会比真实重置晚结束，Key 重置后还背着旧用量。
@@ -694,6 +695,15 @@ function classifyHttpStatus(status: number): {
       retryable: true,
       errorCode: "upstream_auth_error",
       errorMessage: `上游凭证鉴权失败（HTTP ${status}）`,
+    };
+  }
+  if (status === 402) {
+    // 402 Payment Required：这把 Key 的账户付不起了，按限流换 Key；冷却多久由渠道错误码决定。
+    return {
+      kind: "rate_limited",
+      retryable: true,
+      errorCode: "upstream_rate_limited",
+      errorMessage: "上游账户余额不足",
     };
   }
   if (status === 429) {
@@ -980,7 +990,7 @@ export async function sendRelayUpstream(
   }
 
   const classification = classifyHttpStatus(response.status);
-  // 429 怎么处置这把 Key、要不要换 Key 由业务码决定，见 classifyUpstreamRateLimit。
+  // 402 / 429 怎么处置这把 Key、要不要换 Key 由渠道插件 classifyError 决定。
   let kind = classification.kind;
   let retryable = classification.retryable;
   let errorCode = classification.errorCode;
@@ -993,7 +1003,11 @@ export async function sendRelayUpstream(
     } else if (classification.kind === "rate_limited") {
       const bodyText = await peekResponseText(response);
       const now = new Date();
-      const disposition = classifyUpstreamRateLimit(bodyText ?? "");
+      const disposition = classifyChannelError(
+        input.candidate.providerCode,
+        response.status,
+        bodyText ?? "",
+      )?.rateLimitDisposition ?? "key_limited";
       if (disposition === "fair_use" || disposition === "plan_expired") {
         // 这把 Key 自己不会恢复（风控要人工解除，套餐要续订）：停用并通知管理员。
         // 请求照常换一把 Key 重发，不把失败甩给员工。
@@ -1041,6 +1055,8 @@ export async function sendRelayUpstream(
           env.RELAY_QUOTA_COOLDOWN_SECONDS,
           now,
           candidateAnchors,
+          input.candidate.providerCode,
+          response.status,
         );
         const metaPatch = await usageCapMetaPatch(input.candidate, decision.cap, now);
         // 报文带未来重置时刻时校准窗口状态列：1308 → 首用锚点（重置−5h），
@@ -1071,7 +1087,13 @@ export async function sendRelayUpstream(
       // 模型拥堵（1305）线上多数以 HTTP 529 返回：和 429 的同码一样处理，
       // 不算这把 Key 的故障，也不换 Key 去扫别的 Key。
       const bodyText = await peekResponseText(response);
-      if (classifyUpstreamRateLimit(bodyText ?? "") === "model_busy") {
+      if (
+        classifyChannelError(
+          input.candidate.providerCode,
+          response.status,
+          bodyText ?? "",
+        )?.rateLimitDisposition === "model_busy"
+      ) {
         await markCredentialUsed(input.candidate);
         kind = "rate_limited";
         retryable = false;

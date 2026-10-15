@@ -44,7 +44,7 @@ export type RelayCandidate = {
   credentialWeight: number;
   /** Raw credential meta JSON (test results, external drain evidence, …); absent on hand-built candidates. */
   meta?: unknown;
-  /** Configured credit limits when the candidate came through the bound/open-pool path. */
+  /** Configured credit limits when the candidate came through the bound path. */
   fiveHourCreditLimit?: number | null;
   weeklyCreditLimit?: number | null;
   monthlyCreditLimit?: number | null;
@@ -55,7 +55,7 @@ export type RelayCandidate = {
   weeklyWindowResetAt?: Date | null;
   /** The package's monthly reset instant (null: the 1st, Beijing time). */
   monthlyWindowResetAt?: Date | null;
-  /** Per-Key concurrency limit for bound Keys; absent means unlimited (open pool, support bot). */
+  /** Per-Key concurrency limit for bound Keys; absent means unlimited (support bot). */
   maxConcurrency?: number | null;
   /** Per-employee cap on one Key; absent means no per-member cap. */
   maxMemberConcurrency?: number | null;

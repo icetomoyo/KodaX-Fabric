@@ -1,10 +1,10 @@
 import type { FastifyInstance } from "fastify";
 import { db } from "../../db/client.js";
 import { providers } from "../../db/schema/index.js";
+import { findChannelPlugin } from "../../channels/index.js";
 import {
   catalogModelKind,
   groupOfficialProviderCatalogs,
-  isHuoshanProvider,
   type CatalogModelKind,
 } from "../../lib/discovered-models.js";
 import { creditRateFor, type ModelCreditRate } from "../../lib/relay/credit-cost.js";
@@ -46,10 +46,11 @@ export type CatalogModelEntry = {
   creditRate: ModelCreditRate | null;
 };
 
-/** Client call name shown on the model list, e.g. huoshan/glm-5.3. */
+/** Client call name shown on the model list: bare for alias channels, otherwise `channel/model`. */
 export function catalogCallName(providerCode: string, model: string): string {
   if (model.includes("/")) return model;
-  if (isHuoshanProvider(providerCode)) return `huoshan/${model}`;
+  const plugin = findChannelPlugin(providerCode);
+  if (plugin && !plugin.models.bareAlias) return `${plugin.code}/${model}`;
   return model;
 }
 

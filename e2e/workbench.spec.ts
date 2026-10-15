@@ -10,10 +10,12 @@ import {
 } from "@playwright/test";
 import postgres from "postgres";
 import { E2E } from "./env.ts";
+import { isolateChannelPool } from "./pool-isolation.ts";
 import {
   SCHED_LOGIN_PASSWORD,
   SCHED_PEOPLE,
   SCHED_POOLS,
+  schedLineCode,
   type SchedPersonKey,
   type SchedPoolKey,
 } from "./scheduling-fixture.ts";
@@ -157,6 +159,7 @@ let savedBuckets: BucketRow[] = [];
 let savedGrants: GrantRow[] = [];
 let savedTidalSettings: Record<string, unknown> | null = null;
 let grantEmployeeIds: number[] = [];
+let restorePool: (() => Promise<void>) | null = null;
 
 function lineId(pool: SchedPoolKey): number {
   const id = lineIds.get(pool);
@@ -259,12 +262,14 @@ test.describe.serial("超管工作台", () => {
     token = await loginToken(E2E.admin.phone, E2E.admin.password);
 
     const lines = await sql<Array<{ id: string; code: string }>>`
-      select id, code from product_lines where code like 'hz_sched_%'
+      select id, code from product_lines where code like 'cn_sched_%'
     `;
     for (const pool of Object.keys(SCHED_POOLS) as SchedPoolKey[]) {
-      const row = lines.find((line) => line.code === `hz_sched_${pool.toLowerCase()}`);
+      const row = lines.find((line) => line.code === schedLineCode(pool));
       if (row) lineIds.set(pool, Number(row.id));
     }
+    // 夹具套餐默认停用（智谱是一个调度池）。工作台只看统计，把它们全部启用、同渠道其他套餐停用。
+    restorePool = await isolateChannelPool(sql, "glm", [...lineIds.values()]);
     for (const ref of TOUCHED) {
       const [row] = await sql<Array<{ id: string }>>`
         select id from upstream_credentials
@@ -369,7 +374,7 @@ test.describe.serial("超管工作台", () => {
       await sql`
         insert into sensitive_word_hits
           (request_id, employee_id, client_model, protocol, path, matched_word, action)
-        values (${`${HIT_PREFIX}${index}`}, ${grantEmployeeIds[0]}, 'e2e-upstream-model',
+        values (${`${HIT_PREFIX}${index}`}, ${grantEmployeeIds[0]}, 'glm-5.3',
                 'openai_chat', '/v1/chat/completions', 'e2e', ${action}::sensitive_word_hit_action)
         on conflict (request_id) do nothing
       `;
@@ -417,6 +422,7 @@ test.describe.serial("超管工作台", () => {
         }
       }
       await sql`delete from sensitive_word_hits where request_id like ${`${HIT_PREFIX}%`}`;
+      await restorePool?.();
       await sql.end({ timeout: 5 });
     }
     if (api && savedTidalSettings) {

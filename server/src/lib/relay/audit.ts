@@ -9,7 +9,7 @@ import {
   usageCountersDaily,
   usageCountersTeamDaily,
 } from "../../db/schema/index.js";
-import { resolveLoggedError } from "../glm-error-codes.js";
+import { resolveLoggedError } from "../upstream-error.js";
 import {
   buildRequestContextRecord,
   scheduleRequestContextWrite,

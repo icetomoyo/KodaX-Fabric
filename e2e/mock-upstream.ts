@@ -46,10 +46,17 @@ function resetControl(): void {
   seq = 0;
 }
 
-function bearerSecret(req: IncomingMessage): string {
-  const header = req.headers.authorization;
+function headerValue(req: IncomingMessage, name: string): string {
+  const header = req.headers[name];
   const value = Array.isArray(header) ? header[0] : header;
-  return value?.replace(/^Bearer\s+/i, "").trim() ?? "";
+  return value?.trim() ?? "";
+}
+
+/** Authorization Bearer first, then x-api-key (Anthropic / some gateways). */
+function requestSecret(req: IncomingMessage): string {
+  const bearer = headerValue(req, "authorization").replace(/^Bearer\s+/i, "").trim();
+  if (bearer) return bearer;
+  return headerValue(req, "x-api-key");
 }
 
 /** 取最后一条 user 消息的文本，用例用它给每次调用打标记。 */
@@ -171,7 +178,7 @@ async function handleControl(req: IncomingMessage, res: ServerResponse, url: str
 async function handleChat(req: IncomingMessage, res: ServerResponse, url: string): Promise<void> {
   const body = await readBody(req);
   const model = typeof body.model === "string" ? body.model : "e2e-upstream-model";
-  const secret = bearerSecret(req);
+  const secret = requestSecret(req);
   console.log(`[mock-upstream] POST ${url} model=${model} stream=${Boolean(body.stream)}`);
 
   seq += 1;

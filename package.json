@@ -16,6 +16,7 @@
     "test": "npm run test:server && npm run test:e2e",
     "test:server": "npm test --workspace=@kodax-fabric/server",
     "test:e2e": "playwright test",
+    "test:e2e:channel-pool": "playwright test e2e/channel-pool.spec.ts",
     "test:e2e:report": "playwright show-report playwright-report",
     "db:generate": "npm run db:generate --workspace=@kodax-fabric/server",
     "db:migrate": "npm run db:migrate --workspace=@kodax-fabric/server",

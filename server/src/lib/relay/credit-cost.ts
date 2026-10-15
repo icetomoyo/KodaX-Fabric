@@ -1,3 +1,6 @@
+import { findChannelPlugin } from "../../channels/index.js";
+import { inferModelChannel } from "../discovered-models.js";
+
 /**
  * Per-10k-token credit coefficients stored as numeric strings (Drizzle).
  *
@@ -25,74 +28,6 @@ export type StoredCreditRate = {
   completionCreditsPer10k: string | null;
 };
 
-/** GLM Flash row from the official Zhipu coding-plan table. */
-const GLM_FLASH_CREDIT_RATE: ModelCreditRate = {
-  promptCreditsPer10k: "2.3",
-  cacheHitCreditsPer10k: "0.56",
-  completionCreditsPer10k: "8",
-};
-
-/** GLM-5.3 row; Zhipu bills historical GLM models at these rates. */
-const GLM_DEFAULT_CREDIT_RATE: ModelCreditRate = {
-  promptCreditsPer10k: "6.9",
-  cacheHitCreditsPer10k: "1.7",
-  completionCreditsPer10k: "24",
-};
-
-/** Volcano Ark provider code; also the model prefix (`huoshan/<model>`). */
-const HUOSHAN_PROVIDER_CODE = "huoshan";
-
-/**
- * Volcano Ark Agent Plan (enterprise) AFP coefficients per 10k tokens.
- * Official table: https://www.volcengine.com/docs/82379/2516283
- * AFP = (input tokens × input + output tokens × output) / 10,000. Cached input
- * has no separate rate and there is no off-peak discount.
- * Hub only exposes the Agent Plan models below. glm-latest,
- * kimi-k2.8-preview, kimi-k3, image / video / audio / Harness stay omitted.
- * Text rows use the 输入不含音频 coefficient.
- */
-const HUOSHAN_TEXT_RATES: ReadonlyArray<readonly [model: string, input: string, output: string]> = [
-  ["doubao-seed-2.0-mini", "0.25", "0.25"],
-  ["deepseek-v4-flash", "0.5", "0.5"],
-  ["doubao-seed-2.1-lite", "0.5", "0.5"],
-  ["glm-5.3-flash", "0.5", "0.5"],
-  ["doubao-seed-evolving", "2.5", "2.5"],
-  ["minimax-m3", "2.5", "2.5"],
-  ["doubao-seed-2.1-pro", "2.5", "2.5"],
-  ["deepseek-v4.1-flash", "2.5", "2.5"],
-  ["kimi-k2.7-code", "4.5", "4.5"],
-  ["glm-5.3", "4.5", "4.5"],
-  ["deepseek-v4-pro", "5.5", "5.5"],
-];
-
-const HUOSHAN_EMBEDDING_RATES: ReadonlyArray<readonly [model: string, input: string, output: string]> = [
-  ["doubao-embedding-vision", "0.5", "0.5"],
-];
-
-const HUOSHAN_CREDIT_RATES = new Map<string, ModelCreditRate>(
-  [...HUOSHAN_TEXT_RATES, ...HUOSHAN_EMBEDDING_RATES].map(([model, input, output]) => [
-    model,
-    {
-      promptCreditsPer10k: input,
-      cacheHitCreditsPer10k: input,
-      completionCreditsPer10k: output,
-      offPeakDiscount: false,
-    },
-  ]),
-);
-
-/** Volcano Ark text-generation models the relay accepts. */
-export const HUOSHAN_TEXT_MODELS: readonly string[] = HUOSHAN_TEXT_RATES.map(([model]) => model);
-
-/** Volcano Ark embedding models the relay accepts. */
-export const HUOSHAN_EMBEDDING_MODELS: readonly string[] = HUOSHAN_EMBEDDING_RATES.map(([model]) => model);
-
-/** Agent Plan text + embedding; glm-latest / kimi-k2.8 / kimi-k3 stay blocked. */
-export const HUOSHAN_ALLOWED_MODELS: readonly string[] = [
-  ...HUOSHAN_TEXT_MODELS,
-  ...HUOSHAN_EMBEDDING_MODELS,
-];
-
 function stripModelPrefix(model: string): { prefix: string | null; name: string } {
   const normalized = model.trim().toLowerCase();
   const slash = normalized.lastIndexOf("/");
@@ -103,35 +38,13 @@ function stripModelPrefix(model: string): { prefix: string | null; name: string 
 
 /**
  * Built-in credit coefficients. The same model name bills differently per
- * vendor (glm-5.3 is 4.5 on Volcano Ark, 6.9 on Zhipu), so the provider that
- * served the request decides; a `huoshan/` prefix on the model counts too.
+ * vendor, so the provider that served the request decides; a routing prefix
+ * on the model counts too.
  */
 export function creditRateFor(clientModel: string, providerCode?: string | null): ModelCreditRate | null {
   const { prefix, name } = stripModelPrefix(clientModel);
-  if (providerCode === HUOSHAN_PROVIDER_CODE || prefix === HUOSHAN_PROVIDER_CODE) {
-    return HUOSHAN_CREDIT_RATES.get(name) ?? null;
-  }
-  return defaultCreditRateFor(clientModel);
-}
-
-/**
- * Built-in Zhipu coding-plan credit coefficients.
- *
- * Official table: https://docs.bigmodel.cn/cn/coding-plan/team
- * ("积分抵扣计算方式"). Names containing `flash` under the GLM family use
- * the Flash row; remaining models that start with `glm` use the GLM-5.3
- * row because Zhipu bills historical models at GLM-5.3 rates. Non-GLM
- * models have no built-in rate. Edit this table when official rates change.
- */
-export function defaultCreditRateFor(clientModel: string): ModelCreditRate | null {
-  const name = clientModel.toLowerCase();
-  if (name.startsWith("glm") && name.includes("flash")) {
-    return GLM_FLASH_CREDIT_RATE;
-  }
-  if (name.startsWith("glm")) {
-    return GLM_DEFAULT_CREDIT_RATE;
-  }
-  return null;
+  const plugin = findChannelPlugin(providerCode ?? prefix ?? "") ?? inferModelChannel(name);
+  return plugin?.creditRate?.(name) ?? null;
 }
 
 function isCompleteCreditRate(row: StoredCreditRate): row is ModelCreditRate {

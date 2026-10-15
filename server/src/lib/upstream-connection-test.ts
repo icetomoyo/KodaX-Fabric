@@ -1,6 +1,5 @@
-import { GLM_TEXT_CATALOG_MODEL } from "./discovered-models.js";
-import { extractUpstreamUsageCap, formatUpstreamVendorError } from "./glm-error-codes.js";
-import { getProviderTemplate, isTestableUpstreamUrl } from "./provider-templates.js";
+import { classifyChannelError, findChannelPlugin, isTestableUpstreamUrl } from "../channels/index.js";
+import { formatUpstreamVendorError } from "./upstream-error.js";
 import {
   DEFAULT_RELAY_PROTOCOL,
   type RelayProtocol,
@@ -95,9 +94,8 @@ export function resolveUpstreamTestModel(
     ?.map((name) => name.trim())
     .find((name) => name.length > 0);
   if (discovered) return discovered;
-  if (providerCode === "glm") return GLM_TEXT_CATALOG_MODEL;
-  if (providerCode === "deepseek") return "deepseek-chat";
-  if (providerCode === "huoshan") return "doubao-seed-2.0-mini";
+  const testModel = findChannelPlugin(providerCode)?.models.testModel?.trim();
+  if (testModel) return testModel;
   throw new Error("无法确定测试模型");
 }
 
@@ -154,7 +152,7 @@ export async function probeUpstreamModels(input: {
 }): Promise<UpstreamConnectionTestResult> {
   if (!isTestableUpstreamUrl(input.providerCode, input.baseUrl)) {
     throw new Error(
-      getProviderTemplate(input.providerCode)
+      findChannelPlugin(input.providerCode)
         ? "当前仅支持对已确认供应商的官方 HTTPS 地址进行连通性测试"
         : "自定义渠道缺少可测试的上游地址",
     );
@@ -192,7 +190,8 @@ export async function probeUpstreamModels(input: {
     } catch {
       payload = null;
     }
-    const usageCap = extractUpstreamUsageCap(payload);
+    const usageCap = classifyChannelError(input.providerCode, response.status, raw)?.usageCap
+      ?? null;
     const businessFailure = parseUpstreamBusinessFailure(payload);
     const connectionOk = response.ok && businessFailure === null && usageCap === null;
     const models = connectionOk ? uniqueModels(model, input.discoveredModels) : [];

@@ -391,7 +391,7 @@ export const upstreamCredentials = pgTable(
     weeklyWindowResetAt: timestamp("weekly_window_reset_at", { withTimezone: true }),
     /** 结构化失败分类；看板泳道据此划分，不再解析 last_error 文本。 */
     lastFailureKind: varchar("last_failure_kind", { length: 32 }),
-    lastVendorCode: varchar("last_vendor_code", { length: 16 }),
+    lastVendorCode: varchar("last_vendor_code", { length: 64 }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },

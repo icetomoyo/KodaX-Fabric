@@ -1,17 +1,13 @@
-import { randomBytes } from "node:crypto";
-import { resolveCustomProtocolConfigs } from "./custom-channel.js";
 import {
-  HAIZHI_PROVIDER_CODE,
-  HAIZHI_PROVIDER_NAME,
-  getProviderTemplate,
-  resolveTemplateProtocolConfigs,
-} from "./provider-templates.js";
+  allocateProductCode,
+  findChannelPlugin,
+  findChannelVariant,
+  resolveVariantProtocolConfigs,
+} from "../channels/index.js";
 import { RELAY_PROTOCOLS, type RelayProtocol } from "./relay/protocol.js";
 import { configurableSupportedProtocolsSchema } from "./upstream-channel-update.js";
 import type { ProductLineProtocolConfigs } from "./upstream-protocol-config.js";
 
-export const CHANNEL_CREATE_PROVIDERS = ["glm", "deepseek", "huoshan", "haizhi"] as const;
-export const CHANNEL_CREATE_VARIANTS = ["domestic", "international"] as const;
 export const CHANNEL_TAG_MAX_LENGTH = 32;
 
 export function normalizeChannelTag(value: unknown): string | null {
@@ -20,26 +16,6 @@ export function normalizeChannelTag(value: unknown): string | null {
   const tag = value.trim();
   if (tag.length > CHANNEL_TAG_MAX_LENGTH) return null;
   return tag;
-}
-
-export function allocateDomesticProductLineCode(): string {
-  return `cn_${randomBytes(8).toString("hex")}`;
-}
-
-export function allocateHaizhiProductLineCode(): string {
-  return `hz_${randomBytes(8).toString("hex")}`;
-}
-
-export function allocateInternationalProductLineCode(): string {
-  return `in_${randomBytes(8).toString("hex")}`;
-}
-
-export function allocateDeepseekProductLineCode(): string {
-  return `ds_${randomBytes(8).toString("hex")}`;
-}
-
-export function allocateHuoshanProductLineCode(): string {
-  return `hs_${randomBytes(8).toString("hex")}`;
 }
 
 export type UpstreamChannelCreatePlan =
@@ -54,6 +30,7 @@ export type UpstreamChannelCreatePlan =
     productType: "api" | "coding_plan";
     providerCode: string;
     providerName: string;
+    variantCode: string;
     testModel: string | null;
     allocateCode: () => string;
   }
@@ -63,7 +40,6 @@ export type UpstreamChannelCreatePlan =
   | { kind: "tag_invalid" }
   | { kind: "test_model_invalid" }
   | { kind: "provider_unsupported" }
-  | { kind: "custom_configs_required" }
   | { kind: "protocol_unsupported"; unsupportedProtocols: RelayProtocol[] };
 
 export const CHANNEL_TEST_MODEL_MAX_LENGTH = 128;
@@ -100,90 +76,11 @@ export function planUpstreamChannelCreate(input: unknown): UpstreamChannelCreate
   if (!protocolsParsed.success) return { kind: "protocols_required" };
   const protocols = RELAY_PROTOCOLS.filter((protocol) => protocolsParsed.data.includes(protocol));
 
-  if (body.provider === "haizhi") {
-    const resolution = resolveCustomProtocolConfigs(body.protocolConfigs, protocols);
-    if (!resolution.ok) return { kind: "custom_configs_required" };
-    return {
-      kind: "accepted",
-      name,
-      tag,
-      seatCount,
-      status,
-      protocols,
-      protocolConfigs: resolution.configs,
-      productType: "api",
-      providerCode: HAIZHI_PROVIDER_CODE,
-      providerName: HAIZHI_PROVIDER_NAME,
-      testModel,
-      allocateCode: allocateHaizhiProductLineCode,
-    };
-  }
-
-  if (body.provider === "deepseek") {
-    const template = getProviderTemplate("deepseek");
-    const line = template?.baseUrls[0];
-    if (!template || !line) return { kind: "provider_unsupported" };
-    const resolution = resolveTemplateProtocolConfigs(template, line.productLineCode, protocols);
-    if (!resolution.ok) {
-      return {
-        kind: "protocol_unsupported",
-        unsupportedProtocols: resolution.unsupportedProtocols,
-      };
-    }
-    return {
-      kind: "accepted",
-      name,
-      tag,
-      seatCount,
-      status,
-      protocols,
-      protocolConfigs: resolution.configs,
-      productType: "api",
-      providerCode: template.code,
-      providerName: template.name,
-      testModel,
-      allocateCode: allocateDeepseekProductLineCode,
-    };
-  }
-
-  if (body.provider === "huoshan") {
-    const template = getProviderTemplate("huoshan");
-    const line = template?.baseUrls[0];
-    if (!template || !line) return { kind: "provider_unsupported" };
-    const resolution = resolveTemplateProtocolConfigs(template, line.productLineCode, protocols);
-    if (!resolution.ok) {
-      return {
-        kind: "protocol_unsupported",
-        unsupportedProtocols: resolution.unsupportedProtocols,
-      };
-    }
-    return {
-      kind: "accepted",
-      name,
-      tag,
-      seatCount,
-      status,
-      protocols,
-      protocolConfigs: resolution.configs,
-      productType: body.productType === "api" ? "api" : "coding_plan",
-      providerCode: template.code,
-      providerName: template.name,
-      testModel,
-      allocateCode: allocateHuoshanProductLineCode,
-    };
-  }
-
-  if (body.provider !== "glm") return { kind: "provider_unsupported" };
-  if (body.variant !== "domestic" && body.variant !== "international") {
-    return { kind: "provider_unsupported" };
-  }
-
-  const template = getProviderTemplate("glm");
-  const line = body.variant === "international"
-    ? template?.baseUrls.find((option) => option.productLineCode === "api_intl") ?? template?.baseUrls[1]
-    : template?.baseUrls[0];
-  if (!template || !line) return { kind: "provider_unsupported" };
-  const resolution = resolveTemplateProtocolConfigs(template, line.productLineCode, protocols);
+  const plugin = findChannelPlugin(typeof body.provider === "string" ? body.provider : "");
+  if (!plugin) return { kind: "provider_unsupported" };
+  const variant = findChannelVariant(plugin, body.variant);
+  if (!variant) return { kind: "provider_unsupported" };
+  const resolution = resolveVariantProtocolConfigs(variant, protocols);
   if (!resolution.ok) {
     return {
       kind: "protocol_unsupported",
@@ -198,13 +95,12 @@ export function planUpstreamChannelCreate(input: unknown): UpstreamChannelCreate
     status,
     protocols,
     protocolConfigs: resolution.configs,
-    productType: body.productType === "api" ? "api" : line.productType,
-    providerCode: template.code,
-    providerName: template.name,
+    productType: plugin.productType,
+    providerCode: plugin.code,
+    providerName: plugin.meta.company,
+    variantCode: variant.code,
     testModel,
-    allocateCode: body.variant === "international"
-      ? allocateInternationalProductLineCode
-      : allocateDomesticProductLineCode,
+    allocateCode: () => allocateProductCode(variant),
   };
 }
 
@@ -224,9 +120,7 @@ export function channelCreateError(kind: Exclude<UpstreamChannelCreatePlan["kind
     case "test_model_invalid":
       return { status: 400, message: "测试模型最多 128 个字符" };
     case "provider_unsupported":
-      return { status: 400, message: "目前只支持智谱、DeepSeek、火山方舟或海致集团" };
-    case "custom_configs_required":
-      return { status: 400, message: "请填写上游地址" };
+      return { status: 400, message: "目前只支持智谱、DeepSeek 或火山方舟" };
     case "protocol_unsupported":
       return { status: 400, message: "所选协议不受该供应商支持" };
   }

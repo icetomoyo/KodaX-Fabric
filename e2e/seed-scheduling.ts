@@ -14,8 +14,8 @@ import { encryptEmployeeApiKey, hashApiKey } from "../server/src/lib/api-key.js"
 import { encryptSecret, secretSuffix } from "../server/src/lib/crypto-secret.js";
 import { ensureDefaultTeam, insertEnterprise } from "../server/src/lib/enterprise.js";
 import { hashPassword, REGISTRATION_INITIAL_PASSWORD } from "../server/src/lib/password.js";
-import { HAIZHI_PROVIDER_CODE, HAIZHI_PROVIDER_NAME } from "../server/src/lib/provider-templates.js";
-import { E2E } from "./env.ts";
+import { findRelayVariant, getChannelPlugin } from "../server/src/channels/index.js";
+import { channelPoolKey } from "../server/src/lib/relay/channel-pool.js";
 import {
   SCHED_DEPARTMENTS,
   SCHED_ENTERPRISE,
@@ -25,6 +25,7 @@ import {
   SCHED_POOLS,
   SCHED_UI_PACKAGE,
   schedApiKey,
+  schedLineCode,
   schedSecret,
   type SchedDeptKey,
   type SchedPerson,
@@ -34,28 +35,20 @@ import {
 } from "./scheduling-fixture.ts";
 
 /**
- * 渠道 Key 调度 E2E 夹具：编制树、人员、每个场景一条 haizhi 自建渠道
- * （上游指向本机 mock）、渠道 Key、席位和员工 API Key。
+ * 渠道 Key 调度 E2E 夹具：编制树、人员、每个场景一条智谱套餐、渠道 Key、席位和员工 API Key。
  * 在 db:seed / seed-org 之后执行，测试库每次运行都会重置，所以只做插入。
+ *
+ * 渠道只用注册表里的真实渠道（db:seed 已写入 providers）。一个渠道一个调度池，
+ * 所以场景套餐全部以停用状态入库，用例开跑前用 isolateChannelPool 只启用自己那条。
+ * 官方网关地址由 rewrite-upstream-fetch 打到本机 mock。
  */
-async function ensureHaizhiProvider(): Promise<number> {
-  await db
-    .insert(providers)
-    .values({
-      code: HAIZHI_PROVIDER_CODE,
-      name: HAIZHI_PROVIDER_NAME,
-      defaultBaseUrl: `${E2E.mockUpstreamBaseUrl}/v1`,
-      authStyle: "bearer",
-      openaiCompatLevel: "full",
-      status: "active",
-    })
-    .onConflictDoNothing({ target: providers.code });
+async function channelProviderId(code: string): Promise<number> {
   const [row] = await db
     .select({ id: providers.id })
     .from(providers)
-    .where(eq(providers.code, HAIZHI_PROVIDER_CODE))
+    .where(eq(providers.code, code))
     .limit(1);
-  if (!row) throw new Error("haizhi 供应商创建失败");
+  if (!row) throw new Error(`渠道 ${code} 未入库，先跑 db:seed`);
   return row.id;
 }
 
@@ -112,28 +105,30 @@ async function main() {
       }
     }
 
-    const providerId = await ensureHaizhiProvider();
+    const glm = getChannelPlugin("glm");
+    const glmVariant = findRelayVariant(glm);
+    if (!glmVariant) throw new Error("智谱渠道缺少 relay 网关");
+    const glmId = await channelProviderId(glm.code);
     const summary: Record<string, unknown> = {};
     for (const poolKey of Object.keys(SCHED_POOLS) as SchedPoolKey[]) {
       const pool: SchedPoolDef = SCHED_POOLS[poolKey];
       const [line] = await db
         .insert(productLines)
         .values({
-          providerId,
-          code: `hz_sched_${poolKey.toLowerCase()}`,
+          providerId: glmId,
+          code: schedLineCode(poolKey),
           name: pool.name,
-          tag: "调度E2E",
-          productType: "api",
-          protocolConfigs: {
-            openai_chat: { baseUrl: `${E2E.mockUpstreamBaseUrl}/v1`, authStyle: "bearer" },
-          },
+          tag: glmVariant.label,
+          productType: glm.productType,
+          protocolConfigs: glmVariant.protocolConfigs,
           configVersion: 1,
           seatCount: pool.keys.length,
-          status: "active",
-          testModel: "e2e-upstream-model",
+          status: "disabled",
+          testModel: glm.models.testModel,
           fiveHourCreditLimit:
             pool.fiveHourCreditLimit != null ? String(pool.fiveHourCreditLimit) : null,
           weeklyCreditLimit: pool.weeklyCreditLimit != null ? String(pool.weeklyCreditLimit) : null,
+          relayPoolKey: channelPoolKey(glm.code),
         })
         .returning({ id: productLines.id });
 
@@ -180,33 +175,19 @@ async function main() {
     }
 
     // 界面用例用的智谱套餐：停用的 Key，没有 API Key，不会产生任何上游调用。
-    await db
-      .insert(providers)
-      .values({
-        code: "glm",
-        name: SCHED_UI_PACKAGE.channelName,
-        defaultBaseUrl: "https://open.bigmodel.cn/api/coding/paas/v4",
-        authStyle: "bearer",
-        openaiCompatLevel: "full",
-        status: "active",
-      })
-      .onConflictDoNothing({ target: providers.code });
-    const [glm] = await db
-      .select({ id: providers.id })
-      .from(providers)
-      .where(eq(providers.code, "glm"))
-      .limit(1);
     const [uiLine] = await db
       .insert(productLines)
       .values({
-        providerId: glm.id,
+        providerId: glmId,
         code: SCHED_UI_PACKAGE.code,
         name: SCHED_UI_PACKAGE.name,
-        tag: "国内",
-        productType: "coding_plan",
+        tag: glmVariant.label,
+        productType: glm.productType,
+        protocolConfigs: glmVariant.protocolConfigs,
         configVersion: 1,
         seatCount: SCHED_UI_PACKAGE.keys.length,
         status: "active",
+        relayPoolKey: channelPoolKey(glm.code),
       })
       .returning({ id: productLines.id });
     for (const keyDef of SCHED_UI_PACKAGE.keys) {

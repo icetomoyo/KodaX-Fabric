@@ -1,51 +1,32 @@
-import { HUOSHAN_ALLOWED_MODELS } from "./credit-cost.js";
-
-export const MODEL_PREFIXES = ["glm", "deepseek", "huoshan", "haizhi"] as const;
-export type ModelPrefix = (typeof MODEL_PREFIXES)[number];
+import { listChannelPlugins } from "../../channels/index.js";
 
 export type CatalogClientModel = {
-  prefix: ModelPrefix;
+  prefix: string;
   providerCode: string;
   upstreamModel: string;
   canonicalId: string;
   alias: string;
 };
 
-export const CLIENT_MODEL_CATALOG: readonly CatalogClientModel[] = [
-  {
-    prefix: "glm",
-    providerCode: "glm",
-    upstreamModel: "glm-5.3",
-    canonicalId: "glm/glm-5.3",
-    alias: "glm-5.3",
-  },
-  {
-    prefix: "glm",
-    providerCode: "glm",
-    upstreamModel: "glm-5.3-flash",
-    canonicalId: "glm/glm-5.3-flash",
-    alias: "glm-5.3-flash",
-  },
-  {
-    prefix: "deepseek",
-    providerCode: "deepseek",
-    upstreamModel: "deepseek-flash",
-    canonicalId: "deepseek/deepseek-flash",
-    alias: "deepseek-flash",
-  },
-  ...HUOSHAN_ALLOWED_MODELS.map((upstreamModel) => ({
-    prefix: "huoshan" as const,
-    providerCode: "huoshan",
-    upstreamModel,
-    canonicalId: `huoshan/${upstreamModel}`,
-    alias: `huoshan/${upstreamModel}`,
-  })),
-];
+function buildClientModelCatalog(): CatalogClientModel[] {
+  return listChannelPlugins().flatMap((plugin) => {
+    const prefix = plugin.code;
+    return plugin.models.allowlist.map((upstreamModel) => ({
+      prefix,
+      providerCode: plugin.code,
+      upstreamModel,
+      canonicalId: `${prefix}/${upstreamModel}`,
+      alias: plugin.models.bareAlias ? upstreamModel : `${prefix}/${upstreamModel}`,
+    }));
+  });
+}
+
+export const CLIENT_MODEL_CATALOG: readonly CatalogClientModel[] = buildClientModelCatalog();
 
 export type ParsedClientModel =
   | {
       kind: "catalog";
-      prefix: ModelPrefix;
+      prefix: string;
       providerCode: string;
       canonicalId: string;
       upstreamModel: string;
@@ -120,6 +101,12 @@ export function parseClientModel(raw: string): ParsedClientModel {
     }
   }
   return { kind: "legacy", upstreamModel: raw.trim() };
+}
+
+/** Channel implied by the model name alone: a routing prefix or a bare catalog alias. */
+export function inferChannelCode(model: string): string | null {
+  const parsed = parseClientModel(model);
+  return parsed.kind === "legacy" ? null : parsed.providerCode;
 }
 
 export function catalogModelsForProvider(providerCode: string): CatalogClientModel[] {

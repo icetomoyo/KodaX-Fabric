@@ -54,7 +54,6 @@ import {
   getEmployeeInFlight,
 } from "./credential-load.js";
 import { type RelayProtocol } from "./protocol.js";
-import { isOpenPoolProvider } from "./open-pool.js";
 import {
   loadRelayPool,
   resolveRelayUpstreamConfig,
@@ -135,8 +134,6 @@ export type AcquireBindingResult =
       role: BindingRole;
       /** This request only; the employee's binding was not changed. */
       transient: boolean;
-      /** Self-hosted pool: no membership and no per-Key concurrency limit. */
-      openPool: boolean;
     }
   | {
       ok: false;
@@ -397,9 +394,6 @@ export async function acquireBoundCredential(
   if (!pool) {
     return { ok: false, reason: "no_binding_available", retryAt: null };
   }
-  if (isOpenPoolProvider(pool.providerCode)) {
-    return acquireOpenPoolCredential(params, now);
-  }
 
   const [requester] = await db
     .select({ enterpriseId: employees.enterpriseId })
@@ -495,7 +489,7 @@ function granted(
   role: BindingRole,
   transient: boolean,
 ): AcquireBindingResult {
-  return { ok: true, credential, role, transient, openPool: false };
+  return { ok: true, credential, role, transient };
 }
 
 function rankingFailure(
@@ -957,100 +951,6 @@ function anchorsMapFromSnapshots(
   return new Map(
     snapshots.map((snapshot) => [snapshot.credentialId, snapshotAnchors(snapshot)]),
   );
-}
-
-/**
- * Self-hosted channels keep no bindings: every request picks the Key with the
- * most quota headroom from the whole pool.
- */
-async function acquireOpenPoolCredential(
-  params: AcquireBindingParams,
-  now: Date,
-): Promise<AcquireBindingResult> {
-  await restoreExpiredCooling([params.productLineId], now);
-  const pool = await loadOpenPool(
-    [params.productLineId],
-    params.protocol,
-    params.excludeCredentialIds ?? new Set(),
-  );
-  const usageMap = await loadUsage(pool, now);
-  const usable: Array<{
-    snapshot: CredentialSnapshotRow;
-    credential: BoundCredential;
-    headroom: number;
-  }> = [];
-  const retryTimes: number[] = [];
-  for (const snapshot of pool) {
-    const limits = packageCreditLimits(snapshot);
-    const usage = withInFlightEstimate(
-      usageMap.get(snapshot.credentialId) ?? { fiveHourCredits: 0, weeklyCredits: 0 },
-      getCredentialLoad(snapshot.credentialId).inFlight,
-    );
-    const quota = evaluateCredentialQuota(usage, limits, now, snapshotAnchors(snapshot));
-    const status = effectiveCredentialStatus(snapshot.credentialStatus, snapshot.coolUntil, now);
-    if (quota.exhausted && quota.exhaustedUntil) {
-      retryTimes.push(quota.exhaustedUntil.getTime());
-    }
-    if (status === "cooling" && snapshot.coolUntil) {
-      retryTimes.push(snapshot.coolUntil.getTime());
-    }
-    if (status !== "active" || quota.exhausted) continue;
-    const credential = toBoundCredential(snapshot, params.protocol, now);
-    if (!credential) continue;
-    usable.push({ snapshot, credential, headroom: remainingQuotaFraction(usage, limits) });
-  }
-  usable.sort(
-    (a, b) =>
-      b.snapshot.credentialPriority - a.snapshot.credentialPriority ||
-      b.headroom - a.headroom ||
-      b.snapshot.credentialWeight - a.snapshot.credentialWeight ||
-      a.snapshot.credentialId - b.snapshot.credentialId,
-  );
-  const picked = usable[0];
-  if (picked) {
-    return {
-      ok: true,
-      credential: picked.credential,
-      role: "guest",
-      transient: true,
-      openPool: true,
-    };
-  }
-  if (retryTimes.length) {
-    return { ok: false, reason: "exhausted_pool", retryAt: earliestFuture(retryTimes, now) };
-  }
-  return { ok: false, reason: "no_binding_available", retryAt: null };
-}
-
-async function loadOpenPool(
-  productLineIds: readonly number[],
-  protocol: RelayProtocol,
-  exclude: ReadonlySet<number>,
-): Promise<CredentialSnapshotRow[]> {
-  if (productLineIds.length === 0) return [];
-  const excludeIds = [...exclude];
-  const rows = await db
-    .select(credentialSnapshotSelect)
-    .from(upstreamCredentials)
-    .innerJoin(productLines, eq(upstreamCredentials.productLineId, productLines.id))
-    .innerJoin(providers, eq(productLines.providerId, providers.id))
-    .where(
-      and(
-        inArray(upstreamCredentials.productLineId, [...productLineIds]),
-        gt(upstreamCredentials.weight, 0),
-        or(
-          eq(upstreamCredentials.status, "active"),
-          eq(upstreamCredentials.status, "cooling"),
-        ),
-        excludeIds.length > 0 ? notInArray(upstreamCredentials.id, excludeIds) : undefined,
-      ),
-    )
-    .orderBy(
-      desc(upstreamCredentials.priority),
-      desc(upstreamCredentials.weight),
-      asc(upstreamCredentials.id),
-    );
-  return rows.filter((row) => supportsProtocol(row.supportedProtocols, protocol));
 }
 
 export async function restoreExpiredCooling(productLineIds: readonly number[], now: Date): Promise<void> {
