@@ -61,16 +61,16 @@
                     cx="36"
                     cy="36"
                     r="30"
-                    :stroke="quotaRingColor(quotaRingPercent(row.weeklyCredits, row.weeklyCreditLimit), 'weekly')"
-                    :stroke-dasharray="quotaRingDash(row.weeklyCredits, row.weeklyCreditLimit, 30)"
+                    :stroke="quotaRingColor(windowPercent(row, 'weekly'), 'weekly')"
+                    :stroke-dasharray="quotaRingDash(windowPercent(row, 'weekly'), 30)"
                   />
                   <circle
                     class="key-ring-progress inner"
                     cx="36"
                     cy="36"
                     r="21"
-                    :stroke="quotaRingColor(quotaRingPercent(row.fiveHourCredits, row.fiveHourCreditLimit), 'five')"
-                    :stroke-dasharray="quotaRingDash(row.fiveHourCredits, row.fiveHourCreditLimit, 21)"
+                    :stroke="quotaRingColor(windowPercent(row, 'five'), 'five')"
+                    :stroke-dasharray="quotaRingDash(windowPercent(row, 'five'), 21)"
                   />
                   <circle cx="36" cy="36" r="12" :fill="channelDotColor(row.productLineId)" />
                 </svg>
@@ -160,45 +160,45 @@
               </div>
               <div class="info-item">
                 <dt>5 小时用量</dt>
-                <dd>{{ formatQuotaPair(detailRow.fiveHourCredits, detailRow.fiveHourCreditLimit) }}</dd>
+                <dd>{{ formatWindowUsage(detailRow, "five") }}</dd>
               </div>
               <div class="info-item">
                 <dt>5 小时重置</dt>
                 <dd>
                   {{
-                    detailRow.nextFiveHourResetAt
-                      ? `${formatDateTime(detailRow.nextFiveHourResetAt)} 恢复 100%`
+                    windowResetAt(detailRow, "five")
+                      ? `${formatDateTime(windowResetAt(detailRow, "five")!)} 恢复 100%`
                       : "已恢复，下次调用起算"
                   }}
                 </dd>
               </div>
               <div class="info-item">
                 <dt>本周用量</dt>
-                <dd>{{ formatQuotaPair(detailRow.weeklyCredits, detailRow.weeklyCreditLimit) }}</dd>
+                <dd>{{ formatWindowUsage(detailRow, "weekly") }}</dd>
               </div>
               <div class="info-item">
                 <dt>周额度重置</dt>
                 <dd>
-                  <template v-if="detailRow.nextWeeklyResetAt">
-                    {{ formatDateTime(detailRow.nextWeeklyResetAt) }} 恢复 100%
-                    <span v-if="detailRow.weeklyResetEstimated" class="estimate-mark">（估算）</span>
+                  <template v-if="windowResetAt(detailRow, 'weekly')">
+                    {{ formatDateTime(windowResetAt(detailRow, "weekly")!) }} 恢复 100%
+                    <span v-if="weeklyResetEstimated(detailRow)" class="estimate-mark">（估算）</span>
                   </template>
                   <template v-else>—</template>
                 </dd>
               </div>
             </dl>
-            <div v-if="detailRow.fiveHourCreditLimit != null" class="quota-progress">
+            <div v-if="windowTracked(detailRow, 'five')" class="quota-progress">
               <span>5 小时</span>
               <el-progress
-                :percentage="usagePercent(detailRow.fiveHourCredits, detailRow.fiveHourCreditLimit)"
-                :status="usageProgressStatus(detailRow.fiveHourCredits, detailRow.fiveHourCreditLimit)"
+                :percentage="windowPercent(detailRow, 'five')"
+                :status="windowProgressStatus(detailRow, 'five')"
               />
             </div>
-            <div v-if="detailRow.weeklyCreditLimit != null" class="quota-progress">
+            <div v-if="windowTracked(detailRow, 'weekly')" class="quota-progress">
               <span>本周</span>
               <el-progress
-                :percentage="usagePercent(detailRow.weeklyCredits, detailRow.weeklyCreditLimit)"
-                :status="usageProgressStatus(detailRow.weeklyCredits, detailRow.weeklyCreditLimit)"
+                :percentage="windowPercent(detailRow, 'weekly')"
+                :status="windowProgressStatus(detailRow, 'weekly')"
               />
             </div>
             <p class="form-help">积分上限在「渠道管理 → 编辑产品」里按产品统一设置，渠道 KEY 不单独设置。</p>
@@ -287,7 +287,18 @@ import {
   isShortRateLimitCooling,
 } from "@/lib/keys-board-cooling";
 
-import { usagePercent, usageProgressStatus } from "@/lib/tokens";
+import {
+  currentOfficialWindow,
+  upstreamWindowExhausted,
+  weeklyResetEstimated,
+  windowCredits,
+  windowLimit,
+  windowPercent,
+  windowResetAt,
+  windowTracked,
+  type KeyQuotaRow,
+  type QuotaWindowKind,
+} from "@/lib/key-quota";
 
 import { useAuthStore } from "@/stores/auth";
 
@@ -363,6 +374,8 @@ type CredentialRow = {
   /** 结构化失败分类（服务端写入/迁移回填），泳道划分优先读它。 */
   lastFailureKind: string | null;
   lastVendorCode: string | null;
+  officialQuota?: KeyQuotaRow["officialQuota"];
+  officialQuotaAt?: string | null;
   /** 5h：窗口进行中 → 锚点+5h；已过期/未锚定 → null（下次调用起算）。 */
   nextFiveHourResetAt: string | null;
   /** 周窗口下一次翻转时刻（未学到相位时为 epoch 估算，见 weeklyResetEstimated）。 */
@@ -624,45 +637,52 @@ function channelDotColor(productLineId: number): string {
   return CHANNEL_DOT_PALETTE[index] ?? CHANNEL_DOT_PALETTE[0];
 }
 
-function quotaRingPercent(used: number, limit: number | null): number {
-  if (limit == null || limit <= 0) return 0;
-  return usagePercent(used, limit);
-}
-
 function quotaRingColor(percent: number, kind: "five" | "weekly"): string {
   if (percent >= 95) return "#f43f5e";
   if (percent >= 85) return "#f59e0b";
   return kind === "five" ? "#38bdf8" : "#34d399";
 }
 
-function quotaRingDash(used: number, limit: number | null, radius: number): string {
+function windowProgressStatus(row: CredentialRow, kind: QuotaWindowKind): "warning" | "exception" | undefined {
+  const percent = windowPercent(row, kind);
+  if (percent >= 100) return "exception";
+  if (percent >= 80) return "warning";
+  return undefined;
+}
+
+function formatWindowUsage(row: CredentialRow, kind: QuotaWindowKind): string {
+  const pair = `本地 ${formatQuotaPair(windowCredits(row, kind), windowLimit(row, kind))}`;
+  if (upstreamWindowExhausted(row, kind)) return `${pair}（上游已用尽）`;
+  const official = currentOfficialWindow(row, kind);
+  if (!official) return pair;
+  const at = row.officialQuotaAt ? `，${formatDateTime(row.officialQuotaAt)} 刷新` : "";
+  return `${pair}（官方 ${Math.round(official.percentage)}%${at}）`;
+}
+
+function quotaRingDash(percent: number, radius: number): string {
   const circumference = 2 * Math.PI * radius;
-  const filled = (quotaRingPercent(used, limit) / 100) * circumference;
+  const filled = (percent / 100) * circumference;
   return `${filled} ${circumference}`;
 }
 
 function keyRingCaption(row: CredentialRow): string {
-  if (row.weeklyCreditLimit != null) {
-    return `${Math.round(quotaRingPercent(row.weeklyCredits, row.weeklyCreditLimit))}%`;
-  }
-  if (row.fiveHourCreditLimit != null) {
-    return `${Math.round(quotaRingPercent(row.fiveHourCredits, row.fiveHourCreditLimit))}%`;
-  }
+  if (windowTracked(row, "weekly")) return `${Math.round(windowPercent(row, "weekly"))}%`;
+  if (windowTracked(row, "five")) return `${Math.round(windowPercent(row, "five"))}%`;
   return "—";
 }
 
 function keyRingTitle(row: CredentialRow): string {
-  const five = row.fiveHourCreditLimit == null
-    ? "5 小时 不限"
-    : `5 小时 ${formatQuotaPair(row.fiveHourCredits, row.fiveHourCreditLimit)}`;
-  const week = row.weeklyCreditLimit == null
-    ? "7 天 不限"
-    : `7 天 ${formatQuotaPair(row.weeklyCredits, row.weeklyCreditLimit)}`;
-  const fiveReset = row.nextFiveHourResetAt
-    ? `5 小时重置 ${formatDateTime(row.nextFiveHourResetAt)}`
+  const five = windowTracked(row, "five")
+    ? `5 小时 ${formatWindowUsage(row, "five")}`
+    : "5 小时 不限";
+  const week = windowTracked(row, "weekly")
+    ? `7 天 ${formatWindowUsage(row, "weekly")}`
+    : "7 天 不限";
+  const fiveReset = windowResetAt(row, "five")
+    ? `5 小时重置 ${formatDateTime(windowResetAt(row, "five")!)}`
     : "5 小时已恢复，下次调用起算";
-  const weekReset = row.nextWeeklyResetAt
-    ? `周额度重置 ${formatDateTime(row.nextWeeklyResetAt)}${row.weeklyResetEstimated ? "（估算）" : ""}`
+  const weekReset = windowResetAt(row, "weekly")
+    ? `周额度重置 ${formatDateTime(windowResetAt(row, "weekly")!)}${weeklyResetEstimated(row) ? "（估算）" : ""}`
     : "";
   const people = (row.connectedNames ?? []).join("、") || row.binding?.scopeName || "未连接";
   return `${channelDisplayName(row)} · •••• ${row.secretSuffix}\n${people}\n${five}\n${fiveReset}\n${week}${weekReset ? `\n${weekReset}` : ""}`;

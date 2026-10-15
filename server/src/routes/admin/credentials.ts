@@ -25,6 +25,7 @@ import {
   packageCreditLimits,
   nextFiveHourResetAt,
   nextWeeklyResetAt,
+  monthlyWindowBounds,
   type CredentialWindowAnchors,
 } from "../../lib/relay/credential-quota.js";
 import { resolveRelayRateLimitCooldown } from "../../lib/relay/upstream.js";
@@ -43,6 +44,11 @@ import {
   fetchZhipuTeamQuota,
   type QuotaWindow,
 } from "../../lib/zhipu-team-quota.js";
+import {
+  officialCoolingTarget,
+  QUOTA_CAP_KINDS,
+  type QuotaCapKind,
+} from "../../lib/official-quota-state.js";
 import { writeOpsAudit } from "../../lib/ops-audit.js";
 import {
   probeUpstreamModels,
@@ -490,6 +496,81 @@ async function testCredentialConnection(
   return result;
 }
 
+
+function beijingWallTime(date: Date): string {
+  return new Intl.DateTimeFormat("sv-SE", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).format(date);
+}
+
+/** 官方说这个窗口已用满：冷却到官方的重置时刻，并校准窗口相位（与收到 1308 / 1310 时一致）。 */
+async function applyOfficialCooling(
+  credentialId: number,
+  kind: QuotaCapKind,
+  until: Date,
+  currentKind: string | null,
+  now: Date,
+): Promise<void> {
+  const untilIso = until.toISOString();
+  // 原来就是额度冷却：以官方时刻为准（可能缩短）；其他原因的冷却取较晚的。
+  const replaceCooling = currentKind == null || QUOTA_CAP_KINDS.includes(currentKind as QuotaCapKind);
+  const label = kind === "weekly_cap" ? "本周" : "5 小时";
+  await db
+    .update(upstreamCredentials)
+    .set({
+      status: sql`'cooling'::credential_status`,
+      coolUntil: replaceCooling
+        ? until
+        : sql`greatest(coalesce(${upstreamCredentials.coolUntil}, ${untilIso}::timestamptz), ${untilIso}::timestamptz)`,
+      lastFailureKind: kind,
+      lastVendorCode: null,
+      lastError: `官方额度：${label}已用 100%，${beijingWallTime(until)} 后恢复`,
+      lastErrorAt: now,
+      updatedAt: now,
+      ...(kind === "weekly_cap"
+        ? { weeklyWindowResetAt: until }
+        : {
+            fiveHourWindowAnchor: new Date(until.getTime() - FIVE_HOUR_MS),
+            fiveHourWindowBaseCredits: fiveHourBaseCreditsBeforeSql(new Date(until.getTime() - FIVE_HOUR_MS)),
+          }),
+    })
+    .where(and(
+      eq(upstreamCredentials.id, credentialId),
+      inArray(upstreamCredentials.status, ["active", "cooling"]),
+    ));
+}
+
+/** 额度冷却已过时（官方两个窗口都没满）：解除冷却，周相位改用官方的重置时刻。 */
+async function releaseOfficialCooling(
+  credentialId: number,
+  weeklyResetAt: string | null,
+  now: Date,
+): Promise<void> {
+  const weeklyReset = weeklyResetAt ? new Date(weeklyResetAt) : null;
+  await db
+    .update(upstreamCredentials)
+    .set({
+      status: sql`case when ${upstreamCredentials.status} = 'cooling' then 'active'::credential_status else ${upstreamCredentials.status} end`,
+      coolUntil: null,
+      lastFailureKind: null,
+      lastVendorCode: null,
+      updatedAt: now,
+      ...(weeklyReset && weeklyReset.getTime() > now.getTime() ? { weeklyWindowResetAt: weeklyReset } : {}),
+    })
+    .where(and(
+      eq(upstreamCredentials.id, credentialId),
+      inArray(upstreamCredentials.status, ["active", "cooling"]),
+      inArray(upstreamCredentials.lastFailureKind, [...QUOTA_CAP_KINDS]),
+    ));
+}
+
 export async function adminCredentialRoutes(app: FastifyInstance) {
   app.addHook("preHandler", requireSession);
   app.addHook("preHandler", requireRoles("admin"));
@@ -776,6 +857,9 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
         lineMonthlyWindowResetAt: productLines.monthlyWindowResetAt,
         lastFailureKind: upstreamCredentials.lastFailureKind,
         lastVendorCode: upstreamCredentials.lastVendorCode,
+        // KEYS 表格「刷新」写入的官方额度快照，看板优先按它画圈。
+        officialQuota: upstreamCredentials.officialQuota,
+        officialQuotaAt: upstreamCredentials.officialQuotaAt,
         createdAt: upstreamCredentials.createdAt,
         updatedAt: upstreamCredentials.updatedAt,
         productLineCode: productLines.code,
@@ -895,6 +979,10 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
           // 两者都没有时只能按固定 epoch 估算并标记。
           nextWeeklyResetAt: nextWeeklyResetAt(effectiveWeeklyResetAt(row), now),
           weeklyResetEstimated: effectiveWeeklyResetAt(row) == null,
+          // 月额度（火山方舟）：套餐录入的订阅日起按自然月滚动，没录入按北京时间每月 1 日。
+          nextMonthlyResetAt: limits.monthlyLimit != null
+            ? monthlyWindowBounds(row.lineMonthlyWindowResetAt ?? null, now).end.toISOString()
+            : null,
           lastFailureKind: row.lastFailureKind,
           lastVendorCode: row.lastVendorCode,
           binding,
@@ -941,6 +1029,9 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
       .select({
         id: upstreamCredentials.id,
         secretEncrypted: upstreamCredentials.secretEncrypted,
+        status: upstreamCredentials.status,
+        coolUntil: upstreamCredentials.coolUntil,
+        lastFailureKind: upstreamCredentials.lastFailureKind,
         productType: productLines.productType,
         providerCode: providers.code,
         zhipuOrganizationId: productLines.zhipuOrganizationId,
@@ -1022,9 +1113,33 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
       ),
     );
 
+    // 官方快照比 relay 记下的冷却新：按它校正 Key 的冷却状态，调度和看板随之准确。
+    const reconciled = { cooled: 0, released: 0 };
+    for (let index = 0; index < rows.length; index += 1) {
+      const row = rows[index];
+      const quota = data[index];
+      if (!row || !quota || quota.state !== "ok") continue;
+      const target = officialCoolingTarget({
+        status: row.status,
+        coolUntil: row.coolUntil,
+        lastFailureKind: row.lastFailureKind,
+        fiveHour: quota.fiveHour,
+        weekly: quota.weekly,
+        now: queriedAt,
+      });
+      if (target.action === "cool") {
+        await applyOfficialCooling(row.id, target.kind, target.until, row.lastFailureKind, queriedAt);
+        reconciled.cooled += 1;
+      } else if (target.action === "release") {
+        await releaseOfficialCooling(row.id, quota.weekly?.resetAt ?? null, queriedAt);
+        reconciled.released += 1;
+      }
+    }
+
     return {
       data,
       queriedAt: queriedAt.toISOString(),
+      reconciled,
     };
   });
 
