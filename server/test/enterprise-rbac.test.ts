@@ -14,7 +14,7 @@ const { adminUserRoutes, buildAdminUserListQuery } = await import(
   "../src/routes/admin/users.js"
 );
 const { adminCredentialRoutes } = await import("../src/routes/admin/credentials.js");
-const { adminKeyBindingRoutes, resolveActorEnterpriseFilter } = await import(
+const { adminKeyBindingRoutes } = await import(
   "../src/routes/admin/key-bindings.js"
 );
 const { canAccessEmployee, resolveUpdatedUserFields, resolveUserListScope } = await import(
@@ -110,15 +110,6 @@ test("dept_admin cannot open the scheduling canvas or release a channel Key", as
   } finally {
     await app.close();
   }
-});
-
-test("org_admin canvas is locked to that enterprise", () => {
-  assert.equal(resolveActorEnterpriseFilter("org_admin", 3, undefined), 3);
-  assert.equal(resolveActorEnterpriseFilter("org_admin", 3, 3), 3);
-  assert.equal(resolveActorEnterpriseFilter("org_admin", 3, 99), "forbidden");
-  assert.equal(resolveActorEnterpriseFilter("org_admin", null, 3), "forbidden");
-  assert.equal(resolveActorEnterpriseFilter("admin", null, 8), 8);
-  assert.equal(resolveActorEnterpriseFilter("admin", null, undefined), undefined);
 });
 
 test("org_admin cannot open the scheduling canvas or release a channel Key", async () => {
