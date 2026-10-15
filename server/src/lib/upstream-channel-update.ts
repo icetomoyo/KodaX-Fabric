@@ -57,6 +57,8 @@ export const upstreamChannelUpdateSchema = z
     /** Zhipu team Coding Plan project ID; empty string after trim is stored as null. */
     zhipuProjectId: z.string().trim().max(64).nullable().optional()
       .transform((value) => (value === "" ? null : value)),
+    /** Whether Keys under this package join the batch official quota query. */
+    officialQuotaQueryEnabled: z.boolean().optional(),
     supportedProtocols: configurableSupportedProtocolsSchema.optional(),
     protocolConfigs: protocolConfigsInputSchema.optional(),
   })

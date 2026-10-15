@@ -158,6 +158,12 @@ export const router = createRouter({
           meta: { roles: ["admin"] },
         },
         {
+          path: "keys-table",
+          name: "admin-keys-table",
+          component: () => import("@/views/admin/KeysTableView.vue"),
+          meta: { roles: ["admin"] },
+        },
+        {
           path: "channel-keys",
           redirect: "/admin/temp-channels",
           meta: { roles: ["admin"] },

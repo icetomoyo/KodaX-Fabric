@@ -18,6 +18,7 @@ export type ProductRow = {
   monthlyCreditLimit: number | null;
   zhipuOrganizationId: string | null;
   zhipuProjectId: string | null;
+  officialQuotaQueryEnabled: boolean;
 };
 
 export type SeatRow = {
@@ -66,4 +67,5 @@ export type EditProductForm = {
   monthlyCreditLimit: string;
   zhipuOrganizationId: string;
   zhipuProjectId: string;
+  officialQuotaQueryEnabled: boolean;
 };

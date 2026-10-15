@@ -122,6 +122,7 @@ export async function adminProviderRoutes(app: FastifyInstance) {
         monthlyCreditLimit: productLines.monthlyCreditLimit,
         zhipuOrganizationId: productLines.zhipuOrganizationId,
         zhipuProjectId: productLines.zhipuProjectId,
+        officialQuotaQueryEnabled: productLines.officialQuotaQueryEnabled,
         providerCode: providers.code,
         providerName: providers.name,
         defaultBaseUrl: providers.defaultBaseUrl,
@@ -519,6 +520,9 @@ export async function adminProviderRoutes(app: FastifyInstance) {
             ...(body.data.zhipuProjectId !== undefined
               ? { zhipuProjectId: body.data.zhipuProjectId }
               : {}),
+            ...(body.data.officialQuotaQueryEnabled !== undefined
+              ? { officialQuotaQueryEnabled: body.data.officialQuotaQueryEnabled }
+              : {}),
             ...(updatingProtocolSurface
               ? { protocolConfigs: nextProtocolConfigs }
               : {}),
@@ -592,6 +596,9 @@ export async function adminProviderRoutes(app: FastifyInstance) {
               ...(body.data.zhipuProjectId !== undefined
                 ? { zhipuProjectId: existing.zhipuProjectId }
                 : {}),
+              ...(body.data.officialQuotaQueryEnabled !== undefined
+                ? { officialQuotaQueryEnabled: existing.officialQuotaQueryEnabled }
+                : {}),
               ...(updatingProtocolSurface
                 ? {
                   supportedProtocols: protocolPlan.currentProtocols,
@@ -626,6 +633,9 @@ export async function adminProviderRoutes(app: FastifyInstance) {
                 : {}),
               ...(body.data.zhipuProjectId !== undefined
                 ? { zhipuProjectId: row.zhipuProjectId }
+                : {}),
+              ...(body.data.officialQuotaQueryEnabled !== undefined
+                ? { officialQuotaQueryEnabled: row.officialQuotaQueryEnabled }
                 : {}),
               ...(updatingProtocolSurface
                 ? {

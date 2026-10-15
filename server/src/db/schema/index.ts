@@ -346,6 +346,8 @@ export const productLines = pgTable(
     zhipuOrganizationId: varchar("zhipu_organization_id", { length: 64 }),
     /** Zhipu team Coding Plan project ID for official quota lookup; null for personal plans. */
     zhipuProjectId: varchar("zhipu_project_id", { length: 64 }),
+    /** Whether Keys under this package join the batch official quota query. */
+    officialQuotaQueryEnabled: boolean("official_quota_query_enabled").notNull().default(false),
     relayPoolKey: varchar("relay_pool_key", { length: 64 }).notNull().default(""),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -392,6 +394,9 @@ export const upstreamCredentials = pgTable(
     /** 结构化失败分类；看板泳道据此划分，不再解析 last_error 文本。 */
     lastFailureKind: varchar("last_failure_kind", { length: 32 }),
     lastVendorCode: varchar("last_vendor_code", { length: 64 }),
+    /** 官方额度快照，仅由管理员手动刷新写入。 */
+    officialQuota: jsonb("official_quota"),
+    officialQuotaAt: timestamp("official_quota_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },

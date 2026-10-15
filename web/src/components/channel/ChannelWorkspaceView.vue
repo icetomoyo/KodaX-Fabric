@@ -101,6 +101,8 @@
       :monthly-credit-limit="ws.editForm.monthlyCreditLimit"
       :weekly-window-reset-at="ws.editForm.weeklyWindowResetAt"
       :monthly-window-reset-at="ws.editForm.monthlyWindowResetAt"
+      :show-monthly-reset="channel.code !== 'glm'"
+      :official-quota-query-enabled="ws.editForm.officialQuotaQueryEnabled"
       :status="ws.editForm.status"
       :saving="ws.productSaving"
       @update:visible="ws.showEditProduct = $event"
@@ -112,6 +114,7 @@
       @update:monthly-credit-limit="ws.editForm.monthlyCreditLimit = $event"
       @update:weekly-window-reset-at="onWeeklyReset"
       @update:monthly-window-reset-at="onMonthlyReset"
+      @update:official-quota-query-enabled="ws.editForm.officialQuotaQueryEnabled = $event"
       @update:status="onStatus"
       @submit="onEdit"
     >

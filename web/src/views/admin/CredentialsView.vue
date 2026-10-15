@@ -10,14 +10,6 @@
           clearable
           placeholder="搜索姓名"
         />
-        <el-button
-          v-if="canWrite"
-          :loading="batchTesting"
-          :disabled="!boardVisibleRows.length"
-          @click="batchTestCredentials"
-        >
-          {{ batchTesting ? `测试中 ${batchTestProgress.done}/${batchTestProgress.total}` : "测试全部" }}
-        </el-button>
         <el-button :loading="loading" @click="refreshAll">刷新</el-button>
       </div>
       <div v-loading="loading" class="keys-board-stack">
@@ -281,7 +273,7 @@ import { computed, onMounted, reactive, ref, watch } from "vue";
 
 import { useRoute, useRouter } from "vue-router";
 
-import { ElMessage, ElMessageBox } from "element-plus";
+import { ElMessage } from "element-plus";
 
 import { http } from "@/api/http";
 
@@ -507,10 +499,6 @@ const showChannelDetails = ref(false);
 const channelSummaries = ref(new Map<number, ChannelSummary>());
 
 const testingIds = ref<Set<number>>(new Set());
-
-const batchTesting = ref(false);
-
-const batchTestProgress = reactive({ done: 0, total: 0 });
 
 const channels = computed<ChannelGroup[]>(() => {
   const grouped = new Map<number, CredentialRow[]>();
@@ -999,58 +987,6 @@ async function testCredential(row: CredentialRow, protocol?: RelayProtocol) {
     ElMessage.error(getErrorMessage(error, "测试失败"));
   } finally {
     setTesting(row.id, false);
-  }
-}
-
-async function runWithConcurrency<T>(
-  items: T[],
-  limit: number,
-  worker: (item: T) => Promise<void>,
-) {
-  let cursor = 0;
-  const runners = Array.from({ length: Math.min(limit, items.length) }, async () => {
-    while (cursor < items.length) {
-      const index = cursor;
-      cursor += 1;
-      await worker(items[index]);
-    }
-  });
-  await Promise.all(runners);
-}
-
-async function batchTestCredentials() {
-  const targets = [...boardVisibleRows.value];
-  if (!canWrite.value || !targets.length || batchTesting.value) return;
-  batchTesting.value = true;
-  batchTestProgress.done = 0;
-  batchTestProgress.total = targets.length;
-  let successCount = 0;
-  let failedCount = 0;
-
-  try {
-    await runWithConcurrency(targets, 3, async (row) => {
-      setTesting(row.id, true);
-      try {
-        const result = await requestCredentialTest(row);
-        if (result.ok) successCount += 1;
-        else failedCount += 1;
-      } catch {
-        failedCount += 1;
-      } finally {
-        setTesting(row.id, false);
-        batchTestProgress.done += 1;
-      }
-    });
-    await loadCredentials();
-    if (failedCount) {
-      ElMessage.warning(`批量测试完成：${successCount} 个正常，${failedCount} 个失败`);
-    } else {
-      ElMessage.success(`批量测试完成：${successCount} 个 Key 均正常`);
-    }
-  } catch (error) {
-    ElMessage.error(getErrorMessage(error, "刷新批量测试结果失败"));
-  } finally {
-    batchTesting.value = false;
   }
 }
 

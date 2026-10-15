@@ -85,7 +85,7 @@
             保存后各 KEY 之前从上游学到的时间会清空，统一跟随这里。
           </p>
         </el-form-item>
-        <el-form-item label="月重置时间">
+        <el-form-item v-if="showMonthlyReset" label="月重置时间">
           <el-date-picker
             :model-value="monthlyWindowResetAt"
             type="datetime"
@@ -97,6 +97,13 @@
           />
         </el-form-item>
       </template>
+      <el-form-item v-if="mode === 'edit'" label="批量查询额度">
+        <el-switch
+          :model-value="officialQuotaQueryEnabled"
+          @update:model-value="$emit('update:officialQuotaQueryEnabled', Boolean($event))"
+        />
+        <p class="form-hint">开启后，该产品下的 KEY 参与 KEYS Table 的官方额度批量查询。</p>
+      </el-form-item>
       <slot name="extra-edit" />
       <el-form-item v-if="mode === 'edit'" label="状态">
         <el-radio-group
@@ -118,7 +125,7 @@
 </template>
 
 <script setup lang="ts">
-defineProps<{
+withDefaults(defineProps<{
   visible: boolean;
   mode: "create" | "edit";
   title: string;
@@ -134,10 +141,15 @@ defineProps<{
   monthlyCreditLimit: string;
   weeklyWindowResetAt: Date | null;
   monthlyWindowResetAt: Date | null;
+  showMonthlyReset?: boolean;
+  officialQuotaQueryEnabled?: boolean;
   status: "active" | "disabled";
   saving: boolean;
   namePlaceholder?: string;
-}>();
+}>(), {
+  showMonthlyReset: true,
+  officialQuotaQueryEnabled: false,
+});
 
 defineEmits<{
   "update:visible": [value: boolean];
@@ -149,6 +161,7 @@ defineEmits<{
   "update:monthlyCreditLimit": [value: string];
   "update:weeklyWindowResetAt": [value: unknown];
   "update:monthlyWindowResetAt": [value: unknown];
+  "update:officialQuotaQueryEnabled": [value: boolean];
   "update:status": [value: "active" | "disabled"];
   submit: [];
 }>();

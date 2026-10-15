@@ -39,6 +39,10 @@ import {
   type CredentialStatus,
 } from "../../lib/credential-status.js";
 import { decryptSecret, encryptSecret, secretSuffix } from "../../lib/crypto-secret.js";
+import {
+  fetchZhipuTeamQuota,
+  type QuotaWindow,
+} from "../../lib/zhipu-team-quota.js";
 import { writeOpsAudit } from "../../lib/ops-audit.js";
 import {
   probeUpstreamModels,
@@ -901,6 +905,126 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
         ...line,
         baseUrl: line.baseUrlOverride || line.defaultBaseUrl,
       })),
+    };
+  });
+
+  type OfficialQuotaRow = {
+    credentialId: number;
+    state: "ok" | "error" | "unconfigured" | "unsupported";
+    message?: string;
+    level?: string;
+    fiveHour?: QuotaWindow | null;
+    weekly?: QuotaWindow | null;
+  };
+
+  app.get("/api/admin/credentials/official-quota", async () => {
+    const rows = await db
+      .select({
+        id: upstreamCredentials.id,
+        officialQuota: upstreamCredentials.officialQuota,
+        officialQuotaAt: upstreamCredentials.officialQuotaAt,
+      })
+      .from(upstreamCredentials);
+
+    let queriedAt: Date | null = null;
+    const data: OfficialQuotaRow[] = [];
+    for (const row of rows) {
+      if (!row.officialQuota || !row.officialQuotaAt) continue;
+      data.push({ ...(row.officialQuota as Omit<OfficialQuotaRow, "credentialId">), credentialId: row.id });
+      if (!queriedAt || row.officialQuotaAt > queriedAt) queriedAt = row.officialQuotaAt;
+    }
+    return { data, queriedAt: queriedAt?.toISOString() ?? null };
+  });
+
+  app.post("/api/admin/credentials/official-quota/refresh", async () => {
+    const rows = await db
+      .select({
+        id: upstreamCredentials.id,
+        secretEncrypted: upstreamCredentials.secretEncrypted,
+        productType: productLines.productType,
+        providerCode: providers.code,
+        zhipuOrganizationId: productLines.zhipuOrganizationId,
+        zhipuProjectId: productLines.zhipuProjectId,
+        officialQuotaQueryEnabled: productLines.officialQuotaQueryEnabled,
+      })
+      .from(upstreamCredentials)
+      .innerJoin(productLines, eq(upstreamCredentials.productLineId, productLines.id))
+      .innerJoin(providers, eq(productLines.providerId, providers.id));
+
+    const data: OfficialQuotaRow[] = rows.map((row) => ({
+      credentialId: row.id,
+      state: "unsupported",
+    }));
+    const pending: Array<{ index: number; organizationId: string; projectId: string; secretEncrypted: string }> = [];
+
+    for (let index = 0; index < rows.length; index += 1) {
+      const row = rows[index];
+      if (!row?.officialQuotaQueryEnabled) continue;
+      if (row.providerCode !== "glm" || row.productType !== "coding_plan") continue;
+      const organizationId = row.zhipuOrganizationId?.trim() ?? "";
+      const projectId = row.zhipuProjectId?.trim() ?? "";
+      if (!organizationId || !projectId) {
+        data[index] = { credentialId: row.id, state: "unconfigured" };
+        continue;
+      }
+      pending.push({
+        index,
+        organizationId,
+        projectId,
+        secretEncrypted: row.secretEncrypted,
+      });
+    }
+
+    let cursor = 0;
+    const workers = Array.from(
+      { length: Math.min(8, pending.length) },
+      async () => {
+        while (cursor < pending.length) {
+          const current = cursor;
+          cursor += 1;
+          const item = pending[current];
+          if (!item) continue;
+          const credentialId = rows[item.index]?.id;
+          if (credentialId == null) continue;
+          let apiKey: string;
+          try {
+            apiKey = decryptSecret(item.secretEncrypted);
+          } catch {
+            data[item.index] = { credentialId, state: "error", message: "无法解密凭据" };
+            continue;
+          }
+          const result = await fetchZhipuTeamQuota({
+            apiKey,
+            organizationId: item.organizationId,
+            projectId: item.projectId,
+          });
+          data[item.index] = result.ok
+            ? {
+                credentialId,
+                state: "ok",
+                level: result.level,
+                fiveHour: result.fiveHour,
+                weekly: result.weekly,
+              }
+            : { credentialId, state: "error", message: result.message };
+        }
+      },
+    );
+    await Promise.all(workers);
+
+    const queriedAt = new Date();
+    await Promise.all(
+      data.map(({ credentialId, ...snapshot }) =>
+        db
+          .update(upstreamCredentials)
+          .set({ officialQuota: snapshot, officialQuotaAt: queriedAt })
+          .where(eq(upstreamCredentials.id, credentialId)),
+      ),
+    );
+
+    return {
+      data,
+      queriedAt: queriedAt.toISOString(),
     };
   });
 

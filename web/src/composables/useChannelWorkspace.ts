@@ -33,6 +33,7 @@ type ProductLineApiRow = {
   monthlyCreditLimit?: string | number | null;
   zhipuOrganizationId?: string | null;
   zhipuProjectId?: string | null;
+  officialQuotaQueryEnabled?: boolean;
 };
 
 function storedCreditLimit(value: string | number | null | undefined): number | null {
@@ -72,6 +73,7 @@ function emptyEditForm(): EditProductForm {
     monthlyCreditLimit: "",
     zhipuOrganizationId: "",
     zhipuProjectId: "",
+    officialQuotaQueryEnabled: false,
   };
 }
 
@@ -126,6 +128,7 @@ export function useChannelWorkspace(channelCode: MaybeRefOrGetter<string>) {
     monthlyCreditLimit: null as number | null,
     zhipuOrganizationId: null as string | null,
     zhipuProjectId: null as string | null,
+    officialQuotaQueryEnabled: false,
   });
   const editSeatForm = reactive({
     id: 0,
@@ -293,6 +296,7 @@ export function useChannelWorkspace(channelCode: MaybeRefOrGetter<string>) {
             monthlyCreditLimit: storedCreditLimit(row.monthlyCreditLimit),
             zhipuOrganizationId: row.zhipuOrganizationId ?? null,
             zhipuProjectId: row.zhipuProjectId ?? null,
+            officialQuotaQueryEnabled: Boolean(row.officialQuotaQueryEnabled),
           }))
         : [];
       seats.value = Array.isArray(seatRes.data.data)
@@ -405,6 +409,8 @@ export function useChannelWorkspace(channelCode: MaybeRefOrGetter<string>) {
     editForm.zhipuProjectId = pkg.zhipuProjectId ?? "";
     editOriginal.zhipuOrganizationId = pkg.zhipuOrganizationId;
     editOriginal.zhipuProjectId = pkg.zhipuProjectId;
+    editForm.officialQuotaQueryEnabled = pkg.officialQuotaQueryEnabled;
+    editOriginal.officialQuotaQueryEnabled = pkg.officialQuotaQueryEnabled;
     editOriginal.name = pkg.name;
     editOriginal.tag = pkg.tag;
     editOriginal.seatCount = pkg.seatCount;
@@ -428,6 +434,9 @@ export function useChannelWorkspace(channelCode: MaybeRefOrGetter<string>) {
     if (name !== editOriginal.name) payload.name = name;
     if (editForm.tag.trim() !== editOriginal.tag) payload.tag = editForm.tag.trim();
     if (editForm.status !== editOriginal.status) payload.status = editForm.status;
+    if (editForm.officialQuotaQueryEnabled !== editOriginal.officialQuotaQueryEnabled) {
+      payload.officialQuotaQueryEnabled = editForm.officialQuotaQueryEnabled;
+    }
     if (
       editForm.productType === "coding_plan"
       && editForm.seatCount !== editOriginal.seatCount
