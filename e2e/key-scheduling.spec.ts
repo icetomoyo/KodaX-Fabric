@@ -151,7 +151,7 @@ async function toResult(res: APIResponse, marker: string): Promise<CallResult> {
 async function call(pool: SchedPoolKey, person: SchedPersonKey): Promise<CallResult> {
   markerSeq += 1;
   const marker = `${pool}:${person}:${markerSeq}`;
-  const res = await api.post("/ai/chat/completions", {
+  const res = await api.post("/v1/chat/completions", {
     headers: { Authorization: `Bearer ${schedApiKey(pool, person)}` },
     data: { model: MODEL, messages: [{ role: "user", content: marker }], stream: false },
     timeout: 90_000,

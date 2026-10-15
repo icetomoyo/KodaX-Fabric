@@ -272,7 +272,7 @@ export const SCHED_UI_PACKAGE = {
 } as const;
 
 /** 调度用例统一走智谱渠道，用它目录里的模型。 */
-export const SCHED_MODEL = "glm-5.3";
+export const SCHED_MODEL = "glm/glm-5.3";
 
 /** 场景套餐的产品代码，前缀与智谱国内版生成的产品代码一致。 */
 export function schedLineCode(pool: SchedPoolKey): string {

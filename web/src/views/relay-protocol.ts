@@ -6,8 +6,6 @@ export const RELAY_PROTOCOLS = [
 
 export type RelayProtocol = (typeof RELAY_PROTOCOLS)[number];
 
-export const RELAY_BASE_PATH = "/ai" as const;
-
 export type RelayAuthStyle = "bearer" | "x-api-key";
 
 export type RelayProtocolConfig = {

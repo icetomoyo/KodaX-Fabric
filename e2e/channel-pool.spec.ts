@@ -73,7 +73,10 @@ const products: Record<ChannelCode, Record<ProductSlot, ProductRecord>> = {
 };
 const secretIndex = new Map<string, { channel: ChannelCode; slot: ProductSlot }>();
 const requests: RequestRecord[] = [];
-let unknownResult: { httpStatus: number; code: string | null } | null = null;
+type RejectedCase = { path: string; model: string; httpStatus: number; code: string | null };
+
+/** Requests that must never be served: unknown prefix, bare GLM name, retired /ai path. */
+const rejected: Record<string, RejectedCase> = {};
 let channelTypes: unknown = null;
 let api: APIRequestContext;
 let db: postgres.Sql;
@@ -244,7 +247,7 @@ function writeArtifact(): void {
         },
       ]),
     ),
-    unknownPrefix: unknownResult,
+    rejected,
     summary: byChannel,
     requests,
   };
@@ -352,7 +355,7 @@ test.describe("channel pool: one channel = one KEY pool", () => {
       for (const slot of ["a", "b"] as const) {
         for (let i = 0; i < perOwner; i += 1) {
           const marker = `${channel}:${slot}:${i + 1}`;
-          const res = await api.post("/ai/chat/completions", {
+          const res = await api.post("/v1/chat/completions", {
             headers: { Authorization: `Bearer ${products[channel][slot].virtualKey}` },
             data: {
               model: CHANNEL_MODEL[channel],
@@ -373,7 +376,7 @@ test.describe("channel pool: one channel = one KEY pool", () => {
         }
       }
       const smokeMarker = `${channel}:caller:1`;
-      const smokeRes = await api.post("/ai/chat/completions", {
+      const smokeRes = await api.post("/v1/chat/completions", {
         headers: { Authorization: `Bearer ${callerKey}` },
         data: {
           model: CHANNEL_MODEL[channel],
@@ -393,22 +396,26 @@ test.describe("channel pool: one channel = one KEY pool", () => {
       });
     }
 
-    const unknownRes = await api.post("/ai/chat/completions", {
-      headers: { Authorization: `Bearer ${callerKey}` },
-      data: {
-        model: UNKNOWN_MODEL,
-        messages: [{ role: "user", content: "unknown:prefix" }],
-        stream: false,
-      },
-    });
-    let code: string | null = null;
-    try {
-      const body = (await unknownRes.json()) as { error?: { code?: string } };
-      code = body.error?.code ?? null;
-    } catch {
-      code = null;
+    const rejectCases = {
+      unknownPrefix: { path: "/v1/chat/completions", model: UNKNOWN_MODEL },
+      // callerKey is bound to a GLM product, so the bare name must not fall back to it.
+      bareGlmModel: { path: "/v1/chat/completions", model: "glm-5.3" },
+      legacyAiPath: { path: "/ai/chat/completions", model: CHANNEL_MODEL.glm },
+    };
+    for (const [name, { path, model }] of Object.entries(rejectCases)) {
+      const res = await api.post(path, {
+        headers: { Authorization: `Bearer ${callerKey}` },
+        data: { model, messages: [{ role: "user", content: `rejected:${name}` }], stream: false },
+      });
+      let code: string | null = null;
+      try {
+        const body = (await res.json()) as { error?: { code?: string } };
+        code = body.error?.code ?? null;
+      } catch {
+        code = null;
+      }
+      rejected[name] = { path, model, httpStatus: res.status(), code };
     }
-    unknownResult = { httpStatus: unknownRes.status(), code };
 
     const mockState = (await mockControl("state")) as MockState;
     for (const row of requests) {
@@ -462,9 +469,15 @@ test.describe("channel pool: one channel = one KEY pool", () => {
     expect.soft(huoshan.has("huoshan-a"), `huoshan hits: ${[...huoshan].join(",")}`).toBe(true);
     expect.soft(huoshan.has("huoshan-b"), `huoshan hits: ${[...huoshan].join(",")}`).toBe(true);
 
-    expect(unknownResult, "unknown-prefix request should have run").toBeTruthy();
-    expect(unknownResult!.httpStatus, "unknown prefix must not be served").not.toBe(200);
-    expect(unknownResult!.code).toBe("model_not_allowed");
+    for (const name of ["unknownPrefix", "bareGlmModel"]) {
+      expect(rejected[name], `${name} request should have run`).toBeTruthy();
+      expect(rejected[name]!.httpStatus, `${name} must not be served`).not.toBe(200);
+      expect(rejected[name]!.code, name).toBe("model_not_allowed");
+    }
+  });
+
+  test("retired /ai relay path returns 404", () => {
+    expect(rejected.legacyAiPath?.httpStatus).toBe(404);
   });
 
   test("GET /api/admin/channel-types lists glm, deepseek, huoshan", () => {

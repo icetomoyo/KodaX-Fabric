@@ -46,12 +46,11 @@ export type CatalogModelEntry = {
   creditRate: ModelCreditRate | null;
 };
 
-/** Client call name shown on the model list: bare for alias channels, otherwise `channel/model`. */
+/** Client call name shown on the model list: `channel/model`. */
 export function catalogCallName(providerCode: string, model: string): string {
   if (model.includes("/")) return model;
   const plugin = findChannelPlugin(providerCode);
-  if (plugin && !plugin.models.bareAlias) return `${plugin.code}/${model}`;
-  return model;
+  return plugin ? `${plugin.code}/${model}` : model;
 }
 
 export function toCatalogModelEntry(

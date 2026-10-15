@@ -20,26 +20,19 @@ const { anthropicMessageRoutes } = await import(
   "../src/routes/relay/anthropic-messages.js"
 );
 
-test("employee relay exposes Chat Completions, Responses, and Anthropic Messages under /ai and origin paths", async () => {
+test("employee relay exposes Chat Completions, Responses, and Anthropic Messages under origin paths only", async () => {
   const app = Fastify();
   await app.register(chatCompletionRoutes);
   await app.register(anthropicMessageRoutes);
 
   const currentRoutes = [
-    { method: "GET", url: "/ai/models" },
-    { method: "GET", url: "/ai/v1/models" },
     { method: "GET", url: "/models" },
     { method: "GET", url: "/v1/models" },
-    { method: "POST", url: "/ai/chat/completions" },
     { method: "POST", url: "/v1/chat/completions" },
     { method: "POST", url: "/chat/completions" },
-    { method: "POST", url: "/ai/responses" },
-    { method: "POST", url: "/ai/v1/responses" },
     { method: "POST", url: "/v1/responses" },
     { method: "POST", url: "/responses" },
-    { method: "POST", url: "/ai/v1/messages" },
     { method: "POST", url: "/v1/messages" },
-    { method: "POST", url: "/ai/v1/messages/count_tokens" },
     { method: "POST", url: "/v1/messages/count_tokens" },
   ] as const;
   for (const route of currentRoutes) {
@@ -50,6 +43,13 @@ test("employee relay exposes Chat Completions, Responses, and Anthropic Messages
   const unregisteredRoutes = [
     { method: "POST", url: "/v1/responses/compact" },
     { method: "POST", url: "/ai/responses/compact" },
+    { method: "GET", url: "/ai/models" },
+    { method: "GET", url: "/ai/v1/models" },
+    { method: "POST", url: "/ai/chat/completions" },
+    { method: "POST", url: "/ai/responses" },
+    { method: "POST", url: "/ai/v1/responses" },
+    { method: "POST", url: "/ai/v1/messages" },
+    { method: "POST", url: "/ai/v1/messages/count_tokens" },
   ] as const;
   for (const route of unregisteredRoutes) {
     const response = await app.inject(route);

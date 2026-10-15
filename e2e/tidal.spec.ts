@@ -179,7 +179,7 @@ async function toResult(res: APIResponse, marker: string): Promise<CallResult> {
 async function relay(apiKey: string, label: string, session?: string): Promise<CallResult> {
   markerSeq += 1;
   const marker = `tidal:${label}:${markerSeq}`;
-  const res = await api.post("/ai/chat/completions", {
+  const res = await api.post("/v1/chat/completions", {
     headers: {
       Authorization: `Bearer ${apiKey}`,
       ...(session ? { "x-session-id": session } : {}),

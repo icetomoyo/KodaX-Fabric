@@ -31,7 +31,6 @@ export const deepseekChannel: ChannelPlugin = {
   models: {
     allowlist: [FLASH_MODEL],
     testModel: "deepseek-chat",
-    bareAlias: true,
     toCatalogName,
   },
   classifyError: classifyDeepseekError,

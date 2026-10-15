@@ -10,7 +10,9 @@ import { E2E_ORG } from "./org-fixture.ts";
  * 通过 relay 调用 mock 上游 → 员工与管理员在页面上都能看到这次调用的 tokens 与积分。
  * 全程走真实 HTTP（经 vite 代理进真实 server），上游为本机 mock，可离线重复执行。
  */
-const CLIENT_MODEL = "glm-5.3";
+const CLIENT_MODEL = "glm/glm-5.3";
+/** model_routes match the unprefixed upstream name. */
+const ROUTE_MODEL = "glm-5.3";
 const UPSTREAM_MODEL = "e2e-upstream-model";
 const UPSTREAM_SECRET = "sk-e2e-mock-secret";
 const EMPLOYEE = { name: "E2E员工", phone: "13800000002", password: "E2eEmp@2026" };
@@ -114,7 +116,7 @@ test.describe.serial("核心闭环：渠道 → 席位 → 员工 Key → relay 
 
     // 4. 模型路由：客户端模型 → 上游模型
     await postJson(request, "/api/admin/model-routes", admin, {
-      clientModel: CLIENT_MODEL,
+      clientModel: ROUTE_MODEL,
       productLineId: channel.id,
       upstreamModel: UPSTREAM_MODEL,
     });
@@ -153,8 +155,8 @@ test.describe.serial("核心闭环：渠道 → 席位 → 员工 Key → relay 
     expect(typeof apiKey.key, "创建 API Key 应返回明文").toBe("string");
     state.employeeApiKey = apiKey.key as string;
 
-    // 8. relay 调用：Bearer 员工 Key，走 /ai/chat/completions 命中 mock 上游
-    const relayRes = await request.post("/ai/chat/completions", {
+    // 8. relay 调用：Bearer 员工 Key，走 /v1/chat/completions 命中 mock 上游
+    const relayRes = await request.post("/v1/chat/completions", {
       headers: { Authorization: `Bearer ${state.employeeApiKey}` },
       data: {
         model: CLIENT_MODEL,

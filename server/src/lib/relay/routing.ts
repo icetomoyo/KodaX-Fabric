@@ -7,6 +7,7 @@ import {
   providers,
   upstreamCredentials,
 } from "../../db/schema/index.js";
+import { findChannelPlugin } from "../../channels/index.js";
 import { effectiveCredentialStatus } from "../credential-status.js";
 import {
   type CredentialLoad,
@@ -516,7 +517,9 @@ export async function resolveRelayBoundCandidate(
       retryAfterSeconds: null,
     };
   }
-  if (providerBlocksClientModel(pool.providerCode, upstreamModel)) {
+  // Plugin channels only accept `channel/model`.
+  const unprefixedOnPlugin = parsed.kind === "legacy" && findChannelPlugin(pool.providerCode) != null;
+  if (unprefixedOnPlugin || providerBlocksClientModel(pool.providerCode, upstreamModel)) {
     return {
       candidate: null,
       unavailableReason: "model_not_allowed",
@@ -623,10 +626,7 @@ export async function resolveAccessibleRelayModels(
   const catalog = catalogModelsForProvider(access.providerCode ?? "");
   if (catalog.length > 0) {
     return {
-      models: catalog.flatMap((item) => [
-        { id: item.canonicalId, ownedBy: item.providerCode },
-        { id: item.alias, ownedBy: item.providerCode },
-      ]),
+      models: catalog.map((item) => ({ id: item.canonicalId, ownedBy: item.providerCode })),
       unavailableReason: null,
     };
   }

@@ -9,9 +9,15 @@ function uniqueSorted(values: string[]): string[] {
 /** Official input modalities shown on the model list. FlashX is not on Coding Plan yet. */
 export type CatalogModelTag = PluginCatalogModelTag;
 
-/** Channel of a model name without a known provider: fold to the catalog name, then match its alias. */
+/**
+ * Channel of a model name without a known provider (billing / display only, not routing):
+ * match a routing prefix, else the plugin that folds the name into its catalog.
+ */
 export function inferModelChannel(model: string): ChannelPlugin | undefined {
-  return findChannelPlugin(inferChannelCode(toCatalogModelName(model)) ?? "");
+  const prefixed = findChannelPlugin(inferChannelCode(model) ?? "");
+  if (prefixed) return prefixed;
+  const name = clientModelUpstreamName(model);
+  return listChannelPlugins().find((plugin) => plugin.models.toCatalogName?.(name) != null);
 }
 
 export function catalogModelTags(model: string, providerCode?: string | null): CatalogModelTag[] {

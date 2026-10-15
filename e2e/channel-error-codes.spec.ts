@@ -137,7 +137,7 @@ async function toResult(res: APIResponse, marker: string): Promise<CallResult> {
 async function call(channel: ChannelCode): Promise<CallResult> {
   markerSeq += 1;
   const marker = `err:${channel}:${markerSeq}`;
-  const res = await api.post("/ai/chat/completions", {
+  const res = await api.post("/v1/chat/completions", {
     headers: { Authorization: `Bearer ${virtualKeys[channel]}` },
     data: { model: CHANNEL_MODEL[channel], messages: [{ role: "user", content: marker }], stream: false },
     timeout: 60_000,

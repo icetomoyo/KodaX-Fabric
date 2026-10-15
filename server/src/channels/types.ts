@@ -27,8 +27,6 @@ export type CooldownDecision = {
 export type ChannelModels = {
   allowlist: readonly string[];
   testModel: string;
-  /** Also accept the unprefixed name (`glm-5.3`) as an alias of `glm/glm-5.3`. */
-  bareAlias?: boolean;
   embeddingModels?: readonly string[];
   /** Fold historical names onto the current catalog entry. */
   toCatalogName?(upstream: string): string | null;

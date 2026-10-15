@@ -131,7 +131,7 @@ interface MeLogRow {
   createdAt: string;
 }
 
-type ModelOption = { model: string; alias?: string | null };
+type ModelOption = { model: string };
 
 const numberFormatter = new Intl.NumberFormat("zh-CN");
 

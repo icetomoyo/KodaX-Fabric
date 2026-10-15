@@ -5,7 +5,6 @@ export type CatalogClientModel = {
   providerCode: string;
   upstreamModel: string;
   canonicalId: string;
-  alias: string;
 };
 
 function buildClientModelCatalog(): CatalogClientModel[] {
@@ -16,7 +15,6 @@ function buildClientModelCatalog(): CatalogClientModel[] {
       providerCode: plugin.code,
       upstreamModel,
       canonicalId: `${prefix}/${upstreamModel}`,
-      alias: plugin.models.bareAlias ? upstreamModel : `${prefix}/${upstreamModel}`,
     }));
   });
 }
@@ -30,7 +28,6 @@ export type ParsedClientModel =
       providerCode: string;
       canonicalId: string;
       upstreamModel: string;
-      fromAlias: boolean;
     }
   | {
       kind: "prefixed";
@@ -47,10 +44,6 @@ export type ParsedClientModel =
 const catalogByCanonical = new Map(
   CLIENT_MODEL_CATALOG.map((item) => [item.canonicalId, item]),
 );
-const catalogByAlias = new Map(
-  CLIENT_MODEL_CATALOG.map((item) => [item.alias, item]),
-);
-
 function normalizeModelId(value: string): string {
   return value.trim().replace(/^\/+|\/+$/g, "").toLowerCase();
 }
@@ -72,18 +65,6 @@ export function parseClientModel(raw: string): ParsedClientModel {
       providerCode: catalog.providerCode,
       canonicalId: catalog.canonicalId,
       upstreamModel: catalog.upstreamModel,
-      fromAlias: false,
-    };
-  }
-  const aliased = catalogByAlias.get(normalized);
-  if (aliased) {
-    return {
-      kind: "catalog",
-      prefix: aliased.prefix,
-      providerCode: aliased.providerCode,
-      canonicalId: aliased.canonicalId,
-      upstreamModel: aliased.upstreamModel,
-      fromAlias: true,
     };
   }
   const slash = normalized.indexOf("/");
@@ -103,7 +84,7 @@ export function parseClientModel(raw: string): ParsedClientModel {
   return { kind: "legacy", upstreamModel: raw.trim() };
 }
 
-/** Channel implied by the model name alone: a routing prefix or a bare catalog alias. */
+/** Channel implied by the model name's routing prefix. */
 export function inferChannelCode(model: string): string | null {
   const parsed = parseClientModel(model);
   return parsed.kind === "legacy" ? null : parsed.providerCode;

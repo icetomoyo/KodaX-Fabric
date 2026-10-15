@@ -86,7 +86,6 @@ export const glmChannel: ChannelPlugin = {
   models: {
     allowlist: [TEXT_MODEL, FLASH_MODEL],
     testModel: TEXT_MODEL,
-    bareAlias: true,
     toCatalogName,
     tags,
   },

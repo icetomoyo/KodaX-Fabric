@@ -22,7 +22,7 @@
           <div>
             <h3 class="models-title">{{ currentChannel?.name || "模型" }}</h3>
             <p class="muted" v-if="currentChannel?.providerCode === 'glm'">
-              {{ catalog.length }} 个模型。积分按每 1 万 Token 计；文本归到 glm-5.3，多模态归到 glm-5.3-flash
+              {{ catalog.length }} 个模型。调用名必须带前缀，如 glm/glm-5.3；积分按每 1 万 Token 计；文本归到 glm/glm-5.3，多模态归到 glm/glm-5.3-flash
             </p>
             <p class="muted" v-else-if="currentChannel?.providerCode === 'huoshan'">
               {{ catalog.length }} 个模型。调用名形如 huoshan/glm-5.3；AFP 按每 1 万 Token 计，无闲时折扣。仅 Agent Plan 支持的文本与向量化模型。

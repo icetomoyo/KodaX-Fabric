@@ -224,21 +224,6 @@ async function meModelChannels(employeeId: number) {
   });
 }
 
-/**
- * 日志筛选用的模型匹配集合：正式名与别称都算命中
- * （客户端两种写法都合法，审计里记录的是原始写法）。
- */
-async function meLogModelVariants(employeeId: number, model: string): Promise<string[]> {
-  const variants = new Set<string>([model]);
-  for (const channel of await meModelChannels(employeeId)) {
-    for (const item of channel.models) {
-      const entry = typeof item === "string" ? { model: item } : item;
-      if (entry.model === model) variants.add(entry.model);
-    }
-  }
-  return [...variants];
-}
-
 export async function meRoutes(app: FastifyInstance) {
   app.addHook("preHandler", requireSession);
   app.addHook("preHandler", requireRoles("employee", "dept_admin", "org_admin", "admin"));
@@ -1639,8 +1624,7 @@ export async function meRoutes(app: FastifyInstance) {
     const conditions: SQL[] = [eq(requestAudits.employeeId, meId(req))];
     if (filters.productLineId) conditions.push(eq(requestAudits.productLineId, filters.productLineId));
     if (filters.model) {
-      const variants = await meLogModelVariants(meId(req), filters.model);
-      conditions.push(inArray(requestAudits.clientModel, variants));
+      conditions.push(eq(requestAudits.clientModel, filters.model));
     }
     if (filters.status) conditions.push(eq(requestAudits.status, filters.status));
     if (rangeStart && rangeEnd) {
