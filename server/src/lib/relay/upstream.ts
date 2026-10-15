@@ -43,7 +43,9 @@ export type RelayUpstreamAttemptKind =
   /** The upstream does not serve this model; the caller has to fix the model name. */
   | "model_unsupported"
   /** The Key was already at its concurrency limit; nothing was sent upstream. */
-  | "key_busy";
+  | "key_busy"
+  /** This employee already has RELAY_KEY_MEMBER_CONCURRENCY in flight on the Key. */
+  | "member_busy";
 
 /**
  * Retry-After when a request used up its attempts on Keys that were all rate
@@ -838,25 +840,30 @@ export async function sendRelayUpstream(
   );
   // Take the Key's concurrency slot before anything else. A full Key is not a
   // failure of the Key: the caller excludes it for this request and re-binds.
-  const releaseLoad = input.heldSlot ?? tryBeginCredentialUse(input.candidate.credentialId, {
-    virtualKeyId: input.virtualKeyId,
-    employeeId: input.employeeId,
-    limit: input.candidate.maxConcurrency ?? null,
-  });
-  if (!releaseLoad) {
+  const began = input.heldSlot
+    ? { ok: true as const, release: input.heldSlot }
+    : tryBeginCredentialUse(input.candidate.credentialId, {
+      virtualKeyId: input.virtualKeyId,
+      employeeId: input.employeeId,
+      limit: input.candidate.maxConcurrency ?? null,
+      employeeLimit: input.candidate.maxMemberConcurrency ?? null,
+    });
+  if (!began.ok) {
+    const memberBusy = began.reason === "member_busy";
     return {
       response: null,
-      kind: "key_busy",
-      retryable: true,
+      kind: memberBusy ? "member_busy" : "key_busy",
+      retryable: !memberBusy,
       status: null,
       latencyMs: Date.now() - startedAt,
-      errorCode: "upstream_key_busy",
-      errorMessage: "渠道 Key 并发已满",
+      errorCode: memberBusy ? "employee_concurrency_limit" : "upstream_key_busy",
+      errorMessage: memberBusy ? "当前个人并发已满，请稍后重试" : "渠道 Key 并发已满",
       retryAfterSeconds: RELAY_KEY_BUSY_RETRY_AFTER_SECONDS,
       cleanup: () => {},
       abort: () => {},
     };
   }
+  const releaseLoad = began.release;
   const baseLifetime = createRequestLifetime(timeoutMs, input.signal);
   // Load tracking must span the whole attempt, including streamed bodies, so
   // release is tied to the same cleanup/abort pair that owns the lifetime.

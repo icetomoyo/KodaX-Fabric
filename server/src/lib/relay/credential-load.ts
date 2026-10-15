@@ -58,6 +58,7 @@ type HopCounter = LiveCounter & {
 };
 
 const inFlightByCredential = new Map<number, number>();
+const inFlightByEmployeeCredential = new Map<string, number>();
 /** 其中经潮汐KEY 发起的部分；潮汐在每把 Key 上另有一个更小的并发上限。 */
 const inFlightTidalByCredential = new Map<number, number>();
 const inFlightByEmployee = new Map<number, number>();
@@ -69,6 +70,10 @@ const liveByHop = new Map<string, HopCounter>();
 
 function hopKey(virtualKeyId: number, credentialId: number): string {
   return `${virtualKeyId}:${credentialId}`;
+}
+
+function employeeCredentialKey(employeeId: number, credentialId: number): string {
+  return `${employeeId}:${credentialId}`;
 }
 
 function isPositiveId(value: number | null | undefined): value is number {
@@ -167,6 +172,14 @@ export function getEmployeeInFlight(employeeId: number): number {
   return inFlightByEmployee.get(employeeId) ?? 0;
 }
 
+/** Upstream attempts this employee currently has in flight on one Key. */
+export function getEmployeeCredentialInFlight(
+  employeeId: number,
+  credentialId: number,
+): number {
+  return inFlightByEmployeeCredential.get(employeeCredentialKey(employeeId, credentialId)) ?? 0;
+}
+
 export function recordCredentialTokens(credentialId: number, tokens: number): void {
   const amount = Number.isFinite(tokens) ? Math.trunc(tokens) : 0;
   if (amount <= 0) return;
@@ -254,10 +267,17 @@ export function beginCredentialUse(
     );
   }
   const trackedEmployeeId = !tidal && isPositiveId(employeeId) ? employeeId : null;
-  if (trackedEmployeeId != null) {
+  const trackedPair = trackedEmployeeId != null
+    ? employeeCredentialKey(trackedEmployeeId, credentialId)
+    : null;
+  if (trackedEmployeeId != null && trackedPair != null) {
     inFlightByEmployee.set(
       trackedEmployeeId,
       (inFlightByEmployee.get(trackedEmployeeId) ?? 0) + 1,
+    );
+    inFlightByEmployeeCredential.set(
+      trackedPair,
+      (inFlightByEmployeeCredential.get(trackedPair) ?? 0) + 1,
     );
   }
   let released = false;
@@ -291,6 +311,14 @@ export function beginCredentialUse(
       } else {
         inFlightByEmployee.set(trackedEmployeeId, mine - 1);
       }
+      if (trackedPair != null) {
+        const pairCount = inFlightByEmployeeCredential.get(trackedPair) ?? 0;
+        if (pairCount <= 1) {
+          inFlightByEmployeeCredential.delete(trackedPair);
+        } else {
+          inFlightByEmployeeCredential.set(trackedPair, pairCount - 1);
+        }
+      }
     }
   };
 }
@@ -300,31 +328,50 @@ export type CredentialUseOptions = {
   employeeId?: number | null;
   /** Refuse the attempt when the Key already has this many requests in flight. */
   limit?: number | null;
+  /** Refuse when this employee already has this many in flight on this Key. */
+  employeeLimit?: number | null;
   /** Set for tidal attempts: refuse when the Key already has this many tidal requests in flight. */
   tidalLimit?: number | null;
 };
 
+export type TryBeginCredentialUseResult =
+  | { ok: true; release: () => void }
+  | { ok: false; reason: "key_busy" | "member_busy" };
+
 /**
- * Take one concurrency slot on a Key, or return null when it is full.
+ * Take one concurrency slot on a Key, or return why it is full.
  * The check and the increment run in the same synchronous turn, so a burst
  * of concurrent requests cannot all pass a stale in-flight reading.
  */
 export function tryBeginCredentialUse(
   credentialId: number,
   options: CredentialUseOptions = {},
-): (() => void) | null {
+): TryBeginCredentialUseResult {
+  const employeeId = options.employeeId;
+  const employeeLimit = options.employeeLimit;
+  if (
+    employeeLimit != null &&
+    isPositiveId(employeeId) &&
+    (inFlightByEmployeeCredential.get(employeeCredentialKey(employeeId, credentialId)) ?? 0)
+      >= employeeLimit
+  ) {
+    return { ok: false, reason: "member_busy" };
+  }
   const limit = options.limit;
   if (limit != null && (inFlightByCredential.get(credentialId) ?? 0) >= limit) {
-    return null;
+    return { ok: false, reason: "key_busy" };
   }
   const tidalLimit = options.tidalLimit;
   if (tidalLimit != null && (inFlightTidalByCredential.get(credentialId) ?? 0) >= tidalLimit) {
-    return null;
+    return { ok: false, reason: "key_busy" };
   }
-  return beginCredentialUse(
-    credentialId,
-    options.virtualKeyId,
-    options.employeeId,
-    tidalLimit != null,
-  );
+  return {
+    ok: true,
+    release: beginCredentialUse(
+      credentialId,
+      options.virtualKeyId,
+      options.employeeId,
+      tidalLimit != null,
+    ),
+  };
 }

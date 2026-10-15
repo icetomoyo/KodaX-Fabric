@@ -242,6 +242,13 @@ function downstreamFailure(kind: RelayUpstreamAttemptKind): {
         code: "model_channels_busy",
         message: "当前渠道并发已满，请稍后重试",
       };
+    case "member_busy":
+      return {
+        status: 429,
+        type: "rate_limit_error",
+        code: "employee_concurrency_limit",
+        message: "当前个人并发已满，请稍后重试",
+      };
     case "model_unsupported":
       return {
         status: 404,
@@ -520,7 +527,8 @@ async function handleNativeRequest(
         if (index === 0) {
           const boundUnavailable = resolution.unavailableReason === "bound_channel_unavailable";
           const busy = resolution.unavailableReason === "busy";
-          const cooling = busy || resolution.unavailableReason === "cooling";
+          const memberBusy = resolution.unavailableReason === "member_busy";
+          const cooling = busy || memberBusy || resolution.unavailableReason === "cooling";
           const unavailable = resolution.unavailableReason === "unavailable";
           const modelDenied = resolution.unavailableReason === "model_not_allowed";
           const httpStatus = modelDenied
@@ -534,6 +542,8 @@ async function handleNativeRequest(
             ? "model_not_allowed"
             : boundUnavailable
               ? "bound_channel_unavailable"
+              : memberBusy
+                ? "employee_concurrency_limit"
               : busy
                 ? "model_channels_busy"
                 : cooling
@@ -545,6 +555,8 @@ async function handleNativeRequest(
             ? "model not allowed"
             : boundUnavailable
               ? "当前 Key 绑定的上游渠道不可用"
+              : memberBusy
+                ? "当前个人并发已满，请稍后重试"
               : busy
                 ? "当前渠道并发已满，请稍后重试"
                 : cooling

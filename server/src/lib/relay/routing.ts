@@ -72,6 +72,8 @@ export type RelayCandidateResolution = {
     | "cooling"
     /** Every Key the employee could use is at its concurrency limit. */
     | "busy"
+    /** This employee already has RELAY_KEY_MEMBER_CONCURRENCY in flight on the bound Key. */
+    | "member_busy"
     | "unavailable"
     | "model_not_allowed"
     | null;
@@ -265,9 +267,12 @@ function retryAfterSecondsFrom(retryAt: Date | null): number | null {
 }
 
 function mapAcquireFailure(
-  reason: "no_scope" | "exhausted_pool" | "pool_busy" | "no_binding_available",
+  reason: "no_scope" | "exhausted_pool" | "pool_busy" | "member_busy" | "no_binding_available",
   retryAt: Date | null,
 ): Pick<RelayBoundCandidateResolution, "unavailableReason" | "retryAfterSeconds"> {
+  if (reason === "member_busy") {
+    return { unavailableReason: "member_busy", retryAfterSeconds: RELAY_KEY_BUSY_RETRY_AFTER_SECONDS };
+  }
   if (reason === "pool_busy") {
     return { unavailableReason: "busy", retryAfterSeconds: RELAY_KEY_BUSY_RETRY_AFTER_SECONDS };
   }
@@ -579,6 +584,9 @@ export async function resolveRelayBoundCandidate(
   if (resolved.candidate) {
     // Bound Keys are shared by a few employees and capped per Key; open pools are not.
     resolved.candidate.maxConcurrency = acquired.openPool ? null : env.RELAY_KEY_MAX_CONCURRENCY;
+    resolved.candidate.maxMemberConcurrency = acquired.openPool
+      ? null
+      : env.RELAY_KEY_MEMBER_CONCURRENCY;
   }
   return resolved;
 }

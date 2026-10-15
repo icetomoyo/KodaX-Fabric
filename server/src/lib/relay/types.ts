@@ -57,6 +57,8 @@ export type RelayCandidate = {
   monthlyWindowResetAt?: Date | null;
   /** Per-Key concurrency limit for bound Keys; absent means unlimited (open pool, support bot). */
   maxConcurrency?: number | null;
+  /** Per-employee cap on one Key; absent means no per-member cap. */
+  maxMemberConcurrency?: number | null;
 };
 
 export type RelayUsage = {

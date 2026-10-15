@@ -48,7 +48,11 @@ import {
   type CredentialQuotaUsage,
   type CredentialWindowAnchors,
 } from "./credential-quota.js";
-import { getCredentialLoad, getEmployeeInFlight } from "./credential-load.js";
+import {
+  getCredentialLoad,
+  getEmployeeCredentialInFlight,
+  getEmployeeInFlight,
+} from "./credential-load.js";
 import { type RelayProtocol } from "./protocol.js";
 import { isOpenPoolProvider } from "./open-pool.js";
 import {
@@ -60,12 +64,15 @@ import {
 /**
  * 渠道 Key 调度：每个员工在一个调度池里挂在一把 Key 上（成员关系），
  * 一把 Key 最多挂 RELAY_KEY_MAX_MEMBERS 个员工、同时最多
- * RELAY_KEY_MAX_CONCURRENCY 个在途请求。
+ * RELAY_KEY_MAX_CONCURRENCY 个在途请求；同一员工在一把 Key 上最多
+ * RELAY_KEY_MEMBER_CONCURRENCY 路。单人超额只 429，不解绑、不换 Key。
  *
  * 选 Key 按亲和度从高到低（见 affinity.ts）：本人的席位 Key 最优先，
  * 其次是编制上离得近的同事的 Key。绑定后粘住，只有当前 Key 不能用时才换。
  *
  * 席位主人（owner）和借用者（guest）的区别：
+ * - 同一员工在一把 Key 上最多 RELAY_KEY_MEMBER_CONCURRENCY 路；超额只 429，
+ *   不解绑、不换 Key。默认 3 人 × 3 路 = 9，已绑定的人不会因为并发去换 Key。
  * - 主人的 Key 被借满时，主人进来会让出最久没用的借用者。
  * - 主人的 Key 满并发时，主人只把这一次请求临时发到别的 Key，绑定不动；
  *   借用者遇到满并发则解绑，换到空位够的 Key。
@@ -133,7 +140,7 @@ export type AcquireBindingResult =
     }
   | {
       ok: false;
-      reason: "no_scope" | "exhausted_pool" | "pool_busy" | "no_binding_available";
+      reason: "no_scope" | "exhausted_pool" | "pool_busy" | "member_busy" | "no_binding_available";
       retryAt: Date | null;
     };
 
@@ -209,7 +216,8 @@ type KeyVerdict =
   | { kind: "cooling"; until: Date | null }
   | { kind: "excluded" }
   | { kind: "guest_line"; until: Date | null }
-  | { kind: "busy" };
+  | { kind: "busy" }
+  | { kind: "member_busy" };
 
 type RankedKey = {
   key: PoolKeyRow;
@@ -445,6 +453,11 @@ export async function acquireBoundCredential(
         return granted(verdict.credential, role, false);
       }
 
+      if (verdict.kind === "member_busy") {
+        await touchMembership(current, now);
+        return { ok: false, reason: "member_busy", retryAt: null };
+      }
+
       if (role === "owner" && (verdict.kind === "busy" || verdict.kind === "excluded")) {
         // Their own Key is only momentarily unusable: borrow for this request, stay bound.
         await touchMembership(current, now);
@@ -521,6 +534,8 @@ function judgeKey(
   if (ctx.requestExclude.has(key.credentialId)) return { kind: "excluded" };
 
   const inFlight = getCredentialLoad(key.credentialId).inFlight;
+  const mine = getEmployeeCredentialInFlight(ctx.employeeId, key.credentialId);
+  if (mine >= env.RELAY_KEY_MEMBER_CONCURRENCY) return { kind: "member_busy" };
   const limits = packageCreditLimits(key);
   const usage = withInFlightEstimate(
     ledger ?? { fiveHourCredits: 0, weeklyCredits: 0 },
@@ -589,6 +604,7 @@ async function rankPoolKeys(
       if (verdict.until) ranking.retryTimes.push(verdict.until.getTime());
       continue;
     }
+    if (verdict.kind === "member_busy") continue;
     if (verdict.kind === "busy") {
       ranking.busy = true;
       continue;

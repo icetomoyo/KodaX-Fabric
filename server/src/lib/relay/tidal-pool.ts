@@ -266,13 +266,15 @@ export async function acquireTidalCredential(
     if (state.usable) usable.push({ key, state });
   }
 
-  const take = (credentialId: number) =>
-    tryBeginCredentialUse(credentialId, {
+  const take = (credentialId: number) => {
+    const began = tryBeginCredentialUse(credentialId, {
       virtualKeyId: params.tidal.apiKeyId,
       employeeId: params.employeeId,
       limit: env.RELAY_KEY_MAX_CONCURRENCY,
       tidalLimit: settings.perKeyConcurrency,
     });
+    return began.ok ? began.release : null;
+  };
 
   const sessionKey = params.tidal.sessionKey;
   const sticky = sessionKey ? sessions.get(sessionKey) : undefined;
