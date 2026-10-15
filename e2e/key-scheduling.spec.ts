@@ -42,7 +42,7 @@ import {
  * 10. 借用者第 4 路并发去换 Key，而不是 429 且保持原绑定。
  * 11. 主人第 4 路并发溢出到别的 Key，而不是 429 且保持原绑定。
  * 12. 三人各 3 路打满后新请求挂住或报 5xx，而不是立刻 429 带 retry-after。
- * 13. 借用者越过 85% 借用线继续用主人的 Key；或者主人在 85% 被本地拦下。
+ * 13. 借用者或主人在本地估算到 85%/100% 时被本地拦下换 Key，而不是都用到上游真的限额。
  * 14. 上游返回 5 小时额度用尽（1308）后没有冷却到重置时刻；或者池里还有能用的 Key，
  *     请求却因为「限流只换一次 Key」而失败（员工白白失败一次）。
  * 15. 上游返回公平使用风控（1313）后 Key 没停用、没有告警；或者这次请求没有换 Key 重发，
@@ -60,7 +60,7 @@ import {
  * 23. 没学到自己重置时刻的 Key，周窗口没有跟随套餐上录入的周重置时间。
  * 24. 某把 Key 从上游 1310 回包学到的重置时刻，没有覆盖套餐的默认值。
  * 25. 管理员改了套餐的周重置时间后，Key 上以前学到的旧时刻还在生效。
- * 26. 套餐上设了积分上限，套餐下的 Key 却仍然不限额（借用线不生效）。
+ * 26. 套餐上设了积分上限，套餐下的 Key 显示/计算的仍是不限额。
  * 27. 渠道 Key 还能单独设置上限，积分上限出现两处来源。
  * 28. 在套餐上改了上限后，没有立即对套餐下所有 Key 生效。
  * 29. 管理端显示的上限不是实际生效的上限。
@@ -601,7 +601,7 @@ test.describe.serial("渠道 Key 调度", () => {
     };
   });
 
-  test("借用者到 85% 让出，主人用到上游真的限额；1308 冷却到重置时刻并换 Key 完成请求", async () => {
+  test("借用者和主人都用到上游真的限额；1308 冷却到重置时刻并换 Key 完成请求", async () => {
     const pool = "quota";
     const ownerKey = await credentialRow(pool, "qtao");
 
@@ -626,12 +626,14 @@ test.describe.serial("渠道 Key 调度", () => {
     };
     await setUsage(90);
 
-    const guestAfter = await call(pool, "guest1");
-    expect(guestAfter.key, "借用者越过 85% 借用线后换 Key").toBe("qtaf");
+    const guestAt90 = await call(pool, "guest1");
+    expect(guestAt90.key, "本地估算到 90% 也不拦借用者，以上游为准").toBe("qtao");
     const ownerAt90 = await call(pool, "ownerQuota");
-    expect(ownerAt90.key, "主人不受 85% 借用线限制").toBe("qtao");
+    expect(ownerAt90.key, "本地估算到 90% 也不拦主人，以上游为准").toBe("qtao");
 
     await setUsage(100);
+    const guestAt100 = await call(pool, "guest1");
+    expect(guestAt100.key, "本地估算到 100% 也不拦借用者，以上游为准").toBe("qtao");
     const ownerAt100 = await call(pool, "ownerQuota");
     expect(ownerAt100.key, "本地估算到 100% 也不拦主人，以上游为准").toBe("qtao");
 
@@ -660,9 +662,10 @@ test.describe.serial("渠道 Key 调度", () => {
     expect(anchorDriftMs, "5 小时窗口起点应校准为上游重置时刻 − 5 小时").toBeLessThan(2_000);
 
     report.quota = {
-      guestBeforeLine: guestBefore.key,
-      guestAfterLine: guestAfter.key,
+      guestBefore: guestBefore.key,
+      guestAt90: guestAt90.key,
       ownerAt90: ownerAt90.key,
+      guestAt100: guestAt100.key,
       ownerAt100: ownerAt100.key,
       afterUpstreamCap: {
         hits: ["qtao", "qtaf"],
@@ -706,14 +709,24 @@ test.describe.serial("渠道 Key 调度", () => {
     const light = await call(pool, "guest1");
     expect(light.key, "窗口开始前的旧用量不能算进新窗口").toBe("w5ho");
 
-    // 新窗口里用到 90：还在窗口开头这不满一小时里，也必须算数。
+    // 新窗口里用到 90：还在窗口开头这不满一小时里，也必须算数（本地不再按 85% 让出）。
     await setHourBucket(key.id, thisHour, 150);
+    const token = await adminToken();
+    const credsRes = await api.get(`/api/admin/credentials?productLineId=${lineId(pool)}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const creds = ((await credsRes.json()) as {
+      data: Array<{ label: string; fiveHourCredits: number }>;
+    }).data;
+    const ownerUsage = creds.find((row) => row.label.replace(/^调度-/, "") === "w5ho");
+    expect(ownerUsage?.fiveHourCredits, "窗口开头不满一小时的用量要计入").toBe(90);
     const heavy = await call(pool, "guest1");
-    expect(heavy.key, "窗口开头不满一小时的用量要计入，借用者到 85% 让出").toBe("w5hf");
+    expect(heavy.key, "本地估算到 90% 也不拦借用者，以上游为准").toBe("w5ho");
 
     report.window5h = {
       baseCredits: Number(afterAnchor.five_hour_window_base_credits),
       keyAt30Percent: light.key,
+      creditsAt90Percent: ownerUsage?.fiveHourCredits,
       keyAt90Percent: heavy.key,
     };
   });
@@ -737,20 +750,22 @@ test.describe.serial("渠道 Key 调度", () => {
       return new Map(rows.map((row) => [row.label.replace(/^调度-/, ""), row]));
     };
 
-    // 3 小时前这把 Key 用掉了 96 积分（周额度 100，借用线 95%）。
+    // 3 小时前这把 Key 用掉了 96 积分（周额度 100）。
     await setHourBucket(key.id, hourStartOf(minutesAgo(3 * 60)), 96);
 
     const before = await listCredentials();
     expect(before.get("wkyf")?.weeklyResetEstimated, "套餐没录入时周重置时间只是估算").toBe(true);
 
-    // 这把 Key 之前从上游学到：本周窗口 5 小时前开始 → 那 96 积分在本周内，借用者不能用。
+    // 这把 Key 之前从上游学到：本周窗口 5 小时前开始 → 那 96 积分按 Key 自己的相位算在本周内。
     await sql`
       update upstream_credentials
       set weekly_window_reset_at = ${new Date(Date.now() - 5 * HOUR_MS + WEEK_MS)}
       where id = ${key.id}
     `;
-    const blocked = await call(pool, "guest1");
-    expect(blocked.key, "周额度已到借用线的 Key 不借").toBe("wkyf");
+    const byKeyPhase = await listCredentials();
+    expect(byKeyPhase.get("wkyo")?.weeklyCredits, "按 Key 自己的周相位，96 积分在本周内").toBe(96);
+    const affinity = await call(pool, "guest1");
+    expect(affinity.key, "本地不因周用量让出，按亲和度仍用这把 Key").toBe("wkyo");
 
     // 管理员在套餐上录入周重置时间：本周窗口 1 小时前才开始 → 那 96 积分属于上一周。
     const lineReset = new Date(Math.floor((Date.now() - HOUR_MS + WEEK_MS) / 1_000) * 1_000);
@@ -798,7 +813,8 @@ test.describe.serial("渠道 Key 调度", () => {
     expect(cooled.cool_until?.getTime(), "周限额冷却到上游给的重置时刻").toBe(keyReset.getTime());
 
     report.weekly = {
-      blockedByKeyPhase: blocked.key,
+      weeklyCreditsByKeyPhase: byKeyPhase.get("wkyo")?.weeklyCredits,
+      affinityByKeyPhase: affinity.key,
       lineResetAt: lineReset.toISOString(),
       allowedByLinePhase: allowed.key,
       keyLearnedResetAt: keyReset.toISOString(),
@@ -848,16 +864,16 @@ test.describe.serial("渠道 Key 调度", () => {
     // 套餐没设上限：不限额。
     expect(await limitsByKey()).toEqual({ lmto: [null, null], lmtf: [null, null] });
     const unlimited = await call(pool, "guest1");
-    expect(unlimited.key, "没有上限时不受借用线约束").toBe("lmto");
+    expect(unlimited.key, "没有上限时按亲和度用这把 Key").toBe("lmto");
 
-    // 在套餐上设上限：套餐下每把 Key 立即按它算（90 / 100 已过 85% 借用线）。
+    // 在套餐上设上限：套餐下每把 Key 立即按它显示；90 / 100 也不再本地让出。
     await setPackageLimits({ fiveHourCreditLimit: 100, weeklyCreditLimit: 1000 });
     expect(await limitsByKey(), "套餐下每把 Key 都显示套餐的上限").toEqual({
       lmto: [100, 1000],
       lmtf: [100, 1000],
     });
     const limited = await call(pool, "guest1");
-    expect(limited.key, "套餐上限立即参与调度").toBe("lmtf");
+    expect(limited.key, "设了上限也不按本地用量让出").toBe("lmto");
 
     // 渠道 Key 不能再单独设置上限。
     const perKey = await api.patch(`/api/admin/credentials/${key.id}`, {
@@ -867,15 +883,14 @@ test.describe.serial("渠道 Key 调度", () => {
     expect(perKey.status(), "渠道 Key 的接口不再接受积分上限").toBe(400);
     expect((await limitsByKey()).lmto, "被拒绝的请求不改变任何东西").toEqual([100, 1000]);
 
-    // 调高套餐上限：90 / 1000 只有 9%，这把 Key 又可以借了。
+    // 调高 / 调低套餐上限：立刻反映在套餐下每把 Key 的显示上。
     await setPackageLimits({ fiveHourCreditLimit: 1000 });
-    const raised = await call(pool, "guest2");
-    expect(raised.key, "调高后立即生效").toBe("lmto");
+    const afterRaise = await limitsByKey();
+    expect(afterRaise, "调高后立即显示").toEqual({ lmto: [1000, 1000], lmtf: [1000, 1000] });
 
-    // 调低到 105：90 / 105 又过了借用线。
     await setPackageLimits({ fiveHourCreditLimit: 105 });
-    const lowered = await call(pool, "guest2");
-    expect(lowered.key, "调低后立即生效").toBe("lmtf");
+    const afterLower = await limitsByKey();
+    expect(afterLower, "调低后立即显示").toEqual({ lmto: [105, 1000], lmtf: [105, 1000] });
 
     // 清空表示不限。
     await setPackageLimits({ fiveHourCreditLimit: null, weeklyCreditLimit: null });
@@ -885,8 +900,8 @@ test.describe.serial("渠道 Key 调度", () => {
       unlimited: unlimited.key,
       afterPackageLimit: limited.key,
       perKeyUpdateStatus: perKey.status(),
-      afterRaise: raised.key,
-      afterLower: lowered.key,
+      afterRaise,
+      afterLower,
     };
   });
 
