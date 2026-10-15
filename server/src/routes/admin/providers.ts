@@ -97,6 +97,8 @@ export async function adminProviderRoutes(app: FastifyInstance) {
         fiveHourCreditLimit: productLines.fiveHourCreditLimit,
         weeklyCreditLimit: productLines.weeklyCreditLimit,
         monthlyCreditLimit: productLines.monthlyCreditLimit,
+        zhipuOrganizationId: productLines.zhipuOrganizationId,
+        zhipuProjectId: productLines.zhipuProjectId,
         providerCode: providers.code,
         providerName: providers.name,
         defaultBaseUrl: providers.defaultBaseUrl,
@@ -498,6 +500,12 @@ export async function adminProviderRoutes(app: FastifyInstance) {
                   : String(body.data.monthlyCreditLimit),
               }
               : {}),
+            ...(body.data.zhipuOrganizationId !== undefined
+              ? { zhipuOrganizationId: body.data.zhipuOrganizationId }
+              : {}),
+            ...(body.data.zhipuProjectId !== undefined
+              ? { zhipuProjectId: body.data.zhipuProjectId }
+              : {}),
             ...(updatingProtocolSurface
               ? { protocolConfigs: nextProtocolConfigs }
               : {}),
@@ -565,6 +573,12 @@ export async function adminProviderRoutes(app: FastifyInstance) {
               ...(nextMonthlyWindowResetAt !== undefined
                 ? { monthlyWindowResetAt: existing.monthlyWindowResetAt }
                 : {}),
+              ...(body.data.zhipuOrganizationId !== undefined
+                ? { zhipuOrganizationId: existing.zhipuOrganizationId }
+                : {}),
+              ...(body.data.zhipuProjectId !== undefined
+                ? { zhipuProjectId: existing.zhipuProjectId }
+                : {}),
               ...(updatingProtocolSurface
                 ? {
                   supportedProtocols: protocolPlan.currentProtocols,
@@ -593,6 +607,12 @@ export async function adminProviderRoutes(app: FastifyInstance) {
                 : {}),
               ...(nextMonthlyWindowResetAt !== undefined
                 ? { monthlyWindowResetAt: row.monthlyWindowResetAt }
+                : {}),
+              ...(body.data.zhipuOrganizationId !== undefined
+                ? { zhipuOrganizationId: row.zhipuOrganizationId }
+                : {}),
+              ...(body.data.zhipuProjectId !== undefined
+                ? { zhipuProjectId: row.zhipuProjectId }
                 : {}),
               ...(updatingProtocolSurface
                 ? {

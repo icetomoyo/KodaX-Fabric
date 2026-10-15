@@ -51,6 +51,12 @@ export const upstreamChannelUpdateSchema = z
     fiveHourCreditLimit: z.number().nonnegative().finite().nullable().optional(),
     weeklyCreditLimit: z.number().nonnegative().finite().nullable().optional(),
     monthlyCreditLimit: z.number().nonnegative().finite().nullable().optional(),
+    /** Zhipu team Coding Plan org ID; empty string after trim is stored as null. */
+    zhipuOrganizationId: z.string().trim().max(64).nullable().optional()
+      .transform((value) => (value === "" ? null : value)),
+    /** Zhipu team Coding Plan project ID; empty string after trim is stored as null. */
+    zhipuProjectId: z.string().trim().max(64).nullable().optional()
+      .transform((value) => (value === "" ? null : value)),
     supportedProtocols: configurableSupportedProtocolsSchema.optional(),
     protocolConfigs: customProtocolConfigsInputSchema.optional(),
   })

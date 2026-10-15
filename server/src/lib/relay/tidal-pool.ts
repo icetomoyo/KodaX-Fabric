@@ -367,6 +367,7 @@ export async function previewTidalPool(
       foreign: 0,
       in_use: 0,
       weekly_line: 0,
+      monthly_line: 0,
       five_hour_line: 0,
       busy: 0,
     },

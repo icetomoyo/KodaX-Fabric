@@ -403,6 +403,25 @@
             clearable
           />
         </el-form-item>
+        <template v-if="editPackageForm.productType === 'coding_plan' && editPackageForm.providerCode === 'glm'">
+          <el-form-item label="组织 ID">
+            <el-input
+              v-model="editPackageForm.zhipuOrganizationId"
+              placeholder="org-xxxxxx"
+              clearable
+            />
+          </el-form-item>
+          <el-form-item label="项目 ID">
+            <el-input
+              v-model="editPackageForm.zhipuProjectId"
+              placeholder="proj_xxxxxx"
+              clearable
+            />
+            <p class="form-hint">
+              智谱团队套餐查询官方额度用，在团队管理后台用量页 URL 中可找到；个人套餐留空。
+            </p>
+          </el-form-item>
+        </template>
         <el-form-item label="状态">
           <el-radio-group v-model="editPackageForm.status">
             <el-radio-button value="active">启用</el-radio-button>
@@ -647,6 +666,8 @@ type PackageRow = {
   weeklyCreditLimit: number | null;
   monthlyCreditLimit: number | null;
   monthlyWindowResetAt: string | null;
+  zhipuOrganizationId: string | null;
+  zhipuProjectId: string | null;
 };
 
 type SeatRow = {
@@ -738,6 +759,8 @@ const editPackageForm = reactive({
   fiveHourCreditLimit: "",
   weeklyCreditLimit: "",
   monthlyCreditLimit: "",
+  zhipuOrganizationId: "",
+  zhipuProjectId: "",
 });
 const editPackageOriginal = reactive({
   name: "",
@@ -749,6 +772,8 @@ const editPackageOriginal = reactive({
   fiveHourCreditLimit: null as number | null,
   weeklyCreditLimit: null as number | null,
   monthlyCreditLimit: null as number | null,
+  zhipuOrganizationId: null as string | null,
+  zhipuProjectId: null as string | null,
 });
 const editSeatForm = reactive({
   id: 0,
@@ -993,6 +1018,8 @@ async function refresh() {
         fiveHourCreditLimit?: string | number | null;
         weeklyCreditLimit?: string | number | null;
         monthlyCreditLimit?: string | number | null;
+        zhipuOrganizationId?: string | null;
+        zhipuProjectId?: string | null;
       }) => ({
           id: row.id,
           providerId: row.providerId,
@@ -1009,6 +1036,8 @@ async function refresh() {
           fiveHourCreditLimit: storedCreditLimit(row.fiveHourCreditLimit),
           weeklyCreditLimit: storedCreditLimit(row.weeklyCreditLimit),
           monthlyCreditLimit: storedCreditLimit(row.monthlyCreditLimit),
+          zhipuOrganizationId: row.zhipuOrganizationId ?? null,
+          zhipuProjectId: row.zhipuProjectId ?? null,
         }))
       : [];
     seats.value = Array.isArray(seatRes.data.data)
@@ -1258,6 +1287,10 @@ function openEditPackage(pkg: PackageRow) {
   editPackageOriginal.fiveHourCreditLimit = pkg.fiveHourCreditLimit;
   editPackageOriginal.weeklyCreditLimit = pkg.weeklyCreditLimit;
   editPackageOriginal.monthlyCreditLimit = pkg.monthlyCreditLimit;
+  editPackageForm.zhipuOrganizationId = pkg.zhipuOrganizationId ?? "";
+  editPackageForm.zhipuProjectId = pkg.zhipuProjectId ?? "";
+  editPackageOriginal.zhipuOrganizationId = pkg.zhipuOrganizationId;
+  editPackageOriginal.zhipuProjectId = pkg.zhipuProjectId;
   editPackageOriginal.name = pkg.name;
   editPackageOriginal.tag = pkg.tag;
   editPackageOriginal.seatCount = pkg.seatCount;
@@ -1321,6 +1354,16 @@ async function saveEditPackage() {
       : null;
     if ((nextMonthlyReset?.getTime() ?? null) !== previousMonthlyMs) {
       payload.monthlyWindowResetAt = nextMonthlyReset ? nextMonthlyReset.toISOString() : null;
+    }
+    if (editPackageForm.providerCode === "glm") {
+      const nextOrgId = editPackageForm.zhipuOrganizationId.trim() || null;
+      const nextProjectId = editPackageForm.zhipuProjectId.trim() || null;
+      if (nextOrgId !== editPackageOriginal.zhipuOrganizationId) {
+        payload.zhipuOrganizationId = nextOrgId;
+      }
+      if (nextProjectId !== editPackageOriginal.zhipuProjectId) {
+        payload.zhipuProjectId = nextProjectId;
+      }
     }
   }
   if (Object.keys(payload).length === 1) {

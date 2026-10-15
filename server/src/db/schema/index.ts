@@ -342,6 +342,10 @@ export const productLines = pgTable(
      * 为空时按北京时间每月 1 日 0 点重置。
      */
     monthlyWindowResetAt: timestamp("monthly_window_reset_at", { withTimezone: true }),
+    /** Zhipu team Coding Plan organization ID for official quota lookup; null for personal plans. */
+    zhipuOrganizationId: varchar("zhipu_organization_id", { length: 64 }),
+    /** Zhipu team Coding Plan project ID for official quota lookup; null for personal plans. */
+    zhipuProjectId: varchar("zhipu_project_id", { length: 64 }),
     relayPoolKey: varchar("relay_pool_key", { length: 64 }).notNull().default(""),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
