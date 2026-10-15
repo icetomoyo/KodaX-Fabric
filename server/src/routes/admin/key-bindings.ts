@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, gte, inArray, isNotNull, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../../db/client.js";
 import {
@@ -12,23 +12,15 @@ import {
   enterprises,
   productLines,
   providers,
-  teamMembers,
+  requestAudits,
   teams,
   upstreamCredentials,
 } from "../../db/schema/index.js";
 import { env } from "../../config.js";
 import { effectiveCredentialStatus } from "../../lib/credential-status.js";
 import { snapshotRelayLiveLoad } from "../../lib/relay/credential-load.js";
-import {
-  buildKeyBindingGraph,
-  type KeyBindingCredentialBinding,
-  type KeyBindingScopeType,
-} from "../../lib/key-binding-graph.js";
 import { writeOpsAudit } from "../../lib/ops-audit.js";
-import {
-  loadBindingEnterpriseId,
-  releaseCredentialBinding,
-} from "../../lib/relay/binding.js";
+import { releaseCredentialBinding, type BindingScopeType } from "../../lib/relay/binding.js";
 import {
   credentialWindowAnchors,
   evaluateCredentialQuota,
@@ -41,58 +33,43 @@ import {
   requireSession,
 } from "../../middleware/auth.js";
 
+/** 画布可选的「最近有通信」窗口：30 分钟 / 2 小时 / 24 小时。 */
+const WINDOW_MINUTES = [30, 120, 1440] as const;
+
 const querySchema = z.object({
+  windowMinutes: z.coerce
+    .number()
+    .int()
+    .refine((value) => (WINDOW_MINUTES as readonly number[]).includes(value))
+    .default(30),
   productLineId: z.coerce.number().int().positive().optional(),
-  enterpriseId: z.coerce.number().int().positive().optional(),
-  q: z.string().trim().max(100).optional(),
 });
+
+type CredentialBindingView = {
+  scopeType: BindingScopeType;
+  scopeId: number;
+  scopeName: string;
+};
 
 export async function adminKeyBindingRoutes(app: FastifyInstance) {
   app.addHook("preHandler", requireSession);
   app.addHook("preHandler", requireRoles("admin"));
 
+  /**
+   * 调度画布：员工 → 虚拟 Key → 渠道 Key。
+   * 连线是窗口内 request_audits 里真实发生过的「虚拟 Key 打到哪把渠道 Key」，
+   * 再并上此刻在途、还没落审计的请求；渠道 Key 不论有没有流量全部返回。
+   */
   app.get("/api/admin/key-bindings", async (req, reply) => {
     const query = querySchema.safeParse(req.query);
     if (!query.success) {
       return reply.code(400).send({ success: false, message: "参数无效" });
     }
-
-    const scopedEnterpriseId = resolveActorEnterpriseFilter(
-      req.session?.role,
-      req.session?.enterpriseId,
-      query.data.enterpriseId,
-    );
-    if (scopedEnterpriseId === "forbidden") {
-      return reply.code(403).send({ success: false, message: "权限不足" });
-    }
-
+    const { windowMinutes, productLineId } = query.data;
     const now = new Date();
-    const [keyRows, credentialRows, bindingRows, membershipRows, bindingMemberRows] = await Promise.all([
-      db
-        .select({
-          id: employeeApiKeys.id,
-          employeeId: employeeApiKeys.employeeId,
-          name: employeeApiKeys.name,
-          keyPrefix: employeeApiKeys.keyPrefix,
-          protocol: employeeApiKeys.protocol,
-          productLineId: employeeApiKeys.productLineId,
-          productLineName: productLines.name,
-          teamId: employeeApiKeys.teamId,
-          teamName: teams.name,
-          teamIsDefault: teams.isDefault,
-          departmentId: teams.departmentId,
-          departmentName: departments.name,
-          status: employeeApiKeys.status,
-          employeeName: employees.name,
-          enterpriseId: employees.enterpriseId,
-          enterpriseName: enterprises.name,
-        })
-        .from(employeeApiKeys)
-        .innerJoin(employees, eq(employeeApiKeys.employeeId, employees.id))
-        .innerJoin(productLines, eq(employeeApiKeys.productLineId, productLines.id))
-        .leftJoin(teams, eq(employeeApiKeys.teamId, teams.id))
-        .leftJoin(departments, eq(teams.departmentId, departments.id))
-        .leftJoin(enterprises, eq(employees.enterpriseId, enterprises.id)),
+    const since = new Date(now.getTime() - windowMinutes * 60_000);
+
+    const [credentialRows, bindingRows, memberRows, hopRows] = await Promise.all([
       db
         .select({
           id: upstreamCredentials.id,
@@ -100,7 +77,6 @@ export async function adminKeyBindingRoutes(app: FastifyInstance) {
           secretSuffix: upstreamCredentials.secretSuffix,
           productLineId: upstreamCredentials.productLineId,
           productLineName: productLines.name,
-          providerCode: providers.code,
           providerName: providers.name,
           status: upstreamCredentials.status,
           coolUntil: upstreamCredentials.coolUntil,
@@ -112,7 +88,6 @@ export async function adminKeyBindingRoutes(app: FastifyInstance) {
           weeklyWindowResetAt: upstreamCredentials.weeklyWindowResetAt,
           lineWeeklyWindowResetAt: productLines.weeklyWindowResetAt,
           lineMonthlyWindowResetAt: productLines.monthlyWindowResetAt,
-          supportedProtocols: upstreamCredentials.supportedProtocols,
           ownerEmployeeId: channelSeats.employeeId,
           ownerName: employees.name,
         })
@@ -130,80 +105,125 @@ export async function adminKeyBindingRoutes(app: FastifyInstance) {
         })
         .from(credentialBindings),
       db
-        .select({
-          employeeId: teamMembers.employeeId,
-          teamId: teams.id,
-          teamName: teams.name,
-          teamIsDefault: teams.isDefault,
-          departmentId: teams.departmentId,
-          departmentName: departments.name,
-        })
-        .from(teamMembers)
-        .innerJoin(teams, eq(teamMembers.teamId, teams.id))
-        .leftJoin(departments, eq(teams.departmentId, departments.id)),
+        .select({ bindingId: credentialBindingMembers.bindingId })
+        .from(credentialBindingMembers),
       db
         .select({
-          bindingId: credentialBindingMembers.bindingId,
-          employeeId: credentialBindingMembers.employeeId,
+          virtualKeyId: requestAudits.employeeApiKeyId,
+          credentialId: requestAudits.credentialId,
+          requests: sql<number>`count(*)::int`,
+          failures: sql<number>`(count(*) filter (where ${requestAudits.status} <> 'success'))::int`,
+          credits: sql<string>`coalesce(sum(${requestAudits.requestCredits}), 0)`,
+          lastAt: sql<string>`max(${requestAudits.createdAt})`,
         })
-        .from(credentialBindingMembers),
+        .from(requestAudits)
+        .where(
+          and(
+            gte(requestAudits.createdAt, since),
+            isNotNull(requestAudits.employeeApiKeyId),
+            isNotNull(requestAudits.credentialId),
+          ),
+        )
+        .groupBy(requestAudits.employeeApiKeyId, requestAudits.credentialId),
     ]);
 
-    const membershipByEmployee = new Map(
-      membershipRows.map((row) => [row.employeeId, row]),
-    );
-    const employeesById = new Map<
-      number,
-      {
-        id: number;
-        name: string;
-        enterpriseId: number | null;
-        enterpriseName: string | null;
-        departmentId: number | null;
-        departmentName: string | null;
-        teamId: number | null;
-        teamName: string | null;
-        teamIsDefault: boolean;
-      }
-    >();
-    for (const row of keyRows) {
-      if (employeesById.has(row.employeeId)) continue;
-      const membership = membershipByEmployee.get(row.employeeId);
-      employeesById.set(row.employeeId, {
-        id: row.employeeId,
-        name: row.employeeName,
-        enterpriseId: row.enterpriseId,
-        enterpriseName: row.enterpriseName,
-        departmentId: membership?.departmentId ?? row.departmentId,
-        departmentName: membership?.departmentName ?? row.departmentName,
-        teamId: membership?.teamId ?? row.teamId,
-        teamName: membership?.teamName ?? row.teamName,
-        teamIsDefault: membership?.teamIsDefault ?? row.teamIsDefault ?? false,
+    const productLineOptions = new Map<number, { id: number; name: string; providerName: string }>();
+    for (const row of credentialRows) {
+      productLineOptions.set(row.productLineId, {
+        id: row.productLineId,
+        name: row.productLineName,
+        providerName: row.providerName,
       });
     }
 
-    const usageById = await getCredentialQuotaUsage(
-      credentialRows.map((row) => row.id),
-      now,
-      new Map(credentialRows.map((row) => [row.id, credentialWindowAnchors(row)])),
+    const visibleCredentials = credentialRows.filter(
+      (row) => productLineId == null || row.productLineId === productLineId,
+    );
+    const credentialById = new Map(visibleCredentials.map((row) => [row.id, row]));
+
+    // 窗口内的真实请求，加上此刻在途、审计还没写的请求。
+    type Hop = {
+      virtualKeyId: number;
+      credentialId: number;
+      requests: number;
+      failures: number;
+      credits: number;
+      lastAt: string | null;
+    };
+    const hops = new Map<string, Hop>();
+    for (const row of hopRows) {
+      if (row.virtualKeyId == null || row.credentialId == null) continue;
+      hops.set(`${row.virtualKeyId}:${row.credentialId}`, {
+        virtualKeyId: row.virtualKeyId,
+        credentialId: row.credentialId,
+        requests: Number(row.requests),
+        failures: Number(row.failures),
+        credits: Number(row.credits),
+        lastAt: row.lastAt ? new Date(row.lastAt).toISOString() : null,
+      });
+    }
+    for (const live of snapshotRelayLiveLoad().hops) {
+      const id = `${live.virtualKeyId}:${live.credentialId}`;
+      if (hops.has(id)) continue;
+      hops.set(id, {
+        virtualKeyId: live.virtualKeyId,
+        credentialId: live.credentialId,
+        requests: 0,
+        failures: 0,
+        credits: 0,
+        lastAt: null,
+      });
+    }
+    const scopedHops = [...hops.values()].filter((hop) => credentialById.has(hop.credentialId));
+
+    const keyIds = [...new Set(scopedHops.map((hop) => hop.virtualKeyId))];
+    const keyRows = keyIds.length
+      ? await db
+        .select({
+          id: employeeApiKeys.id,
+          employeeId: employeeApiKeys.employeeId,
+          name: employeeApiKeys.name,
+          keyPrefix: employeeApiKeys.keyPrefix,
+          protocol: employeeApiKeys.protocol,
+          productLineId: employeeApiKeys.productLineId,
+          productLineName: productLines.name,
+          status: employeeApiKeys.status,
+          employeeName: employees.name,
+          enterpriseName: enterprises.name,
+        })
+        .from(employeeApiKeys)
+        .innerJoin(employees, eq(employeeApiKeys.employeeId, employees.id))
+        .innerJoin(productLines, eq(employeeApiKeys.productLineId, productLines.id))
+        .leftJoin(enterprises, eq(employees.enterpriseId, enterprises.id))
+        .where(inArray(employeeApiKeys.id, keyIds))
+      : [];
+    const keyById = new Map(keyRows.map((row) => [row.id, row]));
+
+    const employeesById = new Map<number, { id: number; name: string; enterpriseName: string | null }>();
+    for (const row of keyRows) {
+      employeesById.set(row.employeeId, {
+        id: row.employeeId,
+        name: row.employeeName,
+        enterpriseName: row.enterpriseName,
+      });
+    }
+
+    const membersByBinding = new Map<number, number>();
+    for (const row of memberRows) {
+      membersByBinding.set(row.bindingId, (membersByBinding.get(row.bindingId) ?? 0) + 1);
+    }
+    const memberCountByCredential = new Map(
+      bindingRows.map((row) => [row.credentialId, membersByBinding.get(row.id) ?? 0]),
     );
     const bindingViewById = await loadCredentialBindingViews(bindingRows);
+    const usageById = await getCredentialQuotaUsage(
+      visibleCredentials.map((row) => row.id),
+      now,
+      new Map(visibleCredentials.map((row) => [row.id, credentialWindowAnchors(row)])),
+    );
 
-    const graph = buildKeyBindingGraph({
-      employees: [...employeesById.values()],
-      virtualKeys: keyRows.map((row) => ({
-        id: row.id,
-        employeeId: row.employeeId,
-        name: row.name,
-        keyPrefix: row.keyPrefix,
-        protocol: row.protocol,
-        productLineId: row.productLineId,
-        productLineName: row.productLineName,
-        teamId: row.teamId,
-        teamName: row.teamName,
-        status: row.status,
-      })),
-      credentials: credentialRows.map((row) => {
+    const credentials = visibleCredentials
+      .map((row) => {
         const status = effectiveCredentialStatus(row.status, row.coolUntil, now);
         const usage = usageById.get(row.id) ?? { fiveHourCredits: 0, weeklyCredits: 0 };
         const quota = evaluateCredentialQuota(
@@ -224,43 +244,54 @@ export async function adminKeyBindingRoutes(app: FastifyInstance) {
           secretSuffix: row.secretSuffix,
           productLineId: row.productLineId,
           productLineName: row.productLineName,
-          providerCode: row.providerCode,
           providerName: row.providerName,
           status,
           coolingKind,
           coolUntil: coolingUntilIso(coolingKind, row.coolUntil, quota.exhaustedUntil),
-          supportedProtocols: row.supportedProtocols ?? [],
           fiveHourCredits: quota.fiveHourCredits,
           weeklyCredits: quota.weeklyCredits,
           fiveHourLimit: quota.fiveHourLimit,
           weeklyLimit: quota.weeklyLimit,
           binding: bindingViewById.get(row.id) ?? null,
+          memberCount: memberCountByCredential.get(row.id) ?? 0,
           ownerEmployeeId: row.ownerEmployeeId,
           ownerName: row.ownerName,
         };
-      }),
-      bindings: (() => {
-        const membersByBinding = new Map<number, number[]>();
-        for (const row of bindingMemberRows) {
-          const list = membersByBinding.get(row.bindingId) ?? [];
-          list.push(row.employeeId);
-          membersByBinding.set(row.bindingId, list);
-        }
-        return bindingRows.map((row) => ({
-          credentialId: row.credentialId,
-          scopeType: row.scopeType,
-          scopeId: row.scopeId,
-          memberEmployeeIds: membersByBinding.get(row.id) ?? [],
-        }));
-      })(),
-      filter: {
-        productLineId: query.data.productLineId,
-        enterpriseId: scopedEnterpriseId,
-        q: query.data.q,
-      },
-    });
+      })
+      .sort((a, b) => a.id - b.id);
 
-    return { success: true, data: graph };
+    const edges = scopedHops
+      .filter((hop) => keyById.has(hop.virtualKeyId))
+      .map((hop) => ({
+        ...hop,
+        // 席位主人打到自己的 Key 算「本人」，其余都是借用。
+        owner: credentialById.get(hop.credentialId)?.ownerEmployeeId === keyById.get(hop.virtualKeyId)?.employeeId,
+      }))
+      .sort((a, b) => a.virtualKeyId - b.virtualKeyId || a.credentialId - b.credentialId);
+
+    return {
+      success: true,
+      data: {
+        windowMinutes,
+        since: since.toISOString(),
+        productLines: [...productLineOptions.values()].sort((a, b) => a.id - b.id),
+        employees: [...employeesById.values()].sort((a, b) => a.id - b.id),
+        virtualKeys: keyRows
+          .map((row) => ({
+            id: row.id,
+            employeeId: row.employeeId,
+            name: row.name,
+            keyPrefix: row.keyPrefix,
+            protocol: row.protocol,
+            productLineId: row.productLineId,
+            productLineName: row.productLineName,
+            status: row.status,
+          }))
+          .sort((a, b) => a.id - b.id),
+        credentials,
+        hops: edges,
+      },
+    };
   });
 
   app.get("/api/admin/key-bindings/live", async () => {
@@ -274,35 +305,6 @@ export async function adminKeyBindingRoutes(app: FastifyInstance) {
     }
 
     const credentialId = params.data.id;
-    const [locator] = await db
-      .select({
-        credentialId: credentialBindings.credentialId,
-        scopeType: credentialBindings.scopeType,
-        scopeId: credentialBindings.scopeId,
-      })
-      .from(credentialBindings)
-      .where(eq(credentialBindings.credentialId, credentialId))
-      .limit(1);
-    if (!locator) {
-      return reply.code(409).send({
-        success: false,
-        message: "该渠道 Key 当前没有可释放的绑定",
-      });
-    }
-
-    if (req.session?.role === "org_admin") {
-      if (req.session.enterpriseId == null) {
-        return reply.code(403).send({ success: false, message: "权限不足" });
-      }
-      const bindingEnterpriseId = await loadBindingEnterpriseId({
-        scopeType: locator.scopeType,
-        scopeId: locator.scopeId,
-      });
-      if (bindingEnterpriseId !== req.session.enterpriseId) {
-        return reply.code(403).send({ success: false, message: "权限不足" });
-      }
-    }
-
     const released = await releaseCredentialBinding(credentialId);
     if (!released) {
       return reply.code(409).send({
@@ -336,29 +338,14 @@ export async function adminKeyBindingRoutes(app: FastifyInstance) {
   });
 }
 
-export function resolveActorEnterpriseFilter(
-  role: string | undefined,
-  actorEnterpriseId: number | null | undefined,
-  requestedEnterpriseId: number | undefined,
-): number | undefined | "forbidden" {
-  if (role === "org_admin") {
-    if (actorEnterpriseId == null) return "forbidden";
-    if (requestedEnterpriseId != null && requestedEnterpriseId !== actorEnterpriseId) {
-      return "forbidden";
-    }
-    return actorEnterpriseId;
-  }
-  return requestedEnterpriseId;
-}
-
 async function loadCredentialBindingViews(
   bindings: readonly {
     credentialId: number;
-    scopeType: KeyBindingScopeType;
+    scopeType: BindingScopeType;
     scopeId: number;
   }[],
-): Promise<Map<number, KeyBindingCredentialBinding>> {
-  const views = new Map<number, KeyBindingCredentialBinding>();
+): Promise<Map<number, CredentialBindingView>> {
+  const views = new Map<number, CredentialBindingView>();
   if (bindings.length === 0) return views;
 
   const rows = await db

@@ -4,7 +4,6 @@
     ref="rootRef"
     class="token-bot"
     :class="{
-      'is-canvas': isCanvasPage,
       'is-moved': position != null,
       'is-dragging': dragging,
     }"
@@ -105,7 +104,6 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { useRoute } from "vue-router";
 import { BotIcon, XIcon } from "@lucide/vue";
 import {
   Conversation,
@@ -161,7 +159,6 @@ type DragSession = {
   moved: boolean;
 };
 
-const route = useRoute();
 const rootRef = ref<HTMLElement | null>(null);
 const enabled = ref(false);
 const open = ref(false);
@@ -176,7 +173,6 @@ const loadError = ref("");
 const conversationId = ref<number | null>(null);
 const messages = ref<ChatLine[]>([]);
 
-const isCanvasPage = computed(() => route.path === "/admin/key-bindings");
 const dragging = computed(() => Boolean(dragSession.value?.moved));
 const positionStyle = computed(() => {
   if (!position.value) return undefined;
@@ -377,11 +373,6 @@ async function sendMessage(message: string) {
   flex-direction: column;
   align-items: flex-end;
   gap: 12px;
-}
-
-.token-bot.is-canvas:not(.is-moved) {
-  right: auto;
-  left: 244px;
 }
 
 .token-bot.is-dragging {

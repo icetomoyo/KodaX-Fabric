@@ -56,7 +56,7 @@ import {
  *     去别的 Key 上再试；或者按限流回 429 让客户端反复重试，而不是明确告诉调用方模型不支持。
  * 18. 上游 5xx 时不再换 Key 重试（限流的换 Key 上限误伤了故障重试）。
  * 19. 30 分钟没调用的成员没有被释放；还在用的成员被误释放；最后一人走后 Key 没回池。
- * 20. 管理端画布上的「谁在用哪把 Key」和库里的实际绑定对不上。
+ * 20. （画布改为按真实请求画线，见 key-bindings-canvas.spec.ts。）
  * 21. 5 小时窗口开头不满一小时的用量没有计入（账本按整点分桶）；
  *     或者把同一小时里、窗口开始之前的旧用量也算了进来。
  * 22. 上游 1308 回包给的重置时刻说明窗口比本地记的开始得早，本地窗口起点却没被改正。
@@ -483,7 +483,7 @@ test.describe.serial("渠道 Key 调度", () => {
     };
   });
 
-  test("每把 Key 最多 3 人；主人回来时让出最久没用的借用者", async ({ request }) => {
+  test("每把 Key 最多 3 人；主人回来时让出最久没用的借用者", async () => {
     const pool = await usePool("capacity");
 
     for (const guest of ["guest1", "guest2", "guest3"] as const) {
@@ -515,41 +515,7 @@ test.describe.serial("渠道 Key 调度", () => {
       expect(people.length, `${label} 不应超过 3 人`).toBeLessThanOrEqual(3);
     }
 
-    // 管理端画布：虚拟 Key → 渠道 Key 的连线必须等于库里的成员关系。
-    const login = await request.post("/api/auth/login", {
-      data: { phone: E2E.admin.phone, password: E2E.admin.password },
-    });
-    const token = ((await login.json()) as { data?: { token?: string } }).data?.token;
-    expect(token, "管理员登录").toBeTruthy();
-    const graphRes = await request.get(`/api/admin/key-bindings?productLineId=${lineId(pool)}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    expect(graphRes.status()).toBe(200);
-    const graph = (
-      (await graphRes.json()) as {
-        data: {
-          virtualKeys: Array<{ id: number; employeeId: number }>;
-          credentials: Array<{ id: number; label: string; bound: boolean }>;
-          edges: Array<{ sourceType: string; sourceId: number; targetType: string; targetId: number }>;
-        };
-      }
-    ).data;
-    const keyOwner = new Map(graph.virtualKeys.map((row) => [row.id, row.employeeId]));
-    const credentialLabel = new Map(
-      graph.credentials.map((row) => [row.id, row.label.replace(/^调度-/, "")]),
-    );
-    const graphMembers: Record<string, SchedPersonKey[]> = {};
-    for (const edge of graph.edges) {
-      if (edge.sourceType !== "virtual_key" || edge.targetType !== "credential") continue;
-      const person = personByEmployeeId.get(keyOwner.get(edge.sourceId) ?? -1);
-      const label = credentialLabel.get(edge.targetId);
-      if (!person || !label) continue;
-      (graphMembers[label] ??= []).push(person);
-    }
-    for (const people of Object.values(graphMembers)) people.sort();
-    expect(graphMembers, "画布连线应与库里的绑定一致").toEqual(final);
-
-    report.capacity = { afterThreeGuests: "capo", fourthGuest: fourth.key, final, graphMembers };
+    report.capacity = { afterThreeGuests: "capo", fourthGuest: fourth.key, final };
   });
 
   test("每把 Key 最多 9 并发、单人 3 路：超额 429 且不解绑", async () => {

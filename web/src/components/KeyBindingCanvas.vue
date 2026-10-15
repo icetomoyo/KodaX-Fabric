@@ -17,7 +17,6 @@
       :only-render-visible-elements="true"
       :elevate-nodes-on-select="false"
       :elevate-edges-on-select="false"
-      fit-view-on-init
       @node-click="onNodeClick"
       @pane-click="emit('pane-click')"
       @init="onFlowInit"
@@ -25,39 +24,15 @@
       <template #edge-traffic="edgeProps">
         <KeyBindingTrafficEdge v-bind="edgeProps" />
       </template>
-      <template #node-enterprise="{ data }">
-        <div class="graph-node org enterprise" :class="{ dimmed: data.dimmed, active: data.active }">
-          <Handle type="source" :position="Position.Right" :connectable="false" />
-          <span class="kind">企业</span>
-          <strong>{{ data.name }}</strong>
-        </div>
-      </template>
-      <template #node-department="{ data }">
-        <div class="graph-node org department" :class="{ dimmed: data.dimmed, active: data.active }">
-          <Handle v-if="!data.root" type="target" :position="Position.Left" :connectable="false" />
-          <Handle type="source" :position="Position.Right" :connectable="false" />
-          <span class="kind">部门</span>
-          <strong>{{ data.name }}</strong>
-          <span v-if="data.root && data.enterpriseName">{{ data.enterpriseName }}</span>
-        </div>
-      </template>
-      <template #node-team="{ data }">
-        <div class="graph-node org team" :class="{ dimmed: data.dimmed, active: data.active }">
-          <Handle type="target" :position="Position.Left" :connectable="false" />
-          <Handle type="source" :position="Position.Right" :connectable="false" />
-          <span class="kind">团队</span>
-          <strong>{{ data.name }}</strong>
-        </div>
-      </template>
       <template #node-employee="{ data }">
         <div
-          class="graph-node org employee"
+          class="graph-node employee"
           :class="{ dimmed: data.dimmed, active: data.active, working: data.working }"
         >
-          <Handle type="target" :position="Position.Left" :connectable="false" />
           <Handle type="source" :position="Position.Right" :connectable="false" />
           <span class="kind">员工</span>
           <strong>{{ data.name }}</strong>
+          <span v-if="data.enterpriseName">{{ data.enterpriseName }}</span>
         </div>
       </template>
       <template #node-virtual_key="{ data }">
@@ -76,7 +51,7 @@
           <span v-else-if="data.working && !data.afterglow" class="work-dot" title="干活中" />
           <strong>{{ data.name }}</strong>
           <span class="mono">{{ data.keyPrefix }}…</span>
-          <span>{{ protocolLabel(data.protocol) }} · {{ data.productLineName }}</span>
+          <span>{{ data.caption }}</span>
         </div>
       </template>
       <template #node-lane_header="{ data }">
@@ -100,7 +75,7 @@
           <span v-else-if="data.working && !data.afterglow" class="work-dot" title="干活中" />
           <strong>{{ data.label }}</strong>
           <span class="mono">…{{ data.secretSuffix }}</span>
-          <span>{{ credentialCaption(data) }}</span>
+          <span>{{ data.caption }}</span>
         </div>
       </template>
       <Background :gap="18" pattern-color="#e5e7eb" />
@@ -123,13 +98,9 @@ import {
 import { Background } from "@vue-flow/background";
 import { Controls } from "@vue-flow/controls";
 import KeyBindingTrafficEdge from "@/components/KeyBindingTrafficEdge.vue";
-import { relayProtocolLabel } from "@/views/relay-protocol";
 import "@vue-flow/core/dist/style.css";
 import "@vue-flow/core/dist/theme-default.css";
 import "@vue-flow/controls/dist/style.css";
-
-type CoolingKind = "five_hour" | "weekly" | "other";
-type CredentialLane = "bound" | "pending" | "cooling_5h" | "cooling_weekly" | "disabled";
 
 type LiveNode = { id: number; inFlight: number; afterglow: boolean };
 type LiveHop = { virtualKeyId: number; credentialId: number; inFlight: number; afterglow: boolean };
@@ -140,7 +111,10 @@ const props = defineProps<{
   edges: Edge[];
   selectedNodeId?: string | null;
   live?: LiveLoad | null;
-  active?: boolean;
+  /** 变了才重新适配视口；后台静默刷新不动用户缩放好的视图。 */
+  fitKey?: string;
+  /** 适配视口时只框住这些节点（例如有流量的部分）；为空则框住全部。 */
+  fitNodeIds?: string[];
 }>();
 
 const emit = defineEmits<{
@@ -159,16 +133,14 @@ function onFlowInit(store: VueFlowStore) {
 
 function fit() {
   void nextTick(() => {
-    requestAnimationFrame(() => flowStore?.fitView({ padding: 0.18 }));
+    requestAnimationFrame(() => {
+      const nodes = props.fitNodeIds?.length ? props.fitNodeIds : undefined;
+      void flowStore?.fitView({ padding: 0.18, nodes });
+    });
   });
 }
 
-watch(
-  () => [props.nodes.length, props.edges.length, props.active],
-  () => {
-    if (props.active !== false) fit();
-  },
-);
+watch(() => props.fitKey, fit);
 
 watch(
   () => props.nodes,
@@ -311,15 +283,7 @@ function syncLive() {
     }
   }
   for (const edge of storeEdges()) {
-    const kind = edge.data?.kind as string | undefined;
-    if (
-      kind !== "dedicated"
-      && kind !== "team_shared"
-      && kind !== "department_shared"
-      && kind !== "enterprise_shared"
-    ) {
-      continue;
-    }
+    if (edge.type !== "traffic") continue;
     const sourceId = parseNumericId(String(edge.source));
     const targetId = parseNumericId(String(edge.target));
     const hop =
@@ -340,43 +304,6 @@ function syncLive() {
 
 function onNodeClick(event: NodeMouseEvent) {
   emit("node-click", event);
-}
-
-function protocolLabel(protocol: string) {
-  return relayProtocolLabel(protocol, true);
-}
-
-function formatCoolUntil(value: string | null | undefined) {
-  if (!value) return "";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "";
-  const pad = (part: number) => String(part).padStart(2, "0");
-  return `${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
-}
-
-function credentialCaption(data: {
-  productLineName?: string;
-  lane?: CredentialLane;
-  coolingKind?: CoolingKind | null;
-  coolUntil?: string | null;
-}) {
-  const lane =
-    data.lane === "pending"
-      ? "待绑定"
-      : data.lane === "cooling_weekly"
-        ? "周冷却"
-        : data.lane === "cooling_5h"
-          ? data.coolingKind === "other"
-            ? "冷却中"
-            : "5小时冷却"
-          : data.lane === "disabled"
-            ? "停用"
-            : "绑定";
-  if (data.lane === "cooling_5h" || data.lane === "cooling_weekly") {
-    const until = formatCoolUntil(data.coolUntil);
-    return until ? `${lane} · 至 ${until}` : lane;
-  }
-  return `${data.productLineName ?? ""} · ${lane}`;
 }
 </script>
 
@@ -459,10 +386,6 @@ function credentialCaption(data: {
   color: #334155;
 }
 
-.graph-node.org {
-  gap: 2px;
-}
-
 .graph-node .kind {
   color: #94a3b8;
   font-size: 11px;
@@ -470,19 +393,8 @@ function credentialCaption(data: {
   letter-spacing: 0.04em;
 }
 
-.graph-node.enterprise {
-  border-left: 3px solid #4338ca;
-}
-
-.graph-node.department {
-  border-left: 3px solid #7c3aed;
-}
-
-.graph-node.team {
-  border-left: 3px solid #0891b2;
-}
-
 .graph-node.employee {
+  gap: 2px;
   border-left: 3px solid #0f766e;
 }
 
@@ -502,12 +414,12 @@ function credentialCaption(data: {
   text-align: center;
 }
 
-.graph-node.credential.bound {
+.graph-node.credential.busy {
   border-left: 3px solid #c2410c;
 }
 
-.graph-node.credential.pending {
-  border-left: 3px solid #ca8a04;
+.graph-node.credential.idle {
+  border-left: 3px solid #cbd5e1;
 }
 
 .graph-node.credential.cooling_5h {

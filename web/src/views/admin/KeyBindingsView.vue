@@ -1,84 +1,57 @@
 <template>
-  <div class="bindings-page" v-loading="loading">
+  <div class="bindings-page" v-loading="loading && !graph">
+    <header class="canvas-toolbar">
+      <el-radio-group v-model="windowMinutes" size="small" @change="() => load()">
+        <el-radio-button v-for="row in WINDOW_OPTIONS" :key="row.value" :value="row.value">
+          {{ row.label }}
+        </el-radio-button>
+      </el-radio-group>
+      <el-select
+        v-model="productLineId"
+        clearable
+        filterable
+        size="small"
+        placeholder="全部产品线"
+        class="toolbar-select"
+        @change="() => load()"
+      >
+        <el-option
+          v-for="row in graph?.productLines ?? []"
+          :key="row.id"
+          :label="`${row.providerName} / ${row.name}`"
+          :value="row.id"
+        />
+      </el-select>
+      <el-input
+        v-model="search"
+        clearable
+        size="small"
+        placeholder="搜索员工 / Key"
+        class="toolbar-search"
+      />
+      <span class="toolbar-stats" data-testid="canvas-stats">
+        有通信虚拟 Key {{ stats.keys }} · 有流量渠道 Key {{ stats.busy }}/{{ stats.credentials }}<template v-if="stats.inFlight"> · 在途 {{ stats.inFlight }}</template>
+      </span>
+      <el-button size="small" :loading="loading" @click="() => load()">刷新</el-button>
+    </header>
+
     <el-empty
-      v-if="!loading && !activeBoard"
-      description="没有可展示的绑定关系"
+      v-if="!loading && graph && !canvasNodes.length"
+      class="canvas-empty"
+      description="没有渠道 Key"
       :image-size="88"
     />
     <KeyBindingCanvas
-      v-else-if="activeBoard"
-      :key="activeBoardKey"
+      v-else-if="canvasNodes.length"
       :nodes="canvasNodes"
       :edges="canvasEdges"
       :selected-node-id="selectedNodeId"
       :live="lastLive"
-      :active="true"
-      @node-click="(event) => onNodeClick(activeBoardKey, event)"
-      @pane-click="() => onPaneClick(activeBoardKey)"
+      :fit-key="fitKey"
+      :fit-node-ids="fitNodeIds"
+      @node-click="onNodeClick"
+      @pane-click="clearSelection"
     />
-
-    <div class="fab-stack">
-      <button type="button" class="fab" :class="{ active: resourceOpen }" @click="resourceOpen = true">
-        资源
-        <span v-if="resourceKeys.length" class="fab-count">{{ resourceKeys.length }}</span>
-      </button>
-      <button type="button" class="fab primary" @click="filterOpen = true">筛选</button>
-    </div>
-
-    <el-drawer
-      v-model="filterOpen"
-      title="筛选"
-      direction="rtl"
-      size="320px"
-      append-to-body
-    >
-      <el-form label-position="top">
-        <el-form-item label="组织">
-          <el-cascader
-            v-model="orgFilterPath"
-            :options="orgCascaderOptions"
-            :props="orgCascaderProps"
-            clearable
-            filterable
-            placeholder="企业 / 部门 / 子部门"
-            style="width: 100%"
-          />
-        </el-form-item>
-        <el-form-item>
-          <el-checkbox v-model="boundOnly">只看已绑定渠道 Key</el-checkbox>
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button :loading="loading" @click="load">刷新</el-button>
-      </template>
-    </el-drawer>
-
-    <el-drawer
-      v-model="resourceOpen"
-      title="资源"
-      direction="rtl"
-      size="400px"
-      append-to-body
-    >
-      <el-empty v-if="!resourceKeys.length" description="暂无资源" :image-size="72" />
-      <div v-else class="resource-list">
-        <article v-for="row in resourceKeys" :key="row.id" class="resource-row">
-          <div class="resource-top">
-            <strong>{{ row.label }}</strong>
-            <el-tag effect="light" :type="resourceTagType(row.lane)">
-              {{ resourceLaneLabel(row.lane) }}
-            </el-tag>
-          </div>
-          <div class="resource-meta">
-            <span class="mono">…{{ row.secretSuffix }}</span>
-            <span>{{ row.providerName || row.productLineName }}</span>
-          </div>
-        </article>
-      </div>
-      <template #footer>
-        <el-button :loading="loading" @click="load">刷新</el-button>
-      </template>
-    </el-drawer>
 
     <el-drawer
       v-model="credentialOpen"
@@ -89,31 +62,30 @@
     >
       <template v-if="selectedCredential">
         <section class="detail-block">
-          <div class="resource-top">
+          <div class="detail-top">
             <strong>{{ selectedCredential.label }}</strong>
-            <el-tag effect="light" :type="resourceTagType(selectedCredential.lane)">
-              {{ resourceLaneLabel(selectedCredential.lane) }}
+            <el-tag effect="light" :type="laneTagType(selectedCredential.lane)">
+              {{ laneLabel(selectedCredential) }}
             </el-tag>
           </div>
-          <div class="resource-meta">
+          <div class="detail-meta">
             <span class="mono">…{{ selectedCredential.secretSuffix }}</span>
-            <span>{{ selectedCredential.providerName || selectedCredential.productLineName }}</span>
+            <span>{{ selectedCredential.providerName }} / {{ selectedCredential.productLineName }}</span>
           </div>
         </section>
 
         <section class="detail-block">
           <h3>绑定</h3>
-          <p>
-            席位主人：{{ selectedCredential.ownerName || "无" }}
-          </p>
+          <p>席位主人：{{ selectedCredential.ownerName || "无" }}</p>
           <p v-if="selectedCredential.binding">
-            当前使用企业：{{ selectedCredential.binding.scopeName || selectedCredential.binding.scopeId }}
+            当前挂在：{{ selectedCredential.binding.scopeName || selectedCredential.binding.scopeId }}
+            · {{ selectedCredential.memberCount }} 人
           </p>
-          <p v-else class="muted">当前没有可释放的绑定</p>
+          <p v-else class="muted">当前没有绑定</p>
         </section>
 
         <section class="detail-block">
-          <h3>使用情况</h3>
+          <h3>额度</h3>
           <dl class="quota-list">
             <div>
               <dt>5 小时积分</dt>
@@ -123,20 +95,32 @@
               <dt>周积分</dt>
               <dd>{{ formatQuotaPair(selectedCredential.weeklyCredits, selectedCredential.weeklyLimit) }}</dd>
             </div>
-            <div v-if="selectedCredential.inFlight">
-              <dt>进行中</dt>
-              <dd>{{ selectedCredential.inFlight }} 路请求</dd>
+            <div v-if="credentialInFlight">
+              <dt>在途</dt>
+              <dd>{{ credentialInFlight }} 路请求</dd>
             </div>
           </dl>
+        </section>
+
+        <section class="detail-block">
+          <h3>{{ windowLabel }}内的调用</h3>
           <el-empty
             v-if="!credentialUsers.length"
-            description="没有连到这把 Key 的员工"
+            description="这段时间没有请求打到这把 Key"
             :image-size="56"
           />
-          <ul v-else class="user-list">
+          <ul v-else class="user-list" data-testid="credential-users">
             <li v-for="row in credentialUsers" :key="row.keyId">
-              <strong>{{ row.employeeName }}</strong>
-              <span>{{ row.isOwner ? "本人 Key" : "借用" }} · {{ row.keyName }}</span>
+              <div class="user-top">
+                <strong>{{ row.employeeName }}</strong>
+                <span class="mono">{{ row.requests }} 次</span>
+              </div>
+              <span>
+                {{ row.owner ? "本人 Key" : "借用" }} · {{ row.keyName }}
+                <template v-if="row.failures"> · 失败 {{ row.failures }}</template>
+                <template v-if="row.lastAt"> · 最近 {{ formatTime(row.lastAt) }}</template>
+                <template v-else> · 进行中</template>
+              </span>
             </li>
           </ul>
         </section>
@@ -149,7 +133,7 @@
           :loading="releasing"
           @click="releaseSelectedCredential"
         >
-          释放到资源列表
+          释放绑定
         </el-button>
       </template>
     </el-drawer>
@@ -157,69 +141,17 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import { computed, onMounted, onUnmounted, ref } from "vue";
 import KeyBindingCanvas from "@/components/KeyBindingCanvas.vue";
 import { MarkerType, type Edge, type Node, type NodeMouseEvent } from "@vue-flow/core";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { http } from "@/api/http";
-import {
-  buildOrgCascaderOptions,
-  employeeInOrgSelection,
-  enterpriseCascaderValue,
-  groupingDepartmentId,
-  parseOrgFilterPath,
-  subtreeIdsForSelection,
-  type OrgFilterDepartment,
-  type OrgFilterSelection,
-} from "@/lib/key-binding-org-filter";
 
-type BindingKind =
-  | "org"
-  | "owns"
-  | "dedicated"
-  | "team_shared"
-  | "department_shared"
-  | "enterprise_shared";
-type UseBindingKind = "dedicated" | "team_shared" | "department_shared" | "enterprise_shared";
-type NodeKind =
-  | "enterprise"
-  | "department"
-  | "team"
-  | "employee"
-  | "virtual_key"
-  | "credential"
-  | "lane_header";
-type CanvasDepth = "enterprise" | "department" | "team";
 type CoolingKind = "five_hour" | "weekly" | "other";
-type CredentialLane = "bound" | "pending" | "cooling_5h" | "cooling_weekly" | "disabled";
+/** 渠道 Key 的状态色：有流量 / 空闲 / 冷却 / 停用。冷却优先于有没有流量。 */
+type CredentialLane = "busy" | "idle" | "cooling_5h" | "cooling_weekly" | "disabled";
 
-type GraphEmployee = {
-  id: number;
-  name: string;
-  enterpriseId: number | null;
-  enterpriseName: string | null;
-  departmentId: number | null;
-  departmentName: string | null;
-  teamId: number | null;
-  teamName: string | null;
-  teamIsDefault?: boolean;
-};
-
-type GraphDepartment = {
-  id: number;
-  name: string;
-  enterpriseId: number | null;
-  parentId?: number | null;
-  isDefault?: boolean;
-};
-
-type GraphTeam = {
-  id: number;
-  name: string;
-  enterpriseId: number | null;
-  departmentId?: number | null;
-  isDefault?: boolean;
-};
+type GraphEmployee = { id: number; name: string; enterpriseName: string | null };
 
 type GraphVirtualKey = {
   id: number;
@@ -229,15 +161,7 @@ type GraphVirtualKey = {
   protocol: string;
   productLineId: number;
   productLineName: string;
-  teamId: number | null;
-  teamName: string | null;
   status: "active" | "revoked";
-};
-
-type GraphCredentialBinding = {
-  scopeType: "employee" | "team" | "enterprise" | "department";
-  scopeId: number;
-  scopeName: string;
 };
 
 type GraphCredential = {
@@ -246,220 +170,108 @@ type GraphCredential = {
   secretSuffix: string;
   productLineId: number;
   productLineName: string;
-  providerCode: string;
   providerName: string;
   status: "active" | "disabled" | "auto_disabled" | "cooling";
-  coolingKind?: CoolingKind | null;
-  coolUntil?: string | null;
-  supportedProtocols: string[];
-  bound?: boolean;
-  fiveHourCredits?: number;
-  weeklyCredits?: number;
-  fiveHourLimit?: number | null;
-  weeklyLimit?: number | null;
-  binding?: GraphCredentialBinding | null;
-  ownerEmployeeId?: number | null;
-  ownerName?: string | null;
+  coolingKind: CoolingKind | null;
+  coolUntil: string | null;
+  fiveHourCredits: number;
+  weeklyCredits: number;
+  fiveHourLimit: number | null;
+  weeklyLimit: number | null;
+  binding: { scopeType: string; scopeId: number; scopeName: string } | null;
+  memberCount: number;
+  ownerEmployeeId: number | null;
+  ownerName: string | null;
 };
 
-type GraphEdge = {
-  id: string;
-  sourceType: NodeKind;
-  sourceId: number;
-  targetType: NodeKind;
-  targetId: number;
-  kind: BindingKind;
-};
-
-type KeyBindingGraph = {
-  employees: GraphEmployee[];
-  departments?: GraphDepartment[];
-  teams: GraphTeam[];
-  virtualKeys: GraphVirtualKey[];
-  credentials: GraphCredential[];
-  edges: GraphEdge[];
-  channels: Array<{ id: number; name: string; providerCode: string; providerName: string }>;
-  enterprises: Array<{ id: number; name: string }>;
-};
-
-type RelayLiveNode = {
-  id: number;
-  inFlight: number;
-  afterglow: boolean;
-};
-
-type RelayLiveHop = {
+type GraphHop = {
   virtualKeyId: number;
   credentialId: number;
-  inFlight: number;
-  afterglow: boolean;
+  requests: number;
+  failures: number;
+  credits: number;
+  /** 窗口内最后一次请求；只在途、还没落审计时为 null。 */
+  lastAt: string | null;
+  owner: boolean;
 };
 
-type RelayLiveLoad = {
-  keys: RelayLiveNode[];
-  credentials: RelayLiveNode[];
-  hops: RelayLiveHop[];
+type SchedulingGraph = {
+  windowMinutes: number;
+  since: string;
+  productLines: Array<{ id: number; name: string; providerName: string }>;
+  employees: GraphEmployee[];
+  virtualKeys: GraphVirtualKey[];
+  credentials: GraphCredential[];
+  hops: GraphHop[];
 };
 
-type CanvasScope = {
-  enterpriseId: number | null;
-  departmentId: number | null;
-  teamId: number | null;
-};
+type RelayLiveNode = { id: number; inFlight: number; afterglow: boolean };
+type RelayLiveHop = { virtualKeyId: number; credentialId: number; inFlight: number; afterglow: boolean };
+type RelayLiveLoad = { keys: RelayLiveNode[]; credentials: RelayLiveNode[]; hops: RelayLiveHop[] };
 
-type CanvasBoard = {
-  key: string;
-  title: string;
-  enterpriseTitle: string;
-  mode: "enterprise" | "pool";
-  scope: CanvasScope;
-  nodes: any[];
-  edges: any[];
-};
+const WINDOW_OPTIONS = [
+  { value: 30, label: "30 分钟" },
+  { value: 120, label: "2 小时" },
+  { value: 1440, label: "24 小时" },
+] as const;
 
-const COL_X = {
-  enterprise: 0,
-  department: 360,
-  team: 720,
-  employee: 1080,
-  virtual_key: 1440,
-  bound: 1800,
-  pending: 2160,
-  cooling_5h: 2520,
-  cooling_weekly: 2880,
-  disabled: 3240,
-} as const;
-
-const STATUS_HEADERS: Array<{
-  key: "pending" | "cooling_5h" | "cooling_weekly" | "disabled";
-  label: string;
-}> = [
-  { key: "pending", label: "待绑定" },
-  { key: "cooling_5h", label: "5小时冷却" },
-  { key: "cooling_weekly", label: "周冷却" },
-  { key: "disabled", label: "停用" },
-];
+const COL_X = { employee: 0, virtual_key: 360, credential: 720 } as const;
 const NODE_H = 92;
 const NODE_GAP = 40;
 const GROUP_GAP = 72;
 const LIVE_POLL_MS = 4000;
+/** 窗口是滑动的：定时静默重拉，过期的 Key 自然退出画布。 */
+const GRAPH_REFRESH_MS = 60_000;
+/** 实时快照里出现画布上没有的连线时，最快隔这么久重拉一次。 */
+const UNKNOWN_HOP_RELOAD_MS = 5_000;
+const IDLE_LANE_ORDER: CredentialLane[] = ["idle", "cooling_5h", "cooling_weekly", "disabled"];
+const IDLE_MIN_ROWS = 6;
+const IDLE_COL_W = 290;
 
 const loading = ref(false);
-const graph = ref<KeyBindingGraph | null>(null);
+const graph = ref<SchedulingGraph | null>(null);
+const windowMinutes = ref<number>(30);
+const productLineId = ref<number | null>(null);
+const search = ref("");
 const selectedNodeId = ref<string | null>(null);
-const selectedBoardKey = ref<string | null>(null);
-const activeBoardKey = ref("");
-const boards = ref<CanvasBoard[]>([]);
-const lastLive = ref<RelayLiveLoad | null>(null);
-let lastLiveStamp = "";
-const filterOpen = ref(false);
-const resourceOpen = ref(false);
 const credentialOpen = ref(false);
 const releasing = ref(false);
-const activeBoard = computed(() => boards.value.find((board) => board.key === activeBoardKey.value) ?? null);
-const resourceKeys = computed(() => {
-  const source = graph.value;
-  if (!source) return [];
-  const boundIds = boundCredentialIds(source);
-  const order: CredentialLane[] = ["pending", "cooling_5h", "cooling_weekly", "disabled"];
-  return source.credentials
-    .map((row) => ({ ...row, lane: credentialLane(row, boundIds) }))
-    .filter((row) => row.bound !== true && row.lane !== "bound")
-    .sort((a, b) => order.indexOf(a.lane) - order.indexOf(b.lane) || a.id - b.id);
-});
-const selectedCredential = computed(() => {
-  if (!credentialOpen.value || !selectedNodeId.value?.startsWith("credential:")) return null;
-  const credentialId = parseNodeNumericId(selectedNodeId.value);
-  if (credentialId == null) return null;
-  const source = graph.value;
-  if (!source) return null;
-  const row = source.credentials.find((item) => item.id === credentialId);
-  if (!row) return null;
-  const node = activeBoard.value?.nodes.find((item) => item.id === selectedNodeId.value);
-  const live = lastLive.value?.credentials.find((item) => item.id === credentialId);
-  return {
-    ...row,
-    lane: (node?.data?.lane as CredentialLane | undefined) ?? credentialLane(row, boundCredentialIds(source)),
-    inFlight: Number(live?.inFlight ?? node?.data?.inFlight ?? 0),
-  };
-});
-const credentialUsers = computed(() => {
-  const credentialId = selectedCredential.value?.id;
-  const source = graph.value;
-  if (credentialId == null || !source) return [];
-  // 席位主人用自己的 Key 画成 dedicated，其余连线都是借用。
-  const kindByKeyId = new Map(
-    source.edges
-      .filter((edge) => isUseEdgeKind(edge.kind) && edge.targetId === credentialId)
-      .map((edge) => [edge.sourceId, edge.kind]),
-  );
-  const employeesById = new Map(source.employees.map((row) => [row.id, row]));
-  return source.virtualKeys
-    .filter((key) => kindByKeyId.has(key.id))
-    .map((key) => {
-      const employee = employeesById.get(key.employeeId);
-      return {
-        keyId: key.id,
-        keyName: key.name,
-        employeeName: employee?.name ?? `员工 ${key.employeeId}`,
-        isOwner: kindByKeyId.get(key.id) === "dedicated",
-      };
-    });
-});
-const canvasNodes = computed(() => activeBoard.value?.nodes ?? []);
-const canvasEdges = computed(() => activeBoard.value?.edges ?? []);
+const lastLive = ref<RelayLiveLoad | null>(null);
+let lastLiveStamp = "";
+let lastUnknownHopReload = 0;
 
-const orgFilterPath = ref<string[]>([]);
-const boundOnly = ref(true);
-const orgCascaderProps = {
-  checkStrictly: true,
-  emitPath: true,
-  expandTrigger: "click" as const,
-};
-const orgFilterDepartments = computed((): OrgFilterDepartment[] =>
-  (graph.value?.departments ?? []).map((row) => ({
-    id: row.id,
-    name: row.name,
-    parentId: row.parentId ?? null,
-    enterpriseId: row.enterpriseId ?? 0,
-    isDefault: row.isDefault,
-  })),
+const windowLabel = computed(
+  () => WINDOW_OPTIONS.find((row) => row.value === windowMinutes.value)?.label ?? `${windowMinutes.value} 分钟`,
 );
-const orgCascaderOptions = computed(() =>
-  buildOrgCascaderOptions(graph.value?.enterprises ?? [], orgFilterDepartments.value),
-);
-const orgFilterSelection = computed(() => parseOrgFilterPath(orgFilterPath.value));
 
-function nodeId(type: NodeKind, id: number): string {
-  return `${type}:${id}`;
+function credentialLane(credential: GraphCredential, busy: boolean): CredentialLane {
+  if (credential.status === "disabled" || credential.status === "auto_disabled") return "disabled";
+  if (credential.coolingKind === "weekly") return "cooling_weekly";
+  if (credential.coolingKind || credential.status === "cooling") return "cooling_5h";
+  return busy ? "busy" : "idle";
 }
 
-function useEdgeStyle(kind: BindingKind): Record<string, string | number | undefined> {
-  if (kind === "dedicated") {
-    return { stroke: "#2563eb", strokeWidth: 2 };
-  }
-  if (kind === "team_shared" || kind === "department_shared") {
-    return { stroke: "#0891b2", strokeWidth: 1.5, strokeDasharray: "6 4" };
-  }
-  if (kind === "enterprise_shared") {
-    return { stroke: "#4338ca", strokeWidth: 1.5, strokeDasharray: "2 4" };
-  }
-  return { stroke: "#94a3b8", strokeWidth: 1.5 };
+function laneLabel(row: { lane: CredentialLane; coolingKind: CoolingKind | null }): string {
+  if (row.lane === "busy") return "有流量";
+  if (row.lane === "idle") return "空闲";
+  if (row.lane === "cooling_weekly") return "周冷却";
+  if (row.lane === "cooling_5h") return row.coolingKind === "other" ? "冷却中" : "5小时冷却";
+  return "停用";
 }
 
-function resourceLaneLabel(lane: CredentialLane): string {
-  if (lane === "pending") return "待绑定";
-  if (lane === "cooling_weekly") return "周冷却";
-  if (lane === "cooling_5h") return "5小时冷却";
-  if (lane === "disabled") return "停用";
-  return "绑定";
+function laneTagType(lane: CredentialLane): "info" | "warning" | "danger" | "success" {
+  if (lane === "busy") return "success";
+  if (lane === "cooling_5h" || lane === "cooling_weekly") return "danger";
+  if (lane === "disabled") return "warning";
+  return "info";
 }
 
-function resourceTagType(lane: CredentialLane): "info" | "warning" | "danger" | "success" {
-  if (lane === "pending") return "warning";
-  if (lane === "cooling_weekly" || lane === "cooling_5h") return "danger";
-  if (lane === "disabled") return "info";
-  return "success";
+function formatTime(value: string | null | undefined): string {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const pad = (part: number) => String(part).padStart(2, "0");
+  return `${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
 function formatCreditAmount(value: number | undefined): string {
@@ -473,365 +285,70 @@ function formatQuotaPair(used: number | undefined, limit: number | null | undefi
   return limit == null ? `${usedText} / 不限` : `${usedText} / ${formatCreditAmount(limit)} 积分`;
 }
 
-function isUseEdgeKind(kind: BindingKind): kind is UseBindingKind {
-  return (
-    kind === "dedicated" ||
-    kind === "team_shared" ||
-    kind === "department_shared" ||
-    kind === "enterprise_shared"
-  );
+function includesQuery(value: string | null | undefined, q: string): boolean {
+  return (value ?? "").toLowerCase().includes(q);
 }
 
-function isScheduledUseKind(kind: BindingKind): boolean {
-  return (
-    kind === "dedicated" ||
-    kind === "department_shared" ||
-    kind === "enterprise_shared"
-  );
-}
+/** 搜索后留下的连线、虚拟 Key、员工和渠道 Key。没有搜索时渠道 Key 全部保留。 */
+const visible = computed(() => {
+  const source = graph.value;
+  if (!source) return null;
+  const keyById = new Map(source.virtualKeys.map((row) => [row.id, row]));
+  const employeeById = new Map(source.employees.map((row) => [row.id, row]));
+  const credentialById = new Map(source.credentials.map((row) => [row.id, row]));
+  const q = search.value.trim().toLowerCase();
 
-function boundCredentialIds(source: KeyBindingGraph): Set<number> {
-  const keyIds = new Set(source.virtualKeys.map((row) => row.id));
-  const ids = new Set<number>();
-  for (const edge of source.edges) {
-    if (!isScheduledUseKind(edge.kind)) continue;
-    if (!keyIds.has(edge.sourceId)) continue;
-    ids.add(edge.targetId);
-  }
-  return ids;
-}
-
-function credentialLane(
-  credential: GraphCredential,
-  boundIds: Set<number>,
-): CredentialLane {
-  if (credential.status === "disabled" || credential.status === "auto_disabled") return "disabled";
-  if (credential.coolingKind === "weekly") return "cooling_weekly";
-  if (credential.coolingKind === "five_hour" || credential.coolingKind === "other") return "cooling_5h";
-  if (credential.status === "cooling") return "cooling_5h";
-  if (boundIds.has(credential.id)) return "bound";
-  return "pending";
-}
-
-type TeamLookup = {
-  id: number;
-  name: string;
-  departmentId?: number | null;
-  departmentName?: string | null;
-  enterpriseId?: number | null;
-  isDefault?: boolean;
-};
-
-type DepartmentLookup = {
-  id: number;
-  name: string;
-  enterpriseId: number;
-  parentId?: number | null;
-  isDefault?: boolean;
-};
-
-function isHiddenTeam(employee: GraphEmployee, team?: TeamLookup | GraphTeam): boolean {
-  return Boolean(
-    employee.teamIsDefault
-    || team?.isDefault
-    || employee.teamName === "默认团队"
-    || team?.name === "默认团队",
-  );
-}
-
-function hydrateOrgChain(
-  source: KeyBindingGraph,
-  teams: TeamLookup[],
-  departments: DepartmentLookup[],
-): KeyBindingGraph {
-  const teamById = new Map(teams.map((row) => [row.id, row]));
-  const deptById = new Map(departments.map((row) => [row.id, row]));
-  const employees = source.employees.map((employee) => {
-    const team = employee.teamId != null ? teamById.get(employee.teamId) : undefined;
-    const departmentId = employee.departmentId ?? team?.departmentId ?? null;
-    const department = departmentId != null ? deptById.get(departmentId) : undefined;
-    return {
-      ...employee,
-      departmentId,
-      departmentName: employee.departmentName ?? team?.departmentName ?? department?.name ?? null,
-      teamIsDefault: isHiddenTeam(employee, team),
-    };
+  const hops = source.hops.filter((hop) => {
+    const key = keyById.get(hop.virtualKeyId);
+    const credential = credentialById.get(hop.credentialId);
+    if (!key || !credential) return false;
+    if (!q) return true;
+    const employee = employeeById.get(key.employeeId);
+    return (
+      includesQuery(employee?.name, q)
+      || includesQuery(key.name, q)
+      || includesQuery(key.keyPrefix, q)
+      || includesQuery(credential.label, q)
+      || includesQuery(credential.secretSuffix, q)
+    );
   });
-
-  const graphDepartments = new Map<number, GraphDepartment>();
-  for (const department of departments) {
-    graphDepartments.set(department.id, {
-      id: department.id,
-      name: department.name,
-      enterpriseId: department.enterpriseId,
-      parentId: department.parentId ?? null,
-      isDefault: department.isDefault,
-    });
-  }
-  for (const employee of employees) {
-    if (employee.departmentId == null || graphDepartments.has(employee.departmentId)) continue;
-    const department = deptById.get(employee.departmentId);
-    graphDepartments.set(employee.departmentId, {
-      id: employee.departmentId,
-      name: employee.departmentName || department?.name || "部门",
-      enterpriseId: employee.enterpriseId ?? department?.enterpriseId ?? null,
-      parentId: department?.parentId ?? null,
-      isDefault: department?.isDefault,
-    });
-  }
-
-  const graphTeams: GraphTeam[] = [];
-  const seenTeam = new Set<number>();
-  for (const employee of employees) {
-    if (employee.teamId == null || employee.teamIsDefault) continue;
-    if (seenTeam.has(employee.teamId)) continue;
-    seenTeam.add(employee.teamId);
-    const team = teamById.get(employee.teamId);
-    graphTeams.push({
-      id: employee.teamId,
-      name: employee.teamName || team?.name || "团队",
-      enterpriseId: employee.enterpriseId,
-      departmentId: employee.departmentId,
-      isDefault: false,
-    });
-  }
-
-  const orgEdges: GraphEdge[] = [];
-  const seen = new Set<string>();
-  const push = (edge: GraphEdge) => {
-    if (seen.has(edge.id)) return;
-    seen.add(edge.id);
-    orgEdges.push(edge);
-  };
-  for (const employee of employees) {
-    if (employee.enterpriseId != null && employee.departmentId != null) {
-      push({
-        id: `org:ent:${employee.enterpriseId}:dept:${employee.departmentId}`,
-        sourceType: "enterprise",
-        sourceId: employee.enterpriseId,
-        targetType: "department",
-        targetId: employee.departmentId,
-        kind: "org",
-      });
-    }
-    const namedTeam = employee.teamId != null && !employee.teamIsDefault;
-    if (namedTeam && employee.departmentId != null) {
-      push({
-        id: `org:dept:${employee.departmentId}:team:${employee.teamId}`,
-        sourceType: "department",
-        sourceId: employee.departmentId,
-        targetType: "team",
-        targetId: employee.teamId!,
-        kind: "org",
-      });
-    }
-    if (namedTeam) {
-      push({
-        id: `org:team:${employee.teamId}:emp:${employee.id}`,
-        sourceType: "team",
-        sourceId: employee.teamId!,
-        targetType: "employee",
-        targetId: employee.id,
-        kind: "org",
-      });
-    } else if (employee.departmentId != null) {
-      push({
-        id: `org:dept:${employee.departmentId}:emp:${employee.id}`,
-        sourceType: "department",
-        sourceId: employee.departmentId,
-        targetType: "employee",
-        targetId: employee.id,
-        kind: "org",
-      });
-    } else if (employee.enterpriseId != null) {
-      push({
-        id: `org:ent:${employee.enterpriseId}:emp:${employee.id}`,
-        sourceType: "enterprise",
-        sourceId: employee.enterpriseId,
-        targetType: "employee",
-        targetId: employee.id,
-        kind: "org",
-      });
-    }
-  }
-
-  return {
-    ...source,
-    employees,
-    departments: [...graphDepartments.values()],
-    teams: graphTeams,
-    edges: [...orgEdges, ...source.edges.filter((edge) => edge.kind !== "org")],
-  };
-}
-
-function subgraphForBoundKeys(source: KeyBindingGraph): KeyBindingGraph {
-  const connectedKeyIds = new Set(
-    source.edges.filter((edge) => isUseEdgeKind(edge.kind)).map((edge) => edge.sourceId),
-  );
-  const virtualKeys = source.virtualKeys.filter((row) => connectedKeyIds.has(row.id));
+  const keyIds = new Set(hops.map((hop) => hop.virtualKeyId));
+  const usedCredentialIds = new Set(hops.map((hop) => hop.credentialId));
+  const virtualKeys = source.virtualKeys.filter((row) => keyIds.has(row.id));
   const employeeIds = new Set(virtualKeys.map((row) => row.employeeId));
-  const employees = source.employees.filter((row) => employeeIds.has(row.id));
-  return subgraphForEmployees({ ...source, virtualKeys }, employees);
-}
-
-function subgraphForEmployees(source: KeyBindingGraph, employees: GraphEmployee[]): KeyBindingGraph {
-  const employeeIds = new Set(employees.map((row) => row.id));
-  const virtualKeys = source.virtualKeys.filter((row) => employeeIds.has(row.employeeId));
-  const keyIds = new Set(virtualKeys.map((row) => row.id));
-  const teamIds = new Set(
-    employees.map((row) => row.teamId).filter((id): id is number => id != null),
+  const credentials = source.credentials.filter(
+    (row) =>
+      !q
+      || usedCredentialIds.has(row.id)
+      || includesQuery(row.label, q)
+      || includesQuery(row.secretSuffix, q),
   );
-  const departmentIds = new Set(
-    employees.map((row) => row.departmentId).filter((id): id is number => id != null),
-  );
-  const enterpriseIds = new Set(
-    employees.map((row) => row.enterpriseId).filter((id): id is number => id != null),
-  );
-  const useTargets = new Set<number>();
-  const edges = source.edges.filter((edge) => {
-    if (edge.kind === "owns") return employeeIds.has(edge.sourceId) && keyIds.has(edge.targetId);
-    if (isUseEdgeKind(edge.kind)) {
-      if (!keyIds.has(edge.sourceId)) return false;
-      useTargets.add(edge.targetId);
-      return true;
-    }
-    if (edge.sourceType === "enterprise" && edge.targetType === "department") {
-      return enterpriseIds.has(edge.sourceId) && departmentIds.has(edge.targetId);
-    }
-    if (edge.sourceType === "department" && edge.targetType === "team") {
-      return departmentIds.has(edge.sourceId) && teamIds.has(edge.targetId);
-    }
-    if (edge.sourceType === "department" && edge.targetType === "employee") {
-      return departmentIds.has(edge.sourceId) && employeeIds.has(edge.targetId);
-    }
-    if (edge.sourceType === "enterprise" && edge.targetType === "team") {
-      return enterpriseIds.has(edge.sourceId) && teamIds.has(edge.targetId);
-    }
-    if (edge.sourceType === "team" && edge.targetType === "employee") {
-      return teamIds.has(edge.sourceId) && employeeIds.has(edge.targetId);
-    }
-    if (edge.sourceType === "enterprise" && edge.targetType === "employee") {
-      return enterpriseIds.has(edge.sourceId) && employeeIds.has(edge.targetId);
-    }
-    return false;
-  });
   return {
-    ...source,
-    employees,
-    departments: (source.departments ?? []).filter((row) => departmentIds.has(row.id)),
-    teams: source.teams.filter((row) => teamIds.has(row.id)),
+    hops,
     virtualKeys,
-    credentials: source.credentials.filter((row) => useTargets.has(row.id)),
-    edges,
-    enterprises: source.enterprises.filter((row) => enterpriseIds.has(row.id)),
+    employees: source.employees.filter((row) => employeeIds.has(row.id)),
+    credentials,
+    usedCredentialIds,
   };
-}
+});
 
-function orgEdgesForGroupedEmployees(
-  employees: GraphEmployee[],
-  selection: OrgFilterSelection,
-): GraphEdge[] {
-  const edges: GraphEdge[] = [];
-  const seen = new Set<string>();
-  const push = (edge: GraphEdge) => {
-    if (seen.has(edge.id)) return;
-    seen.add(edge.id);
-    edges.push(edge);
-  };
-  for (const employee of employees) {
-    if (selection.kind === "enterprise" && employee.enterpriseId != null && employee.departmentId != null) {
-      push({
-        id: `org:ent:${employee.enterpriseId}:dept:${employee.departmentId}`,
-        sourceType: "enterprise",
-        sourceId: employee.enterpriseId,
-        targetType: "department",
-        targetId: employee.departmentId,
-        kind: "org",
-      });
-    }
-    if (employee.departmentId != null) {
-      push({
-        id: `org:dept:${employee.departmentId}:emp:${employee.id}`,
-        sourceType: "department",
-        sourceId: employee.departmentId,
-        targetType: "employee",
-        targetId: employee.id,
-        kind: "org",
-      });
-    } else if (employee.enterpriseId != null) {
-      push({
-        id: `org:ent:${employee.enterpriseId}:emp:${employee.id}`,
-        sourceType: "enterprise",
-        sourceId: employee.enterpriseId,
-        targetType: "employee",
-        targetId: employee.id,
-        kind: "org",
-      });
-    }
-  }
-  return edges;
-}
-
-function graphForOrgSelection(
-  source: KeyBindingGraph,
-  selection: OrgFilterSelection,
-): { graph: KeyBindingGraph; title: string; enterpriseTitle: string; scope: CanvasScope; depth: CanvasDepth } {
-  const departments = orgFilterDepartments.value;
-  const subtree = subtreeIdsForSelection(selection, departments);
-  const employees = source.employees.filter((employee) =>
-    employeeInOrgSelection(employee, selection, subtree),
-  );
-  const grouped = employees.map((employee) => {
-    const groupedId = groupingDepartmentId(employee.departmentId, selection, departments);
-    const department = groupedId != null
-      ? (source.departments ?? []).find((row) => row.id === groupedId)
-      : undefined;
-    return {
-      ...employee,
-      departmentId: groupedId,
-      departmentName: department?.name ?? employee.departmentName,
-    };
-  });
-  const scoped = boundOnly.value
-    ? subgraphForBoundKeys(subgraphForEmployees(source, grouped))
-    : subgraphForEmployees(source, grouped);
-  const visibleEmployees = scoped.employees;
-  const departmentIds = new Set(
-    visibleEmployees.map((row) => row.departmentId).filter((id): id is number => id != null),
-  );
-  if (selection.kind === "department") departmentIds.add(selection.departmentId);
-  scoped.departments = (source.departments ?? []).filter((row) => departmentIds.has(row.id));
-  if (
-    selection.enterpriseId != null
-    && !scoped.enterprises.some((row) => row.id === selection.enterpriseId)
-  ) {
-    const enterprise = source.enterprises.find((row) => row.id === selection.enterpriseId);
-    if (enterprise) scoped.enterprises = [...scoped.enterprises, enterprise];
-  }
-  scoped.edges = [
-    ...orgEdgesForGroupedEmployees(visibleEmployees, selection),
-    ...scoped.edges.filter((edge) => edge.kind !== "org"),
-  ];
-  const enterpriseTitle = source.enterprises.find((row) => row.id === selection.enterpriseId)?.name || "企业";
-  const title = selection.kind === "department"
-    ? (source.departments ?? []).find((row) => row.id === selection.departmentId)?.name || "部门"
-    : enterpriseTitle;
+const stats = computed(() => {
+  const view = visible.value;
+  const shown = new Set(view?.credentials.map((row) => row.id) ?? []);
+  const inFlight = (lastLive.value?.credentials ?? [])
+    .filter((row) => shown.has(row.id))
+    .reduce((sum, row) => sum + Math.max(0, row.inFlight), 0);
   return {
-    graph: scoped,
-    title,
-    enterpriseTitle,
-    scope: {
-      enterpriseId: selection.enterpriseId,
-      departmentId: selection.kind === "department" ? selection.departmentId : null,
-      teamId: null,
-    },
-    depth: selection.kind === "enterprise" ? "enterprise" : "department",
+    keys: view?.virtualKeys.length ?? 0,
+    busy: view?.usedCredentialIds.size ?? 0,
+    credentials: view?.credentials.length ?? 0,
+    inFlight,
   };
-}
+});
 
-function makeNode(type: NodeKind, id: number, x: number, y: number, data: Record<string, unknown>): Node {
+function makeNode(type: string, id: number | string, x: number, y: number, data: Record<string, unknown>): Node {
   return {
-    id: nodeId(type, id),
+    id: `${type}:${id}`,
     type,
     position: { x, y },
     data: { ...data, dimmed: false, active: false },
@@ -840,375 +357,217 @@ function makeNode(type: NodeKind, id: number, x: number, y: number, data: Record
   };
 }
 
-function layoutGraph(
-  source: KeyBindingGraph,
-  mode: "enterprise" | "pool" = "enterprise",
-  viewDepth: CanvasDepth = "enterprise",
-): { nodes: Node[]; edges: Edge[] } {
+function hopEdgeStyle(hop: GraphHop): Record<string, string | number> {
+  const width = 1.5 + Math.min(3, Math.log2(1 + hop.requests) / 2);
+  return hop.owner
+    ? { stroke: "#2563eb", strokeWidth: width }
+    : { stroke: "#7c3aed", strokeWidth: width, strokeDasharray: "6 4" };
+}
+
+const layout = computed((): { nodes: Node[]; edges: Edge[] } => {
+  const view = visible.value;
+  if (!view) return { nodes: [], edges: [] };
+
+  const requestsByKey = new Map<number, number>();
+  const requestsByCredential = new Map<number, number>();
+  for (const hop of view.hops) {
+    requestsByKey.set(hop.virtualKeyId, (requestsByKey.get(hop.virtualKeyId) ?? 0) + hop.requests);
+    requestsByCredential.set(hop.credentialId, (requestsByCredential.get(hop.credentialId) ?? 0) + hop.requests);
+  }
   const keysByEmployee = new Map<number, GraphVirtualKey[]>();
-  for (const key of source.virtualKeys) {
+  for (const key of view.virtualKeys) {
     const list = keysByEmployee.get(key.employeeId) ?? [];
     list.push(key);
     keysByEmployee.set(key.employeeId, list);
   }
 
-  const departmentById = new Map((source.departments ?? []).map((row) => [row.id, row]));
-  const teamById = new Map(source.teams.map((row) => [row.id, row]));
-  const employees = [...source.employees].sort((a, b) => {
-    const ent = (a.enterpriseName ?? "").localeCompare(b.enterpriseName ?? "", "zh");
-    if (ent !== 0) return ent;
-    const dept = (a.departmentName ?? "").localeCompare(b.departmentName ?? "", "zh");
-    if (dept !== 0) return dept;
-    const team = (a.teamName ?? "").localeCompare(b.teamName ?? "", "zh");
-    if (team !== 0) return team;
-    return a.name.localeCompare(b.name, "zh");
-  });
-
-  type EmpBlock = { employee: GraphEmployee; keys: GraphVirtualKey[]; height: number };
-  type TeamBlock = { team: GraphTeam | null; employees: EmpBlock[]; height: number };
-  type DeptBlock = { department: GraphDepartment | null; teams: TeamBlock[]; height: number };
-  type EntBlock = {
-    enterpriseId: number | null;
-    enterpriseName: string;
-    departments: DeptBlock[];
-    height: number;
-  };
-
-  const originX =
-    viewDepth === "team"
-      ? COL_X.team
-      : viewDepth === "department"
-        ? COL_X.department
-        : COL_X.enterprise;
-  const colX = (column: keyof typeof COL_X) => COL_X[column] - originX;
-  const showEnterprise = viewDepth === "enterprise";
-  const showDepartment = viewDepth === "enterprise" || viewDepth === "department";
-
-  const empBlocks = (list: GraphEmployee[]): EmpBlock[] =>
-    list.map((employee) => {
-      const keys = keysByEmployee.get(employee.id) ?? [];
-      const stack = Math.max(keys.length, 1);
-      return {
-        employee,
-        keys,
-        height: stack * NODE_H + (stack - 1) * NODE_GAP,
-      };
-    });
-
-  const byEnterprise = new Map<number | "none", GraphEmployee[]>();
-  for (const employee of employees) {
-    const key = employee.enterpriseId ?? "none";
-    const list = byEnterprise.get(key) ?? [];
-    list.push(employee);
-    byEnterprise.set(key, list);
-  }
-
-  const entBlocks: EntBlock[] = [];
-  if (employees.length === 0) {
-    for (const department of source.departments ?? []) {
-      const enterpriseName = source.enterprises.find((row) => row.id === department.enterpriseId)?.name
-        || "未加入企业";
-      entBlocks.push({
-        enterpriseId: department.enterpriseId,
-        enterpriseName,
-        departments: [{ department, teams: [], height: NODE_H }],
-        height: NODE_H,
-      });
-    }
-  }
-  for (const [enterpriseKey, entEmployees] of byEnterprise) {
-    const byDepartment = new Map<number | "none", GraphEmployee[]>();
-    for (const employee of entEmployees) {
-      const key = employee.departmentId ?? "none";
-      const list = byDepartment.get(key) ?? [];
-      list.push(employee);
-      byDepartment.set(key, list);
-    }
-    const departments: DeptBlock[] = [];
-    for (const [departmentKey, deptEmployees] of byDepartment) {
-      const byTeam = new Map<number | "none", GraphEmployee[]>();
-      for (const employee of deptEmployees) {
-        const team = employee.teamId == null ? undefined : teamById.get(employee.teamId);
-        const hiddenTeam = Boolean(
-          employee.teamIsDefault
-          || team?.isDefault
-          || employee.teamName === "默认团队"
-          || team?.name === "默认团队",
-        );
-        const key = employee.teamId == null || hiddenTeam ? "none" : employee.teamId;
-        const list = byTeam.get(key) ?? [];
-        list.push(employee);
-        byTeam.set(key, list);
-      }
-      const teams: TeamBlock[] = [];
-      const teamEntries = [...byTeam.entries()].sort((a, b) => {
-        if (a[0] === "none") return 1;
-        if (b[0] === "none") return -1;
-        const nameA = teamById.get(a[0])?.name ?? "";
-        const nameB = teamById.get(b[0])?.name ?? "";
-        return nameA.localeCompare(nameB, "zh");
-      });
-      for (const [teamKey, teamEmployees] of teamEntries) {
-        const blocks = empBlocks(teamEmployees);
-        const height =
-          blocks.reduce((sum, block) => sum + block.height, 0) +
-          Math.max(0, blocks.length - 1) * NODE_GAP;
-        teams.push({
-          team: teamKey === "none" ? null : teamById.get(teamKey) ?? null,
-          employees: blocks,
-          height: Math.max(height, NODE_H),
-        });
-      }
-      const height =
-        teams.reduce((sum, block) => sum + block.height, 0) +
-        Math.max(0, teams.length - 1) * GROUP_GAP;
-      departments.push({
-        department: departmentKey === "none" ? null : departmentById.get(departmentKey) ?? null,
-        teams,
-        height: Math.max(height, NODE_H),
-      });
-    }
-    const height =
-      departments.reduce((sum, block) => sum + block.height, 0) +
-      Math.max(0, departments.length - 1) * GROUP_GAP;
-    entBlocks.push({
-      enterpriseId: enterpriseKey === "none" ? null : enterpriseKey,
-      enterpriseName: entEmployees[0]?.enterpriseName || "未加入企业",
-      departments,
-      height: Math.max(height, NODE_H),
-    });
-  }
-
-  const laidNodes: Node[] = [];
-  const virtualKeyY = new Map<number, number>();
+  const nodes: Node[] = [];
+  const keyY = new Map<number, number>();
   let cursor = 0;
-  if (mode === "enterprise") for (const ent of entBlocks) {
-    if (showEnterprise && ent.enterpriseId != null) {
-      laidNodes.push(
-        makeNode(
-          "enterprise",
-          ent.enterpriseId,
-          colX("enterprise"),
-          cursor + Math.max(0, (ent.height - NODE_H) / 2),
-          { id: ent.enterpriseId, name: ent.enterpriseName },
-        ),
-      );
-    }
-    let deptCursor = cursor;
-    for (const dept of ent.departments) {
-      if (showDepartment && dept.department) {
-        laidNodes.push(
-          makeNode(
-            "department",
-            dept.department.id,
-            colX("department"),
-            deptCursor + Math.max(0, (dept.height - NODE_H) / 2),
-            {
-              ...dept.department,
-              root: viewDepth === "department",
-              enterpriseName: ent.enterpriseName,
-            },
-          ),
-        );
-      }
-      let teamCursor = deptCursor;
-      for (const team of dept.teams) {
-        if (team.team) {
-          laidNodes.push(
-            makeNode(
-              "team",
-              team.team.id,
-              colX("team"),
-              teamCursor + Math.max(0, (team.height - NODE_H) / 2),
-              team.team,
-            ),
-          );
-        }
-        let empCursor = teamCursor;
-        for (const emp of team.employees) {
-          laidNodes.push(
-            makeNode(
-              "employee",
-              emp.employee.id,
-              colX("employee"),
-              empCursor + Math.max(0, (emp.height - NODE_H) / 2),
-              emp.employee,
-            ),
-          );
-          emp.keys.forEach((key, index) => {
-            const y = empCursor + index * (NODE_H + NODE_GAP);
-            virtualKeyY.set(key.id, y);
-            laidNodes.push(
-              makeNode("virtual_key", key.id, colX("virtual_key"), y, key),
-            );
-          });
-          empCursor += emp.height + NODE_GAP;
-        }
-        teamCursor += team.height + GROUP_GAP;
-      }
-      deptCursor += dept.height + GROUP_GAP;
-    }
-    cursor += ent.height + GROUP_GAP;
-  }
-
-  const boundIds = boundCredentialIds(source);
-  const credentialsByLane: Record<CredentialLane, GraphCredential[]> = {
-    bound: [],
-    pending: [],
-    cooling_5h: [],
-    cooling_weekly: [],
-    disabled: [],
-  };
-  for (const credential of source.credentials) {
-    credentialsByLane[credentialLane(credential, boundIds)].push(credential);
-  }
-
-  const boundTargets = new Map<number, number[]>();
-  for (const edge of source.edges) {
-    if (!isScheduledUseKind(edge.kind)) continue;
-    const ys = boundTargets.get(edge.targetId) ?? [];
-    const y = virtualKeyY.get(edge.sourceId);
-    if (y != null) ys.push(y);
-    boundTargets.set(edge.targetId, ys);
-  }
-
-  const boundPlacements = credentialsByLane.bound
-    .map((credential) => {
-      const ys = boundTargets.get(credential.id) ?? [];
-      const desiredY = ys.length ? (Math.min(...ys) + Math.max(...ys)) / 2 : 0;
-      return { credential, desiredY };
-    })
-    .sort((a, b) => a.desiredY - b.desiredY || a.credential.id - b.credential.id);
-
-  if (mode === "enterprise") {
-    let boundCursor = Number.NEGATIVE_INFINITY;
-    for (const item of boundPlacements) {
-      const y = Number.isFinite(boundCursor)
-        ? Math.max(item.desiredY, boundCursor)
-        : item.desiredY;
-      laidNodes.push(
-        makeNode("credential", item.credential.id, colX("bound"), y, {
-          ...item.credential,
-          lane: "bound",
+  const employees = [...view.employees].sort((a, b) => a.name.localeCompare(b.name, "zh"));
+  for (const employee of employees) {
+    const keys = (keysByEmployee.get(employee.id) ?? []).sort((a, b) => a.id - b.id);
+    const height = keys.length * NODE_H + Math.max(0, keys.length - 1) * NODE_GAP;
+    nodes.push(
+      makeNode("employee", employee.id, COL_X.employee, cursor + (height - NODE_H) / 2, employee),
+    );
+    keys.forEach((key, index) => {
+      const y = cursor + index * (NODE_H + NODE_GAP);
+      keyY.set(key.id, y);
+      nodes.push(
+        makeNode("virtual_key", key.id, COL_X.virtual_key, y, {
+          ...key,
+          caption: `${key.productLineName} · ${requestsByKey.get(key.id) ?? 0} 次`,
         }),
       );
-      boundCursor = y + NODE_H + NODE_GAP;
-    }
+    });
+    cursor += height + NODE_GAP;
   }
 
-  if (mode === "pool") {
-    for (const header of STATUS_HEADERS) {
-      laidNodes.push({
-        id: `header:${header.key}`,
-        type: "lane_header",
-        position: { x: COL_X[header.key] - COL_X.pending, y: -72 },
-        data: { label: header.label, dimmed: false, active: false },
-        draggable: false,
-        selectable: false,
-        connectable: false,
-      });
-    }
-    for (const lane of ["pending", "cooling_5h", "cooling_weekly", "disabled"] as const) {
-      let laneCursor = 0;
-      for (const credential of credentialsByLane[lane]) {
-        laidNodes.push(
-          makeNode("credential", credential.id, COL_X[lane] - COL_X.pending, laneCursor, {
-            ...credential,
-            lane,
-          }),
-        );
-        laneCursor += NODE_H + NODE_GAP;
-      }
-    }
+  // 有流量的渠道 Key 放在调用它的虚拟 Key 的中间高度，往下错开不重叠；没流量的按状态排在下面。
+  const targetYs = new Map<number, number[]>();
+  for (const hop of view.hops) {
+    const y = keyY.get(hop.virtualKeyId);
+    if (y == null) continue;
+    const list = targetYs.get(hop.credentialId) ?? [];
+    list.push(y);
+    targetYs.set(hop.credentialId, list);
+  }
+  const credentialData = (credential: GraphCredential) => {
+    const busy = view.usedCredentialIds.has(credential.id);
+    const lane = credentialLane(credential, busy);
+    const state = laneLabel({ lane, coolingKind: credential.coolingKind });
+    const until = lane === "cooling_5h" || lane === "cooling_weekly" ? formatTime(credential.coolUntil) : "";
+    const requests = requestsByCredential.get(credential.id) ?? 0;
+    const tail = until ? `${state} · 至 ${until}` : busy ? `${requests} 次` : state;
+    return {
+      ...credential,
+      lane,
+      caption: `${credential.productLineName} · ${tail}`,
+    };
+  };
+
+  const used = view.credentials
+    .filter((row) => view.usedCredentialIds.has(row.id))
+    .map((credential) => {
+      const ys = targetYs.get(credential.id) ?? [0];
+      return { credential, desiredY: (Math.min(...ys) + Math.max(...ys)) / 2 };
+    })
+    .sort((a, b) => a.desiredY - b.desiredY || a.credential.id - b.credential.id);
+  let credentialCursor = Number.NEGATIVE_INFINITY;
+  for (const item of used) {
+    const y = Math.max(item.desiredY, credentialCursor);
+    nodes.push(makeNode("credential", item.credential.id, COL_X.credential, y, credentialData(item.credential)));
+    credentialCursor = y + NODE_H + NODE_GAP;
   }
 
-  const visibleIds = new Set(laidNodes.map((node) => node.id));
-  const laidEdges: Edge[] = source.edges
-    .filter((edge) => edge.kind === "org" || edge.kind === "owns" || isScheduledUseKind(edge.kind))
-    .map((edge) => {
-      const useEdge = isUseEdgeKind(edge.kind);
+  const idle = view.credentials
+    .filter((row) => !view.usedCredentialIds.has(row.id))
+    .map(credentialData)
+    .sort(
+      (a, b) =>
+        IDLE_LANE_ORDER.indexOf(a.lane) - IDLE_LANE_ORDER.indexOf(b.lane)
+        || a.productLineId - b.productLineId
+        || a.id - b.id,
+    );
+  // 没流量的排成网格放在右侧，不把有流量的部分挤出视口；行数跟有流量那部分一样高。
+  if (idle.length) {
+    const activeBottom = Math.max(cursor, Number.isFinite(credentialCursor) ? credentialCursor : 0);
+    const rows = Math.max(IDLE_MIN_ROWS, Math.floor(activeBottom / (NODE_H + NODE_GAP)));
+    const left = used.length || employees.length ? COL_X.credential + IDLE_COL_W + GROUP_GAP : 0;
+    nodes.push({
+      id: "header:idle",
+      type: "lane_header",
+      position: { x: left, y: -56 },
+      data: { label: `${windowLabel.value}内没有流量 · ${idle.length} 把`, dimmed: false, active: false },
+      draggable: false,
+      selectable: false,
+      connectable: false,
+    });
+    idle.forEach((data, index) => {
+      const x = left + Math.floor(index / rows) * IDLE_COL_W;
+      const y = (index % rows) * (NODE_H + NODE_GAP);
+      nodes.push(makeNode("credential", data.id, x, y, data));
+    });
+  }
+
+  const edges: Edge[] = [];
+  for (const key of view.virtualKeys) {
+    edges.push({
+      id: `owns:${key.employeeId}:${key.id}`,
+      source: `employee:${key.employeeId}`,
+      target: `virtual_key:${key.id}`,
+      type: "step",
+      markerEnd: MarkerType.ArrowClosed,
+      style: { stroke: "#94a3b8", strokeWidth: 1.5 },
+      data: { dimmed: false },
+    });
+  }
+  for (const hop of view.hops) {
+    edges.push({
+      id: `hop:${hop.virtualKeyId}:${hop.credentialId}`,
+      source: `virtual_key:${hop.virtualKeyId}`,
+      target: `credential:${hop.credentialId}`,
+      type: "traffic",
+      markerEnd: MarkerType.ArrowClosed,
+      style: hopEdgeStyle(hop),
+      data: {
+        owner: hop.owner,
+        requests: hop.requests,
+        working: false,
+        afterglow: false,
+        inFlight: 0,
+        dimmed: false,
+      },
+    });
+  }
+  return { nodes, edges };
+});
+
+const canvasNodes = computed(() => layout.value.nodes);
+/** 默认视口框住有流量的部分（员工、虚拟 Key 和它们打到的渠道 Key）；全无流量时框住全部。 */
+const fitNodeIds = computed(() => {
+  const view = visible.value;
+  if (!view?.hops.length) return [];
+  return layout.value.nodes
+    .filter((node) => node.type !== "credential" || view.usedCredentialIds.has(Number(node.data.id)))
+    .filter((node) => node.type !== "lane_header")
+    .map((node) => node.id);
+});
+const canvasEdges = computed(() => layout.value.edges);
+/** 前台加载（换窗口、产品线、手动刷新）的新数据到了，或者换了搜索词，才重新适配视口。 */
+const fitSeq = ref(0);
+const fitKey = computed(() => `${fitSeq.value}|${search.value.trim()}`);
+
+const selectedCredential = computed(() => {
+  if (!credentialOpen.value || !selectedNodeId.value?.startsWith("credential:")) return null;
+  const id = Number(selectedNodeId.value.slice("credential:".length));
+  const node = canvasNodes.value.find((row) => row.id === selectedNodeId.value);
+  const row = graph.value?.credentials.find((item) => item.id === id);
+  if (!row || !node) return null;
+  return { ...row, lane: node.data.lane as CredentialLane };
+});
+
+const credentialInFlight = computed(() => {
+  const id = selectedCredential.value?.id;
+  if (id == null) return 0;
+  return Math.max(0, lastLive.value?.credentials.find((row) => row.id === id)?.inFlight ?? 0);
+});
+
+const credentialUsers = computed(() => {
+  const credentialId = selectedCredential.value?.id;
+  const source = graph.value;
+  if (credentialId == null || !source) return [];
+  const keyById = new Map(source.virtualKeys.map((row) => [row.id, row]));
+  const employeeById = new Map(source.employees.map((row) => [row.id, row]));
+  return source.hops
+    .filter((hop) => hop.credentialId === credentialId && keyById.has(hop.virtualKeyId))
+    .map((hop) => {
+      const key = keyById.get(hop.virtualKeyId)!;
       return {
-        id: edge.id,
-        source: nodeId(edge.sourceType, edge.sourceId),
-        target: nodeId(edge.targetType, edge.targetId),
-        type: useEdge ? "smoothstep" : "step",
-        animated: false,
-        markerEnd: MarkerType.ArrowClosed,
-        pathOptions: { offset: 28, borderRadius: 8 },
-        style: useEdgeStyle(edge.kind),
-        data: {
-          kind: edge.kind,
-          working: false,
-          afterglow: false,
-          inFlight: 0,
-          dimmed: false,
-        },
+        keyId: key.id,
+        keyName: key.name,
+        employeeName: employeeById.get(key.employeeId)?.name ?? `员工 ${key.employeeId}`,
+        owner: hop.owner,
+        requests: hop.requests,
+        failures: hop.failures,
+        lastAt: hop.lastAt,
       };
     })
-    .filter((edge) => visibleIds.has(edge.source) && visibleIds.has(edge.target));
+    .sort((a, b) => b.requests - a.requests || a.keyId - b.keyId);
+});
 
-  return { nodes: laidNodes, edges: laidEdges };
-}
-
-function parseNodeNumericId(id: string): number | null {
-  const value = Number(id.slice(id.indexOf(":") + 1));
-  return Number.isSafeInteger(value) ? value : null;
-}
-
-function boardKeyForSelection(selection: OrgFilterSelection): string {
-  return selection.kind === "department"
-    ? `ent:${selection.enterpriseId}:dept:${selection.departmentId}`
-    : `ent:${selection.enterpriseId}`;
-}
-
-function renderGraph() {
-  if (!graph.value) {
-    boards.value = [];
-    activeBoardKey.value = "";
+function onNodeClick(event: NodeMouseEvent) {
+  if (event.node.type === "lane_header") return;
+  if (selectedNodeId.value === event.node.id) {
+    clearSelection();
     return;
   }
-  const selection = orgFilterSelection.value;
-  if (!selection) {
-    boards.value = [];
-    activeBoardKey.value = "";
-    return;
-  }
-  const item = graphForOrgSelection(graph.value, selection);
-  const laid = layoutGraph(item.graph, "enterprise", item.depth);
-  const board: CanvasBoard = {
-    key: boardKeyForSelection(selection),
-    title: item.title,
-    enterpriseTitle: item.enterpriseTitle,
-    mode: "enterprise",
-    scope: item.scope,
-    nodes: laid.nodes,
-    edges: laid.edges,
-  };
-  boards.value = [board];
-  activeBoardKey.value = board.key;
+  selectedNodeId.value = event.node.id;
+  credentialOpen.value = event.node.type === "credential";
 }
 
-function onTabChange() {
-  selectedNodeId.value = null;
-  selectedBoardKey.value = null;
-  credentialOpen.value = false;
-}
-
-function onNodeClick(boardKey: string, event: NodeMouseEvent) {
-  if (selectedBoardKey.value === boardKey && selectedNodeId.value === event.node.id) {
-    selectedBoardKey.value = null;
-    selectedNodeId.value = null;
-    credentialOpen.value = false;
-  } else {
-    selectedBoardKey.value = boardKey;
-    selectedNodeId.value = event.node.id;
-    credentialOpen.value = event.node.type === "credential";
-  }
-}
-
-function onPaneClick(boardKey: string) {
-  if (selectedBoardKey.value !== boardKey) return;
-  selectedBoardKey.value = null;
+function clearSelection() {
   selectedNodeId.value = null;
   credentialOpen.value = false;
 }
@@ -1218,8 +577,8 @@ async function releaseSelectedCredential() {
   if (!credential?.binding) return;
   try {
     await ElMessageBox.confirm(
-      "释放后，该渠道 Key 会回到资源列表。正在使用它的员工下次请求时会重新从资源池挂 Key。",
-      "释放渠道 Key",
+      "释放后这把渠道 Key 回到资源池，正在用它的员工下次请求时重新挂 Key。",
+      "释放绑定",
       { type: "warning", confirmButtonText: "释放", cancelButtonText: "取消" },
     );
   } catch {
@@ -1228,15 +587,9 @@ async function releaseSelectedCredential() {
   releasing.value = true;
   try {
     const { data } = await http.post(`/api/admin/key-bindings/credentials/${credential.id}/release`);
-    if (!data.success) {
-      throw new Error(data.message || "释放失败");
-    }
-    ElMessage.success("已释放到资源列表");
-    credentialOpen.value = false;
-    selectedNodeId.value = null;
-    selectedBoardKey.value = null;
-    await load();
-    resourceOpen.value = true;
+    if (!data.success) throw new Error(data.message || "释放失败");
+    ElMessage.success("已释放绑定");
+    await load({ silent: true });
   } catch (error) {
     const err = error as { response?: { data?: { message?: string } }; message?: string };
     ElMessage.error(err.response?.data?.message || err.message || "释放失败");
@@ -1245,39 +598,51 @@ async function releaseSelectedCredential() {
   }
 }
 
-async function load() {
-  loading.value = true;
+let loadSeq = 0;
+
+/** silent：后台刷新，不显示加载态、不清掉当前选中。 */
+async function load(options: { silent?: boolean } = {}) {
+  const seq = ++loadSeq;
+  if (!options.silent) loading.value = true;
   try {
-    const [bindingsRes, teamsRes, departmentsRes] = await Promise.all([
-      http.get("/api/admin/key-bindings"),
-      http.get("/api/admin/teams").catch(() => ({ data: { success: false, data: [] } })),
-      http.get("/api/admin/departments").catch(() => ({ data: { success: false, data: [] } })),
-    ]);
-    if (!bindingsRes.data.success) {
-      throw new Error(bindingsRes.data.message || "加载失败");
+    const { data } = await http.get("/api/admin/key-bindings", {
+      params: {
+        windowMinutes: windowMinutes.value,
+        ...(productLineId.value != null ? { productLineId: productLineId.value } : {}),
+      },
+    });
+    if (seq !== loadSeq) return;
+    if (!data.success) throw new Error(data.message || "加载失败");
+    graph.value = data.data as SchedulingGraph;
+    if (!options.silent) {
+      clearSelection();
+      fitSeq.value += 1;
     }
-    graph.value = hydrateOrgChain(
-      bindingsRes.data.data as KeyBindingGraph,
-      (teamsRes.data.success ? teamsRes.data.data : []) as TeamLookup[],
-      (departmentsRes.data.success ? departmentsRes.data.data : []) as DepartmentLookup[],
-    );
-    selectedNodeId.value = null;
-    selectedBoardKey.value = null;
-    credentialOpen.value = false;
-    if (!parseOrgFilterPath(orgFilterPath.value)) {
-      const firstEnterprise = graph.value.enterprises[0];
-      orgFilterPath.value = firstEnterprise ? [enterpriseCascaderValue(firstEnterprise.id)] : [];
+    else if (selectedNodeId.value && !canvasNodes.value.some((row) => row.id === selectedNodeId.value)) {
+      clearSelection();
     }
-    renderGraph();
   } catch (error) {
+    if (seq !== loadSeq || options.silent) return;
     const err = error as { response?: { data?: { message?: string } }; message?: string };
-    ElMessage.error(err.response?.data?.message || err.message || "绑定关系加载失败");
+    ElMessage.error(err.response?.data?.message || err.message || "调度画布加载失败");
   } finally {
-    loading.value = false;
+    if (seq === loadSeq) loading.value = false;
   }
 }
 
-let liveTimer: ReturnType<typeof setInterval> | null = null;
+/** 实时快照里有画布上没有的连线（刚开始、还没落审计的请求），就重拉一次图。 */
+function reloadForUnknownHops(live: RelayLiveLoad) {
+  const source = graph.value;
+  if (!source || loading.value) return;
+  const known = new Set(source.hops.map((hop) => `${hop.virtualKeyId}:${hop.credentialId}`));
+  const credentialIds = new Set(source.credentials.map((row) => row.id));
+  const unknown = live.hops.some(
+    (hop) => credentialIds.has(hop.credentialId) && !known.has(`${hop.virtualKeyId}:${hop.credentialId}`),
+  );
+  if (!unknown || Date.now() - lastUnknownHopReload < UNKNOWN_HOP_RELOAD_MS) return;
+  lastUnknownHopReload = Date.now();
+  void load({ silent: true });
+}
 
 async function pollLive() {
   if (typeof document !== "undefined" && document.hidden) return;
@@ -1288,44 +653,34 @@ async function pollLive() {
     if (stamp === lastLiveStamp) return;
     lastLiveStamp = stamp;
     lastLive.value = data.data;
+    reloadForUnknownHops(data.data as RelayLiveLoad);
   } catch {
     // Keep the last snapshot; a missed poll should not toast.
   }
 }
 
-function startLivePolling() {
-  stopLivePolling();
-  void pollLive();
-  liveTimer = setInterval(() => {
-    void pollLive();
-  }, LIVE_POLL_MS);
-}
-
-function stopLivePolling() {
-  if (!liveTimer) return;
-  clearInterval(liveTimer);
-  liveTimer = null;
-}
+let liveTimer: ReturnType<typeof setInterval> | null = null;
+let graphTimer: ReturnType<typeof setInterval> | null = null;
 
 function onVisibilityChange() {
   if (document.hidden) return;
   void pollLive();
+  void load({ silent: true });
 }
-
-watch([orgFilterPath, boundOnly], () => {
-  if (loading.value) return;
-  renderGraph();
-  onTabChange();
-});
 
 onMounted(() => {
   void load();
-  startLivePolling();
+  void pollLive();
+  liveTimer = setInterval(() => void pollLive(), LIVE_POLL_MS);
+  graphTimer = setInterval(() => {
+    if (!document.hidden) void load({ silent: true });
+  }, GRAPH_REFRESH_MS);
   document.addEventListener("visibilitychange", onVisibilityChange);
 });
 
 onUnmounted(() => {
-  stopLivePolling();
+  if (liveTimer) clearInterval(liveTimer);
+  if (graphTimer) clearInterval(graphTimer);
   document.removeEventListener("visibilitychange", onVisibilityChange);
 });
 </script>
@@ -1343,99 +698,33 @@ onUnmounted(() => {
   background: #f8fafc;
 }
 
-.bindings-page .el-empty {
-  margin: auto;
-}
-
-.fab-stack {
-  position: absolute;
-  right: 24px;
-  bottom: 24px;
-  z-index: 20;
+.canvas-toolbar {
   display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 10px;
-}
-
-.fab {
-  display: inline-flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
-  min-height: 40px;
-  padding: 8px 16px;
-  border: 1px solid #e2e8f0;
-  border-radius: 999px;
+  gap: 10px;
+  padding: 10px 16px;
+  border-bottom: 1px solid #e2e8f0;
   background: #fff;
-  color: #0f172a;
-  font: inherit;
-  font-size: 13px;
-  font-weight: 650;
-  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.12);
-  cursor: pointer;
 }
 
-.fab.primary {
-  border-color: #111827;
-  background: #111827;
-  color: #fff;
+.toolbar-select {
+  width: 200px;
 }
 
-.fab.active {
-  border-color: #2563eb;
-  background: #eff6ff;
-  color: #1d4ed8;
+.toolbar-search {
+  width: 160px;
 }
 
-.fab-count {
-  min-width: 18px;
-  padding: 0 6px;
-  border-radius: 999px;
-  background: #e2e8f0;
-  font-size: 11px;
+.toolbar-stats {
+  margin-left: auto;
+  color: #64748b;
+  font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
 
-.fab.active .fab-count {
-  background: #dbeafe;
-}
-
-.resource-list {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.resource-row {
-  padding: 12px 14px;
-  border: 1px solid #eef2f7;
-  border-radius: 10px;
-  background: #f8fafc;
-}
-
-.resource-top {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.resource-top strong {
-  color: #0f172a;
-  font-size: 14px;
-}
-
-.resource-meta {
-  display: flex;
-  gap: 12px;
-  margin-top: 6px;
-  color: #94a3b8;
-  font-size: 12px;
-}
-
-.resource-meta .mono {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  color: #475569;
+.canvas-empty {
+  margin: auto;
 }
 
 .detail-block {
@@ -1450,7 +739,7 @@ onUnmounted(() => {
 }
 
 .detail-block p {
-  margin: 0;
+  margin: 0 0 4px;
   color: #334155;
   font-size: 13px;
 }
@@ -1459,10 +748,36 @@ onUnmounted(() => {
   color: #94a3b8;
 }
 
+.detail-top,
+.user-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.detail-top strong {
+  color: #0f172a;
+  font-size: 14px;
+}
+
+.detail-meta {
+  display: flex;
+  gap: 12px;
+  margin-top: 6px;
+  color: #94a3b8;
+  font-size: 12px;
+}
+
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: #475569;
+}
+
 .quota-list {
   display: grid;
   gap: 8px;
-  margin: 0 0 12px;
+  margin: 0;
 }
 
 .quota-list div {

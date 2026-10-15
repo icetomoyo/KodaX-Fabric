@@ -238,6 +238,12 @@ export const SCHED_POOLS = {
     keys: [{ label: "homo", owner: "ownerHome" }, { label: "homf", owner: "entMate" }],
     users: ["ownerHome", "guest1"],
   },
+  // 调度画布（key-bindings-canvas.spec.ts）：主人一把、同企业一把，借用者在两把之间换过。
+  canvas: {
+    name: "调度E2E-画布",
+    keys: [{ label: "cvso", owner: "ownerCap" }, { label: "cvsf", owner: "entMate" }],
+    users: ["ownerCap", "guest1", "guest2", "guest3", "guest4"],
+  },
   // 潮汐调度：8 把席位 Key，用例往账本里写用量把它们分到不同档位（见 tidal.spec.ts）。
   // 5 小时上限故意比周上限小一个量级，这样能单独把某把 Key 的 5 小时用量顶过借用线。
   tidal: {
