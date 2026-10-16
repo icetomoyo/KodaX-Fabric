@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { expect, test, type Page } from "@playwright/test";
 import postgres from "postgres";
 import { E2E } from "./env.ts";
-import { SCHED_UI_PACKAGE } from "./scheduling-fixture.ts";
+import { SCHED_PEOPLE, SCHED_UI_PACKAGE } from "./scheduling-fixture.ts";
 
 /**
  * 超管「KEYS 表格」点「刷新」查官方额度。
@@ -23,6 +23,9 @@ import { SCHED_UI_PACKAGE } from "./scheduling-fixture.ts";
  *  9. 左侧渠道列出了充值渠道 DeepSeek（它没有额度窗口）。
  * 10. 火山方舟没有月额度列；或者月使用率不是按本地账本 ÷ 套餐月上限算的。
  * 11. 火山方舟上游回了月额度用尽（monthly_cap）时，月使用率不是 100%。
+ * 12. 员工列显示当前挂着的借用者或 Key 备注，而不是 channel_seats 上的持有人。
+ * 13. 没有持有人的充值 Key 显示成借用者或备注，而不是「无」。
+ * 14. 按借用者姓名能搜到行，按持有人姓名搜不到。
  */
 const ARTIFACT_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "artifacts");
 
@@ -190,16 +193,16 @@ test("积分套餐和 Token 套餐刷新后都显示 5 小时 / 周额度", asyn
       resetAt: new Date(WEEKLY_RESET).toISOString(),
     });
 
-    // 界面：只有使用率和重置时间，没有已用 / 剩余。按标签搜出这两把 Key，逐格核对。
+    // 界面：只有使用率和重置时间，没有已用 / 剩余。按尾号搜出这两把 Key，逐格核对。
     const headers = (await page.locator(".el-table__header th").allInnerTexts()).map((text) => text.trim()).filter(Boolean);
     expect(headers).toEqual(["员工", "套餐", "KEY 尾号", "5 小时", "每周", "来源", "状态"]);
     await page.getByPlaceholder("搜索姓名").fill("uik");
     await expect(page.locator(".el-table__row")).toHaveCount(2);
-    const rowText = async (label: string) =>
-      (await page.locator(".el-table__row", { hasText: label }).innerText()).replace(/\s+/g, " ");
-    await expect(page.locator(".el-table__row", { hasText: "调度-uik1" })).toContainText("36%");
-    const creditRow = await rowText("调度-uik1");
-    const tokensRow = await rowText("调度-uik2");
+    const rowText = async (suffix: string) =>
+      (await page.locator(".el-table__row", { hasText: `•••• ${suffix}` }).innerText()).replace(/\s+/g, " ");
+    await expect(page.locator(".el-table__row", { hasText: "•••• uik1" })).toContainText("36%");
+    const creditRow = await rowText("uik1");
+    const tokensRow = await rowText("uik2");
     expect(creditRow).toContain("54%");
     expect(creditRow).toContain("官方");
     expect(creditRow, "不再显示积分数").not.toContain("12,671");
@@ -287,8 +290,8 @@ test("渠道列表只有套餐渠道；火山方舟多一列月额度", async ({
 
     await page.getByPlaceholder("搜索姓名").fill("kt-");
     await expect(page.locator(".el-table__row")).toHaveCount(2);
-    const localRow = page.locator(".el-table__row", { hasText: "kt-local" });
-    const cappedRow = page.locator(".el-table__row", { hasText: "kt-capped" });
+    const localRow = page.locator(".el-table__row", { hasText: "•••• ocal" });
+    const cappedRow = page.locator(".el-table__row", { hasText: "•••• pped" });
     const monthlyCell = (row: typeof localRow) => row.locator("td").nth(5);
     await expect(monthlyCell(localRow), "月使用率 = 本地 250 ÷ 月上限 1000").toContainText("25%");
     await expect(localRow).toContainText("本地估算");
@@ -311,6 +314,125 @@ test("渠道列表只有套餐渠道；火山方舟多一列月额度", async ({
   } finally {
     if (lineId != null) {
       // 渠道池里不留这条测试套餐的可用 Key。
+      await sql`update product_lines set status = 'disabled' where id = ${lineId}`;
+      await sql`update upstream_credentials set status = 'disabled', cool_until = null where product_line_id = ${lineId}`;
+    }
+    await sql.end({ timeout: 5 });
+  }
+});
+
+test("KEYS 表格员工列显示持有人，不显示当前挂着的借用者", async ({ page }) => {
+  test.setTimeout(240_000);
+  const sql = postgres(E2E.databaseUrl, { max: 1 });
+  let lineId: number | null = null;
+  try {
+    await adminLogin(page);
+    const token = await page.evaluate(() => localStorage.getItem("th_token"));
+    const headers = { Authorization: `Bearer ${token}` };
+    const created = await page.request.post("/api/admin/product-lines", {
+      headers,
+      data: {
+        provider: "huoshan",
+        productType: "coding_plan",
+        name: "KEYS表格-持有人",
+        tag: "keys-table-holder",
+        seatCount: 1,
+        status: "active",
+        supportedProtocols: ["openai_chat"],
+      },
+    });
+    const createdBody = (await created.json()) as { data?: { id?: number } };
+    expect(created.ok(), JSON.stringify(createdBody)).toBe(true);
+    lineId = createdBody.data!.id!;
+
+    const [holder] = await sql<Array<{ id: string; enterprise_id: string }>>`
+      select id, enterprise_id from employees where phone = ${SCHED_PEOPLE.ownerCap.phone}
+    `;
+    const [guest] = await sql<Array<{ id: string }>>`
+      select id from employees where phone = ${SCHED_PEOPLE.guest1.phone}
+    `;
+    const [line] = await sql<Array<{ relay_pool_key: string }>>`
+      select relay_pool_key from product_lines where id = ${lineId}
+    `;
+    expect(holder?.id, "调度夹具里要有容量持有人").toBeTruthy();
+    expect(guest?.id, "调度夹具里要有借用甲").toBeTruthy();
+
+    const holderKey = await page.request.post("/api/admin/credentials", {
+      headers,
+      data: {
+        productLineId: lineId,
+        label: "huoshan · 柯昆误标",
+        secret: "sk-e2e-holder-aaaa",
+      },
+    });
+    const holderBody = (await holderKey.json()) as { data?: { id?: number } };
+    expect(holderKey.ok(), JSON.stringify(holderBody)).toBe(true);
+    const holderCredentialId = holderBody.data!.id!;
+
+    const rechargeKey = await page.request.post("/api/admin/credentials", {
+      headers,
+      data: {
+        productLineId: lineId,
+        label: "充值无持有人",
+        secret: "sk-e2e-nohold-bbbb",
+      },
+    });
+    const rechargeBody = (await rechargeKey.json()) as { data?: { id?: number } };
+    expect(rechargeKey.ok(), JSON.stringify(rechargeBody)).toBe(true);
+
+    const seat = await page.request.post("/api/admin/channel-seats", {
+      headers,
+      data: { employeeId: Number(holder.id), productLineId: lineId },
+    });
+    const seatBody = (await seat.json()) as { data?: { id?: number } };
+    expect(seat.ok(), JSON.stringify(seatBody)).toBe(true);
+    await sql`
+      update channel_seats
+      set credential_id = ${holderCredentialId}
+      where id = ${seatBody.data!.id!}
+    `;
+
+    const [binding] = await sql<Array<{ id: string }>>`
+      insert into credential_bindings (credential_id, product_line_id, relay_pool_key, scope_type, scope_id)
+      values (${holderCredentialId}, ${lineId}, ${line.relay_pool_key}, 'enterprise', ${holder.enterprise_id})
+      returning id
+    `;
+    await sql`
+      insert into credential_binding_members (binding_id, employee_id, product_line_id, relay_pool_key, last_used_at)
+      values (${binding.id}, ${guest.id}, ${lineId}, ${line.relay_pool_key}, now())
+    `;
+
+    await page.goto("/admin/keys-table");
+    await page.locator(".channel-item", { hasText: "火山方舟" }).click();
+    const holderRow = page.locator(".el-table__row", { hasText: "•••• aaaa" });
+    const rechargeRow = page.locator(".el-table__row", { hasText: "•••• bbbb" });
+    await expect(holderRow, "持有人那行要出现").toBeVisible({ timeout: 15_000 });
+    await expect(holderRow.locator("td").first(), "员工列应是席位持有人").toHaveText(SCHED_PEOPLE.ownerCap.name);
+    await expect(holderRow.locator("td").first(), "员工列不能是当前挂着的借用者").not.toContainText(SCHED_PEOPLE.guest1.name);
+    await expect(holderRow.locator("td").first(), "员工列不能退回 Key 备注").not.toContainText("柯昆误标");
+    await expect(rechargeRow.locator("td").first(), "充值 Key 没有持有人").toHaveText("无");
+
+    await page.getByPlaceholder("搜索姓名").fill(SCHED_PEOPLE.ownerCap.name);
+    await expect(page.locator(".el-table__row"), "按持有人姓名能搜到").toHaveCount(1);
+    await expect(page.locator(".el-table__row")).toContainText("•••• aaaa");
+
+    await page.getByPlaceholder("搜索姓名").fill(SCHED_PEOPLE.guest1.name);
+    await expect(page.locator(".el-table__row"), "按借用者姓名搜不到").toHaveCount(0);
+
+    mkdirSync(ARTIFACT_DIR, { recursive: true });
+    await page.getByPlaceholder("搜索姓名").fill("");
+    await page.screenshot({ path: resolve(ARTIFACT_DIR, "keys-table-holder.png"), fullPage: true });
+    writeFileSync(
+      resolve(ARTIFACT_DIR, "keys-table-holder.json"),
+      `${JSON.stringify({
+        holderCell: (await holderRow.locator("td").first().innerText()).trim(),
+        rechargeCell: (await rechargeRow.locator("td").first().innerText()).trim(),
+        holderName: SCHED_PEOPLE.ownerCap.name,
+        guestName: SCHED_PEOPLE.guest1.name,
+      }, null, 2)}\n`,
+    );
+  } finally {
+    if (lineId != null) {
       await sql`update product_lines set status = 'disabled' where id = ${lineId}`;
       await sql`update upstream_credentials set status = 'disabled', cool_until = null where product_line_id = ${lineId}`;
     }

@@ -3,6 +3,7 @@ import { and, asc, desc, eq, gte, inArray, ne, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../../db/client.js";
 import {
+  channelSeats,
   credentialBindingMembers,
   credentialBindings,
   employees,
@@ -825,10 +826,14 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
         seatCount: productLines.seatCount,
         productLineTag: productLines.tag,
         testModel: productLines.testModel,
+        holderEmployeeId: channelSeats.employeeId,
+        holderName: employees.name,
       })
       .from(upstreamCredentials)
       .innerJoin(productLines, eq(upstreamCredentials.productLineId, productLines.id))
       .innerJoin(providers, eq(productLines.providerId, providers.id))
+      .leftJoin(channelSeats, eq(channelSeats.credentialId, upstreamCredentials.id))
+      .leftJoin(employees, eq(employees.id, channelSeats.employeeId))
       .where(
         and(
           query.productLineId

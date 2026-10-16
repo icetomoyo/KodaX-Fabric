@@ -119,7 +119,7 @@ type CredentialRow = KeyQuotaRow & {
   secretSuffix: string;
   providerCode: string;
   productLineName: string;
-  connectedNames?: string[];
+  holderName?: string | null;
 };
 
 type RateProp = "fiveRate" | "weeklyRate" | "monthlyRate";
@@ -196,9 +196,9 @@ function keyCount(code: string): number {
 }
 
 function employeeName(row: CredentialRow): string {
-  const connected = (row.connectedNames ?? []).find((name) => name.trim());
-  if (connected) return connected;
-  return row.label;
+  const holder = row.holderName?.trim();
+  if (holder) return holder;
+  return "无";
 }
 
 const SOURCE_TEXT: Record<QuotaWindowSource, string> = {
