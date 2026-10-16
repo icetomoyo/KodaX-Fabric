@@ -24,8 +24,8 @@ import {
 } from "./scheduling-fixture.ts";
 
 /**
- * 渠道 Key 调度 E2E：亲和度选 Key、每把 Key 最多 3 人 / 9 并发 / 单人 3 路、按成员 30 分钟
- * 释放、席位主人保护、上游 429 按业务码分类处理。
+ * 渠道 Key 调度 E2E：持有人只在自己的 Key 没人挂时优先挂上去、其余人人平等摊到人少的 Key、
+ * 每把 Key 最多 3 人 / 9 并发 / 单人 3 路、按成员 30 分钟释放、上游 429 按业务码分类处理。
  *
  * 全程走真实 HTTP 进真实 server，上游是本机可编排的 mock（按 Bearer 认 Key、
  * 回显是哪把 Key 应答）。每个场景一条智谱套餐，开跑前只启用这一条，独占智谱的调度池。
@@ -33,19 +33,22 @@ import {
  * 这里它们必须能共享，顺带证明档位已不参与调度。
  *
  * 调度可能出错的方式（每条对应下面一个断言）：
- *  1. 有席位的人没有用到自己的 Key。
- *  2. 没有席位的人没按「同组 > 同部门 > 同一级部门 > 同企业」的顺序借 Key。
- *  3. 一人多部门时没有取最近的那层关系。
- *  4. 借到了别的企业员工名下的 Key；或者充值模式下没有主人的 Key 同时挂了两家企业的人。
+ *  1. 持有人绑定时，自己持有的 Key 没人挂，却没有优先挂到自己的 Key 上。
+ *  1b. 持有人自己的 Key 已经有人挂着，持有人仍被优先塞进去，而不是和别人一样按人数挑 Key。
+ *  2. 借别人的 Key 时还按部门远近挑（同组同事的 Key 被优先），而不是只看空位、额度和人数。
+ *  3. 借用者没有摊开：还有人数更少的 Key，新借用者却挤到已经有人的 Key 上。
+ *  4. 借到了别的企业员工持有的 Key；或者充值模式下没有持有人的 Key 同时挂了两家企业的人。
  *  5. 已经绑定的人因为更近的 Key 空出来而被来回迁移（不粘）。
- *  6. 主人自己的 Key 恢复可用后，他还留在借来的 Key 上不回去。
+ *  6. 持有人在别的 Key 上用得好好的，自己的 Key 一空出来就被迁回去（持有人没有回家特权）。
  *  7. 一把 Key 上挂了超过 3 个人。
- *  8. 主人回来时自己的 Key 已被借满，结果主人进不去。
+ *  8. 持有人来时自己的 Key 已满 3 人，把别人挤下去给自己腾位（持有人没有让出特权）。
+ *  8b. 持有人自己的 Key 满并发时，持有人只把这次请求临时发到别的 Key、仍留在原 Key 上
+ *      （应和其他成员一样：换到有空位的 Key）。
  *  9. 一把 Key 同时在途超过 9 个请求，或同一人在一把 Key 上超过 3 路。
  * 10. 借用者第 4 路并发去换 Key，而不是 429 且保持原绑定。
- * 11. 主人第 4 路并发溢出到别的 Key，而不是 429 且保持原绑定。
+ * 11. 持有人第 4 路并发溢出到别的 Key，而不是 429 且保持原绑定。
  * 12. 三人各 3 路打满后新请求挂住或报 5xx，而不是立刻 429 带 retry-after。
- * 13. 借用者或主人在本地估算到 85%/100% 时被本地拦下换 Key，而不是都用到上游真的限额。
+ * 13. 成员在本地估算到 85%/100% 时被本地拦下换 Key，而不是都用到上游真的限额（没有借用线）。
  * 14. 上游返回 5 小时额度用尽（1308）后没有冷却到重置时刻；或者池里还有能用的 Key，
  *     请求却因为「限流只换一次 Key」而失败（员工白白失败一次）。
  * 15. 上游返回公平使用风控（1313）后 Key 没停用、没有告警；或者这次请求没有换 Key 重发，
@@ -427,21 +430,32 @@ test.describe.serial("渠道 Key 调度", () => {
     await sql?.end({ timeout: 5 });
   });
 
-  test("亲和度：本人 > 同组 > 同部门 > 同一级部门 > 同企业", async () => {
-    const pool = await usePool("affinity");
-    const ladder = ["self", "leaf", "sub0", "fst0", "ent0"];
+  test("挂 Key：持有人先挂没人的自有 Key，其余不看部门、摊到人少的 Key；外企不借；粘住、不回家", async () => {
+    // 池里按 ID：ent0（同企业）、fst0（同一级部门）、sub0（同部门）、leaf（同组）、self（本人）、out0（外企）。
+    const pool = await usePool("borrow");
 
-    // 每拿到一把就把它停用，逼调度往下一级找。
-    const picks: Array<string | null> = [];
-    for (const expected of ladder) {
-      const result = await call(pool, "self");
-      expect(result.status, `本人应能拿到 ${expected}`).toBe(200);
-      expect(result.key, `亲和度第 ${picks.length + 1} 顺位应是 ${expected}`).toBe(expected);
-      picks.push(result.key);
-      await setCredentialStatus(pool, expected, "disabled");
-    }
+    const own = await call(pool, "self");
+    expect(own.key, "自己持有的 Key 上没人，先挂自己的（1）").toBe("self");
 
-    // 只剩外部企业员工名下的 Key：不能借。
+    // 自己的 Key 停了：同组的 leaf 不再优先，人数一样时取 ID 小的 ent0（2）。
+    await setCredentialStatus(pool, "self", "disabled");
+    const borrowed = await call(pool, "self");
+    expect(borrowed.key, "借 Key 不看部门远近").toBe("ent0");
+
+    // 后来的借用者摊到没人的 Key 上，而不是挤到已经有人的 Key（3）。
+    const guestFirst = await call(pool, "guest1");
+    expect(guestFirst.key, "ent0 已有 1 人，借用者去没人的 fst0").toBe("fst0");
+    const multiFirst = await call(pool, "multi");
+    expect(multiFirst.key, "ent0、fst0 各 1 人，再来的人去没人的 sub0").toBe("sub0");
+    const spread = await membersByKey(pool);
+    expect(spread, "三个人摊在三把 Key 上").toEqual({ ent0: ["self"], fst0: ["guest1"], sub0: ["multi"] });
+
+    // 已绑定且可用：旁边 leaf 空着也不迁移（5）。
+    const guestSticky = await call(pool, "guest1");
+    expect(guestSticky.key, "已绑定且可用时不迁移").toBe("fst0");
+
+    // 本企业的 Key 全停：只剩外部企业员工名下的 out0，不能借（4）。
+    for (const label of ["ent0", "fst0", "sub0", "leaf"]) await setCredentialStatus(pool, label, "disabled");
     const exhausted = await call(pool, "self");
     expect(exhausted.status, "没有可借的 Key 时应明确失败").toBe(503);
     expect(await hitsFor(pool, exhausted.marker), "不能打到外部企业的 Key").toEqual([]);
@@ -449,73 +463,85 @@ test.describe.serial("渠道 Key 调度", () => {
       (hit) => hit.secret === schedSecret(pool, "out0"),
     );
     expect(outsiderHits, "外部企业员工名下的 Key 全程不应被本企业的人用到").toEqual([]);
+    for (const label of ["ent0", "fst0", "sub0", "leaf", "self"]) await setCredentialStatus(pool, label, "active");
 
-    for (const label of ladder) await setCredentialStatus(pool, label, "active");
-
-    // 主人的 Key 恢复后，下一次请求就回到自己的 Key。
+    // 持有人没有回家特权：自己的 Key 恢复了，ent0 还能用就留在 ent0（6）。
     const home = await call(pool, "self");
-    expect(home.key, "自己的 Key 恢复后应回到自己的 Key").toBe("self");
+    expect(home.key, "自己的 Key 恢复后不迁回去").toBe("ent0");
 
-    // 没有席位的同组同事：先借空着的同组 Key；绑定后不因为别的 Key 恢复而迁移。
-    const guestFirst = await call(pool, "guest1");
-    expect(guestFirst.key, "同分时借人少的那把同组 Key").toBe("leaf");
-    await setCredentialStatus(pool, "leaf", "disabled");
+    // 当前 Key 不能用才换，换到人最少的那把（别人持有的空 Key 也一样能挂）；恢复后不再迁回（5）。
+    await setCredentialStatus(pool, "fst0", "disabled");
     const guestMoved = await call(pool, "guest1");
-    expect(guestMoved.key, "当前 Key 不可用时换到另一把同组 Key").toBe("self");
-    await setCredentialStatus(pool, "leaf", "active");
-    const guestSticky = await call(pool, "guest1");
-    expect(guestSticky.key, "已绑定且可用时不迁移").toBe("self");
+    expect(guestMoved.key, "fst0 停了，换到没人的 Key 里 ID 最小的 leaf").toBe("leaf");
+    await setCredentialStatus(pool, "fst0", "active");
+    const guestStays = await call(pool, "guest1");
+    expect(guestStays.key, "fst0 恢复后不迁回").toBe("leaf");
 
-    // 一人多部门（二部 + 存储小组）：两层关系里取最近的。
-    const multiFirst = await call(pool, "multi");
-    expect(multiFirst.key, "通过二部与 Key 主人同组").toBe("ent0");
-    await setCredentialStatus(pool, "ent0", "disabled");
-    const multiSecond = await call(pool, "multi");
-    expect(multiSecond.key, "通过存储小组与 Key 主人同组，不能只看第一个部门").toBe("sub0");
-    await setCredentialStatus(pool, "ent0", "active");
-
-    report.affinity = {
-      ownerLadder: picks,
+    report.borrow = {
+      own: own.key,
+      ownKeyDisabled: borrowed.key,
+      spread,
       noEligibleKeyStatus: exhausted.status,
-      ownerReturnsHome: home.key,
-      guest: [guestFirst.key, guestMoved.key, guestSticky.key],
-      multiDepartment: [multiFirst.key, multiSecond.key],
+      holderStaysAfterOwnKeyBack: home.key,
+      guest: [guestFirst.key, guestSticky.key, guestMoved.key, guestStays.key],
     };
   });
 
-  test("每把 Key 最多 3 人；主人回来时让出最久没用的借用者", async () => {
+  test("每把 Key 最多 3 人；持有人的 Key 有人了就去别的 Key，满了也不能挤人", async () => {
     const pool = await usePool("capacity");
+    const clearMembers = async () => {
+      await sql`delete from credential_binding_members where relay_pool_key = 'glm'`;
+      await sql`delete from credential_bindings where relay_pool_key = 'glm'`;
+    };
 
+    // 两把 Key 都空着：借用者一人一把，不挤在一起（3）。
+    expect((await call(pool, "guest1")).key, "人数一样取 ID 小的").toBe("capo");
+    expect((await call(pool, "guest2")).key, "capo 已有人，去没人的 capf").toBe("capf");
+    expect(await membersByKey(pool)).toEqual({ capo: ["guest1"], capf: ["guest2"] });
+    await clearMembers();
+
+    // 持有人来时自己的 capo 上已经有人：不再优先，和别人一样去人少的 capf（1b）。
+    expect((await call(pool, "guest1")).key).toBe("capo");
+    const holderOccupied = await call(pool, "ownerCap");
+    expect(holderOccupied.key, "自己的 Key 有人了，持有人去人少的 Key").toBe("capf");
+    expect(await membersByKey(pool)).toEqual({ capo: ["guest1"], capf: ["ownerCap"] });
+    await clearMembers();
+
+    // 只剩 capo 能用：最多挂 3 人，第 4 个人不能再挂上去（7）。
+    await setCredentialStatus(pool, "capf", "disabled");
     for (const guest of ["guest1", "guest2", "guest3"] as const) {
-      const result = await call(pool, guest);
-      expect(result.key, `${guest} 应借到同组主人的 Key`).toBe("capo");
+      expect((await call(pool, guest)).key, `${guest} 挂到 capo`).toBe("capo");
     }
     expect(await membersByKey(pool)).toEqual({ capo: ["guest1", "guest2", "guest3"] });
-
     const fourth = await call(pool, "guest4");
-    expect(fourth.key, "第 4 个人不能再挂到已满 3 人的 Key 上").toBe("capf");
+    expect(fourth.status, "第 4 个人不能再挂到已满 3 人的 Key 上").toBe(429);
+    expect(fourth.code).toBe("model_channels_cooling");
+    expect(await hitsFor(pool, fourth.marker), "满员时不打上游").toEqual([]);
 
-    const owner = await call(pool, "ownerCap");
-    expect(owner.key, "主人必须能用上自己的 Key").toBe("capo");
-    const afterOwner = await membersByKey(pool);
-    expect(afterOwner.capo, "主人进来后仍是 3 人，让出最久没用的借用者").toEqual([
-      "guest2",
-      "guest3",
-      "ownerCap",
-    ]);
+    // 持有人也挤不进自己已满员的 Key，不会把别人挤下去（8）。
+    const holderFull = await call(pool, "ownerCap");
+    expect(holderFull.status, "持有人也不能挂到满员的 Key 上").toBe(429);
+    expect(await hitsFor(pool, holderFull.marker)).toEqual([]);
+    expect(await membersByKey(pool), "没有人被挤下去").toEqual({ capo: ["guest1", "guest2", "guest3"] });
 
-    const evicted = await call(pool, "guest1");
-    expect(evicted.key, "被让出的借用者下次请求换到别的 Key").toBe("capf");
+    await setCredentialStatus(pool, "capf", "active");
+    expect((await call(pool, "guest4")).key, "有空位的 Key 恢复后就能挂上").toBe("capf");
+    expect((await call(pool, "ownerCap")).key, "持有人去有空位的 capf").toBe("capf");
     const final = await membersByKey(pool);
     expect(final).toEqual({
-      capf: ["guest1", "guest4"],
-      capo: ["guest2", "guest3", "ownerCap"],
+      capf: ["guest4", "ownerCap"],
+      capo: ["guest1", "guest2", "guest3"],
     });
     for (const [label, people] of Object.entries(final)) {
       expect(people.length, `${label} 不应超过 3 人`).toBeLessThanOrEqual(3);
     }
 
-    report.capacity = { afterThreeGuests: "capo", fourthGuest: fourth.key, final };
+    report.capacity = {
+      holderWhenOwnKeyOccupied: holderOccupied.key,
+      fourthGuestWhileFull: fourth.status,
+      holderWhileOwnKeyFull: holderFull.status,
+      final,
+    };
   });
 
   test("每把 Key 最多 9 并发、单人 3 路：超额 429 且不解绑", async () => {
@@ -524,9 +550,12 @@ test.describe.serial("渠道 Key 调度", () => {
     await setBehavior(pool, "bstf", { type: "hold" });
     const pending: Array<Promise<CallResult>> = [];
 
+    // 借用者会摊到人少的 Key：先停掉 bstf，让三个人都挂到 bsto 上，再把 bstf 放回来。
+    await setCredentialStatus(pool, "bstf", "disabled");
     pending.push(call(pool, "ownerBurst"), call(pool, "guest1"), call(pool, "guest2"));
     await waitForInFlight(pool, { bsto: 3 });
     expect(await boundKey(pool, "guest2")).toBe("bsto");
+    await setCredentialStatus(pool, "bstf", "active");
 
     pending.push(call(pool, "guest2"), call(pool, "guest2"));
     await waitForInFlight(pool, { bsto: 5 });
@@ -543,9 +572,9 @@ test.describe.serial("渠道 Key 调度", () => {
     pending.push(call(pool, "ownerBurst"), call(pool, "ownerBurst"));
     await waitForInFlight(pool, { bsto: 7 });
     const ownerOver = await call(pool, "ownerBurst");
-    expect(ownerOver.status, "主人第 4 路立刻 429").toBe(429);
+    expect(ownerOver.status, "持有人第 4 路立刻 429").toBe(429);
     expect(ownerOver.code).toBe("employee_concurrency_limit");
-    expect(await boundKey(pool, "ownerBurst"), "主人超额不解绑、不溢出").toBe("bsto");
+    expect(await boundKey(pool, "ownerBurst"), "持有人超额不解绑、不溢出").toBe("bsto");
 
     pending.push(call(pool, "guest1"), call(pool, "guest1"));
     await waitForInFlight(pool, { bsto: 9 });
@@ -583,12 +612,16 @@ test.describe.serial("渠道 Key 调度", () => {
     };
   });
 
-  test("借用者和主人都用到上游真的限额；1308 冷却到重置时刻并换 Key 完成请求", async () => {
+  test("借用者和持有人都用到上游真的限额；1308 冷却到重置时刻并换 Key 完成请求", async () => {
     const pool = await usePool("quota");
     const ownerKey = await credentialRow(pool, "qtao");
 
+    expect((await call(pool, "ownerQuota")).key, "持有人先挂没人的自有 Key").toBe("qtao");
+    // 借用者会去人少的 qtaf：先停掉 qtaf，让借用者也挂到 qtao 上，再放回来。
+    await setCredentialStatus(pool, "qtaf", "disabled");
     const guestBefore = await call(pool, "guest1");
-    expect(guestBefore.key, "借用者先用同组主人的 Key").toBe("qtao");
+    await setCredentialStatus(pool, "qtaf", "active");
+    expect(guestBefore.key, "借用者和持有人挂在同一把 qtao 上").toBe("qtao");
 
     // 把这把 Key 当前 5 小时窗口的本地用量写到 90%（额度 100）。
     const setUsage = async (credits: number) => {
@@ -611,13 +644,13 @@ test.describe.serial("渠道 Key 调度", () => {
     const guestAt90 = await call(pool, "guest1");
     expect(guestAt90.key, "本地估算到 90% 也不拦借用者，以上游为准").toBe("qtao");
     const ownerAt90 = await call(pool, "ownerQuota");
-    expect(ownerAt90.key, "本地估算到 90% 也不拦主人，以上游为准").toBe("qtao");
+    expect(ownerAt90.key, "本地估算到 90% 也不拦持有人，以上游为准").toBe("qtao");
 
     await setUsage(100);
     const guestAt100 = await call(pool, "guest1");
     expect(guestAt100.key, "本地估算到 100% 也不拦借用者，以上游为准").toBe("qtao");
     const ownerAt100 = await call(pool, "ownerQuota");
-    expect(ownerAt100.key, "本地估算到 100% 也不拦主人，以上游为准").toBe("qtao");
+    expect(ownerAt100.key, "本地估算到 100% 也不拦持有人，以上游为准").toBe("qtao");
 
     // 上游真的返回 5 小时额度用尽。
     const resetAt = new Date(Date.now() + 2 * 3_600_000);
@@ -746,8 +779,11 @@ test.describe.serial("渠道 Key 调度", () => {
     `;
     const byKeyPhase = await listCredentials();
     expect(byKeyPhase.get("wkyo")?.weeklyCredits, "按 Key 自己的周相位，96 积分在本周内").toBe(96);
-    const affinity = await call(pool, "guest1");
-    expect(affinity.key, "本地不因周用量让出，按亲和度仍用这把 Key").toBe("wkyo");
+    // 剩余额度多的 Key 会被优先借走：停掉 wkyf，只看 wkyo 会不会因为本地周用量拒绝借用者。
+    await setCredentialStatus(pool, "wkyf", "disabled");
+    const byKeyPhaseCall = await call(pool, "guest1");
+    await setCredentialStatus(pool, "wkyf", "active");
+    expect(byKeyPhaseCall.key, "本地不因周用量让出，借用者照样能用这把 Key").toBe("wkyo");
     // 这次 glm-5.3 调用按真实系数计了积分，记在当前小时。
     const callCredits = (await listCredentials()).get("wkyo")!.weeklyCredits - 96;
     expect(callCredits, "调用应计入这把 Key 的账本").toBeGreaterThan(0);
@@ -776,7 +812,9 @@ test.describe.serial("渠道 Key 调度", () => {
     expect(new Date(followsLine.get("wkyf")!.nextWeeklyResetAt).getTime(), "没学到相位的 Key 跟随套餐").toBe(
       lineReset.getTime(),
     );
+    await setCredentialStatus(pool, "wkyf", "disabled");
     const allowed = await call(pool, "guest2");
+    await setCredentialStatus(pool, "wkyf", "active");
     expect(allowed.key, "按套餐的周窗口算，这把 Key 本周还没用").toBe("wkyo");
 
     // 这把 Key 真撞到上游周限额：回包里的重置时刻只覆盖这把 Key。
@@ -800,7 +838,7 @@ test.describe.serial("渠道 Key 调度", () => {
 
     report.weekly = {
       weeklyCreditsByKeyPhase: byKeyPhase.get("wkyo")?.weeklyCredits,
-      affinityByKeyPhase: affinity.key,
+      allowedByKeyPhase: byKeyPhaseCall.key,
       lineResetAt: lineReset.toISOString(),
       allowedByLinePhase: allowed.key,
       keyLearnedResetAt: keyReset.toISOString(),
@@ -850,7 +888,7 @@ test.describe.serial("渠道 Key 调度", () => {
     // 套餐没设上限：不限额。
     expect(await limitsByKey()).toEqual({ lmto: [null, null], lmtf: [null, null] });
     const unlimited = await call(pool, "guest1");
-    expect(unlimited.key, "没有上限时按亲和度用这把 Key").toBe("lmto");
+    expect(unlimited.key, "没有上限时剩余额度一样，人数一样取 ID 小的 lmto").toBe("lmto");
 
     // 在套餐上设上限：套餐下每把 Key 立即按它显示；90 / 100 也不再本地让出。
     await setPackageLimits({ fiveHourCreditLimit: 100, weeklyCreditLimit: 1000 });
@@ -1159,7 +1197,7 @@ test.describe.serial("渠道 Key 调度", () => {
       `;
     };
 
-    // 借用者 31 分钟没调用：只释放他，主人还在。
+    // 借用者 31 分钟没调用：只释放他，持有人还在。
     await backdate("guest1");
     await waitFor("闲置成员被释放", async () => (await boundKey(pool, "guest1")) === null);
     // 再等过至少一轮清理，确认还在用的成员没被误释放。
@@ -1210,10 +1248,10 @@ test.describe.serial("渠道 Key 调度", () => {
     };
   });
 
-  test("充值模式的 Key 没有主人：都能用，但一把 Key 不同时挂两家企业的人", async () => {
+  test("充值模式的 Key 没有持有人：都能用，但一把 Key 不同时挂两家企业的人", async () => {
     const pool = await usePool("recharge");
     const first = await call(pool, "outsider");
-    expect(first.key, "没有主人的 Key 谁都能用，同分取 ID 小的").toBe("rc01");
+    expect(first.key, "没有持有人的 Key 谁都能用，同分取 ID 小的").toBe("rc01");
     const second = await call(pool, "guest1");
     expect(second.key, "已被另一家企业占用的 Key 不能再挂进去").toBe("rc02");
     const members = await membersByKey(pool);
@@ -1221,35 +1259,29 @@ test.describe.serial("渠道 Key 调度", () => {
     report.recharge = { outsider: first.key, guest: second.key, members };
   });
 
-  test("主人的 Key 冷却期间借别人的，冷却结束后回到自己的 Key", async () => {
+  test("持有人的 Key 出错就和别人一样换走，自己的 Key 恢复后也不迁回", async () => {
     const pool = await usePool("homing");
-    expect((await call(pool, "ownerHome")).key).toBe("homo");
+    expect((await call(pool, "ownerHome")).key, "持有人先挂没人的自有 Key").toBe("homo");
 
-    const resetAt = new Date(Date.now() + 2 * 3_600_000);
-    await setBehavior(pool, "homo", { type: "status", status: 429, body: fiveHourCapBody(resetAt) });
-    const displaced = await call(pool, "ownerHome");
-    expect(displaced.key, "自己的 Key 撞限额后换到别的 Key").toBe("homf");
+    // 自己的 Key 这次请求 5xx：换到别的 Key 完成，而且绑定也跟着换走，不是只借这一次（8b）。
+    await setBehavior(pool, "homo", { type: "status", status: 500, body: { error: { message: "boom" } } });
+    const failedOver = await call(pool, "ownerHome");
+    expect(failedOver.status).toBe(200);
+    expect(failedOver.key, "自己的 Key 出错后换到别的 Key").toBe("homf");
+    expect(await hitsFor(pool, failedOver.marker)).toEqual(["homo", "homf"]);
+    expect(await boundKey(pool, "ownerHome"), "持有人和别人一样换绑，不保留原绑定").toBe("homf");
+
+    // 自己的 Key 恢复：homf 还能用就留在 homf（6）。
+    await setBehavior(pool, "homo", { type: "ok" });
+    const stays = await call(pool, "ownerHome");
+    expect(stays.key, "自己的 Key 恢复后不迁回").toBe("homf");
+    expect(await hitsFor(pool, stays.marker)).toEqual(["homf"]);
     expect(await boundKey(pool, "ownerHome")).toBe("homf");
 
-    const whileCooling = await call(pool, "ownerHome");
-    expect(whileCooling.key, "冷却期间留在借来的 Key 上").toBe("homf");
-    expect(await hitsFor(pool, whileCooling.marker), "冷却中的 Key 不能再被打到").toEqual(["homf"]);
-
-    // 冷却到期。
-    await setBehavior(pool, "homo", { type: "ok" });
-    const credential = await credentialRow(pool, "homo");
-    await sql`
-      update upstream_credentials set cool_until = ${minutesAgo(1)}
-      where id = ${credential.id}
-    `;
-    const home = await call(pool, "ownerHome");
-    expect(home.key, "冷却结束后回到自己的 Key").toBe("homo");
-    expect(await boundKey(pool, "ownerHome")).toBe("homo");
-
     report.homing = {
-      displacedTo: displaced.key,
-      whileCooling: whileCooling.key,
-      afterCooling: home.key,
+      afterOwnKeyError: failedOver.key,
+      boundAfterError: "homf",
+      afterOwnKeyRecovered: stays.key,
     };
   });
 });

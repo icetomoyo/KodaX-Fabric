@@ -4,7 +4,6 @@ import { z } from "zod";
 import { env } from "../../config.js";
 import { db } from "../../db/client.js";
 import {
-  credentialBindings,
   departments,
   employeeApiKeys,
   employees,
@@ -122,9 +121,6 @@ async function loadEmployeeDepartmentMemberships(employeeId: number) {
 }
 
 export async function detachAndDeleteTeam(teamId: number): Promise<void> {
-  await db
-    .delete(credentialBindings)
-    .where(and(eq(credentialBindings.scopeType, "team"), eq(credentialBindings.scopeId, teamId)));
   await db.delete(usageCountersTeamDaily).where(eq(usageCountersTeamDaily.teamId, teamId));
   await db.update(requestAudits).set({ teamId: null }).where(eq(requestAudits.teamId, teamId));
   await db.update(requestErrorLogs).set({ teamId: null }).where(eq(requestErrorLogs.teamId, teamId));

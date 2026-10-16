@@ -4,23 +4,19 @@ import { z } from "zod";
 import { db } from "../../db/client.js";
 import {
   channelSeats,
-  credentialBindingMembers,
-  credentialBindings,
-  departments,
   employeeApiKeys,
   employees,
   enterprises,
   productLines,
   providers,
   requestAudits,
-  teams,
   upstreamCredentials,
 } from "../../db/schema/index.js";
 import { env } from "../../config.js";
 import { effectiveCredentialStatus } from "../../lib/credential-status.js";
 import { snapshotRelayLiveLoad } from "../../lib/relay/credential-load.js";
 import { writeOpsAudit } from "../../lib/ops-audit.js";
-import { releaseCredentialBinding, type BindingScopeType } from "../../lib/relay/binding.js";
+import { loadCredentialMembers, releaseCredentialBinding } from "../../lib/relay/binding.js";
 import {
   credentialWindowAnchors,
   evaluateCredentialQuota,
@@ -45,12 +41,6 @@ const querySchema = z.object({
   productLineId: z.coerce.number().int().positive().optional(),
 });
 
-type CredentialBindingView = {
-  scopeType: BindingScopeType;
-  scopeId: number;
-  scopeName: string;
-};
-
 export async function adminKeyBindingRoutes(app: FastifyInstance) {
   app.addHook("preHandler", requireSession);
   app.addHook("preHandler", requireRoles("admin"));
@@ -69,7 +59,7 @@ export async function adminKeyBindingRoutes(app: FastifyInstance) {
     const now = new Date();
     const since = new Date(now.getTime() - windowMinutes * 60_000);
 
-    const [credentialRows, bindingRows, memberRows, hopRows] = await Promise.all([
+    const [credentialRows, hopRows] = await Promise.all([
       db
         .select({
           id: upstreamCredentials.id,
@@ -88,25 +78,14 @@ export async function adminKeyBindingRoutes(app: FastifyInstance) {
           weeklyWindowResetAt: upstreamCredentials.weeklyWindowResetAt,
           lineWeeklyWindowResetAt: productLines.weeklyWindowResetAt,
           lineMonthlyWindowResetAt: productLines.monthlyWindowResetAt,
-          ownerEmployeeId: channelSeats.employeeId,
-          ownerName: employees.name,
+          holderEmployeeId: channelSeats.employeeId,
+          holderName: employees.name,
         })
         .from(upstreamCredentials)
         .innerJoin(productLines, eq(upstreamCredentials.productLineId, productLines.id))
         .innerJoin(providers, eq(productLines.providerId, providers.id))
         .leftJoin(channelSeats, eq(channelSeats.credentialId, upstreamCredentials.id))
         .leftJoin(employees, eq(employees.id, channelSeats.employeeId)),
-      db
-        .select({
-          id: credentialBindings.id,
-          credentialId: credentialBindings.credentialId,
-          scopeType: credentialBindings.scopeType,
-          scopeId: credentialBindings.scopeId,
-        })
-        .from(credentialBindings),
-      db
-        .select({ bindingId: credentialBindingMembers.bindingId })
-        .from(credentialBindingMembers),
       db
         .select({
           virtualKeyId: requestAudits.employeeApiKeyId,
@@ -208,14 +187,7 @@ export async function adminKeyBindingRoutes(app: FastifyInstance) {
       });
     }
 
-    const membersByBinding = new Map<number, number>();
-    for (const row of memberRows) {
-      membersByBinding.set(row.bindingId, (membersByBinding.get(row.bindingId) ?? 0) + 1);
-    }
-    const memberCountByCredential = new Map(
-      bindingRows.map((row) => [row.credentialId, membersByBinding.get(row.id) ?? 0]),
-    );
-    const bindingViewById = await loadCredentialBindingViews(bindingRows);
+    const membershipById = await loadCredentialMembers(visibleCredentials.map((row) => row.id));
     const usageById = await getCredentialQuotaUsage(
       visibleCredentials.map((row) => row.id),
       now,
@@ -231,11 +203,8 @@ export async function adminKeyBindingRoutes(app: FastifyInstance) {
           packageCreditLimits(row),
           now,
           credentialWindowAnchors(row),
-          // 画布上的「额度冷却」与调度里借用者让出 Key 的借用线一致。
-          {
-            fiveHour: env.RELAY_GUEST_FIVE_HOUR_RATIO,
-            weekly: env.RELAY_GUEST_WEEKLY_RATIO,
-          },
+          // 调度不按本地估算提前让出：只有用满才算额度冷却。
+          { fiveHour: 1, weekly: 1 },
         );
         const coolingKind = resolveGraphCoolingKind(status, quota);
         return {
@@ -252,10 +221,14 @@ export async function adminKeyBindingRoutes(app: FastifyInstance) {
           weeklyCredits: quota.weeklyCredits,
           fiveHourLimit: quota.fiveHourLimit,
           weeklyLimit: quota.weeklyLimit,
-          binding: bindingViewById.get(row.id) ?? null,
-          memberCount: memberCountByCredential.get(row.id) ?? 0,
-          ownerEmployeeId: row.ownerEmployeeId,
-          ownerName: row.ownerName,
+          bound: membershipById.get(row.id)?.bound ?? false,
+          members: (membershipById.get(row.id)?.members ?? []).map((member) => ({
+            employeeId: member.employeeId,
+            name: member.name,
+            lastUsedAt: member.lastUsedAt?.toISOString() ?? null,
+          })),
+          holderEmployeeId: row.holderEmployeeId,
+          holderName: row.holderName,
         };
       })
       .sort((a, b) => a.id - b.id);
@@ -264,8 +237,8 @@ export async function adminKeyBindingRoutes(app: FastifyInstance) {
       .filter((hop) => keyById.has(hop.virtualKeyId))
       .map((hop) => ({
         ...hop,
-        // 席位主人打到自己的 Key 算「本人」，其余都是借用。
-        owner: credentialById.get(hop.credentialId)?.ownerEmployeeId === keyById.get(hop.virtualKeyId)?.employeeId,
+        // 持有人打到自己持有的 Key，其余都是借用。
+        holder: credentialById.get(hop.credentialId)?.holderEmployeeId === keyById.get(hop.virtualKeyId)?.employeeId,
       }))
       .sort((a, b) => a.virtualKeyId - b.virtualKeyId || a.credentialId - b.credentialId);
 
@@ -274,6 +247,7 @@ export async function adminKeyBindingRoutes(app: FastifyInstance) {
       data: {
         windowMinutes,
         since: since.toISOString(),
+        memberLimit: env.RELAY_KEY_MAX_MEMBERS,
         productLines: [...productLineOptions.values()].sort((a, b) => a.id - b.id),
         employees: [...employeesById.values()].sort((a, b) => a.id - b.id),
         virtualKeys: keyRows
@@ -305,6 +279,7 @@ export async function adminKeyBindingRoutes(app: FastifyInstance) {
     }
 
     const credentialId = params.data.id;
+    const membership = (await loadCredentialMembers([credentialId])).get(credentialId);
     const released = await releaseCredentialBinding(credentialId);
     if (!released) {
       return reply.code(409).send({
@@ -320,8 +295,7 @@ export async function adminKeyBindingRoutes(app: FastifyInstance) {
       targetId: String(credentialId),
       detail: {
         productLineId: released.productLineId,
-        scopeType: released.scopeType,
-        scopeId: released.scopeId,
+        members: (membership?.members ?? []).map((member) => member.name),
       },
       ip: req.ip,
     });
@@ -331,72 +305,10 @@ export async function adminKeyBindingRoutes(app: FastifyInstance) {
       data: {
         credentialId: released.credentialId,
         productLineId: released.productLineId,
-        scopeType: released.scopeType,
-        scopeId: released.scopeId,
+        releasedMembers: membership?.members.length ?? 0,
       },
     };
   });
-}
-
-async function loadCredentialBindingViews(
-  bindings: readonly {
-    credentialId: number;
-    scopeType: BindingScopeType;
-    scopeId: number;
-  }[],
-): Promise<Map<number, CredentialBindingView>> {
-  const views = new Map<number, CredentialBindingView>();
-  if (bindings.length === 0) return views;
-
-  const rows = await db
-    .select({
-      credentialId: credentialBindings.credentialId,
-      scopeType: credentialBindings.scopeType,
-      scopeId: credentialBindings.scopeId,
-      employeeName: employees.name,
-      teamName: teams.name,
-      departmentName: departments.name,
-      enterpriseName: enterprises.name,
-    })
-    .from(credentialBindings)
-    .leftJoin(
-      employees,
-      and(
-        eq(credentialBindings.scopeType, "employee"),
-        eq(employees.id, credentialBindings.scopeId),
-      ),
-    )
-    .leftJoin(
-      teams,
-      and(
-        eq(credentialBindings.scopeType, "team"),
-        eq(teams.id, credentialBindings.scopeId),
-      ),
-    )
-    .leftJoin(
-      departments,
-      and(
-        eq(credentialBindings.scopeType, "department"),
-        eq(departments.id, credentialBindings.scopeId),
-      ),
-    )
-    .leftJoin(
-      enterprises,
-      and(
-        eq(credentialBindings.scopeType, "enterprise"),
-        eq(enterprises.id, credentialBindings.scopeId),
-      ),
-    )
-    .where(inArray(credentialBindings.credentialId, bindings.map((row) => row.credentialId)));
-
-  for (const row of rows) {
-    views.set(row.credentialId, {
-      scopeType: row.scopeType,
-      scopeId: row.scopeId,
-      scopeName: row.employeeName ?? row.departmentName ?? row.teamName ?? row.enterpriseName ?? "",
-    });
-  }
-  return views;
 }
 
 function coolingUntilIso(

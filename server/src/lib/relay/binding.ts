@@ -19,12 +19,9 @@ import {
   channelSeats,
   credentialBindingMembers,
   credentialBindings,
-  departments,
   employees,
   productLines,
   providers,
-  teamMembers,
-  teams,
   upstreamCredentials,
 } from "../../db/schema/index.js";
 import {
@@ -32,15 +29,8 @@ import {
   type CredentialStatus,
 } from "../credential-status.js";
 import {
-  AFFINITY_OWN,
-  AFFINITY_SAME_ENTERPRISE,
-  departmentAffinity,
-  type AffinityDepartmentNode,
-} from "./affinity.js";
-import {
   credentialWindowAnchors,
   effectiveWeeklyResetAt,
-  evaluateCredentialQuota,
   getCredentialQuotaUsage,
   packageCreditLimits,
   remainingQuotaFraction,
@@ -65,30 +55,23 @@ import {
  * 一把 Key 最多挂 RELAY_KEY_MAX_MEMBERS 个员工、同时最多
  * RELAY_KEY_MAX_CONCURRENCY 个在途请求；同一员工在一把 Key 上最多
  * RELAY_KEY_MEMBER_CONCURRENCY 路。单人超额只 429，不解绑、不换 Key。
+ * 默认 3 人 × 3 路 = 9，正好是一把 Key 的并发上限。
  *
- * 选 Key 按亲和度从高到低（见 affinity.ts）：本人的席位 Key 最优先，
- * 其次是编制上离得近的同事的 Key。绑定后粘住，只有当前 Key 不能用时才换。
+ * 持有人（channel_seats 上登记这把 Key 的员工）只有一点优先：挂 Key 时，
+ * 自己持有的 Key 上还没有人，就先挂自己的；已经有人挂着，就和其他人一样挑。
+ * 除此之外人人平等：
+ * - 挑 Key 不看部门，按并发空位、优先级、剩余额度、当前人数（人少的先）选，
+ *   大家摊到各把 Key 上。
+ * - 绑定后粘住，只有当前 Key 不能用（停用、冷却、满并发、本次请求已失败）才换；
+ *   持有人自己的 Key 空出来也不迁回去。
+ * - 满 3 人的 Key 谁都挂不进去，持有人也不能把别人挤下去。
+ * - 额度以上游真实返回为准，本地估算不提前让出。
  *
- * 席位主人（owner）和借用者（guest）的区别：
- * - 同一员工在一把 Key 上最多 RELAY_KEY_MEMBER_CONCURRENCY 路；超额只 429，
- *   不解绑、不换 Key。默认 3 人 × 3 路 = 9，已绑定的人不会因为并发去换 Key。
- * - 主人的 Key 被借满时，主人进来会让出最久没用的借用者。
- * - 主人的 Key 满并发时，主人只把这一次请求临时发到别的 Key，绑定不动；
- *   借用者遇到满并发则解绑，换到空位够的 Key。
- * - 主人和借用者默认都能用到 100%，以上游真实返回的限额为准；
- *   设了借用线（RELAY_GUEST_*_RATIO < 1）时，借用者用到借用线就让出。
- * - 主人不在自己的 Key 上时（冷却期间借了别人的），自己的 Key 一恢复就回去。
- *
- * 同一把 Key 上的成员都属于同一家企业；别的企业员工名下的 Key 不能借。
+ * 同一把 Key 上的成员都属于同一家企业；别的企业员工持有的 Key 不能借。
+ * 绑定行只用 scope_type = 'enterprise' / scope_id 记成员所属的企业，
+ * 不再有按团队、部门、个人划分的绑定范围。
  */
 export type BindingScopeType = "employee" | "team" | "enterprise" | "department";
-
-export type BindingScope = {
-  scopeType: BindingScopeType;
-  scopeId: number;
-};
-
-export type BindingRole = "owner" | "guest";
 
 export type BoundCredential = {
   credentialId: number;
@@ -131,9 +114,6 @@ export type AcquireBindingResult =
   | {
       ok: true;
       credential: BoundCredential;
-      role: BindingRole;
-      /** This request only; the employee's binding was not changed. */
-      transient: boolean;
     }
   | {
       ok: false;
@@ -177,14 +157,15 @@ type CredentialSnapshotRow = {
   meta: unknown;
 };
 
-/** A Key with who holds it now and whose seat it belongs to. */
+/** A Key with who is on it now and who holds its seat. */
 export type PoolKeyRow = CredentialSnapshotRow & {
   bindingId: number | null;
   bindingScopeType: BindingScopeType | null;
   bindingScopeId: number | null;
   memberCount: number;
-  ownerEmployeeId: number | null;
-  ownerEnterpriseId: number | null;
+  /** 持有人：channel_seats 上登记这把 Key 的员工；充值模式下管理员直接添加的 Key 没有。 */
+  holderEmployeeId: number | null;
+  holderEnterpriseId: number | null;
 };
 
 type Membership = {
@@ -212,15 +193,14 @@ type KeyVerdict =
   | { kind: "unavailable" }
   | { kind: "cooling"; until: Date | null }
   | { kind: "excluded" }
-  | { kind: "guest_line"; until: Date | null }
   | { kind: "busy" }
   | { kind: "member_busy" };
 
 type RankedKey = {
   key: PoolKeyRow;
   credential: BoundCredential;
-  isOwn: boolean;
-  affinity: number;
+  /** 请求人持有这把 Key，且上面还没有人：挂 Key 时排第一。 */
+  freeOwn: boolean;
   headroom: number;
   fitsBurst: boolean;
 };
@@ -275,17 +255,9 @@ const poolKeySelect = {
     from ${credentialBindingMembers}
     where ${credentialBindingMembers.bindingId} = ${credentialBindings.id}
   )`,
-  ownerEmployeeId: channelSeats.employeeId,
-  ownerEnterpriseId: employees.enterpriseId,
+  holderEmployeeId: channelSeats.employeeId,
+  holderEnterpriseId: employees.enterpriseId,
 };
-
-/** Usage ratios at which a guest gives a Key back to its owner. */
-function guestQuotaRatios(): { fiveHour: number; weekly: number } {
-  return {
-    fiveHour: env.RELAY_GUEST_FIVE_HOUR_RATIO,
-    weekly: env.RELAY_GUEST_WEEKLY_RATIO,
-  };
-}
 
 /**
  * Release members who have not called through their Key for
@@ -347,44 +319,60 @@ export async function releaseCredentialBinding(
   return row ?? null;
 }
 
-/**
- * Enterprise that currently owns a binding. Enterprise-scoped rows are the
- * scope itself; other scopes use the subject's `enterpriseId`.
- */
-export async function loadBindingEnterpriseId(
-  binding: BindingScope,
-): Promise<number | null> {
-  if (binding.scopeType === "enterprise") return binding.scopeId;
-  if (binding.scopeType === "employee") {
-    const [row] = await db
-      .select({ enterpriseId: employees.enterpriseId })
-      .from(employees)
-      .where(eq(employees.id, binding.scopeId))
-      .limit(1);
-    return row?.enterpriseId ?? null;
+/** 这把 Key 上已经挂着别的企业的人（一把 Key 上的成员只来自一家企业）。 */
+function heldByOtherEnterprise(
+  binding: { scopeType: BindingScopeType | null; scopeId: number | null },
+  enterpriseId: number,
+): boolean {
+  return binding.scopeType !== "enterprise" || binding.scopeId !== enterpriseId;
+}
+
+export type CredentialMember = {
+  employeeId: number;
+  name: string;
+  lastUsedAt: Date | null;
+};
+
+export type CredentialMembership = {
+  /** 有绑定行（成员可能刚走光，还在宽限期里）。 */
+  bound: boolean;
+  members: CredentialMember[];
+};
+
+/** 每把渠道 Key 现在挂着谁；管理端各处显示绑定都用它，不再显示绑定范围。 */
+export async function loadCredentialMembers(
+  credentialIds: readonly number[],
+): Promise<Map<number, CredentialMembership>> {
+  const result = new Map<number, CredentialMembership>();
+  if (credentialIds.length === 0) return result;
+  const rows = await db
+    .select({
+      credentialId: credentialBindings.credentialId,
+      employeeId: credentialBindingMembers.employeeId,
+      name: employees.name,
+      lastUsedAt: credentialBindingMembers.lastUsedAt,
+    })
+    .from(credentialBindings)
+    .leftJoin(credentialBindingMembers, eq(credentialBindingMembers.bindingId, credentialBindings.id))
+    .leftJoin(employees, eq(employees.id, credentialBindingMembers.employeeId))
+    .where(inArray(credentialBindings.credentialId, [...credentialIds]))
+    .orderBy(asc(credentialBindingMembers.createdAt), asc(credentialBindingMembers.id));
+  for (const row of rows) {
+    const entry = result.get(row.credentialId) ?? { bound: true, members: [] };
+    if (row.employeeId != null) {
+      entry.members.push({ employeeId: row.employeeId, name: row.name ?? "", lastUsedAt: row.lastUsedAt });
+    }
+    result.set(row.credentialId, entry);
   }
-  if (binding.scopeType === "department") {
-    const [row] = await db
-      .select({ enterpriseId: departments.enterpriseId })
-      .from(departments)
-      .where(eq(departments.id, binding.scopeId))
-      .limit(1);
-    return row?.enterpriseId ?? null;
-  }
-  const [row] = await db
-    .select({ enterpriseId: teams.enterpriseId })
-    .from(teams)
-    .where(eq(teams.id, binding.scopeId))
-    .limit(1);
-  return row?.enterpriseId ?? null;
+  return result;
 }
 
 /**
  * Return the Key this request should use.
  *
- * A bound employee keeps their Key while it is usable. Otherwise the best
- * Key by affinity is joined (or, for an owner whose own Key is merely full,
- * borrowed for this one request).
+ * A bound employee keeps their Key while it is usable. Otherwise they join
+ * the best Key by ranking: their own held Key first when nobody is on it,
+ * then any Key by free slots, priority, headroom and fewest members.
  */
 export async function acquireBoundCredential(
   params: AcquireBindingParams,
@@ -428,23 +416,12 @@ export async function acquireBoundCredential(
     const current = await loadMembership(ctx.employeeId, pool.key);
 
     if (current && !ctx.skip.has(current.key.credentialId)) {
-      const role: BindingRole =
-        current.key.ownerEmployeeId === ctx.employeeId ? "owner" : "guest";
       const usageMap = await loadUsage([current.key], now);
-      const verdict = judgeKey(ctx, current.key, usageMap.get(current.key.credentialId), role);
+      const verdict = judgeKey(ctx, current.key, usageMap.get(current.key.credentialId));
 
       if (verdict.kind === "usable") {
-        if (role === "guest") {
-          // An owner borrowing someone else's Key goes home once their own works again.
-          const home = await findUsableHomeKey(ctx);
-          if (home) {
-            const outcome = await joinKey(ctx, home);
-            if (outcome === "joined") return granted(home.credential, "owner", false);
-            if (outcome === "retry") continue;
-          }
-        }
         await touchMembership(current, now);
-        return granted(verdict.credential, role, false);
+        return { ok: true, credential: verdict.credential };
       }
 
       if (verdict.kind === "member_busy") {
@@ -452,44 +429,24 @@ export async function acquireBoundCredential(
         return { ok: false, reason: "member_busy", retryAt: null };
       }
 
-      if (role === "owner" && (verdict.kind === "busy" || verdict.kind === "excluded")) {
-        // Their own Key is only momentarily unusable: borrow for this request, stay bound.
-        await touchMembership(current, now);
-        ctx.skip.add(current.key.credentialId);
-        const ranking = await rankPoolKeys(ctx, "transient");
-        const pick = ranking.usable[0];
-        if (pick) return granted(pick.credential, "guest", true);
-        return rankingFailure(ranking, now, verdict.kind === "busy", null);
-      }
-
-      // Anyone else leaves this Key for another one.
+      // The current Key cannot serve this request: leave it for another one.
       currentBusy = verdict.kind === "busy";
-      if (verdict.kind === "cooling" || verdict.kind === "guest_line") {
+      if (verdict.kind === "cooling") {
         currentRetryAt = verdict.until?.getTime() ?? null;
       }
       ctx.skip.add(current.key.credentialId);
     }
 
-    const ranking = await rankPoolKeys(ctx, "join");
+    const ranking = await rankPoolKeys(ctx);
     const pick = ranking.usable[0];
     if (!pick) {
       return rankingFailure(ranking, now, currentBusy, currentRetryAt);
     }
     const outcome = await joinKey(ctx, pick);
-    if (outcome === "joined") {
-      return granted(pick.credential, pick.isOwn ? "owner" : "guest", false);
-    }
+    if (outcome === "joined") return { ok: true, credential: pick.credential };
     if (outcome !== "retry") ctx.skip.add(pick.key.credentialId);
   }
   return { ok: false, reason: "no_binding_available", retryAt: null };
-}
-
-function granted(
-  credential: BoundCredential,
-  role: BindingRole,
-  transient: boolean,
-): AcquireBindingResult {
-  return { ok: true, credential, role, transient };
 }
 
 function rankingFailure(
@@ -512,14 +469,14 @@ function rankingFailure(
 }
 
 /**
- * Decide whether one Key can serve this request for the given role.
- * Pure given the usage ledger and the in-process in-flight counters.
+ * Decide whether one Key can serve this request. The same rule for everyone:
+ * holders get no exemption. Pure given the usage ledger and the in-process
+ * in-flight counters.
  */
 function judgeKey(
   ctx: AcquireContext,
   key: PoolKeyRow,
   ledger: CredentialQuotaUsage | undefined,
-  role: BindingRole,
 ): KeyVerdict {
   const status = effectiveCredentialStatus(key.credentialStatus, key.coolUntil, ctx.now);
   if (status === "cooling") return { kind: "cooling", until: key.coolUntil };
@@ -531,21 +488,11 @@ function judgeKey(
   const mine = getEmployeeCredentialInFlight(ctx.employeeId, key.credentialId);
   if (mine >= env.RELAY_KEY_MEMBER_CONCURRENCY) return { kind: "member_busy" };
   const limits = packageCreditLimits(key);
+  // 本地账本只用来排序（剩余额度），不拦人：额度以上游真实返回为准。
   const usage = withInFlightEstimate(
     ledger ?? { fiveHourCredits: 0, weeklyCredits: 0 },
     inFlight,
   );
-  if (role === "guest") {
-    // 本地账本是推导值：只用来让借用者提前让出，不写冷却状态。
-    const quota = evaluateCredentialQuota(
-      usage,
-      limits,
-      ctx.now,
-      snapshotAnchors(key),
-      guestQuotaRatios(),
-    );
-    if (quota.exhausted) return { kind: "guest_line", until: quota.exhaustedUntil };
-  }
 
   const freeSlots = env.RELAY_KEY_MAX_CONCURRENCY - inFlight;
   if (freeSlots <= 0) return { kind: "busy" };
@@ -560,15 +507,8 @@ function judgeKey(
   };
 }
 
-/**
- * Order every Key in the pool this employee could use right now.
- * `join` ranks Keys to become a member of; `transient` ranks Keys an owner
- * may borrow for one request without joining.
- */
-async function rankPoolKeys(
-  ctx: AcquireContext,
-  mode: "join" | "transient",
-): Promise<Ranking> {
+/** Order every Key in the pool this employee could join right now. */
+async function rankPoolKeys(ctx: AcquireContext): Promise<Ranking> {
   const ranking: Ranking = { usable: [], busy: false, full: false, retryTimes: [] };
   const keys = await loadPoolKeys({
     productLineIds: ctx.pool.activeProductLineIds,
@@ -578,23 +518,23 @@ async function rankPoolKeys(
   if (keys.length === 0) return ranking;
   const usageMap = await loadUsage(keys, ctx.now);
 
-  const eligible: Array<Omit<RankedKey, "affinity">> = [];
+  const eligible: RankedKey[] = [];
   for (const key of keys) {
     if (ctx.skip.has(key.credentialId)) continue;
-    const isOwn = key.ownerEmployeeId === ctx.employeeId;
-    // 别的企业员工名下的 Key 不能借；一把 Key 上的成员只来自一家企业。
-    if (!isOwn && key.ownerEmployeeId != null && key.ownerEnterpriseId !== ctx.enterpriseId) {
+    const isOwn = key.holderEmployeeId === ctx.employeeId;
+    // 别的企业员工持有的 Key 不能借；一把 Key 上的成员只来自一家企业。
+    if (!isOwn && key.holderEmployeeId != null && key.holderEnterpriseId !== ctx.enterpriseId) {
       continue;
     }
     if (
       key.memberCount > 0 &&
-      (key.bindingScopeType !== "enterprise" || key.bindingScopeId !== ctx.enterpriseId)
+      heldByOtherEnterprise({ scopeType: key.bindingScopeType, scopeId: key.bindingScopeId }, ctx.enterpriseId)
     ) {
       continue;
     }
 
-    const verdict = judgeKey(ctx, key, usageMap.get(key.credentialId), isOwn ? "owner" : "guest");
-    if (verdict.kind === "cooling" || verdict.kind === "guest_line") {
+    const verdict = judgeKey(ctx, key, usageMap.get(key.credentialId));
+    if (verdict.kind === "cooling") {
       if (verdict.until) ranking.retryTimes.push(verdict.until.getTime());
       continue;
     }
@@ -605,31 +545,27 @@ async function rankPoolKeys(
     }
     if (verdict.kind !== "usable") continue;
 
-    // 满员的 Key 只有主人本人能进（进去时让出一个借用者）。
-    if (key.memberCount >= env.RELAY_KEY_MAX_MEMBERS && !(mode === "join" && isOwn)) {
+    // 满员的 Key 谁都挂不进去，持有人也一样。
+    if (key.memberCount >= env.RELAY_KEY_MAX_MEMBERS) {
       ranking.full = true;
       continue;
     }
     eligible.push({
       key,
       credential: verdict.credential,
-      isOwn,
+      freeOwn: isOwn && key.memberCount === 0,
       headroom: verdict.headroom,
       fitsBurst: verdict.freeSlots >= ctx.neededSlots,
     });
   }
   if (eligible.length === 0) return ranking;
 
-  // 自己的 Key 可用时不需要再算别人的亲和度。
-  const own = eligible.filter((item) => item.isOwn);
-  const ranked: RankedKey[] = own.length > 0
-    ? own.map((item) => ({ ...item, affinity: AFFINITY_OWN }))
-    : await withAffinity(ctx, eligible);
-
+  // 持有人只有一点优先：自己的 Key 上还没有人就先挂自己的；其余不看部门、人人平等。
+  const ranked = eligible;
   ranked.sort(
     (a, b) =>
+      Number(b.freeOwn) - Number(a.freeOwn) ||
       Number(b.fitsBurst) - Number(a.fitsBurst) ||
-      b.affinity - a.affinity ||
       b.key.credentialPriority - a.key.credentialPriority ||
       b.headroom - a.headroom ||
       a.key.memberCount - b.key.memberCount ||
@@ -638,98 +574,6 @@ async function rankPoolKeys(
   );
   ranking.usable = ranked;
   return ranking;
-}
-
-async function withAffinity(
-  ctx: AcquireContext,
-  items: ReadonlyArray<Omit<RankedKey, "affinity">>,
-): Promise<RankedKey[]> {
-  const ownerIds = [
-    ...new Set(
-      items
-        .map((item) => item.key.ownerEmployeeId)
-        .filter((id): id is number => id != null),
-    ),
-  ];
-  if (ownerIds.length === 0) {
-    return items.map((item) => ({ ...item, affinity: AFFINITY_SAME_ENTERPRISE }));
-  }
-
-  const [membershipRows, nodes] = await Promise.all([
-    db
-      .select({ employeeId: teamMembers.employeeId, departmentId: teams.departmentId })
-      .from(teamMembers)
-      .innerJoin(teams, eq(teamMembers.teamId, teams.id))
-      .where(inArray(teamMembers.employeeId, [ctx.employeeId, ...ownerIds])),
-    db
-      .select({ id: departments.id, parentId: departments.parentId })
-      .from(departments)
-      .where(eq(departments.enterpriseId, ctx.enterpriseId)),
-  ]);
-  const departmentsByEmployee = new Map<number, number[]>();
-  for (const row of membershipRows) {
-    const list = departmentsByEmployee.get(row.employeeId) ?? [];
-    list.push(row.departmentId);
-    departmentsByEmployee.set(row.employeeId, list);
-  }
-  const mine = departmentsByEmployee.get(ctx.employeeId) ?? [];
-  const treeNodes: AffinityDepartmentNode[] = nodes;
-
-  return items.map((item) => {
-    const ownerId = item.key.ownerEmployeeId;
-    // 没有席位主人的 Key（充值模式）谈不上亲疏，和「只是同企业」同分。
-    const affinity = ownerId == null
-      ? AFFINITY_SAME_ENTERPRISE
-      : departmentAffinity(mine, departmentsByEmployee.get(ownerId) ?? [], treeNodes);
-    return { ...item, affinity };
-  });
-}
-
-/**
- * The requester's own seat Key in this pool, when it can serve them now.
- * Only consulted while they are bound to someone else's Key.
- */
-async function findUsableHomeKey(ctx: AcquireContext): Promise<RankedKey | null> {
-  if (ctx.pool.activeProductLineIds.length === 0) return null;
-  const seatRows = await db
-    .select({ credentialId: upstreamCredentials.id })
-    .from(channelSeats)
-    .innerJoin(upstreamCredentials, eq(upstreamCredentials.id, channelSeats.credentialId))
-    .where(
-      and(
-        eq(channelSeats.employeeId, ctx.employeeId),
-        inArray(upstreamCredentials.productLineId, [...ctx.pool.activeProductLineIds]),
-      ),
-    );
-  const credentialIds = seatRows
-    .map((row) => row.credentialId)
-    .filter((id) => !ctx.skip.has(id));
-  if (credentialIds.length === 0) return null;
-
-  const keys = await loadPoolKeys({ credentialIds, selectableOnly: true });
-  const usageMap = await loadUsage(keys, ctx.now);
-  let best: RankedKey | null = null;
-  for (const key of keys) {
-    if (
-      key.memberCount > 0 &&
-      (key.bindingScopeType !== "enterprise" || key.bindingScopeId !== ctx.enterpriseId)
-    ) {
-      continue;
-    }
-    const verdict = judgeKey(ctx, key, usageMap.get(key.credentialId), "owner");
-    if (verdict.kind !== "usable") continue;
-    if (!best || verdict.headroom > best.headroom) {
-      best = {
-        key,
-        credential: verdict.credential,
-        isOwn: true,
-        affinity: AFFINITY_OWN,
-        headroom: verdict.headroom,
-        fitsBurst: verdict.freeSlots >= ctx.neededSlots,
-      };
-    }
-  }
-  return best;
 }
 
 /**
@@ -769,31 +613,13 @@ async function joinKey(ctx: AcquireContext, pick: RankedKey): Promise<JoinOutcom
     if (!binding) return "retry";
 
     const members = await tx
-      .select({
-        id: credentialBindingMembers.id,
-        employeeId: credentialBindingMembers.employeeId,
-        lastUsedAt: credentialBindingMembers.lastUsedAt,
-        createdAt: credentialBindingMembers.createdAt,
-      })
+      .select({ employeeId: credentialBindingMembers.employeeId })
       .from(credentialBindingMembers)
       .where(eq(credentialBindingMembers.bindingId, binding.id));
-    const heldByOtherEnterprise =
-      binding.scopeType !== "enterprise" || binding.scopeId !== ctx.enterpriseId;
-    if (heldByOtherEnterprise && members.length > 0) return "foreign";
+    if (heldByOtherEnterprise(binding, ctx.enterpriseId) && members.length > 0) return "foreign";
 
     const others = members.filter((member) => member.employeeId !== ctx.employeeId);
-    if (others.length >= maxMembers) {
-      if (!pick.isOwn) return "full";
-      // 主人回到自己的 Key：让出最久没用的借用者，他们下次请求会换到别的 Key。
-      const lastTouch = (member: (typeof others)[number]) =>
-        (member.lastUsedAt ?? member.createdAt).getTime();
-      const evicted = [...others]
-        .sort((a, b) => lastTouch(a) - lastTouch(b) || a.id - b.id)
-        .slice(0, others.length - (maxMembers - 1));
-      await tx
-        .delete(credentialBindingMembers)
-        .where(inArray(credentialBindingMembers.id, evicted.map((member) => member.id)));
-    }
+    if (others.length >= maxMembers) return "full";
 
     await tx
       .update(credentialBindings)

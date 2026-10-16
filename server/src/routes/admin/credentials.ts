@@ -5,17 +5,16 @@ import { db } from "../../db/client.js";
 import {
   credentialBindingMembers,
   credentialBindings,
-  departments,
   employees,
   enterprises,
   opsAuditLogs,
   productLines,
   providers,
   requestAudits,
-  teams,
   upstreamCredentials,
 } from "../../db/schema/index.js";
 import { env } from "../../config.js";
+import { loadCredentialMembers, type CredentialMembership } from "../../lib/relay/binding.js";
 import {
   FIVE_HOUR_MS,
   credentialWindowAnchors,
@@ -86,67 +85,16 @@ const RECENT_WINDOW_MS = 24 * 60 * 60 * 1_000;
 
 const supportedProtocolsSchema = configurableSupportedProtocolsSchema;
 
-type CredentialBindingView = {
-  scopeType: "employee" | "team" | "enterprise" | "department";
-  scopeId: number;
-  scopeName: string;
-};
-
-async function loadCredentialBindingViews(
-  credentialIds: readonly number[],
-): Promise<Map<number, CredentialBindingView>> {
-  const views = new Map<number, CredentialBindingView>();
-  if (credentialIds.length === 0) return views;
-
-  const rows = await db
-    .select({
-      credentialId: credentialBindings.credentialId,
-      scopeType: credentialBindings.scopeType,
-      scopeId: credentialBindings.scopeId,
-      employeeName: employees.name,
-      teamName: teams.name,
-      departmentName: departments.name,
-      enterpriseName: enterprises.name,
-    })
-    .from(credentialBindings)
-    .leftJoin(
-      employees,
-      and(
-        eq(credentialBindings.scopeType, "employee"),
-        eq(employees.id, credentialBindings.scopeId),
-      ),
-    )
-    .leftJoin(
-      teams,
-      and(
-        eq(credentialBindings.scopeType, "team"),
-        eq(teams.id, credentialBindings.scopeId),
-      ),
-    )
-    .leftJoin(
-      departments,
-      and(
-        eq(credentialBindings.scopeType, "department"),
-        eq(departments.id, credentialBindings.scopeId),
-      ),
-    )
-    .leftJoin(
-      enterprises,
-      and(
-        eq(credentialBindings.scopeType, "enterprise"),
-        eq(enterprises.id, credentialBindings.scopeId),
-      ),
-    )
-    .where(inArray(credentialBindings.credentialId, [...credentialIds]));
-
-  for (const row of rows) {
-    views.set(row.credentialId, {
-      scopeType: row.scopeType,
-      scopeId: row.scopeId,
-      scopeName: row.employeeName ?? row.departmentName ?? row.teamName ?? row.enterpriseName ?? "",
-    });
-  }
-  return views;
+/** 绑定只显示成员：挂着谁、几个人、每把最多几个人。 */
+function membershipView(membership: CredentialMembership | undefined) {
+  return {
+    bound: membership?.bound ?? false,
+    members: (membership?.members ?? []).map((member) => ({
+      employeeId: member.employeeId,
+      name: member.name,
+    })),
+    memberLimit: env.RELAY_KEY_MAX_MEMBERS,
+  };
 }
 
 function pushUniqueName(names: string[], value: string | null | undefined) {
@@ -730,9 +678,9 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
         }),
       ]),
     );
-    const [usageById, bindingById] = await Promise.all([
+    const [usageById, membershipById] = await Promise.all([
       getCredentialQuotaUsage(credentialIds, now, summaryAnchorsById),
-      loadCredentialBindingViews(credentialIds),
+      loadCredentialMembers(credentialIds),
     ]);
     const effectiveStatuses = credentialRows.map((row) => ({
       ...row,
@@ -810,7 +758,7 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
               now,
             ),
             lastFailureKind: row.lastFailureKind,
-            binding: bindingById.get(row.id) ?? null,
+            ...membershipView(membershipById.get(row.id)),
           };
         }),
       },
@@ -897,7 +845,7 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
     const anchorsById = new Map<number, CredentialWindowAnchors>(
       rows.map((row) => [row.id, credentialWindowAnchors(row)]),
     );
-    const [recentRows, usageById, bindingById, connectedNamesById] = await Promise.all([
+    const [recentRows, usageById, membershipById, connectedNamesById] = await Promise.all([
       credentialIds.length
         ? db
           .select({
@@ -915,7 +863,7 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
           .groupBy(requestAudits.credentialId)
         : Promise.resolve([]),
       getCredentialQuotaUsage(credentialIds, now, anchorsById),
-      loadCredentialBindingViews(credentialIds),
+      loadCredentialMembers(credentialIds),
       loadConnectedNamesByCredential(rows),
     ]);
 
@@ -956,9 +904,7 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
       success: true,
       data: rows.map((row) => {
         const usage = usageById.get(row.id) ?? { fiveHourCredits: 0, weeklyCredits: 0 };
-        const binding = bindingById.get(row.id) ?? null;
         const connectedNames: string[] = [];
-        pushUniqueName(connectedNames, binding?.scopeName);
         for (const name of connectedNamesById.get(row.id) ?? []) pushUniqueName(connectedNames, name);
         // 积分上限来自套餐，套餐下每把 Key 相同。
         const limits = packageCreditLimits(row);
@@ -985,7 +931,7 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
             : null,
           lastFailureKind: row.lastFailureKind,
           lastVendorCode: row.lastVendorCode,
-          binding,
+          ...membershipView(membershipById.get(row.id)),
           connectedNames,
         };
       }),

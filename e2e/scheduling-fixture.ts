@@ -62,7 +62,7 @@ function person(
 
 /** 人员按「相对网关小组的远近」命名，方便读用例。 */
 export const SCHED_PEOPLE = {
-  // 亲和度阶梯
+  // 编制上远近不同的同事：借 Key 不看部门，用来证明同组的 Key 不会被优先
   self: person(1, "调度-本人", ["d1a1"]),
   leafMate: person(2, "调度-同组同事", ["d1a1"]),
   subMate: person(3, "调度-同部门同事", ["d1a2"]),
@@ -76,27 +76,27 @@ export const SCHED_PEOPLE = {
   guest2: person(12, "调度-借用乙", ["d1a1"]),
   guest3: person(13, "调度-借用丙", ["d1a1"]),
   guest4: person(14, "调度-借用丁", ["d1a1"]),
-  // 各场景的席位主人
-  ownerCap: person(21, "调度-容量主人", ["d1a1"]),
-  ownerBurst: person(22, "调度-并发主人", ["d1a1"]),
-  ownerQuota: person(23, "调度-额度主人", ["d1a1"]),
-  ownerIdle: person(24, "调度-闲置主人", ["d1a1"]),
-  ownerIso: person(25, "调度-隔离主人", ["d1a1"]),
-  ownerHome: person(26, "调度-回家主人", ["d1a1"]),
-  ownerWin5: person(27, "调度-五小时主人", ["d1a1"]),
-  ownerWeek: person(28, "调度-周窗口主人", ["d1a1"]),
-  ownerLimit: person(29, "调度-上限主人", ["d1a1"]),
-  // 潮汐调度：被授权的人、没被授权的人、企业管理员，以及各把 Key 的席位主人
+  // 各场景的持有人
+  ownerCap: person(21, "调度-容量持有人", ["d1a1"]),
+  ownerBurst: person(22, "调度-并发持有人", ["d1a1"]),
+  ownerQuota: person(23, "调度-额度持有人", ["d1a1"]),
+  ownerIdle: person(24, "调度-闲置持有人", ["d1a1"]),
+  ownerIso: person(25, "调度-隔离持有人", ["d1a1"]),
+  ownerHome: person(26, "调度-回家持有人", ["d1a1"]),
+  ownerWin5: person(27, "调度-五小时持有人", ["d1a1"]),
+  ownerWeek: person(28, "调度-周窗口持有人", ["d1a1"]),
+  ownerLimit: person(29, "调度-上限持有人", ["d1a1"]),
+  // 潮汐调度：被授权的人、没被授权的人、企业管理员，以及各把 Key 的持有人
   tdUser: person(31, "潮汐-被授权员工", ["d1a1"], {}),
   tdPlain: person(32, "潮汐-未授权员工", ["d1a1"], {}),
   tdOrgAdmin: person(33, "潮汐-企业管理员", ["d1a1"], { role: "org_admin" }),
-  tdO1: person(41, "潮汐-主人一", ["d1a1"]),
-  tdO2: person(42, "潮汐-主人二", ["d1a1"]),
-  tdO3: person(43, "潮汐-主人三", ["d1a1"]),
-  tdO4: person(44, "潮汐-主人四", ["d1a1"]),
-  tdO5: person(45, "潮汐-主人五", ["d1a1"]),
-  tdO7: person(47, "潮汐-主人七", ["d1a1"]),
-  tdO8: person(48, "潮汐-主人八", ["d1a1"]),
+  tdO1: person(41, "潮汐-持有人一", ["d1a1"]),
+  tdO2: person(42, "潮汐-持有人二", ["d1a1"]),
+  tdO3: person(43, "潮汐-持有人三", ["d1a1"]),
+  tdO4: person(44, "潮汐-持有人四", ["d1a1"]),
+  tdO5: person(45, "潮汐-持有人五", ["d1a1"]),
+  tdO7: person(47, "潮汐-持有人七", ["d1a1"]),
+  tdO8: person(48, "潮汐-持有人八", ["d1a1"]),
 } as const satisfies Record<string, SchedPerson>;
 
 export type SchedPersonKey = keyof typeof SCHED_PEOPLE;
@@ -121,13 +121,13 @@ export type SchedPoolDef = {
  * 每个场景一条智谱套餐。智谱是一个调度池，用例开跑前只启用自己那条套餐，互不影响。
  * 渠道 Key 按数组顺序入库，ID 递增；同分时调度取 ID 小的。
  *
- * 席位套餐的池子里每把 Key 都有席位主人。只有充值模式（管理员直接添加 Key）
- * 的池子里 Key 没有主人：recharge、ratelimit、planDenied、attempts、planExpired、
+ * 席位套餐的池子里每把 Key 都有持有人。只有充值模式（管理员直接添加 Key）
+ * 的池子里 Key 没有持有人：recharge、ratelimit、planDenied、attempts、planExpired、
  * overload、serverError。
  */
 export const SCHED_POOLS = {
-  affinity: {
-    name: "调度E2E-亲和",
+  borrow: {
+    name: "调度E2E-借用",
     keys: [
       { label: "ent0", owner: "entMate" },
       { label: "fst0", owner: "firstMate" },
@@ -238,11 +238,15 @@ export const SCHED_POOLS = {
     keys: [{ label: "homo", owner: "ownerHome" }, { label: "homf", owner: "entMate" }],
     users: ["ownerHome", "guest1"],
   },
-  // 调度画布（key-bindings-canvas.spec.ts）：主人一把、同企业一把，借用者在两把之间换过。
+  // 调度画布（key-bindings-canvas.spec.ts）：三把 Key，借用者摊开，持有人的 Key 冷却后换走。
   canvas: {
     name: "调度E2E-画布",
-    keys: [{ label: "cvso", owner: "ownerCap" }, { label: "cvsf", owner: "entMate" }],
-    users: ["ownerCap", "guest1", "guest2", "guest3", "guest4"],
+    keys: [
+      { label: "cvso", owner: "ownerCap" },
+      { label: "cvsf", owner: "entMate" },
+      { label: "cvsx", owner: "firstMate" },
+    ],
+    users: ["ownerCap", "guest1", "guest2", "guest3", "guest4", "leafMate"],
   },
   // 潮汐调度：8 把席位 Key，用例往账本里写用量把它们分到不同档位（见 tidal.spec.ts）。
   // 5 小时上限故意比周上限小一个量级，这样能单独把某把 Key 的 5 小时用量顶过借用线。

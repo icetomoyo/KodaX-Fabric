@@ -75,13 +75,12 @@
         </section>
 
         <section class="detail-block">
-          <h3>绑定</h3>
-          <p>席位主人：{{ selectedCredential.ownerName || "无" }}</p>
-          <p v-if="selectedCredential.binding">
-            当前挂在：{{ selectedCredential.binding.scopeName || selectedCredential.binding.scopeId }}
-            · {{ selectedCredential.memberCount }} 人
+          <h3>成员 {{ selectedCredential.members.length }}/{{ graph?.memberLimit ?? 3 }}</h3>
+          <p>持有人：{{ selectedCredential.holderName || "无" }}</p>
+          <p v-if="selectedCredential.members.length" data-testid="credential-members">
+            {{ selectedCredential.members.map(memberText).join("、") }}
           </p>
-          <p v-else class="muted">当前没有绑定</p>
+          <p v-else class="muted">当前没有成员</p>
         </section>
 
         <section class="detail-block">
@@ -116,7 +115,7 @@
                 <span class="mono">{{ row.requests }} 次</span>
               </div>
               <span>
-                {{ row.owner ? "本人 Key" : "借用" }} · {{ row.keyName }}
+                {{ row.holder ? "持有人自用" : "借用" }} · {{ row.keyName }}
                 <template v-if="row.failures"> · 失败 {{ row.failures }}</template>
                 <template v-if="row.lastAt"> · 最近 {{ formatTime(row.lastAt) }}</template>
                 <template v-else> · 进行中</template>
@@ -128,7 +127,7 @@
       <template #footer>
         <el-button @click="credentialOpen = false">关闭</el-button>
         <el-button
-          v-if="selectedCredential?.binding"
+          v-if="selectedCredential?.bound"
           type="primary"
           :loading="releasing"
           @click="releaseSelectedCredential"
@@ -178,10 +177,13 @@ type GraphCredential = {
   weeklyCredits: number;
   fiveHourLimit: number | null;
   weeklyLimit: number | null;
-  binding: { scopeType: string; scopeId: number; scopeName: string } | null;
-  memberCount: number;
-  ownerEmployeeId: number | null;
-  ownerName: string | null;
+  /** 有绑定行；成员走光后在宽限期里仍为 true。 */
+  bound: boolean;
+  /** 现在挂在这把 Key 上的人，最多 memberLimit 个。 */
+  members: Array<{ employeeId: number; name: string; lastUsedAt: string | null }>;
+  /** 持有人：登记这把 Key 的员工；只在挂 Key 时、Key 上没人时优先挂自己的。 */
+  holderEmployeeId: number | null;
+  holderName: string | null;
 };
 
 type GraphHop = {
@@ -192,12 +194,14 @@ type GraphHop = {
   credits: number;
   /** 窗口内最后一次请求；只在途、还没落审计时为 null。 */
   lastAt: string | null;
-  owner: boolean;
+  /** 持有人打到自己持有的 Key。 */
+  holder: boolean;
 };
 
 type SchedulingGraph = {
   windowMinutes: number;
   since: string;
+  memberLimit: number;
   productLines: Array<{ id: number; name: string; providerName: string }>;
   employees: GraphEmployee[];
   virtualKeys: GraphVirtualKey[];
@@ -264,6 +268,11 @@ function laneTagType(lane: CredentialLane): "info" | "warning" | "danger" | "suc
   if (lane === "cooling_5h" || lane === "cooling_weekly") return "danger";
   if (lane === "disabled") return "warning";
   return "info";
+}
+
+function memberText(member: { employeeId: number; name: string }): string {
+  const holder = selectedCredential.value?.holderEmployeeId === member.employeeId;
+  return `${member.name}${holder ? "（持有人）" : "（借用）"}`;
 }
 
 function formatTime(value: string | null | undefined): string {
@@ -359,7 +368,7 @@ function makeNode(type: string, id: number | string, x: number, y: number, data:
 
 function hopEdgeStyle(hop: GraphHop): Record<string, string | number> {
   const width = 1.5 + Math.min(3, Math.log2(1 + hop.requests) / 2);
-  return hop.owner
+  return hop.holder
     ? { stroke: "#2563eb", strokeWidth: width }
     : { stroke: "#7c3aed", strokeWidth: width, strokeDasharray: "6 4" };
 }
@@ -420,10 +429,13 @@ const layout = computed((): { nodes: Node[]; edges: Edge[] } => {
     const until = lane === "cooling_5h" || lane === "cooling_weekly" ? formatTime(credential.coolUntil) : "";
     const requests = requestsByCredential.get(credential.id) ?? 0;
     const tail = until ? `${state} · 至 ${until}` : busy ? `${requests} 次` : state;
+    const members = credential.members.length
+      ? ` · ${credential.members.length}/${graph.value?.memberLimit ?? 3} 人`
+      : "";
     return {
       ...credential,
       lane,
-      caption: `${credential.productLineName} · ${tail}`,
+      caption: `${credential.productLineName} · ${tail}${members}`,
     };
   };
 
@@ -492,7 +504,7 @@ const layout = computed((): { nodes: Node[]; edges: Edge[] } => {
       markerEnd: MarkerType.ArrowClosed,
       style: hopEdgeStyle(hop),
       data: {
-        owner: hop.owner,
+        holder: hop.holder,
         requests: hop.requests,
         working: false,
         afterglow: false,
@@ -548,7 +560,7 @@ const credentialUsers = computed(() => {
         keyId: key.id,
         keyName: key.name,
         employeeName: employeeById.get(key.employeeId)?.name ?? `员工 ${key.employeeId}`,
-        owner: hop.owner,
+        holder: hop.holder,
         requests: hop.requests,
         failures: hop.failures,
         lastAt: hop.lastAt,
@@ -574,10 +586,10 @@ function clearSelection() {
 
 async function releaseSelectedCredential() {
   const credential = selectedCredential.value;
-  if (!credential?.binding) return;
+  if (!credential?.bound) return;
   try {
     await ElMessageBox.confirm(
-      "释放后这把渠道 Key 回到资源池，正在用它的员工下次请求时重新挂 Key。",
+      "释放后这把渠道 Key 上的成员全部移走，他们下次请求时重新挂 Key。",
       "释放绑定",
       { type: "warning", confirmButtonText: "释放", cancelButtonText: "取消" },
     );

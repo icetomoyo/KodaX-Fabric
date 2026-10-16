@@ -119,7 +119,6 @@ type CredentialRow = KeyQuotaRow & {
   secretSuffix: string;
   providerCode: string;
   productLineName: string;
-  binding: { scopeName: string } | null;
   connectedNames?: string[];
 };
 
@@ -199,7 +198,6 @@ function keyCount(code: string): number {
 function employeeName(row: CredentialRow): string {
   const connected = (row.connectedNames ?? []).find((name) => name.trim());
   if (connected) return connected;
-  if (row.binding?.scopeName) return row.binding.scopeName;
   return row.label;
 }
 

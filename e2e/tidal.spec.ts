@@ -24,7 +24,7 @@ import {
 
 /**
  * 潮汐调度 E2E：被授权的员工用一把「潮汐KEY」，在开放时段内把请求铺到很多把
- * 闲置的渠道 Key 上（每把只占一两个并发），不挤占席位主人。
+ * 闲置的渠道 Key 上（每把只占一两个并发），不挤占持有人。
  *
  * 全程走真实 HTTP 进真实 server，上游是本机可编排的 mock。夹具见
  * scheduling-fixture.ts 的 tidal 池：8 把席位 Key，套餐上限 5 小时 100 / 每周 1000。
@@ -33,7 +33,7 @@ import {
  *   td03                  周用量 10%      → 第二档
  *   td04                  周用量 60%      → 超过周借用线（50%）
  *   td05                  5 小时用量 70%  → 超过 5 小时借用线（60%）
- *   td06                  主人是别的企业的员工
+ *   td06                  持有人是别的企业的员工
  *
  * 潮汐调度可能出错的方式（每条对应下面一个断言）：
  *  1. 没授权的员工能从 Key 列表接口看到潮汐授权的字段，或者能建出潮汐KEY。
@@ -50,12 +50,12 @@ import {
  * 12. 授权 8 并发，却被员工级 5 并发的保护限流提前拦住；或者超过 8 仍放行。
  * 13. 潮汐请求加入了 Key 的成员关系（占了 3 人名额、留下绑定）。
  * 14. 能用的 Key 都没有潮汐空位时请求挂住或报 5xx，而不是立刻 429 带 retry-after。
- * 15. 主人回来时因为 Key 上有潮汐在途而用不上自己的 Key。
+ * 15. 持有人回来时因为 Key 上有潮汐在途而用不上自己的 Key。
  * 16. Key 上已经有成员在用，潮汐的新请求还往上发。
  * 17. 同一个会话的请求没有粘在同一把 Key 上；或者两个会话被排到同一把 Key（没铺开）。
  * 18. 会话粘着的 Key 不能用了，会话没有换到别的 Key。
  * 19. 潮汐请求没有和普通请求一样计入员工、部门的用量统计；或者请求日志里认不出哪些是潮汐请求。
- * 20. 潮汐请求的消耗没有记到渠道 Key 的账本上（主人看到的剩余额度就是错的）。
+ * 20. 潮汐请求的消耗没有记到渠道 Key 的账本上（持有人看到的剩余额度就是错的）。
  * 21. 授权到期后潮汐KEY 仍可用，或者仍出现在员工的列表里。
  * 22. 撤销授权后潮汐KEY 仍可用，或者没有被删除。
  * 23. 管理端没有「潮汐调度」页，或者被授权的人没显示在名单里。
@@ -640,10 +640,10 @@ test.describe.serial("潮汐调度", () => {
     expect(Number(noSlot.retryAfter), "429 应带 retry-after").toBeGreaterThan(0);
     expect(await hitsFor(noSlot.marker), "没有空位时不打上游").toEqual([]);
 
-    // 15：主人回来，用自己的普通 Key，直接落在自己的 td01 上并成为成员。
+    // 15：持有人回来，用自己的普通 Key，直接落在自己的 td01 上并成为成员。
     pending.push(relay(schedApiKey(POOL, "tdO1"), "owner"));
     await waitForInFlight({ td01: 3 });
-    expect(await membersByKey(), "主人照常绑定到自己的 Key").toEqual({ td01: [employeeId("tdO1")] });
+    expect(await membersByKey(), "持有人照常绑定到自己的 Key").toEqual({ td01: [employeeId("tdO1")] });
 
     await setBehaviorAll({ type: "ok" });
     await mockControl("release", {});
@@ -656,11 +656,11 @@ test.describe.serial("潮汐调度", () => {
     const peak = Object.fromEntries(
       ALL_LABELS.map((label) => [label, state.maxInFlight[schedSecret(POOL, label)] ?? 0]),
     );
-    expect(peak, "各 Key 的峰值在途：潮汐每把最多 2，td01 另加主人的 1 个").toEqual({
+    expect(peak, "各 Key 的峰值在途：潮汐每把最多 2，td01 另加持有人的 1 个").toEqual({
       td01: 3, td02: 2, td03: 2, td04: 0, td05: 0, td06: 0, td07: 2, td08: 2,
     });
 
-    // 16：td01 上现在有成员（主人刚用过），潮汐的新请求要绕开它。
+    // 16：td01 上现在有成员（持有人刚用过），潮汐的新请求要绕开它。
     const picks: Array<string | null> = [];
     for (let index = 0; index < 6; index += 1) picks.push((await tidalCall()).key);
     expect(picks, "有成员在用的 Key 不再接潮汐请求").not.toContain("td01");
@@ -741,7 +741,7 @@ test.describe.serial("潮汐调度", () => {
     expect(logs.data.items.length).toBeGreaterThan(0);
     expect(logs.data.items.every((item) => item.tidal === true), "请求日志应标出潮汐").toBe(true);
 
-    // 主人自己的请求不是潮汐，照常计入日常用量。
+    // 持有人自己的请求不是潮汐，照常计入日常用量。
     const [ownerAudits] = await sql<Array<{ total: number; tidal: number }>>`
       select count(*)::int total, (count(*) filter (where tidal))::int tidal
       from request_audits where employee_id = ${employeeId("tdO1")}

@@ -31,9 +31,9 @@ import { loadTidalSettings, type TidalSettings } from "./tidal-settings.js";
  *
  * 和绑定调度（binding.ts）的区别：
  * - 不加入成员关系，不占一把 Key 的 3 人名额。
- * - 只用没人在用的 Key：Key 上有成员（主人或借用者最近用过）就不选它。
+ * - 只用没人在用的 Key：Key 上有成员（最近有人用过）就不选它。
  * - 铺得薄：每把 Key 上的潮汐在途不超过 perKeyConcurrency，靠 Key 的数量撑起总并发。
- *   集中在少数几把 Key 上会很快打满 5 小时额度，主人第二天早上就用不了。
+ *   集中在少数几把 Key 上会很快打满 5 小时额度，持有人和其他成员第二天早上就用不了。
  * - 先用周用量最低的档位，同一档内选负载最轻的；用量到了借用线的 Key 不用。
  * - 同一个会话尽量落在同一把 Key 上（上游的提示缓存按账号隔离）。
  */
@@ -160,11 +160,11 @@ export function judgeTidalKey(input: {
   if (status === "cooling") return skip("cooling");
   if (status !== "active" || key.credentialWeight <= 0) return skip("unavailable");
   if (!key.supportedProtocols?.includes(input.protocol)) return skip("unavailable");
-  // 别的企业员工名下的 Key 不能借。
+  // 别的企业员工持有的 Key 不能借。
   if (
     input.enterpriseId != null &&
-    key.ownerEmployeeId != null &&
-    key.ownerEnterpriseId !== input.enterpriseId
+    key.holderEmployeeId != null &&
+    key.holderEnterpriseId !== input.enterpriseId
   ) {
     return skip("foreign");
   }

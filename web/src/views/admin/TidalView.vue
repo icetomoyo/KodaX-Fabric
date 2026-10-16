@@ -4,7 +4,7 @@
       <h2 class="page-title">潮汐调度</h2>
       <el-tag :type="statusTag.type" effect="light">{{ statusTag.text }}</el-tag>
       <span class="muted">
-        被授权的员工用潮汐KEY，在开放时段内把请求铺到闲置的渠道 Key 上，不挤占席位主人。
+        被授权的员工用潮汐KEY，在开放时段内把请求铺到闲置的渠道 Key 上，不挤占各把 Key 上的成员。
       </span>
     </div>
 
@@ -44,7 +44,7 @@
         </el-form-item>
         <el-form-item label="5 小时借用线（%）">
           <el-input-number v-model="form.fiveHourLine" :min="1" :max="100" controls-position="right" />
-          <span class="hint">留出余量，主人早上来时 5 小时额度还够用</span>
+          <span class="hint">留出余量，第二天早上大家来时 5 小时额度还够用</span>
         </el-form-item>
         <el-form-item label="每把 Key 潮汐并发">
           <el-input-number v-model="form.perKeyConcurrency" :min="1" :max="20" controls-position="right" />
@@ -119,7 +119,7 @@
           <template #default="{ row }">{{ row.label }} · 尾号 {{ row.secretSuffix }}</template>
         </el-table-column>
         <el-table-column prop="productLineName" label="套餐" min-width="140" />
-        <el-table-column label="席位主人" min-width="120">
+        <el-table-column label="持有人" min-width="120">
           <template #default="{ row }">{{ row.ownerName || "—" }}</template>
         </el-table-column>
         <el-table-column prop="tidalInFlight" label="潮汐在途" width="100" />

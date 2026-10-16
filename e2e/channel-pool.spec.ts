@@ -10,6 +10,7 @@ import {
 import postgres from "postgres";
 import { E2E } from "./env.ts";
 import { E2E_ORG } from "./org-fixture.ts";
+import { isolateChannelPool } from "./pool-isolation.ts";
 
 /**
  * One channel = one KEY pool.
@@ -80,6 +81,7 @@ const rejected: Record<string, RejectedCase> = {};
 let channelTypes: unknown = null;
 let api: APIRequestContext;
 let db: postgres.Sql;
+const restorePools: Array<() => Promise<void>> = [];
 
 function secretFor(channel: ChannelCode, slot: ProductSlot): string {
   return `sk-pool-${channel}-${slot}-secret`;
@@ -350,6 +352,14 @@ test.describe("channel pool: one channel = one KEY pool", () => {
       "pool-vk-caller",
     );
 
+    // 同一个测试库里别的用例也往这些渠道加过 Key；借 Key 不看部门以后它们和本用例的 Key 同分，
+    // 所以发请求期间每个渠道只启用本用例的两条产品。
+    for (const channel of CHANNELS) {
+      restorePools.push(
+        await isolateChannelPool(db, channel, [products[channel].a.productLineId, products[channel].b.productLineId]),
+      );
+    }
+
     for (const channel of CHANNELS) {
       const perOwner = REQUESTS_PER_CHANNEL / 2;
       for (const slot of ["a", "b"] as const) {
@@ -438,6 +448,7 @@ test.describe("channel pool: one channel = one KEY pool", () => {
 
   test.afterAll(async () => {
     writeArtifact();
+    for (const restore of restorePools) await restore();
     await mockControl("reset", {}).catch(() => {});
     await api?.dispose();
     await db?.end({ timeout: 5 });

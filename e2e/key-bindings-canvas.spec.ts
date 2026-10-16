@@ -12,10 +12,12 @@
  *  6. 正在进行、还没落审计的请求（流式长请求）不在图上，直到请求结束才出现。
  *  7. 没有流量的渠道 Key 被藏掉（应当全部画出，标「空闲」）。
  *  8. 已绑定但正在冷却的渠道 Key 从图上消失，连同指向它的连线（旧版画布的 bug）。
- *  9. 席位主人用自己的 Key（本人）和借用别人的 Key 没有区分。
+ *  9. 持有人用自己持有的 Key 和借用别人的 Key 没有区分。
  * 10. 按产品线筛选后，别的产品线的渠道 Key 或连线还在。
  * 11. 搜索员工名后，没匹配的虚拟 Key 还在；或者匹配员工用到的渠道 Key 被一起藏掉。
  * 12. 渠道 Key 详情里「窗口内谁用过」和连线对不上；释放后绑定没删、页面没刷新。
+ * 13. 详情里显示的是绑定范围（企业 / 部门），而不是这把 Key 上现在挂着的成员和人数（n/3）。
+ * 14. 渠道 Key 列表（/api/admin/credentials）的「已连接」里混进企业名，或者没有列出现在挂着的成员。
  * （非超管调不到这些接口，由 auth-guard.spec.ts 覆盖。）
  */
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -26,6 +28,7 @@ import postgres from "postgres";
 import { E2E } from "./env.ts";
 import { isolateChannelPool } from "./pool-isolation.ts";
 import {
+  SCHED_ENTERPRISE,
   SCHED_MODEL,
   SCHED_PEOPLE,
   SCHED_POOLS,
@@ -45,7 +48,7 @@ type Hop = {
   requests: number;
   failures: number;
   lastAt: string | null;
-  owner: boolean;
+  holder: boolean;
 };
 
 type Graph = {
@@ -59,9 +62,11 @@ type Graph = {
     productLineId: number;
     status: string;
     coolingKind: string | null;
-    binding: { scopeName: string } | null;
+    bound: boolean;
+    members: Array<{ employeeId: number; name: string }>;
   }>;
   hops: Hop[];
+  memberLimit: number;
 };
 
 let api: APIRequestContext;
@@ -132,7 +137,7 @@ function readableHops(source: Graph) {
       person: personByEmployeeId.get(ownerOfKey.get(hop.virtualKeyId) ?? -1) ?? `key:${hop.virtualKeyId}`,
       key: labelByCredentialId.get(hop.credentialId) ?? `credential:${hop.credentialId}`,
       requests: hop.requests,
-      owner: hop.owner,
+      holder: hop.holder,
       inFlightOnly: hop.lastAt == null,
     }))
     .sort((a, b) => `${a.person}/${a.key}`.localeCompare(`${b.person}/${b.key}`));
@@ -223,48 +228,49 @@ test.describe.serial("调度画布", () => {
   });
 
   test("连线按窗口内的真实请求画，冷却中的 Key 不消失", async () => {
-    const owner = await call("ownerCap");
-    expect(owner.key, "主人用自己的 Key").toBe("cvso");
+    // 三把 Key：cvso（容量持有人）、cvsf、cvsx。借用者摊到人少的 Key 上。
+    expect((await call("ownerCap")).key, "持有人用自己的 Key").toBe("cvso");
     for (let i = 0; i < 2; i += 1) {
-      expect((await call("guest1")).key, "借用者先借同组主人的 Key").toBe("cvso");
+      expect((await call("guest1")).key, "cvso 已有人，借用甲去没人的 cvsf").toBe("cvsf");
     }
-    // 上游说 cvso 5 小时额度用尽：这次请求换到 cvsf 完成，cvso 冷却但主人仍挂在上面。
+    expect((await call("guest2")).key, "借用乙去还没人的 cvsx").toBe("cvsx");
+    expect((await call("guest3")).key, "三把都是 1 人，取 ID 小的 cvso").toBe("cvso");
+
+    // 上游说 cvso 5 小时额度用尽：持有人这次请求换到人最少的 cvsf，借用丙还挂在 cvso 上。
     await mockControl("behavior", {
       secret: schedSecret(POOL, "cvso"),
       behavior: { type: "status", status: 429, body: fiveHourCapBody(new Date(Date.now() + 2 * HOUR_MS)) },
     });
-    const moved = await call("guest1");
+    const moved = await call("ownerCap");
     expect(moved.key, "撞限额后换到另一把 Key").toBe("cvsf");
     expect(await hitsFor(moved.marker)).toEqual(["cvso", "cvsf"]);
-    const [binding] = await sql`
-      select 1 from credential_bindings where credential_id = ${credentialIds.get("cvso")!}
-    `;
-    expect(binding, "冷却不会解除 cvso 的绑定").toBeTruthy();
 
-    // 3 小时前借用乙打过 cvso：30 分钟窗口里不算有通信，24 小时窗口里要算。
-    const [guest2Key] = await sql<Array<{ id: string }>>`
-      select id from employee_api_keys where employee_id = ${employeeIds.get("guest2")!} and product_line_id = ${lineId}
+    // 3 小时前同组同事打过 cvso：30 分钟窗口里不算有通信，24 小时窗口里要算。
+    const [oldKey] = await sql<Array<{ id: string }>>`
+      select id from employee_api_keys where employee_id = ${employeeIds.get("leafMate")!} and product_line_id = ${lineId}
     `;
     await sql`
       insert into request_audits
         (request_id, employee_id, employee_api_key_id, client_model, provider_code, product_line_id,
          credential_id, status, created_at)
       values
-        (${`canvas-old-${Date.now()}`}, ${employeeIds.get("guest2")!}, ${guest2Key.id}, ${SCHED_MODEL}, 'glm',
+        (${`canvas-old-${Date.now()}`}, ${employeeIds.get("leafMate")!}, ${oldKey.id}, ${SCHED_MODEL}, 'glm',
          ${lineId}, ${credentialIds.get("cvso")!}, 'success', ${new Date(Date.now() - 3 * HOUR_MS)})
     `;
 
     const recent = await graph({ productLineId: lineId });
     const recentHops = readableHops(recent);
-    expect(recentHops, "连线 = 窗口内真实请求，本人 / 借用分开（2、4、9）").toEqual([
-      { person: "guest1", key: "cvso", requests: 2, owner: false, inFlightOnly: false },
-      { person: "guest1", key: "cvsf", requests: 1, owner: false, inFlightOnly: false },
-      { person: "ownerCap", key: "cvso", requests: 1, owner: true, inFlightOnly: false },
+    expect(recentHops, "连线 = 窗口内真实请求，持有人自用 / 借用分开（2、4、9）").toEqual([
+      { person: "guest1", key: "cvsf", requests: 2, holder: false, inFlightOnly: false },
+      { person: "guest2", key: "cvsx", requests: 1, holder: false, inFlightOnly: false },
+      { person: "guest3", key: "cvso", requests: 1, holder: false, inFlightOnly: false },
+      { person: "ownerCap", key: "cvsf", requests: 1, holder: false, inFlightOnly: false },
+      { person: "ownerCap", key: "cvso", requests: 1, holder: true, inFlightOnly: false },
     ].sort((a, b) => `${a.person}/${a.key}`.localeCompare(`${b.person}/${b.key}`)));
     expect(
       new Set(recent.virtualKeys.map((row) => personByEmployeeId.get(row.employeeId))),
-      "只画有通信的虚拟 Key：借用乙在窗口外、借用丙没调用过（2、3）",
-    ).toEqual(new Set(["guest1", "ownerCap"]));
+      "只画有通信的虚拟 Key：同组同事在窗口外、借用丁没调用过（2、3）",
+    ).toEqual(new Set(["guest1", "guest2", "guest3", "ownerCap"]));
 
     const audited = await sql<Array<{ employee_api_key_id: string; credential_id: string; n: number }>>`
       select employee_api_key_id, credential_id, count(*)::int as n from request_audits
@@ -277,9 +283,17 @@ test.describe.serial("调度画布", () => {
       "连线次数与 request_audits 一致（5）",
     ).toEqual(audited.map((row) => `${row.employee_api_key_id}:${row.credential_id}:${row.n}`).sort());
 
+    const memberNames = (label: string) =>
+      (recent.credentials.find((row) => row.id === credentialIds.get(label))?.members ?? [])
+        .map((member) => personByEmployeeId.get(member.employeeId))
+        .sort();
     const cooled = recent.credentials.find((row) => row.id === credentialIds.get("cvso"));
     expect(cooled?.status, "冷却中的已绑定 Key 仍在图上（8）").toBe("cooling");
-    expect(cooled?.binding, "冷却中的 Key 仍显示绑定，可以释放").toBeTruthy();
+    expect(recent.memberLimit, "每把 Key 最多 3 人").toBe(3);
+    expect(
+      { cvso: memberNames("cvso"), cvsf: memberNames("cvsf"), cvsx: memberNames("cvsx") },
+      "每把 Key 返回的是现在挂着的成员，不是绑定范围（13）",
+    ).toEqual({ cvso: ["guest3"], cvsf: ["guest1", "ownerCap"], cvsx: ["guest2"] });
     expect(
       recent.credentials.every((row) => row.productLineId === lineId),
       "按产品线筛选后只剩这条产品线的 Key（10）",
@@ -287,9 +301,9 @@ test.describe.serial("调度画布", () => {
 
     const day = await graph({ productLineId: lineId, windowMinutes: 1440 });
     expect(
-      readableHops(day).find((hop) => hop.person === "guest2"),
+      readableHops(day).find((hop) => hop.person === "leafMate"),
       "24 小时窗口里出现 3 小时前的请求（3）",
-    ).toEqual({ person: "guest2", key: "cvso", requests: 1, owner: false, inFlightOnly: false });
+    ).toEqual({ person: "leafMate", key: "cvso", requests: 1, holder: false, inFlightOnly: false });
 
     const everything = await graph();
     const [{ n: credentialTotal }] = await sql<Array<{ n: number }>>`select count(*)::int as n from upstream_credentials`;
@@ -300,11 +314,27 @@ test.describe.serial("调度画布", () => {
       "不带筛选时也只有有通信的虚拟 Key（2）",
     ).toBe(true);
 
+    // 渠道 Key 列表：「已连接」里不再混进企业名，成员单独列出（14）。
+    const listRes = await api.get(`/api/admin/credentials?productLineId=${lineId}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const listed = ((await listRes.json()) as {
+      data: Array<{ id: number; members: Array<{ name: string }>; memberLimit: number; connectedNames: string[]; binding?: unknown }>;
+    }).data.find((row) => row.id === credentialIds.get("cvsf"))!;
+    expect(listed.members.map((member) => member.name).sort(), "列表里列出 cvsf 现在的成员").toEqual(
+      [SCHED_PEOPLE.guest1.name, SCHED_PEOPLE.ownerCap.name].sort(),
+    );
+    expect(listed.memberLimit).toBe(3);
+    expect(listed.connectedNames, "「已连接」里不能有企业名").not.toContain(SCHED_ENTERPRISE.name);
+    expect(listed.binding, "不再返回绑定范围").toBeUndefined();
+
     report.api = {
       recent: recentHops,
+      members: { cvso: memberNames("cvso"), cvsf: memberNames("cvsf"), cvsx: memberNames("cvsx") },
       day: readableHops(day),
       unfilteredCredentials: everything.credentials.length,
       unfilteredVirtualKeys: everything.virtualKeys.length,
+      credentialList: { members: listed.members, connectedNames: listed.connectedNames },
     };
   });
 
@@ -329,10 +359,10 @@ test.describe.serial("调度画布", () => {
     await page.getByRole("option", { name: new RegExp(SCHED_POOLS[POOL].name) }).click();
 
     const nodes = (type: string) => page.locator(`.vue-flow__node-${type}`);
-    await expect(nodes("credential"), "只剩画布套餐的两把 Key（10）").toHaveCount(2);
-    await expect(nodes("employee")).toHaveCount(2);
-    await expect(nodes("virtual_key")).toHaveCount(2);
-    await expect(page.locator(".vue-flow__edge-traffic"), "三条真实请求连线").toHaveCount(3);
+    await expect(nodes("credential"), "只剩画布套餐的三把 Key（10）").toHaveCount(3);
+    await expect(nodes("employee")).toHaveCount(4);
+    await expect(nodes("virtual_key")).toHaveCount(4);
+    await expect(page.locator(".vue-flow__edge-traffic"), "五条真实请求连线").toHaveCount(5);
     for (const type of ["enterprise", "department", "team"]) {
       await expect(nodes(type), `不再画${type}节点（1）`).toHaveCount(0);
     }
@@ -340,53 +370,61 @@ test.describe.serial("调度画布", () => {
       nodes("credential").filter({ hasText: "调度-cvso" }).locator(".graph-node.cooling_5h"),
       "冷却中的已绑定 Key 照样画出来并标冷却（8）",
     ).toBeVisible();
+    await expect(
+      nodes("credential").filter({ hasText: "调度-cvsf" }),
+      "节点上显示现在挂着几个人（13）",
+    ).toContainText("2/3 人");
 
-    // 在途、还没落审计的请求：页面不点刷新也要冒出来（6）。
-    await mockControl("behavior", { secret: schedSecret(POOL, "cvsf"), behavior: { type: "hold" } });
+    // 在途、还没落审计的请求：页面不点刷新也要冒出来（6）。借用丁去人最少的 cvsx。
+    await mockControl("behavior", { secret: schedSecret(POOL, "cvsx"), behavior: { type: "hold" } });
     const held = call("guest4");
-    await waitFor("cvsf 上有一路在途", async () => {
+    await waitFor("cvsx 上有一路在途", async () => {
       const state = (await mockControl("state")) as { inFlight: Record<string, number> };
-      return (state.inFlight[schedSecret(POOL, "cvsf")] ?? 0) === 1;
+      return (state.inFlight[schedSecret(POOL, "cvsx")] ?? 0) === 1;
     });
     const live = await graph({ productLineId: lineId });
     expect(
       readableHops(live).find((hop) => hop.person === "guest4"),
       "接口把在途请求并进连线（6）",
-    ).toEqual({ person: "guest4", key: "cvsf", requests: 0, owner: false, inFlightOnly: true });
+    ).toEqual({ person: "guest4", key: "cvsx", requests: 0, holder: false, inFlightOnly: true });
     await expect(
       nodes("employee").filter({ hasText: SCHED_PEOPLE.guest4.name }),
       "在途请求的员工自动出现在画布上（6）",
     ).toBeVisible({ timeout: 15_000 });
     await mockControl("release", {});
-    expect((await held).key).toBe("cvsf");
+    expect((await held).key).toBe("cvsx");
 
-    // 搜索：只留借用甲的虚拟 Key，他用到的两把渠道 Key 都还在（11）。
+    // 搜索：只留借用甲的虚拟 Key 和他用到的 cvsf（11）。
     await page.getByPlaceholder("搜索员工 / Key").fill(SCHED_PEOPLE.guest1.name);
     await expect(nodes("virtual_key")).toHaveCount(1);
-    await expect(nodes("credential")).toHaveCount(2);
+    await expect(nodes("credential")).toHaveCount(1);
+    await expect(nodes("credential")).toContainText("调度-cvsf");
     await page.getByPlaceholder("搜索员工 / Key").fill("");
 
-    // 24 小时窗口：3 小时前的借用乙出现（3）。
+    // 24 小时窗口：3 小时前的同组同事出现（3）。
     await page.getByText("24 小时", { exact: true }).click();
-    await expect(nodes("employee").filter({ hasText: SCHED_PEOPLE.guest2.name })).toBeVisible();
+    await expect(nodes("employee").filter({ hasText: SCHED_PEOPLE.leafMate.name })).toBeVisible();
     await page.getByText("30 分钟", { exact: true }).click();
-    await expect(nodes("employee").filter({ hasText: SCHED_PEOPLE.guest2.name })).toHaveCount(0);
+    await expect(nodes("employee").filter({ hasText: SCHED_PEOPLE.leafMate.name })).toHaveCount(0);
 
-    // 详情：窗口内谁用过，和连线一致；本人和借用分开（9、12）。
+    // 详情：窗口内谁用过和连线一致；成员显示人和人数，不显示绑定范围（9、12、13）。
     await nodes("credential").filter({ hasText: "调度-cvso" }).click();
+    const drawer = page.locator(".el-drawer").filter({ hasText: "调度-cvso" });
     const users = page.getByTestId("credential-users").locator("li");
     await expect(users).toHaveCount(2);
-    await expect(users.filter({ hasText: SCHED_PEOPLE.guest1.name })).toContainText("借用");
-    await expect(users.filter({ hasText: SCHED_PEOPLE.guest1.name })).toContainText("2 次");
-    await expect(users.filter({ hasText: SCHED_PEOPLE.ownerCap.name })).toContainText("本人 Key");
+    await expect(users.filter({ hasText: SCHED_PEOPLE.guest3.name })).toContainText("借用");
+    await expect(users.filter({ hasText: SCHED_PEOPLE.ownerCap.name })).toContainText("持有人自用");
     await expect(users.filter({ hasText: SCHED_PEOPLE.ownerCap.name })).toContainText("1 次");
+    await expect(drawer.getByRole("heading", { name: "成员 1/3" })).toBeVisible();
+    await expect(page.getByTestId("credential-members")).toHaveText(`${SCHED_PEOPLE.guest3.name}（借用）`);
+    await expect(drawer, "不再显示「当前挂在 企业」").not.toContainText("当前挂在");
     mkdirSync(ARTIFACT_DIR, { recursive: true });
     await page.screenshot({ path: resolve(ARTIFACT_DIR, "key-bindings-canvas.png") });
 
-    // 释放：库里的绑定删掉，抽屉刷新成「当前没有绑定」（12）。
+    // 释放：库里的绑定删掉，抽屉刷新成「当前没有成员」（12）。
     await page.getByRole("button", { name: "释放绑定" }).click();
     await page.getByRole("button", { name: "释放", exact: true }).click();
-    await expect(page.locator(".el-drawer").getByText("当前没有绑定")).toBeVisible();
+    await expect(drawer.getByText("当前没有成员")).toBeVisible();
     const left = await sql`select 1 from credential_bindings where credential_id = ${credentialIds.get("cvso")!}`;
     expect(left.length, "释放后库里没有 cvso 的绑定").toBe(0);
 

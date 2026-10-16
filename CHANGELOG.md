@@ -13,6 +13,8 @@
 
 ### Changed
 
+- 取消渠道 Key「主人」的概念，改称「持有人」（channel_seats 上登记这把 Key 的员工）。持有人只有一点优先：挂 Key 时自己持有的 Key 上还没有人，就先挂自己的；已经有人挂着，就和其他人一样按并发空位、优先级、剩余额度、人数挑。去掉持有人的其他特权：不能再挤进自己已满 3 人的 Key（不再让出借用者）；自己的 Key 满并发、出错时和其他成员一样换绑，不再「只借这一次、绑定不动」；自己的 Key 恢复后不再迁回；删除只对借用者生效的借用线 `RELAY_GUEST_FIVE_HOUR_RATIO` / `RELAY_GUEST_WEEKLY_RATIO`（默认本来就是 1，不设线）。调度画布、潮汐调度页的「席位主人 / 本人 Key」改为「持有人 / 持有人自用」，画布接口字段 `ownerEmployeeId / ownerName / owner` 改为 `holderEmployeeId / holderName / holder`
+- 渠道 Key 绑定统一为「一把 Key 最多挂 3 个员工」，不再有绑定到企业 / 部门 / 团队的说法：借别人的 Key 时不再按部门远近（同组 > 同部门 > 同一级部门 > 同企业）挑选，本人的席位 Key 仍最优先，其余按并发空位、优先级、剩余额度、当前人数（人少的先）选，借用者摊到各把 Key 上；一把 Key 上的成员仍只来自同一家企业。管理端渠道 Key 列表、KEYS 表格、调度画布不再显示「企业·XX」绑定范围，改为显示现在挂着的成员和人数（n/3），「已连接」里不再混入企业名；`/api/admin/credentials`、`/api/admin/product-lines/:id/summary`、`/api/admin/key-bindings` 的 `binding` 字段改为 `bound / members / memberLimit`。删除 `affinity.ts` 以及删除部门 / 团队时清理对应范围绑定的遗留代码
 - 调度画布改为只看渠道 Key 的真实调度：只画「员工 → 虚拟 Key → 渠道 Key」三列，不再画企业 / 部门 / 团队。连线取最近 30 分钟 / 2 小时 / 24 小时内 `request_audits` 里真实发生的「虚拟 Key 打到哪把渠道 Key」，并上此刻在途、还没落审计的请求；只有这段时间里发过请求的虚拟 Key 才出现。渠道 Key 全部画出：有流量的对齐到调用方，没流量的按空闲 / 冷却 / 停用排成右侧网格；已绑定但在冷却的 Key 不再从画布上消失。支持按产品线筛选、按员工 / Key 搜索；本人 Key 实线、借用虚线；渠道 Key 详情列出窗口内谁用过、各多少次，仍可释放绑定。连线上的流量粒子动画恢复。`GET /api/admin/key-bindings` 的返回改为 `employees / virtualKeys / credentials / hops`，参数为 `windowMinutes`（30 / 120 / 1440）与 `productLineId`；删除按编制树建图的 `key-binding-graph.ts` 与前端组织级联筛选
 - 员工提交渠道 KEY 时，名称按员工姓名生成（代提交不再写成「管理员」）
 - 同一员工同一模式下可登记多个席位：第一条标签可不填，再登记必须填标签（内容自定，能区分即可）；KEY 仍由本人在个人中心按席位提交，不再为多把 KEY 建占位员工

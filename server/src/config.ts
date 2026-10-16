@@ -59,9 +59,6 @@ const envSchema = z.object({
   // 成员多久没调用就从 Key 上释放，以及清理任务多久跑一次。
   RELAY_KEY_IDLE_RELEASE_SECONDS: z.coerce.number().int().min(60).max(604_800).default(1_800),
   RELAY_KEY_IDLE_SWEEP_SECONDS: z.coerce.number().int().min(1).max(3_600).default(60),
-  // 借用线：非席位主人用到这个比例就让出这把 Key（1 表示不设借用线，默认不设）。
-  RELAY_GUEST_FIVE_HOUR_RATIO: z.coerce.number().min(0.01).max(1).default(1),
-  RELAY_GUEST_WEEKLY_RATIO: z.coerce.number().min(0.01).max(1).default(1),
   // 潮汐调度：池内 Key 状态和用量账本的快照复用多久（每个潮汐请求都要看全池）。
   RELAY_TIDAL_SNAPSHOT_TTL_MS: z.coerce.number().int().min(0).max(60_000).default(2_000),
   QUOTA_TIMEZONE: z

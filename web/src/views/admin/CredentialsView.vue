@@ -153,8 +153,8 @@
               <div class="info-item">
                 <dt>绑定状态</dt>
                 <dd>
-                  <span class="binding-badge" :class="bindingTone(detailRow.binding)">
-                    {{ bindingLabel(detailRow.binding) }}
+                  <span class="binding-badge" :class="bindingTone(detailRow)">
+                    {{ bindingLabel(detailRow) }}
                   </span>
                 </dd>
               </div>
@@ -315,12 +315,9 @@ type ChannelStatus = "active" | "disabled";
 
 type CredentialStatus = ChannelStatus | "auto_disabled" | "cooling";
 
-type BindingScopeType = "employee" | "team" | "enterprise";
-
-type CredentialBinding = {
-  scopeType: BindingScopeType;
-  scopeId: number;
-  scopeName: string;
+type CredentialMember = {
+  employeeId: number;
+  name: string;
 };
 
 type TestResult = {
@@ -381,7 +378,11 @@ type CredentialRow = {
   /** 周窗口下一次翻转时刻（未学到相位时为 epoch 估算，见 weeklyResetEstimated）。 */
   nextWeeklyResetAt: string | null;
   weeklyResetEstimated?: boolean;
-  binding: CredentialBinding | null;
+  /** 有绑定行；成员走光后在宽限期里仍为 true。 */
+  bound: boolean;
+  /** 现在挂在这把 Key 上的人，每把最多 memberLimit 个。 */
+  members: CredentialMember[];
+  memberLimit: number;
   connectedNames?: string[];
   createdAt?: string;
   updatedAt?: string;
@@ -590,7 +591,7 @@ function boardLaneOf(row: CredentialRow): BoardLane {
     if (isShortRateLimitCooling(row.lastError)) return "rate_limit";
     return coolingLaneOf(row);
   }
-  if (row.binding) return "in_use";
+  if (row.bound) return "in_use";
   return "waiting";
 }
 
@@ -609,7 +610,7 @@ function credentialMatchesName(row: CredentialRow, query: string): boolean {
   const haystacks = [
     row.label,
     row.tag,
-    row.binding?.scopeName,
+    ...row.members.map((member) => member.name),
     ...(row.connectedNames ?? []),
   ];
   return haystacks.some((value) => String(value ?? "").toLowerCase().includes(needle));
@@ -684,7 +685,7 @@ function keyRingTitle(row: CredentialRow): string {
   const weekReset = windowResetAt(row, "weekly")
     ? `周额度重置 ${formatDateTime(windowResetAt(row, "weekly")!)}${weeklyResetEstimated(row) ? "（估算）" : ""}`
     : "";
-  const people = (row.connectedNames ?? []).join("、") || row.binding?.scopeName || "未连接";
+  const people = (row.connectedNames ?? []).join("、") || "未连接";
   return `${channelDisplayName(row)} · •••• ${row.secretSuffix}\n${people}\n${five}\n${fiveReset}\n${week}${weekReset ? `\n${weekReset}` : ""}`;
 }
 
@@ -862,18 +863,16 @@ function visibleStatus(row: CredentialRow): CredentialStatus {
   return row.status;
 }
 
-function bindingLabel(binding: CredentialBinding | null): string {
-  if (!binding) return "待绑定";
-  const prefix = binding.scopeType === "employee"
-    ? "独占"
-    : binding.scopeType === "team"
-      ? "团队"
-      : "企业";
-  return binding.scopeName ? `${prefix}·${binding.scopeName}` : prefix;
+/** 绑定只看成员：挂着几个人、是谁；每把 Key 最多 memberLimit 人。 */
+function bindingLabel(row: CredentialRow): string {
+  if (!row.members.length) return "待绑定";
+  const names = row.members.map((member) => member.name).join("、");
+  return `${row.members.length}/${row.memberLimit} 人 · ${names}`;
 }
 
-function bindingTone(binding: CredentialBinding | null): BindingScopeType | "pending" {
-  return binding?.scopeType ?? "pending";
+function bindingTone(row: CredentialRow): "pending" | "members" | "full" {
+  if (!row.members.length) return "pending";
+  return row.members.length >= row.memberLimit ? "full" : "members";
 }
 
 function formatCreditAmount(value: number): string {
@@ -1252,23 +1251,19 @@ onMounted(refreshAll);
   font-size: 11px;
   font-weight: 650;
   line-height: 1.4;
-  white-space: nowrap;
+  white-space: normal;
 }
 .binding-badge.pending {
   background: #fffbeb;
   color: #a16207;
 }
-.binding-badge.employee {
-  background: #fee2e2;
-  color: #b91c1c;
-}
-.binding-badge.team {
-  background: #cffafe;
-  color: #0e7490;
-}
-.binding-badge.enterprise {
+.binding-badge.members {
   background: #e0e7ff;
   color: #4338ca;
+}
+.binding-badge.full {
+  background: #fef3c7;
+  color: #b45309;
 }
 .quota-progress {
   display: grid;
