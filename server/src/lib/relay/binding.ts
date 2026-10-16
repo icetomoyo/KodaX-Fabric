@@ -40,7 +40,6 @@ import {
 } from "./credential-quota.js";
 import {
   getCredentialLoad,
-  getEmployeeCredentialInFlight,
   getEmployeeInFlight,
 } from "./credential-load.js";
 import { type RelayProtocol } from "./protocol.js";
@@ -53,16 +52,18 @@ import {
 /**
  * 渠道 Key 调度：每个员工在一个调度池里挂在一把 Key 上（成员关系），
  * 一把 Key 最多挂 RELAY_KEY_MAX_MEMBERS 个员工、同时最多
- * RELAY_KEY_MAX_CONCURRENCY 个在途请求；同一员工在一把 Key 上最多
- * RELAY_KEY_MEMBER_CONCURRENCY 路。单人超额只 429，不解绑、不换 Key。
- * 默认 3 人 × 3 路 = 9，正好是一把 Key 的并发上限。
+ * RELAY_KEY_MAX_CONCURRENCY 个在途请求（默认 3 人、9 路）。
+ *
+ * 每个员工同时最多 RELAY_EMPLOYEE_MAX_CONCURRENCY 路（默认 9，所有 Key 加起来）。
+ * 到了这个数只 429，不解绑、不换 Key；没到而当前 Key 已满 9 路，就换绑到
+ * 有空位的 Key，新请求发到新 Key，留在旧 Key 上的在途请求照常跑完。
  *
  * 持有人（channel_seats 上登记这把 Key 的员工）只有一点优先：挂 Key 时，
  * 自己持有的 Key 上还没有人，就先挂自己的；已经有人挂着，就和其他人一样挑。
  * 除此之外人人平等：
  * - 挑 Key 不看部门，按并发空位、优先级、剩余额度、当前人数（人少的先）选，
  *   大家摊到各把 Key 上。
- * - 绑定后粘住，只有当前 Key 不能用（停用、冷却、满并发、本次请求已失败）才换；
+ * - 绑定后粘住，只有当前 Key 不能用（停用、冷却、满 9 路、本次请求已失败）才换；
  *   持有人自己的 Key 空出来也不迁回去。
  * - 满 3 人的 Key 谁都挂不进去，持有人也不能把别人挤下去。
  * - 额度以上游真实返回为准，本地估算不提前让出。
@@ -193,8 +194,7 @@ type KeyVerdict =
   | { kind: "unavailable" }
   | { kind: "cooling"; until: Date | null }
   | { kind: "excluded" }
-  | { kind: "busy" }
-  | { kind: "member_busy" };
+  | { kind: "busy" };
 
 type RankedKey = {
   key: PoolKeyRow;
@@ -392,6 +392,11 @@ export async function acquireBoundCredential(
     return { ok: false, reason: "no_scope", retryAt: null };
   }
 
+  // 员工自己已满 9 路：429，不换 Key（换了也只是在别的 Key 上再多占几路）。
+  if (getEmployeeInFlight(params.employeeId) >= env.RELAY_EMPLOYEE_MAX_CONCURRENCY) {
+    return { ok: false, reason: "member_busy", retryAt: null };
+  }
+
   await restoreExpiredCooling(pool.productLineIds, now);
 
   const ctx: AcquireContext = {
@@ -422,11 +427,6 @@ export async function acquireBoundCredential(
       if (verdict.kind === "usable") {
         await touchMembership(current, now);
         return { ok: true, credential: verdict.credential };
-      }
-
-      if (verdict.kind === "member_busy") {
-        await touchMembership(current, now);
-        return { ok: false, reason: "member_busy", retryAt: null };
       }
 
       // The current Key cannot serve this request: leave it for another one.
@@ -485,8 +485,6 @@ function judgeKey(
   if (ctx.requestExclude.has(key.credentialId)) return { kind: "excluded" };
 
   const inFlight = getCredentialLoad(key.credentialId).inFlight;
-  const mine = getEmployeeCredentialInFlight(ctx.employeeId, key.credentialId);
-  if (mine >= env.RELAY_KEY_MEMBER_CONCURRENCY) return { kind: "member_busy" };
   const limits = packageCreditLimits(key);
   // 本地账本只用来排序（剩余额度），不拦人：额度以上游真实返回为准。
   const usage = withInFlightEstimate(
@@ -538,7 +536,6 @@ async function rankPoolKeys(ctx: AcquireContext): Promise<Ranking> {
       if (verdict.until) ranking.retryTimes.push(verdict.until.getTime());
       continue;
     }
-    if (verdict.kind === "member_busy") continue;
     if (verdict.kind === "busy") {
       ranking.busy = true;
       continue;

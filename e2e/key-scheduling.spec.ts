@@ -25,7 +25,8 @@ import {
 
 /**
  * 渠道 Key 调度 E2E：持有人只在自己的 Key 没人挂时优先挂上去、其余人人平等摊到人少的 Key、
- * 每把 Key 最多 3 人 / 9 并发 / 单人 3 路、按成员 30 分钟释放、上游 429 按业务码分类处理。
+ * 每把 Key 最多 3 人 / 9 并发、每个员工最多 9 路（当前 Key 满了就换绑到有空位的 Key）、
+ * 按成员 30 分钟释放、上游 429 按业务码分类处理。
  *
  * 全程走真实 HTTP 进真实 server，上游是本机可编排的 mock（按 Bearer 认 Key、
  * 回显是哪把 Key 应答）。每个场景一条智谱套餐，开跑前只启用这一条，独占智谱的调度池。
@@ -44,10 +45,11 @@ import {
  *  8. 持有人来时自己的 Key 已满 3 人，把别人挤下去给自己腾位（持有人没有让出特权）。
  *  8b. 持有人自己的 Key 满并发时，持有人只把这次请求临时发到别的 Key、仍留在原 Key 上
  *      （应和其他成员一样：换到有空位的 Key）。
- *  9. 一把 Key 同时在途超过 9 个请求，或同一人在一把 Key 上超过 3 路。
- * 10. 借用者第 4 路并发去换 Key，而不是 429 且保持原绑定。
- * 11. 持有人第 4 路并发溢出到别的 Key，而不是 429 且保持原绑定。
- * 12. 三人各 3 路打满后新请求挂住或报 5xx，而不是立刻 429 带 retry-after。
+ *  9. 一把 Key 同时在途超过 9 个请求，或一个员工同时在途超过 9 路（换绑后两把 Key 加起来也算）。
+ * 10. 员工还没到 9 路，却在第 4 路就被 429（还是旧的单人 3 路上限）。
+ * 11. 员工第 10 路去换 Key 继续发，而不是 429 带 retry-after、保持原绑定。
+ * 12. 当前 Key 已满 9 路、员工自己没到 9 路时，新请求被 429 或挂住，而不是换绑到有空位的 Key 继续；
+ *     或者换绑后员工留在旧 Key 上的在途请求被打断。
  * 13. 成员在本地估算到 85%/100% 时被本地拦下换 Key，而不是都用到上游真的限额（没有借用线）。
  * 14. 上游返回 5 小时额度用尽（1308）后没有冷却到重置时刻；或者池里还有能用的 Key，
  *     请求却因为「限流只换一次 Key」而失败（员工白白失败一次）。
@@ -544,70 +546,66 @@ test.describe.serial("渠道 Key 调度", () => {
     };
   });
 
-  test("每把 Key 最多 9 并发、单人 3 路：超额 429 且不解绑", async () => {
+  test("每个员工最多 9 路：当前 Key 满了换绑到有空位的 Key，到 9 路才 429", async () => {
     const pool = await usePool("burst");
     await setBehavior(pool, "bsto", { type: "hold" });
     await setBehavior(pool, "bstf", { type: "hold" });
     const pending: Array<Promise<CallResult>> = [];
 
-    // 借用者会摊到人少的 Key：先停掉 bstf，让三个人都挂到 bsto 上，再把 bstf 放回来。
+    // 持有人和借用甲都挂到 bsto：先停掉 bstf，挂好后再放回来。
     await setCredentialStatus(pool, "bstf", "disabled");
-    pending.push(call(pool, "ownerBurst"), call(pool, "guest1"), call(pool, "guest2"));
-    await waitForInFlight(pool, { bsto: 3 });
-    expect(await boundKey(pool, "guest2")).toBe("bsto");
+    pending.push(call(pool, "ownerBurst"));
+    await waitForInFlight(pool, { bsto: 1 });
+    pending.push(call(pool, "guest1"));
+    await waitForInFlight(pool, { bsto: 2 });
     await setCredentialStatus(pool, "bstf", "active");
+    expect(await membersByKey(pool)).toEqual({ bsto: ["guest1", "ownerBurst"] });
 
-    pending.push(call(pool, "guest2"), call(pool, "guest2"));
-    await waitForInFlight(pool, { bsto: 5 });
-    expect(await boundKey(pool, "guest2"), "个人未满 3 路时仍留在原 Key").toBe("bsto");
-
-    const guestOver = await call(pool, "guest2");
-    expect(guestOver.status, "借用者第 4 路立刻 429").toBe(429);
-    expect(guestOver.code).toBe("employee_concurrency_limit");
-    expect(Number(guestOver.retryAfter), "429 应带 retry-after").toBeGreaterThan(0);
-    expect(await hitsFor(pool, guestOver.marker), "个人超额不应再打上游").toEqual([]);
-    expect(await boundKey(pool, "guest2"), "借用者超额不解绑").toBe("bsto");
-    expect(await boundKey(pool, "guest1"), "没发新请求的借用者不受影响").toBe("bsto");
-
-    pending.push(call(pool, "ownerBurst"), call(pool, "ownerBurst"));
-    await waitForInFlight(pool, { bsto: 7 });
-    const ownerOver = await call(pool, "ownerBurst");
-    expect(ownerOver.status, "持有人第 4 路立刻 429").toBe(429);
-    expect(ownerOver.code).toBe("employee_concurrency_limit");
-    expect(await boundKey(pool, "ownerBurst"), "持有人超额不解绑、不溢出").toBe("bsto");
-
-    pending.push(call(pool, "guest1"), call(pool, "guest1"));
+    // 持有人再发 7 路：第 4 路起也不 429（10），bsto 满 9 路。
+    for (let i = 0; i < 7; i += 1) pending.push(call(pool, "ownerBurst"));
     await waitForInFlight(pool, { bsto: 9 });
-    const full = await call(pool, "guest1");
-    expect(full.status, "三人各 3 路打满后立刻 429").toBe(429);
-    expect(Number(full.retryAfter)).toBeGreaterThan(0);
-    expect(await boundKey(pool, "guest1"), "打满后仍留在原 Key").toBe("bsto");
-    expect((await mockState()).inFlight[schedSecret(pool, "bstf")] ?? 0, "并发超额不应换到第二把 Key").toBe(0);
+    expect(await boundKey(pool, "ownerBurst"), "8 路都在 bsto 上").toBe("bsto");
+
+    // bsto 满了、持有人才 8 路：第 9 路换绑到有空位的 bstf 继续（12）。
+    pending.push(call(pool, "ownerBurst"));
+    await waitForInFlight(pool, { bsto: 9, bstf: 1 });
+    expect(await boundKey(pool, "ownerBurst"), "当前 Key 满了就换绑").toBe("bstf");
+
+    // 第 10 路：员工自己到 9 路了，429，不换 Key、不解绑（9、11）。
+    const over = await call(pool, "ownerBurst");
+    expect(over.status, "员工第 10 路立刻 429").toBe(429);
+    expect(over.code).toBe("employee_concurrency_limit");
+    expect(Number(over.retryAfter), "429 应带 retry-after").toBeGreaterThan(0);
+    expect(await hitsFor(pool, over.marker), "个人超额不应再打上游").toEqual([]);
+    expect(await boundKey(pool, "ownerBurst"), "个人超额不解绑").toBe("bstf");
+
+    // 借用甲在 bsto 上只有 1 路，bsto 满了：同样换绑到有空位的 bstf（12）。
+    pending.push(call(pool, "guest1"));
+    await waitForInFlight(pool, { bsto: 9, bstf: 2 });
+    expect(await boundKey(pool, "guest1"), "借用者也换绑到有空位的 Key").toBe("bstf");
 
     await setBehavior(pool, "bsto", { type: "ok" });
     await setBehavior(pool, "bstf", { type: "ok" });
     await mockControl("release", {});
     const results = await Promise.all(pending);
-    expect(results.map((result) => result.status), "挂起的请求全部正常完成").toEqual(
+    expect(results.map((result) => result.status), "挂起的请求（含换绑前留在旧 Key 上的）全部正常完成").toEqual(
       results.map(() => 200),
     );
     const served = { bsto: 0, bstf: 0 } as Record<string, number>;
     for (const result of results) served[result.key ?? "none"] = (served[result.key ?? "none"] ?? 0) + 1;
-    expect(served).toEqual({ bsto: 9, bstf: 0 });
+    expect(served, "持有人 8 路 + 借用甲 1 路在 bsto，换绑后的 2 路在 bstf").toEqual({ bsto: 9, bstf: 2 });
 
     const state = await mockState();
     const maxInFlight = {
       bsto: state.maxInFlight[schedSecret(pool, "bsto")] ?? 0,
       bstf: state.maxInFlight[schedSecret(pool, "bstf")] ?? 0,
     };
-    expect(maxInFlight, "任何时刻单把 Key 在途都不超过 9").toEqual({ bsto: 9, bstf: 0 });
+    expect(maxInFlight, "任何时刻单把 Key 在途都不超过 9").toEqual({ bsto: 9, bstf: 2 });
 
     report.burst = {
       served,
       maxInFlight,
-      guestOver: { status: guestOver.status, code: guestOver.code, retryAfter: guestOver.retryAfter },
-      ownerOver: { status: ownerOver.status, code: ownerOver.code, retryAfter: ownerOver.retryAfter },
-      full: { status: full.status, code: full.code, retryAfter: full.retryAfter },
+      tenthRequest: { status: over.status, code: over.code, retryAfter: over.retryAfter },
       finalBindings: await membersByKey(pool),
     };
   });

@@ -72,7 +72,7 @@ export type RelayCandidateResolution = {
     | "cooling"
     /** Every Key the employee could use is at its concurrency limit. */
     | "busy"
-    /** This employee already has RELAY_KEY_MEMBER_CONCURRENCY in flight on the bound Key. */
+    /** This employee already has RELAY_EMPLOYEE_MAX_CONCURRENCY in flight across all Keys. */
     | "member_busy"
     | "unavailable"
     | "model_not_allowed"
@@ -575,7 +575,7 @@ export async function resolveRelayBoundCandidate(
   );
   if (resolved.candidate) {
     resolved.candidate.maxConcurrency = env.RELAY_KEY_MAX_CONCURRENCY;
-    resolved.candidate.maxMemberConcurrency = env.RELAY_KEY_MEMBER_CONCURRENCY;
+    resolved.candidate.maxEmployeeConcurrency = env.RELAY_EMPLOYEE_MAX_CONCURRENCY;
   }
   return resolved;
 }

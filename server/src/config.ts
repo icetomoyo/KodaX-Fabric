@@ -52,10 +52,10 @@ const envSchema = z.object({
   RELAY_SAFEGUARD_RPM: z.coerce.number().int().min(1).default(60),
   RELAY_SAFEGUARD_MAX_CONCURRENCY: z.coerce.number().int().min(1).default(5),
   // 渠道 Key 调度：每把 Key 最多挂几个员工、最多几个在途请求。
-  // 单人在一把 Key 上再单独封顶，3 人 × 3 路 = 9，避免已绑定的人因并发满去换 Key。
   RELAY_KEY_MAX_MEMBERS: z.coerce.number().int().min(1).max(100).default(3),
   RELAY_KEY_MAX_CONCURRENCY: z.coerce.number().int().min(1).max(1_000).default(9),
-  RELAY_KEY_MEMBER_CONCURRENCY: z.coerce.number().int().min(1).max(1_000).default(3),
+  // 每个员工同时最多几路（所有 Key 加起来）。当前 Key 满了而员工没到这个数，就换绑到有空位的 Key。
+  RELAY_EMPLOYEE_MAX_CONCURRENCY: z.coerce.number().int().min(1).max(1_000).default(9),
   // 成员多久没调用就从 Key 上释放，以及清理任务多久跑一次。
   RELAY_KEY_IDLE_RELEASE_SECONDS: z.coerce.number().int().min(60).max(604_800).default(1_800),
   RELAY_KEY_IDLE_SWEEP_SECONDS: z.coerce.number().int().min(1).max(3_600).default(60),

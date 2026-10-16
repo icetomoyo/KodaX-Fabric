@@ -43,7 +43,7 @@ export type RelayUpstreamAttemptKind =
   | "model_unsupported"
   /** The Key was already at its concurrency limit; nothing was sent upstream. */
   | "key_busy"
-  /** This employee already has RELAY_KEY_MEMBER_CONCURRENCY in flight on the Key. */
+  /** This employee already has RELAY_EMPLOYEE_MAX_CONCURRENCY in flight across all Keys. */
   | "member_busy";
 
 /**
@@ -856,7 +856,7 @@ export async function sendRelayUpstream(
       virtualKeyId: input.virtualKeyId,
       employeeId: input.employeeId,
       limit: input.candidate.maxConcurrency ?? null,
-      employeeLimit: input.candidate.maxMemberConcurrency ?? null,
+      employeeLimit: input.candidate.maxEmployeeConcurrency ?? null,
     });
   if (!began.ok) {
     const memberBusy = began.reason === "member_busy";

@@ -78,7 +78,7 @@ export function e2eServerEnv(): NodeJS.ProcessEnv {
     RELAY_SAFEGUARD_RPM: "100000",
     RELAY_SAFEGUARD_MAX_CONCURRENCY: "100",
     RELAY_KEY_MAX_CONCURRENCY: "9",
-    RELAY_KEY_MEMBER_CONCURRENCY: "3",
+    RELAY_EMPLOYEE_MAX_CONCURRENCY: "9",
     // 潮汐用例改完库里的用量、Key 状态后立刻发请求，不能读到上一份快照。
     RELAY_TIDAL_SNAPSHOT_TTL_MS: "0",
   };

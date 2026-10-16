@@ -58,7 +58,6 @@ type HopCounter = LiveCounter & {
 };
 
 const inFlightByCredential = new Map<number, number>();
-const inFlightByEmployeeCredential = new Map<string, number>();
 /** 其中经潮汐KEY 发起的部分；潮汐在每把 Key 上另有一个更小的并发上限。 */
 const inFlightTidalByCredential = new Map<number, number>();
 const inFlightByEmployee = new Map<number, number>();
@@ -70,10 +69,6 @@ const liveByHop = new Map<string, HopCounter>();
 
 function hopKey(virtualKeyId: number, credentialId: number): string {
   return `${virtualKeyId}:${credentialId}`;
-}
-
-function employeeCredentialKey(employeeId: number, credentialId: number): string {
-  return `${employeeId}:${credentialId}`;
 }
 
 function isPositiveId(value: number | null | undefined): value is number {
@@ -172,14 +167,6 @@ export function getEmployeeInFlight(employeeId: number): number {
   return inFlightByEmployee.get(employeeId) ?? 0;
 }
 
-/** Upstream attempts this employee currently has in flight on one Key. */
-export function getEmployeeCredentialInFlight(
-  employeeId: number,
-  credentialId: number,
-): number {
-  return inFlightByEmployeeCredential.get(employeeCredentialKey(employeeId, credentialId)) ?? 0;
-}
-
 export function recordCredentialTokens(credentialId: number, tokens: number): void {
   const amount = Number.isFinite(tokens) ? Math.trunc(tokens) : 0;
   if (amount <= 0) return;
@@ -267,17 +254,10 @@ export function beginCredentialUse(
     );
   }
   const trackedEmployeeId = !tidal && isPositiveId(employeeId) ? employeeId : null;
-  const trackedPair = trackedEmployeeId != null
-    ? employeeCredentialKey(trackedEmployeeId, credentialId)
-    : null;
-  if (trackedEmployeeId != null && trackedPair != null) {
+  if (trackedEmployeeId != null) {
     inFlightByEmployee.set(
       trackedEmployeeId,
       (inFlightByEmployee.get(trackedEmployeeId) ?? 0) + 1,
-    );
-    inFlightByEmployeeCredential.set(
-      trackedPair,
-      (inFlightByEmployeeCredential.get(trackedPair) ?? 0) + 1,
     );
   }
   let released = false;
@@ -311,14 +291,6 @@ export function beginCredentialUse(
       } else {
         inFlightByEmployee.set(trackedEmployeeId, mine - 1);
       }
-      if (trackedPair != null) {
-        const pairCount = inFlightByEmployeeCredential.get(trackedPair) ?? 0;
-        if (pairCount <= 1) {
-          inFlightByEmployeeCredential.delete(trackedPair);
-        } else {
-          inFlightByEmployeeCredential.set(trackedPair, pairCount - 1);
-        }
-      }
     }
   };
 }
@@ -328,7 +300,7 @@ export type CredentialUseOptions = {
   employeeId?: number | null;
   /** Refuse the attempt when the Key already has this many requests in flight. */
   limit?: number | null;
-  /** Refuse when this employee already has this many in flight on this Key. */
+  /** Refuse when this employee already has this many in flight across all Keys. */
   employeeLimit?: number | null;
   /** Set for tidal attempts: refuse when the Key already has this many tidal requests in flight. */
   tidalLimit?: number | null;
@@ -352,8 +324,7 @@ export function tryBeginCredentialUse(
   if (
     employeeLimit != null &&
     isPositiveId(employeeId) &&
-    (inFlightByEmployeeCredential.get(employeeCredentialKey(employeeId, credentialId)) ?? 0)
-      >= employeeLimit
+    (inFlightByEmployee.get(employeeId) ?? 0) >= employeeLimit
   ) {
     return { ok: false, reason: "member_busy" };
   }
