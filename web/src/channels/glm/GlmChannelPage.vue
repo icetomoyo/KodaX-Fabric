@@ -2,7 +2,7 @@
   <ChannelWorkspaceView
     :channel="channel"
     show-seats
-    show-keys
+    :show-keys="false"
     show-seat-count
     create-tag-default="国内"
     name-placeholder="例如 GLM-50"

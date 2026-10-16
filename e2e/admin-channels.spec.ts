@@ -66,7 +66,7 @@ test("上游渠道页列出三个插件渠道，没有新增渠道和模式", as
   });
 });
 
-test("智谱：新增套餐、席位、KEY", async ({ page }) => {
+test("智谱：新增套餐、席位，右侧只有席位表", async ({ page }) => {
   test.setTimeout(60_000);
   await loginAdmin(page);
   await openChannels(page);
@@ -100,14 +100,14 @@ test("智谱：新增套餐、席位、KEY", async ({ page }) => {
     page.getByRole("cell", { name: E2E_ORG.employees.childA.name, exact: true }),
   ).toBeVisible();
 
-  const secret = `sk-e2e-glm-admin-${stamp}`;
-  await page.getByRole("button", { name: "添加 KEY" }).click();
-  const keyDialog = page.locator(".el-dialog").filter({ hasText: "添加 KEY" });
-  await expect(keyDialog).toBeVisible();
-  await keyDialog.getByPlaceholder("粘贴管理员手里的 API KEY").fill(secret);
-  await keyDialog.getByRole("button", { name: "添加" }).click();
-  await expect(page.getByText("KEY 已添加")).toBeVisible();
-  await expect(page.getByText(`•••• ${secret.slice(-4)}`)).toBeVisible();
+  const detail = page.locator(".detail-pane");
+  await expect(detail.locator(".pane-label", { hasText: "席位" })).toBeVisible();
+  await expect(detail.locator(".pane-label", { hasText: /^KEY$/ })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "添加 KEY" })).toHaveCount(0);
+  await page.screenshot({
+    path: resolve(ARTIFACT_DIR, "admin-channels-glm-seats-only.png"),
+    fullPage: true,
+  });
 });
 
 test("深度求索：新增充值账户", async ({ page }) => {
@@ -141,6 +141,11 @@ test("火山方舟：新增套餐（无既有产品也能创建）", async ({ pa
   await expect(dialog).toBeHidden();
   await expect(page.locator(".el-overlay:visible")).toHaveCount(0);
   await expect(page.locator(".el-message")).toHaveCount(0);
+
+  const detail = page.locator(".detail-pane");
+  await expect(detail.locator(".pane-label", { hasText: "席位" })).toBeVisible();
+  await expect(detail.locator(".pane-label", { hasText: /^KEY$/ })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "添加 KEY" })).toHaveCount(0);
 
   await page.screenshot({
     path: resolve(ARTIFACT_DIR, "admin-channels-huoshan.png"),

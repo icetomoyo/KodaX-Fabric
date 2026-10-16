@@ -2,7 +2,7 @@
   <ChannelWorkspaceView
     :channel="channel"
     show-seats
-    show-keys
+    :show-keys="false"
     show-seat-count
     name-placeholder="例如 Agent Plan"
     @changed="$emit('changed')"
