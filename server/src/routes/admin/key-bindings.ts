@@ -17,6 +17,7 @@ import { effectiveCredentialStatus } from "../../lib/credential-status.js";
 import { snapshotRelayLiveLoad } from "../../lib/relay/credential-load.js";
 import { writeOpsAudit } from "../../lib/ops-audit.js";
 import { loadCredentialMembers, releaseCredentialBinding } from "../../lib/relay/binding.js";
+import { effectiveKeyMaxMembers } from "../../lib/relay/key-limits.js";
 import {
   credentialWindowAnchors,
   evaluateCredentialQuota,
@@ -80,6 +81,7 @@ export async function adminKeyBindingRoutes(app: FastifyInstance) {
           lineMonthlyWindowResetAt: productLines.monthlyWindowResetAt,
           holderEmployeeId: channelSeats.employeeId,
           holderName: employees.name,
+          keyMaxMembers: productLines.keyMaxMembers,
         })
         .from(upstreamCredentials)
         .innerJoin(productLines, eq(upstreamCredentials.productLineId, productLines.id))
@@ -227,6 +229,7 @@ export async function adminKeyBindingRoutes(app: FastifyInstance) {
             name: member.name,
             lastUsedAt: member.lastUsedAt?.toISOString() ?? null,
           })),
+          memberLimit: effectiveKeyMaxMembers(row.keyMaxMembers),
           holderEmployeeId: row.holderEmployeeId,
           holderName: row.holderName,
         };

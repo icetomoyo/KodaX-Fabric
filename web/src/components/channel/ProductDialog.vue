@@ -96,6 +96,26 @@
             @update:model-value="$emit('update:monthlyWindowResetAt', $event)"
           />
         </el-form-item>
+        <el-form-item label="可挂员工数">
+          <el-input
+            :model-value="keyMaxMembers"
+            placeholder="每把 KEY 可挂员工数，留空为 3"
+            clearable
+            @update:model-value="$emit('update:keyMaxMembers', $event)"
+          />
+        </el-form-item>
+        <el-form-item label="KEY 并发">
+          <el-input
+            :model-value="keyMaxConcurrency"
+            placeholder="每把 KEY 并发，留空为 9"
+            clearable
+            @update:model-value="$emit('update:keyMaxConcurrency', $event)"
+          />
+          <p class="form-hint">
+            该产品下每把 KEY 最多挂几名员工、最多几路在途请求。留空走全局默认（3 人 / 9 路）。
+            保存后对该产品下所有 KEY 立即生效。
+          </p>
+        </el-form-item>
       </template>
       <el-form-item v-if="mode === 'edit'" label="批量查询额度">
         <el-switch
@@ -143,12 +163,16 @@ withDefaults(defineProps<{
   monthlyWindowResetAt: Date | null;
   showMonthlyReset?: boolean;
   officialQuotaQueryEnabled?: boolean;
+  keyMaxMembers?: string;
+  keyMaxConcurrency?: string;
   status: "active" | "disabled";
   saving: boolean;
   namePlaceholder?: string;
 }>(), {
   showMonthlyReset: true,
   officialQuotaQueryEnabled: false,
+  keyMaxMembers: "",
+  keyMaxConcurrency: "",
 });
 
 defineEmits<{
@@ -162,6 +186,8 @@ defineEmits<{
   "update:weeklyWindowResetAt": [value: unknown];
   "update:monthlyWindowResetAt": [value: unknown];
   "update:officialQuotaQueryEnabled": [value: boolean];
+  "update:keyMaxMembers": [value: string];
+  "update:keyMaxConcurrency": [value: string];
   "update:status": [value: "active" | "disabled"];
   submit: [];
 }>();

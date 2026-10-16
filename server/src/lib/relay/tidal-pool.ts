@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { env } from "../../config.js";
 import { db } from "../../db/client.js";
+import { effectiveKeyMaxConcurrency } from "./key-limits.js";
 import { employees } from "../../db/schema/index.js";
 import { effectiveCredentialStatus } from "../credential-status.js";
 import {
@@ -176,7 +177,7 @@ export function judgeTidalKey(input: {
   if (fiveHourRatio >= settings.fiveHourLine) return skip("five_hour_line");
   if (
     getTidalInFlight(key.credentialId) >= settings.perKeyConcurrency ||
-    inFlight >= env.RELAY_KEY_MAX_CONCURRENCY
+    inFlight >= effectiveKeyMaxConcurrency(key.keyMaxConcurrency)
   ) {
     return skip("busy");
   }
@@ -267,10 +268,14 @@ export async function acquireTidalCredential(
   }
 
   const take = (credentialId: number) => {
+    const state = stateById.get(credentialId);
+    const limit = state?.usable
+      ? state.credential.keyMaxConcurrency
+      : env.RELAY_KEY_MAX_CONCURRENCY;
     const began = tryBeginCredentialUse(credentialId, {
       virtualKeyId: params.tidal.apiKeyId,
       employeeId: params.employeeId,
-      limit: env.RELAY_KEY_MAX_CONCURRENCY,
+      limit,
       tidalLimit: settings.perKeyConcurrency,
     });
     return began.ok ? began.release : null;

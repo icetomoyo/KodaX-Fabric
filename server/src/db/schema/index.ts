@@ -348,6 +348,14 @@ export const productLines = pgTable(
     zhipuProjectId: varchar("zhipu_project_id", { length: 64 }),
     /** Whether Keys under this package join the batch official quota query. */
     officialQuotaQueryEnabled: boolean("official_quota_query_enabled").notNull().default(false),
+    /**
+     * 套餐下每把 Key 最多挂几个员工；null 走全局 RELAY_KEY_MAX_MEMBERS（默认 3）。
+     */
+    keyMaxMembers: integer("key_max_members"),
+    /**
+     * 套餐下每把 Key 最多几路在途；null 走全局 RELAY_KEY_MAX_CONCURRENCY（默认 9）。
+     */
+    keyMaxConcurrency: integer("key_max_concurrency"),
     relayPoolKey: varchar("relay_pool_key", { length: 64 }).notNull().default(""),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),

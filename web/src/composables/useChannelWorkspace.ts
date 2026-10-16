@@ -34,6 +34,8 @@ type ProductLineApiRow = {
   zhipuOrganizationId?: string | null;
   zhipuProjectId?: string | null;
   officialQuotaQueryEnabled?: boolean;
+  keyMaxMembers?: number | null;
+  keyMaxConcurrency?: number | null;
 };
 
 function storedCreditLimit(value: string | number | null | undefined): number | null {
@@ -48,6 +50,14 @@ function parseCreditLimitInput(raw: string): number | null | undefined {
   if (!/^(?:0|[1-9]\d*)(?:\.\d+)?$/.test(trimmed)) return undefined;
   const value = Number(trimmed);
   return Number.isFinite(value) && value >= 0 ? value : undefined;
+}
+
+function parseCountInput(raw: string, min: number, max: number): number | null | undefined {
+  const trimmed = raw.trim();
+  if (trimmed === "") return null;
+  if (!/^[1-9]\d*$/.test(trimmed)) return undefined;
+  const value = Number(trimmed);
+  return Number.isInteger(value) && value >= min && value <= max ? value : undefined;
 }
 
 function normalizeSeatTag(value: string): string | null {
@@ -74,6 +84,8 @@ function emptyEditForm(): EditProductForm {
     zhipuOrganizationId: "",
     zhipuProjectId: "",
     officialQuotaQueryEnabled: false,
+    keyMaxMembers: "",
+    keyMaxConcurrency: "",
   };
 }
 
@@ -129,6 +141,8 @@ export function useChannelWorkspace(channelCode: MaybeRefOrGetter<string>) {
     zhipuOrganizationId: null as string | null,
     zhipuProjectId: null as string | null,
     officialQuotaQueryEnabled: false,
+    keyMaxMembers: null as number | null,
+    keyMaxConcurrency: null as number | null,
   });
   const editSeatForm = reactive({
     id: 0,
@@ -297,6 +311,8 @@ export function useChannelWorkspace(channelCode: MaybeRefOrGetter<string>) {
             zhipuOrganizationId: row.zhipuOrganizationId ?? null,
             zhipuProjectId: row.zhipuProjectId ?? null,
             officialQuotaQueryEnabled: Boolean(row.officialQuotaQueryEnabled),
+            keyMaxMembers: storedCreditLimit(row.keyMaxMembers),
+            keyMaxConcurrency: storedCreditLimit(row.keyMaxConcurrency),
           }))
         : [];
       seats.value = Array.isArray(seatRes.data.data)
@@ -411,6 +427,10 @@ export function useChannelWorkspace(channelCode: MaybeRefOrGetter<string>) {
     editOriginal.zhipuProjectId = pkg.zhipuProjectId;
     editForm.officialQuotaQueryEnabled = pkg.officialQuotaQueryEnabled;
     editOriginal.officialQuotaQueryEnabled = pkg.officialQuotaQueryEnabled;
+    editForm.keyMaxMembers = pkg.keyMaxMembers == null ? "" : String(pkg.keyMaxMembers);
+    editForm.keyMaxConcurrency = pkg.keyMaxConcurrency == null ? "" : String(pkg.keyMaxConcurrency);
+    editOriginal.keyMaxMembers = pkg.keyMaxMembers;
+    editOriginal.keyMaxConcurrency = pkg.keyMaxConcurrency;
     editOriginal.name = pkg.name;
     editOriginal.tag = pkg.tag;
     editOriginal.seatCount = pkg.seatCount;
@@ -466,6 +486,22 @@ export function useChannelWorkspace(channelCode: MaybeRefOrGetter<string>) {
       }
       if (monthlyLimit !== editOriginal.monthlyCreditLimit) {
         payload.monthlyCreditLimit = monthlyLimit;
+      }
+      const keyMaxMembers = parseCountInput(editForm.keyMaxMembers, 1, 100);
+      const keyMaxConcurrency = parseCountInput(editForm.keyMaxConcurrency, 1, 1000);
+      if (keyMaxMembers === undefined) {
+        ElMessage.warning("可挂员工数须为 1–100 的整数，留空走全局默认");
+        return false;
+      }
+      if (keyMaxConcurrency === undefined) {
+        ElMessage.warning("KEY 并发须为 1–1000 的整数，留空走全局默认");
+        return false;
+      }
+      if (keyMaxMembers !== editOriginal.keyMaxMembers) {
+        payload.keyMaxMembers = keyMaxMembers;
+      }
+      if (keyMaxConcurrency !== editOriginal.keyMaxConcurrency) {
+        payload.keyMaxConcurrency = keyMaxConcurrency;
       }
       const nextMonthlyReset = editForm.monthlyWindowResetAt;
       const previousMonthlyMs = editOriginal.monthlyWindowResetAt

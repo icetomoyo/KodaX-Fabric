@@ -118,6 +118,8 @@ export const OPS_AUDIT_DETAIL_KEY_LABELS: Record<string, string> = {
   allowAutoRoute: "自动路由",
   fiveHourCreditLimit: "5 小时积分额度",
   weeklyCreditLimit: "周积分额度",
+  keyMaxMembers: "每把 KEY 可挂员工数",
+  keyMaxConcurrency: "每把 KEY 并发",
   promptCreditsPer10k: "Input 积分系数",
   cacheHitCreditsPer10k: "Cached Input 积分系数",
   completionCreditsPer10k: "Output 积分系数",

@@ -19,6 +19,8 @@ export type ProductRow = {
   zhipuOrganizationId: string | null;
   zhipuProjectId: string | null;
   officialQuotaQueryEnabled: boolean;
+  keyMaxMembers: number | null;
+  keyMaxConcurrency: number | null;
 };
 
 export type SeatRow = {
@@ -68,4 +70,6 @@ export type EditProductForm = {
   zhipuOrganizationId: string;
   zhipuProjectId: string;
   officialQuotaQueryEnabled: boolean;
+  keyMaxMembers: string;
+  keyMaxConcurrency: string;
 };

@@ -59,6 +59,10 @@ export const upstreamChannelUpdateSchema = z
       .transform((value) => (value === "" ? null : value)),
     /** Whether Keys under this package join the batch official quota query. */
     officialQuotaQueryEnabled: z.boolean().optional(),
+    /** 套餐下每把 Key 最多挂几个员工；null 走全局默认。 */
+    keyMaxMembers: z.number().int().min(1).max(100).nullable().optional(),
+    /** 套餐下每把 Key 最多几路在途；null 走全局默认。 */
+    keyMaxConcurrency: z.number().int().min(1).max(1_000).nullable().optional(),
     supportedProtocols: configurableSupportedProtocolsSchema.optional(),
     protocolConfigs: protocolConfigsInputSchema.optional(),
   })

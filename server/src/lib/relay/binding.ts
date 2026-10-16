@@ -16,6 +16,10 @@ import {
 import { env } from "../../config.js";
 import { db } from "../../db/client.js";
 import {
+  effectiveKeyMaxConcurrency,
+  effectiveKeyMaxMembers,
+} from "./key-limits.js";
+import {
   channelSeats,
   credentialBindingMembers,
   credentialBindings,
@@ -52,7 +56,7 @@ import {
 /**
  * 渠道 Key 调度：每个员工在一个调度池里挂在一把 Key 上（成员关系），
  * 一把 Key 最多挂 RELAY_KEY_MAX_MEMBERS 个员工、同时最多
- * RELAY_KEY_MAX_CONCURRENCY 个在途请求（默认 3 人、9 路）。
+ * RELAY_KEY_MAX_CONCURRENCY 个在途请求（默认 3 人、9 路；套餐可覆盖）。
  *
  * 每个员工同时最多 RELAY_EMPLOYEE_MAX_CONCURRENCY 路（默认 9，所有 Key 加起来）。
  * 到了这个数只 429，不解绑、不换 Key；没到而当前 Key 已满 9 路，就换绑到
@@ -65,7 +69,7 @@ import {
  *   大家摊到各把 Key 上。
  * - 绑定后粘住，只有当前 Key 不能用（停用、冷却、满 9 路、本次请求已失败）才换；
  *   持有人自己的 Key 空出来也不迁回去。
- * - 满 3 人的 Key 谁都挂不进去，持有人也不能把别人挤下去。
+ * - 满员的 Key 谁都挂不进去，持有人也不能把别人挤下去。
  * - 额度以上游真实返回为准，本地估算不提前让出。
  *
  * 同一把 Key 上的成员都属于同一家企业；别的企业员工持有的 Key 不能借。
@@ -97,6 +101,10 @@ export type BoundCredential = {
   /** The weekly reset instant the Key follows: its own, else its package's. */
   weeklyWindowResetAt: Date | null;
   monthlyWindowResetAt: Date | null;
+  /** 这把 Key 所属套餐的每把 Key 并发上限（套餐空值已折成全局默认）。 */
+  keyMaxConcurrency: number;
+  /** 这把 Key 所属套餐的每把 Key 人数上限（套餐空值已折成全局默认）。 */
+  keyMaxMembers: number;
   meta: unknown;
 };
 
@@ -155,6 +163,8 @@ type CredentialSnapshotRow = {
   weeklyWindowResetAt: Date | null;
   lineWeeklyWindowResetAt: Date | null;
   lineMonthlyWindowResetAt: Date | null;
+  keyMaxMembers: number | null;
+  keyMaxConcurrency: number | null;
   meta: unknown;
 };
 
@@ -242,6 +252,8 @@ const credentialSnapshotSelect = {
   weeklyWindowResetAt: upstreamCredentials.weeklyWindowResetAt,
   lineWeeklyWindowResetAt: productLines.weeklyWindowResetAt,
   lineMonthlyWindowResetAt: productLines.monthlyWindowResetAt,
+  keyMaxMembers: productLines.keyMaxMembers,
+  keyMaxConcurrency: productLines.keyMaxConcurrency,
   meta: upstreamCredentials.meta,
 };
 
@@ -410,7 +422,7 @@ export async function acquireBoundCredential(
     neededSlots: Math.min(
       env.RELAY_KEY_MAX_CONCURRENCY,
       getEmployeeInFlight(params.employeeId) + 1,
-    ),
+    ), // 排序用全局默认，避免同一池里套餐上限不同时漂移。
   };
 
   // What the current Key contributes to the failure reason if nothing else fits.
@@ -492,7 +504,7 @@ function judgeKey(
     inFlight,
   );
 
-  const freeSlots = env.RELAY_KEY_MAX_CONCURRENCY - inFlight;
+  const freeSlots = effectiveKeyMaxConcurrency(key.keyMaxConcurrency) - inFlight;
   if (freeSlots <= 0) return { kind: "busy" };
 
   const credential = toBoundCredential(key, ctx.protocol, ctx.now);
@@ -543,7 +555,7 @@ async function rankPoolKeys(ctx: AcquireContext): Promise<Ranking> {
     if (verdict.kind !== "usable") continue;
 
     // 满员的 Key 谁都挂不进去，持有人也一样。
-    if (key.memberCount >= env.RELAY_KEY_MAX_MEMBERS) {
+    if (key.memberCount >= effectiveKeyMaxMembers(key.keyMaxMembers)) {
       ranking.full = true;
       continue;
     }
@@ -582,7 +594,7 @@ async function joinKey(ctx: AcquireContext, pick: RankedKey): Promise<JoinOutcom
   const credentialId = pick.key.credentialId;
   const productLineId = pick.key.productLineId;
   const poolKey = ctx.pool.key;
-  const maxMembers = env.RELAY_KEY_MAX_MEMBERS;
+  const maxMembers = effectiveKeyMaxMembers(pick.key.keyMaxMembers);
 
   return db.transaction(async (tx) => {
     await tx
@@ -831,6 +843,8 @@ export function toBoundCredential(
     fiveHourWindowBaseCredits: Number(snapshot.fiveHourWindowBaseCredits) || 0,
     weeklyWindowResetAt: effectiveWeeklyResetAt(snapshot),
     monthlyWindowResetAt: snapshot.lineMonthlyWindowResetAt,
+    keyMaxConcurrency: effectiveKeyMaxConcurrency(snapshot.keyMaxConcurrency),
+    keyMaxMembers: effectiveKeyMaxMembers(snapshot.keyMaxMembers),
     meta: snapshot.meta,
   };
 }

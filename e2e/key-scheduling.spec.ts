@@ -25,7 +25,7 @@ import {
 
 /**
  * 渠道 Key 调度 E2E：持有人只在自己的 Key 没人挂时优先挂上去、其余人人平等摊到人少的 Key、
- * 每把 Key 最多 3 人 / 9 并发、每个员工最多 9 路（当前 Key 满了就换绑到有空位的 Key）、
+ * 每把 Key 默认最多 3 人 / 9 并发（可在「编辑产品」按套餐覆盖）、每个员工最多 9 路（当前 Key 满了就换绑到有空位的 Key）、
  * 按成员 30 分钟释放、上游 429 按业务码分类处理。
  *
  * 全程走真实 HTTP 进真实 server，上游是本机可编排的 mock（按 Bearer 认 Key、
@@ -73,6 +73,9 @@ import {
  * 28. 在套餐上改了上限后，没有立即对套餐下所有 Key 生效。
  * 29. 管理端显示的上限不是实际生效的上限。
  * 30. 「编辑产品」对话框里填的积分上限没有真正保存，或者保存后重新打开看不到。
+ * 34. 「编辑产品」里填的每把 KEY 可挂员工数 / 并发没有保存，或保存后重新打开看不到。
+ * 35. 套餐上改了每把 KEY 并发后，调度仍按全局 9 路拦，满 1 路也不换绑。
+ * 36. 套餐上改了每把 KEY 可挂员工数后，调度仍按全局 3 人拦。
  * 31. 所有 Key 都限流、请求最终失败时，retry-after 不是真实的恢复时间（以前固定 5 分钟）。
  * 32. 试满尝试次数而池里还有别的 Key 时，retry-after 仍是 5 分钟，客户端白等。
  * 33. 套餐到期 / 失效（1309、1314、1315）的 Key 只是冷却，到点又被选中再失败一次，
@@ -610,6 +613,75 @@ test.describe.serial("渠道 Key 调度", () => {
     };
   });
 
+  test("套餐上设的每把 KEY 人数和并发立刻参与调度", async () => {
+    const pool = await usePool("burst");
+    const headers = { Authorization: `Bearer ${await adminToken()}` };
+    const patchLine = async (fields: Record<string, number | null>) => {
+      const linesRes = await api.get("/api/admin/product-lines", { headers });
+      const line = ((await linesRes.json()) as {
+        data: Array<{ id: number; configVersion: number }>;
+      }).data.find((row) => row.id === lineId(pool));
+      const res = await api.patch(`/api/admin/product-lines/${lineId(pool)}`, {
+        headers,
+        data: { expectedConfigVersion: line!.configVersion, ...fields },
+      });
+      expect(res.status(), `保存套餐调度上限失败: ${await res.text()}`).toBe(200);
+    };
+    const clearPoolMembers = async () => {
+      await sql`
+        delete from credential_binding_members
+        where binding_id in (
+          select b.id from credential_bindings b
+          join upstream_credentials uc on uc.id = b.credential_id
+          where uc.product_line_id = ${lineId(pool)}
+        )
+      `;
+      await sql`
+        delete from credential_bindings
+        where credential_id in (
+          select id from upstream_credentials where product_line_id = ${lineId(pool)}
+        )
+      `;
+    };
+
+    try {
+      await patchLine({ keyMaxConcurrency: 1 });
+      await setBehavior(pool, "bsto", { type: "hold" });
+      await setBehavior(pool, "bstf", { type: "hold" });
+      const pending: Array<Promise<CallResult>> = [];
+      pending.push(call(pool, "ownerBurst"));
+      await waitForInFlight(pool, { bsto: 1 });
+      pending.push(call(pool, "ownerBurst"));
+      await waitForInFlight(pool, { bsto: 1, bstf: 1 });
+      expect(await boundKey(pool, "ownerBurst"), "套餐并发 1 时当前 Key 满了就换绑").toBe("bstf");
+
+      await setBehavior(pool, "bsto", { type: "ok" });
+      await setBehavior(pool, "bstf", { type: "ok" });
+      await mockControl("release", {});
+      const held = await Promise.all(pending);
+      expect(held.map((result) => result.status)).toEqual([200, 200]);
+
+      await clearPoolMembers();
+      await patchLine({ keyMaxConcurrency: null, keyMaxMembers: 1 });
+      expect((await call(pool, "guest1")).key, "第一人挂到 ID 小的 Key").toBe("bsto");
+      expect((await call(pool, "guest2")).key, "每把 KEY 只能挂 1 人，第二人去另一把").toBe("bstf");
+      await setCredentialStatus(pool, "bstf", "disabled");
+      const third = await call(pool, "guest3");
+      expect(third.status, "满 1 人后不能再挂").toBe(429);
+      expect(third.code).toBe("model_channels_cooling");
+      expect(await membersByKey(pool)).toEqual({ bsto: ["guest1"], bstf: ["guest2"] });
+
+      report.packageKeyLimitsSchedule = {
+        reboundKey: "bstf",
+        members: await membersByKey(pool),
+        thirdStatus: third.status,
+      };
+    } finally {
+      await setCredentialStatus(pool, "bstf", "active");
+      await patchLine({ keyMaxMembers: null, keyMaxConcurrency: null });
+    }
+  });
+
   test("借用者和持有人都用到上游真的限额；1308 冷却到重置时刻并换 Key 完成请求", async () => {
     const pool = await usePool("quota");
     const ownerKey = await credentialRow(pool, "qtao");
@@ -995,6 +1067,96 @@ test.describe.serial("渠道 Key 调度", () => {
     await expect(reopened.getByPlaceholder(weeklyPlaceholder)).toHaveValue("155000");
 
     report.packageLimitDialog = { afterSave, screenshot: "package-credit-limits.png" };
+  });
+
+  test("在「编辑产品」对话框里设置每把 KEY 可挂员工数和并发", async ({ page }) => {
+    const headers = { Authorization: `Bearer ${await adminToken()}` };
+    const [line] = await sql<Array<{ id: string }>>`
+      select id from product_lines where code = ${SCHED_UI_PACKAGE.code}
+    `;
+    const uiLineId = Number(line.id);
+    const membersPlaceholder = "每把 KEY 可挂员工数，留空为 3";
+    const concurrencyPlaceholder = "每把 KEY 并发，留空为 9";
+
+    const lineLimits = async () => {
+      const res = await api.get("/api/admin/product-lines", { headers });
+      const row = ((await res.json()) as {
+        data: Array<{
+          id: number;
+          keyMaxMembers: number | null;
+          keyMaxConcurrency: number | null;
+        }>;
+      }).data.find((item) => item.id === uiLineId);
+      return {
+        keyMaxMembers: row?.keyMaxMembers ?? null,
+        keyMaxConcurrency: row?.keyMaxConcurrency ?? null,
+      };
+    };
+    const keyMemberLimit = async () => {
+      const res = await api.get(`/api/admin/credentials?productLineId=${uiLineId}`, { headers });
+      const rows = ((await res.json()) as { data: Array<{ memberLimit: number }> }).data;
+      return rows.map((row) => row.memberLimit);
+    };
+
+    expect(await lineLimits(), "保存前：套餐没设人数和并发，走全局默认").toEqual({
+      keyMaxMembers: null,
+      keyMaxConcurrency: null,
+    });
+    expect(await keyMemberLimit(), "保存前 KEY 列表按全局 3 人显示").toEqual([3, 3]);
+
+    await page.goto("/");
+    await page.getByText("账户登录", { exact: true }).click();
+    await page.getByPlaceholder("11 位手机号").fill(E2E.admin.phone);
+    await page.getByPlaceholder("请输入密码").fill(E2E.admin.password);
+    await page.getByRole("button", { name: "登录", exact: true }).click();
+    await expect(page).toHaveURL(/\/admin/, { timeout: 15_000 });
+    await page.goto("/admin/temp-channels");
+    await page.locator(".item-card", { hasText: SCHED_UI_PACKAGE.channelName }).first().click();
+    const packageCard = page.locator(".item-card", { hasText: SCHED_UI_PACKAGE.name });
+    await expect(packageCard).toBeVisible({ timeout: 15_000 });
+
+    const openDialog = async () => {
+      await packageCard.getByRole("button", { name: "编辑" }).click();
+      const dialog = page.locator(".el-dialog", { hasText: "编辑产品" });
+      await expect(dialog).toBeVisible();
+      return dialog;
+    };
+
+    const dialog = await openDialog();
+    await dialog.getByPlaceholder(membersPlaceholder).fill("2");
+    await dialog.getByPlaceholder(concurrencyPlaceholder).fill("4");
+    mkdirSync(ARTIFACT_DIR, { recursive: true });
+    await dialog.screenshot({ path: resolve(ARTIFACT_DIR, "package-key-limits.png") });
+    await dialog.getByRole("button", { name: "保存" }).click();
+    await expect(page.getByText("产品已更新")).toBeVisible();
+
+    expect(await lineLimits(), "保存后套餐记下人数和并发").toEqual({
+      keyMaxMembers: 2,
+      keyMaxConcurrency: 4,
+    });
+    expect(await keyMemberLimit(), "该产品下 KEY 立即按套餐人数显示").toEqual([2, 2]);
+
+    const reopened = await openDialog();
+    await expect(reopened.getByPlaceholder(membersPlaceholder)).toHaveValue("2");
+    await expect(reopened.getByPlaceholder(concurrencyPlaceholder)).toHaveValue("4");
+
+    report.packageKeyLimitsDialog = {
+      afterSave: await lineLimits(),
+      memberLimit: await keyMemberLimit(),
+      screenshot: "package-key-limits.png",
+    };
+
+    const linesRes = await api.get("/api/admin/product-lines", { headers });
+    const saved = ((await linesRes.json()) as { data: Array<{ id: number; configVersion: number }> })
+      .data.find((row) => row.id === uiLineId);
+    await api.patch(`/api/admin/product-lines/${uiLineId}`, {
+      headers,
+      data: {
+        expectedConfigVersion: saved!.configVersion,
+        keyMaxMembers: null,
+        keyMaxConcurrency: null,
+      },
+    });
   });
 
   test("上游 429 按业务码分类：1313 停用告警并换 Key、1305 不冷却不换 Key、1308 一直换到有 Key 能用", async () => {

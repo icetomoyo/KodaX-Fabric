@@ -103,6 +103,8 @@
       :monthly-window-reset-at="ws.editForm.monthlyWindowResetAt"
       :show-monthly-reset="channel.code !== 'glm'"
       :official-quota-query-enabled="ws.editForm.officialQuotaQueryEnabled"
+      :key-max-members="ws.editForm.keyMaxMembers"
+      :key-max-concurrency="ws.editForm.keyMaxConcurrency"
       :status="ws.editForm.status"
       :saving="ws.productSaving"
       @update:visible="ws.showEditProduct = $event"
@@ -115,6 +117,8 @@
       @update:weekly-window-reset-at="onWeeklyReset"
       @update:monthly-window-reset-at="onMonthlyReset"
       @update:official-quota-query-enabled="ws.editForm.officialQuotaQueryEnabled = $event"
+      @update:key-max-members="ws.editForm.keyMaxMembers = $event"
+      @update:key-max-concurrency="ws.editForm.keyMaxConcurrency = $event"
       @update:status="onStatus"
       @submit="onEdit"
     >

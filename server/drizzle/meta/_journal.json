@@ -512,6 +512,13 @@
       "when": 1792530000000,
       "tag": "0072_package_official_quota_query",
       "breakpoints": true
+    },
+    {
+      "idx": 73,
+      "version": "7",
+      "when": 1792620000000,
+      "tag": "0073_package_key_limits",
+      "breakpoints": true
     }
   ]
 }

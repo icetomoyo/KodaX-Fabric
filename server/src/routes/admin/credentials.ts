@@ -16,6 +16,7 @@ import {
 } from "../../db/schema/index.js";
 import { env } from "../../config.js";
 import { loadCredentialMembers, type CredentialMembership } from "../../lib/relay/binding.js";
+import { effectiveKeyMaxMembers } from "../../lib/relay/key-limits.js";
 import {
   FIVE_HOUR_MS,
   credentialWindowAnchors,
@@ -87,14 +88,17 @@ const RECENT_WINDOW_MS = 24 * 60 * 60 * 1_000;
 const supportedProtocolsSchema = configurableSupportedProtocolsSchema;
 
 /** 绑定只显示成员：挂着谁、几个人、每把最多几个人。 */
-function membershipView(membership: CredentialMembership | undefined) {
+function membershipView(
+  membership: CredentialMembership | undefined,
+  memberLimit: number = env.RELAY_KEY_MAX_MEMBERS,
+) {
   return {
     bound: membership?.bound ?? false,
     members: (membership?.members ?? []).map((member) => ({
       employeeId: member.employeeId,
       name: member.name,
     })),
-    memberLimit: env.RELAY_KEY_MAX_MEMBERS,
+    memberLimit,
   };
 }
 
@@ -759,7 +763,10 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
               now,
             ),
             lastFailureKind: row.lastFailureKind,
-            ...membershipView(membershipById.get(row.id)),
+            ...membershipView(
+              membershipById.get(row.id),
+              effectiveKeyMaxMembers(located.productLine.keyMaxMembers),
+            ),
           };
         }),
       },
@@ -826,6 +833,8 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
         seatCount: productLines.seatCount,
         productLineTag: productLines.tag,
         testModel: productLines.testModel,
+        keyMaxMembers: productLines.keyMaxMembers,
+        keyMaxConcurrency: productLines.keyMaxConcurrency,
         holderEmployeeId: channelSeats.employeeId,
         holderName: employees.name,
       })
@@ -936,7 +945,10 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
             : null,
           lastFailureKind: row.lastFailureKind,
           lastVendorCode: row.lastVendorCode,
-          ...membershipView(membershipById.get(row.id)),
+          ...membershipView(
+            membershipById.get(row.id),
+            effectiveKeyMaxMembers(row.keyMaxMembers),
+          ),
           connectedNames,
         };
       }),

@@ -75,7 +75,7 @@
         </section>
 
         <section class="detail-block">
-          <h3>成员 {{ selectedCredential.members.length }}/{{ graph?.memberLimit ?? 3 }}</h3>
+          <h3>成员 {{ selectedCredential.members.length }}/{{ selectedCredential.memberLimit }}</h3>
           <p>持有人：{{ selectedCredential.holderName || "无" }}</p>
           <p v-if="selectedCredential.members.length" data-testid="credential-members">
             {{ selectedCredential.members.map(memberText).join("、") }}
@@ -181,6 +181,7 @@ type GraphCredential = {
   bound: boolean;
   /** 现在挂在这把 Key 上的人，最多 memberLimit 个。 */
   members: Array<{ employeeId: number; name: string; lastUsedAt: string | null }>;
+  memberLimit: number;
   /** 持有人：登记这把 Key 的员工；只在挂 Key 时、Key 上没人时优先挂自己的。 */
   holderEmployeeId: number | null;
   holderName: string | null;
@@ -430,7 +431,7 @@ const layout = computed((): { nodes: Node[]; edges: Edge[] } => {
     const requests = requestsByCredential.get(credential.id) ?? 0;
     const tail = until ? `${state} · 至 ${until}` : busy ? `${requests} 次` : state;
     const members = credential.members.length
-      ? ` · ${credential.members.length}/${graph.value?.memberLimit ?? 3} 人`
+      ? ` · ${credential.members.length}/${credential.memberLimit} 人`
       : "";
     return {
       ...credential,

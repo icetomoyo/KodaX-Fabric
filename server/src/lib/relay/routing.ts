@@ -399,7 +399,7 @@ export async function resolveRelayBoundCandidate(
         protocol,
       );
       if (!resolved.candidate) return resolved;
-      resolved.candidate.maxConcurrency = env.RELAY_KEY_MAX_CONCURRENCY;
+      resolved.candidate.maxConcurrency = acquired.credential.keyMaxConcurrency;
       handedOff = true;
       return { ...resolved, heldSlot: acquired.release };
     } finally {
@@ -425,7 +425,7 @@ export async function resolveRelayBoundCandidate(
     protocol,
   );
   if (resolved.candidate) {
-    resolved.candidate.maxConcurrency = env.RELAY_KEY_MAX_CONCURRENCY;
+    resolved.candidate.maxConcurrency = acquired.credential.keyMaxConcurrency;
     resolved.candidate.maxEmployeeConcurrency = env.RELAY_EMPLOYEE_MAX_CONCURRENCY;
   }
   return resolved;

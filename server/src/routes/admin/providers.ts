@@ -123,6 +123,8 @@ export async function adminProviderRoutes(app: FastifyInstance) {
         zhipuOrganizationId: productLines.zhipuOrganizationId,
         zhipuProjectId: productLines.zhipuProjectId,
         officialQuotaQueryEnabled: productLines.officialQuotaQueryEnabled,
+        keyMaxMembers: productLines.keyMaxMembers,
+        keyMaxConcurrency: productLines.keyMaxConcurrency,
         providerCode: providers.code,
         providerName: providers.name,
         defaultBaseUrl: providers.defaultBaseUrl,
@@ -523,6 +525,14 @@ export async function adminProviderRoutes(app: FastifyInstance) {
             ...(body.data.officialQuotaQueryEnabled !== undefined
               ? { officialQuotaQueryEnabled: body.data.officialQuotaQueryEnabled }
               : {}),
+            // 调度上限只在套餐上设置，对套餐下每把 Key 立即生效；
+            // 不参与 configVersion、不触发凭证健康重置。
+            ...(body.data.keyMaxMembers !== undefined
+              ? { keyMaxMembers: body.data.keyMaxMembers }
+              : {}),
+            ...(body.data.keyMaxConcurrency !== undefined
+              ? { keyMaxConcurrency: body.data.keyMaxConcurrency }
+              : {}),
             ...(updatingProtocolSurface
               ? { protocolConfigs: nextProtocolConfigs }
               : {}),
@@ -599,6 +609,12 @@ export async function adminProviderRoutes(app: FastifyInstance) {
               ...(body.data.officialQuotaQueryEnabled !== undefined
                 ? { officialQuotaQueryEnabled: existing.officialQuotaQueryEnabled }
                 : {}),
+              ...(body.data.keyMaxMembers !== undefined
+                ? { keyMaxMembers: existing.keyMaxMembers }
+                : {}),
+              ...(body.data.keyMaxConcurrency !== undefined
+                ? { keyMaxConcurrency: existing.keyMaxConcurrency }
+                : {}),
               ...(updatingProtocolSurface
                 ? {
                   supportedProtocols: protocolPlan.currentProtocols,
@@ -636,6 +652,12 @@ export async function adminProviderRoutes(app: FastifyInstance) {
                 : {}),
               ...(body.data.officialQuotaQueryEnabled !== undefined
                 ? { officialQuotaQueryEnabled: row.officialQuotaQueryEnabled }
+                : {}),
+              ...(body.data.keyMaxMembers !== undefined
+                ? { keyMaxMembers: row.keyMaxMembers }
+                : {}),
+              ...(body.data.keyMaxConcurrency !== undefined
+                ? { keyMaxConcurrency: row.keyMaxConcurrency }
                 : {}),
               ...(updatingProtocolSurface
                 ? {
