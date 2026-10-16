@@ -73,13 +73,13 @@ import {
  * 28. 在套餐上改了上限后，没有立即对套餐下所有 Key 生效。
  * 29. 管理端显示的上限不是实际生效的上限。
  * 30. 「编辑产品」对话框里填的积分上限没有真正保存，或者保存后重新打开看不到。
- * 34. 「编辑产品」里填的每把 KEY 可挂员工数 / 并发没有保存，或保存后重新打开看不到。
- * 35. 套餐上改了每把 KEY 并发后，调度仍按全局 9 路拦，满 1 路也不换绑。
- * 36. 套餐上改了每把 KEY 可挂员工数后，调度仍按全局 3 人拦。
  * 31. 所有 Key 都限流、请求最终失败时，retry-after 不是真实的恢复时间（以前固定 5 分钟）。
  * 32. 试满尝试次数而池里还有别的 Key 时，retry-after 仍是 5 分钟，客户端白等。
  * 33. 套餐到期 / 失效（1309、1314、1315）的 Key 只是冷却，到点又被选中再失败一次，
  *     而不是停用并告警；或者这次请求没有换 Key 重发。
+ * 34. 「编辑产品」里填的每把 KEY 可挂员工数 / 并发没有保存，或保存后重新打开看不到。
+ * 35. 套餐上改了每把 KEY 并发后，调度仍按全局 9 路拦，满 1 路也不换绑。
+ * 36. 套餐上改了每把 KEY 可挂员工数后，调度仍按全局 3 人拦。
  */
 const ARTIFACT_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "artifacts");
 const MODEL = SCHED_MODEL;
@@ -1075,8 +1075,8 @@ test.describe.serial("渠道 Key 调度", () => {
       select id from product_lines where code = ${SCHED_UI_PACKAGE.code}
     `;
     const uiLineId = Number(line.id);
-    const membersPlaceholder = "每把 KEY 可挂员工数，留空为 3";
-    const concurrencyPlaceholder = "每把 KEY 并发，留空为 9";
+    const membersPlaceholder = "每把 KEY 可挂员工数，留空走全局默认";
+    const concurrencyPlaceholder = "每把 KEY 并发，留空走全局默认";
 
     const lineLimits = async () => {
       const res = await api.get("/api/admin/product-lines", { headers });

@@ -88,10 +88,7 @@ const RECENT_WINDOW_MS = 24 * 60 * 60 * 1_000;
 const supportedProtocolsSchema = configurableSupportedProtocolsSchema;
 
 /** 绑定只显示成员：挂着谁、几个人、每把最多几个人。 */
-function membershipView(
-  membership: CredentialMembership | undefined,
-  memberLimit: number = env.RELAY_KEY_MAX_MEMBERS,
-) {
+function membershipView(membership: CredentialMembership | undefined, memberLimit: number) {
   return {
     bound: membership?.bound ?? false,
     members: (membership?.members ?? []).map((member) => ({
@@ -834,7 +831,6 @@ export async function adminCredentialRoutes(app: FastifyInstance) {
         productLineTag: productLines.tag,
         testModel: productLines.testModel,
         keyMaxMembers: productLines.keyMaxMembers,
-        keyMaxConcurrency: productLines.keyMaxConcurrency,
         holderEmployeeId: channelSeats.employeeId,
         holderName: employees.name,
       })

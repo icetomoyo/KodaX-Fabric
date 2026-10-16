@@ -202,7 +202,6 @@ type GraphHop = {
 type SchedulingGraph = {
   windowMinutes: number;
   since: string;
-  memberLimit: number;
   productLines: Array<{ id: number; name: string; providerName: string }>;
   employees: GraphEmployee[];
   virtualKeys: GraphVirtualKey[];

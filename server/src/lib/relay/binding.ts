@@ -103,8 +103,6 @@ export type BoundCredential = {
   monthlyWindowResetAt: Date | null;
   /** 这把 Key 所属套餐的每把 Key 并发上限（套餐空值已折成全局默认）。 */
   keyMaxConcurrency: number;
-  /** 这把 Key 所属套餐的每把 Key 人数上限（套餐空值已折成全局默认）。 */
-  keyMaxMembers: number;
   meta: unknown;
 };
 
@@ -844,7 +842,6 @@ export function toBoundCredential(
     weeklyWindowResetAt: effectiveWeeklyResetAt(snapshot),
     monthlyWindowResetAt: snapshot.lineMonthlyWindowResetAt,
     keyMaxConcurrency: effectiveKeyMaxConcurrency(snapshot.keyMaxConcurrency),
-    keyMaxMembers: effectiveKeyMaxMembers(snapshot.keyMaxMembers),
     meta: snapshot.meta,
   };
 }

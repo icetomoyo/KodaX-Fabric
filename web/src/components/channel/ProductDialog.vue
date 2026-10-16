@@ -99,7 +99,7 @@
         <el-form-item label="可挂员工数">
           <el-input
             :model-value="keyMaxMembers"
-            placeholder="每把 KEY 可挂员工数，留空为 3"
+            placeholder="每把 KEY 可挂员工数，留空走全局默认"
             clearable
             @update:model-value="$emit('update:keyMaxMembers', $event)"
           />
@@ -107,13 +107,13 @@
         <el-form-item label="KEY 并发">
           <el-input
             :model-value="keyMaxConcurrency"
-            placeholder="每把 KEY 并发，留空为 9"
+            placeholder="每把 KEY 并发，留空走全局默认"
             clearable
             @update:model-value="$emit('update:keyMaxConcurrency', $event)"
           />
           <p class="form-hint">
-            该产品下每把 KEY 最多挂几名员工、最多几路在途请求。留空走全局默认（3 人 / 9 路）。
-            保存后对该产品下所有 KEY 立即生效。
+            该产品下每把 KEY 最多挂几名员工、最多几路在途请求，留空走服务端全局默认。
+            保存后立即用于新的挂入和请求；已挂上的员工不会被移出，空闲后自然释放。
           </p>
         </el-form-item>
       </template>

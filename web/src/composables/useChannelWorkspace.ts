@@ -38,7 +38,7 @@ type ProductLineApiRow = {
   keyMaxConcurrency?: number | null;
 };
 
-function storedCreditLimit(value: string | number | null | undefined): number | null {
+function toNullableNumber(value: string | number | null | undefined): number | null {
   if (value == null) return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
@@ -305,14 +305,14 @@ export function useChannelWorkspace(channelCode: MaybeRefOrGetter<string>) {
             configVersion: Number(row.configVersion) || 1,
             weeklyWindowResetAt: row.weeklyWindowResetAt ?? null,
             monthlyWindowResetAt: row.monthlyWindowResetAt ?? null,
-            fiveHourCreditLimit: storedCreditLimit(row.fiveHourCreditLimit),
-            weeklyCreditLimit: storedCreditLimit(row.weeklyCreditLimit),
-            monthlyCreditLimit: storedCreditLimit(row.monthlyCreditLimit),
+            fiveHourCreditLimit: toNullableNumber(row.fiveHourCreditLimit),
+            weeklyCreditLimit: toNullableNumber(row.weeklyCreditLimit),
+            monthlyCreditLimit: toNullableNumber(row.monthlyCreditLimit),
             zhipuOrganizationId: row.zhipuOrganizationId ?? null,
             zhipuProjectId: row.zhipuProjectId ?? null,
             officialQuotaQueryEnabled: Boolean(row.officialQuotaQueryEnabled),
-            keyMaxMembers: storedCreditLimit(row.keyMaxMembers),
-            keyMaxConcurrency: storedCreditLimit(row.keyMaxConcurrency),
+            keyMaxMembers: toNullableNumber(row.keyMaxMembers),
+            keyMaxConcurrency: toNullableNumber(row.keyMaxConcurrency),
           }))
         : [];
       seats.value = Array.isArray(seatRes.data.data)

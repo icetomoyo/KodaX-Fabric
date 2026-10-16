@@ -64,9 +64,9 @@ type Graph = {
     coolingKind: string | null;
     bound: boolean;
     members: Array<{ employeeId: number; name: string }>;
+    memberLimit: number;
   }>;
   hops: Hop[];
-  memberLimit: number;
 };
 
 let api: APIRequestContext;
@@ -289,7 +289,10 @@ test.describe.serial("调度画布", () => {
         .sort();
     const cooled = recent.credentials.find((row) => row.id === credentialIds.get("cvso"));
     expect(cooled?.status, "冷却中的已绑定 Key 仍在图上（8）").toBe("cooling");
-    expect(recent.memberLimit, "每把 Key 最多 3 人").toBe(3);
+    expect(
+      recent.credentials.every((row) => row.memberLimit === 3),
+      "每把 Key 最多 3 人",
+    ).toBe(true);
     expect(
       { cvso: memberNames("cvso"), cvsf: memberNames("cvsf"), cvsx: memberNames("cvsx") },
       "每把 Key 返回的是现在挂着的成员，不是绑定范围（13）",

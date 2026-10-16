@@ -12,7 +12,6 @@ import {
   requestAudits,
   upstreamCredentials,
 } from "../../db/schema/index.js";
-import { env } from "../../config.js";
 import { effectiveCredentialStatus } from "../../lib/credential-status.js";
 import { snapshotRelayLiveLoad } from "../../lib/relay/credential-load.js";
 import { writeOpsAudit } from "../../lib/ops-audit.js";
@@ -250,7 +249,6 @@ export async function adminKeyBindingRoutes(app: FastifyInstance) {
       data: {
         windowMinutes,
         since: since.toISOString(),
-        memberLimit: env.RELAY_KEY_MAX_MEMBERS,
         productLines: [...productLineOptions.values()].sort((a, b) => a.id - b.id),
         employees: [...employeesById.values()].sort((a, b) => a.id - b.id),
         virtualKeys: keyRows
