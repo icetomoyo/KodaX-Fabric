@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import { and, desc, eq, gt, gte, inArray, lt, sql, type SQL } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, lt, sql, type SQL } from "drizzle-orm";
 import { z } from "zod";
 import { env } from "../config.js";
 import { db } from "../db/client.js";
@@ -38,9 +38,7 @@ import {
   RELAY_PROTOCOLS,
   type RelayProtocol,
 } from "../lib/relay/protocol.js";
-import { catalogModelKind, groupDiscoveredModelsByChannel } from "../lib/discovered-models.js";
-import { catalogModelsForProvider } from "../lib/relay/client-model.js";
-import { creditRateFor } from "../lib/relay/credit-cost.js";
+import { listEmployeeModelChannels } from "../lib/relay/employee-models.js";
 import {
   isEmployeeSubmittedCredentialMeta,
   issueEmployeeSubmitTestProof,
@@ -156,73 +154,8 @@ async function loadOwnedSeat(employeeId: number, seatId: number) {
   return seat ?? null;
 }
 
-function catalogModelEntry(canonicalId: string, upstreamModel: string, providerCode: string) {
-  return {
-    model: canonicalId,
-    kind: catalogModelKind(upstreamModel, providerCode),
-    creditRate: creditRateFor(canonicalId, providerCode),
-  };
-}
-
 /** 「模型列表」页的渠道+模型目录，/api/me/models 与 /api/me/log-models 共用。 */
-async function meModelChannels(employeeId: number) {
-  const accessible = await getEmployeeUpstreamChannels(employeeId);
-  if (accessible.length === 0) {
-    return [];
-  }
-
-  const productLineIds = [...new Set(accessible.flatMap((channel) => channel.memberProductLineIds))];
-  const channelRows = await db
-    .select({
-      productLineId: productLines.id,
-      productLineName: productLines.name,
-      productLineCode: productLines.code,
-      providerName: providers.name,
-      providerCode: providers.code,
-      meta: upstreamCredentials.meta,
-    })
-    .from(productLines)
-    .innerJoin(providers, eq(productLines.providerId, providers.id))
-    .leftJoin(
-      upstreamCredentials,
-      and(
-        eq(upstreamCredentials.productLineId, productLines.id),
-        inArray(upstreamCredentials.status, ["active", "cooling"]),
-        gt(upstreamCredentials.weight, 0),
-      ),
-    )
-    .where(inArray(productLines.id, productLineIds));
-
-  const groupedById = new Map(
-    groupDiscoveredModelsByChannel(channelRows).map((channel) => [channel.id, channel]),
-  );
-  return accessible.map((channel) => {
-    const catalog = catalogModelsForProvider(channel.providerCode);
-    const models = catalog.length > 0
-      ? catalog.map((item) => catalogModelEntry(
-          item.canonicalId,
-          item.upstreamModel,
-          channel.providerCode,
-        ))
-      : [...new Set(
-          channel.memberProductLineIds.flatMap((id) => groupedById.get(id)?.models ?? []),
-        )]
-          .sort((left, right) => left.localeCompare(right))
-          .map((model) => catalogModelEntry(
-            `${channel.providerCode}/${model}`,
-            model,
-            channel.providerCode,
-          ));
-    return {
-      id: channel.productLineId,
-      name: channel.productLineName,
-      code: channel.productLineCode,
-      providerName: channel.providerName,
-      providerCode: channel.providerCode,
-      models,
-    };
-  });
-}
+const meModelChannels = listEmployeeModelChannels;
 
 export async function meRoutes(app: FastifyInstance) {
   app.addHook("preHandler", requireSession);

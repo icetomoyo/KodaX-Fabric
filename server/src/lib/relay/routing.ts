@@ -1,14 +1,12 @@
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { env } from "../../config.js";
 import { db } from "../../db/client.js";
 import {
   modelRoutes,
   productLines,
   providers,
-  upstreamCredentials,
 } from "../../db/schema/index.js";
 import { findChannelPlugin } from "../../channels/index.js";
-import { effectiveCredentialStatus } from "../credential-status.js";
 import {
   type CredentialLoad,
   type CredentialLoadReader,
@@ -18,9 +16,8 @@ import {
 import {
   loadRelayPool,
   loadRelayPoolByProviderCode,
-  resolveRelayUpstreamConfig,
 } from "./channel-pool.js";
-import { catalogModelsForProvider, parseClientModel } from "./client-model.js";
+import { parseClientModel } from "./client-model.js";
 import {
   acquireBoundCredential,
   type BoundCredential,
@@ -33,7 +30,6 @@ import { isValidRelayProductLineId } from "./types.js";
 import { acquireTidalCredential, type TidalRequest } from "./tidal-pool.js";
 import { RELAY_KEY_BUSY_RETRY_AFTER_SECONDS } from "./upstream.js";
 import {
-  isProviderClientModelAllowed,
   providerBlocksClientModel,
 } from "../discovered-models.js";
 
@@ -80,11 +76,6 @@ export type RelayCandidateResolution = {
   retryAfterSeconds: number | null;
 };
 
-export type RelayModelListResolution = {
-  models: Array<{ id: string; ownedBy: string }>;
-  unavailableReason: "bound_channel_unavailable" | null;
-};
-
 export type RelayBoundCandidateResolution = {
   candidate: RelayCandidate | null;
   unavailableReason: RelayCandidateResolution["unavailableReason"];
@@ -113,151 +104,11 @@ export function filterRelayItemsToProductLines<T extends { productLineId: number
   return items.filter((item) => productLineIds.has(item.productLineId));
 }
 
-function discoveredModels(meta: unknown): string[] {
-  if (!meta || typeof meta !== "object" || Array.isArray(meta)) return [];
-  const object = meta as Record<string, unknown>;
-  const direct = object.discoveredModels;
-  if (Array.isArray(direct)) {
-    return direct.filter((item): item is string => typeof item === "string");
-  }
-  const lastTest = object.lastTest;
-  if (lastTest && typeof lastTest === "object" && !Array.isArray(lastTest)) {
-    const models = (lastTest as Record<string, unknown>).models;
-    if (Array.isArray(models)) {
-      return models.filter((item): item is string => typeof item === "string");
-    }
-  }
-  return [];
-}
-
 export function credentialSupportsProtocol(
   credential: { supportedProtocols?: readonly RelayProtocol[] | null },
   protocol: RelayProtocol,
 ): boolean {
   return credential.supportedProtocols?.includes(protocol) ?? false;
-}
-
-type RelayCredentialAccess = {
-  credentials: AvailableRelayCredential[];
-  boundChannelUnavailable: boolean;
-  providerCode: string | null;
-};
-
-/**
- * Credentials of the pool behind a product line, for model discovery.
- * Strictly read-only: expired cooling is applied in memory through the
- * effective-status function; request-time binding restores it in the database.
- */
-async function loadAccessibleCredentials(
-  protocol: RelayProtocol,
-  productLineId: number,
-): Promise<RelayCredentialAccess> {
-  const now = new Date();
-  const pool = await loadRelayPool(productLineId);
-  if (!pool || pool.activeProductLineIds.length === 0) {
-    return {
-      credentials: [],
-      boundChannelUnavailable: true,
-      providerCode: pool?.providerCode ?? null,
-    };
-  }
-  const poolLineIds = pool.activeProductLineIds;
-
-  const rows = await db
-    .select({
-      credentialId: upstreamCredentials.id,
-      credentialSuffix: upstreamCredentials.secretSuffix,
-      secretEncrypted: upstreamCredentials.secretEncrypted,
-      credentialPriority: upstreamCredentials.priority,
-      credentialWeight: upstreamCredentials.weight,
-      credentialStatus: upstreamCredentials.status,
-      coolUntil: upstreamCredentials.coolUntil,
-      meta: upstreamCredentials.meta,
-      fiveHourWindowAnchor: upstreamCredentials.fiveHourWindowAnchor,
-      weeklyWindowResetAt: upstreamCredentials.weeklyWindowResetAt,
-      productLineId: productLines.id,
-      productType: productLines.productType,
-      retryPolicy: productLines.retryPolicy,
-      providerCode: providers.code,
-      authStyle: providers.authStyle,
-      supportedProtocols: upstreamCredentials.supportedProtocols,
-      defaultBaseUrl: providers.defaultBaseUrl,
-      baseUrlOverride: productLines.baseUrlOverride,
-      protocolConfigs: productLines.protocolConfigs,
-    })
-    .from(upstreamCredentials)
-    .innerJoin(productLines, eq(upstreamCredentials.productLineId, productLines.id))
-    .innerJoin(providers, eq(productLines.providerId, providers.id))
-    .where(inArray(upstreamCredentials.productLineId, poolLineIds));
-
-  const credentials = rows
-    .filter((row) => credentialSupportsProtocol(row, protocol))
-    .map((row): AvailableRelayCredential | null => {
-      const upstreamConfig = resolveRelayUpstreamConfig({
-        protocol,
-        providerCode: row.providerCode,
-        productType: row.productType,
-        protocolConfigs: row.protocolConfigs,
-        legacyBaseUrl: row.baseUrlOverride || row.defaultBaseUrl,
-        legacyAuthStyle: row.authStyle,
-      });
-      if (!upstreamConfig) return null;
-      return {
-        credentialId: row.credentialId,
-        credentialSuffix: row.credentialSuffix,
-        secretEncrypted: row.secretEncrypted,
-        credentialPriority: row.credentialPriority,
-        credentialWeight: row.credentialWeight,
-        credentialStatus: effectiveCredentialStatus(
-          row.credentialStatus,
-          row.coolUntil,
-          now,
-        ),
-        coolUntil: row.coolUntil,
-        meta: row.meta,
-        fiveHourWindowAnchor: row.fiveHourWindowAnchor,
-        weeklyWindowResetAt: row.weeklyWindowResetAt,
-        productLineId: row.productLineId,
-        productType: row.productType,
-        retryPolicy: row.retryPolicy,
-        providerCode: row.providerCode,
-        authStyle: upstreamConfig.authStyle,
-        supportedProtocols: row.supportedProtocols ?? [],
-        baseUrl: upstreamConfig.baseUrl,
-      };
-    })
-    .filter((credential): credential is AvailableRelayCredential => credential !== null);
-
-  return {
-    credentials: filterRelayItemsToProductLines(credentials, new Set(poolLineIds)),
-    boundChannelUnavailable: false,
-    providerCode: pool.providerCode,
-  };
-}
-
-function coolingRetryAfter(credentials: AvailableRelayCredential[]): number | null {
-  if (credentials.length === 0) {
-    return null;
-  }
-  if (credentials.some((credential) => credential.credentialStatus !== "cooling")) return null;
-  const now = Date.now();
-  const retryTimes = credentials
-    .filter((credential) => credential.credentialStatus === "cooling")
-    .map((credential) => credential.coolUntil?.getTime())
-    .filter((value): value is number => value !== undefined && value > now);
-  if (retryTimes.length !== credentials.length) return null;
-  if (retryTimes.length === 0) return null;
-  return Math.max(1, Math.ceil((Math.min(...retryTimes) - now) / 1_000));
-}
-
-function unavailableResolution(
-  credentials: AvailableRelayCredential[],
-): Pick<RelayCandidateResolution, "unavailableReason" | "retryAfterSeconds"> {
-  const retryAfterSeconds = coolingRetryAfter(credentials);
-  if (retryAfterSeconds !== null) {
-    return { unavailableReason: "cooling", retryAfterSeconds };
-  }
-  return { unavailableReason: "unavailable", retryAfterSeconds: null };
 }
 
 function retryAfterSecondsFrom(retryAt: Date | null): number | null {
@@ -608,79 +459,5 @@ async function candidateForCredential(
     candidate,
     unavailableReason: null,
     retryAfterSeconds: null,
-  };
-}
-
-export async function resolveAccessibleRelayModels(
-  employeeId: number,
-  upstreamProtocol: RelayProtocol,
-  productLineId: number,
-): Promise<RelayModelListResolution> {
-  if (!isValidRelayProductLineId(productLineId)) {
-    return { models: [], unavailableReason: "bound_channel_unavailable" };
-  }
-  const access = await loadAccessibleCredentials(upstreamProtocol, productLineId);
-  if (access.boundChannelUnavailable) {
-    return { models: [], unavailableReason: "bound_channel_unavailable" };
-  }
-  const catalog = catalogModelsForProvider(access.providerCode ?? "");
-  if (catalog.length > 0) {
-    return {
-      models: catalog.map((item) => ({ id: item.canonicalId, ownedBy: item.providerCode })),
-      unavailableReason: null,
-    };
-  }
-  const credentials = access.credentials.filter(
-    (credential) =>
-      credential.credentialStatus === "active" && credential.credentialWeight > 0,
-  );
-  const eligibleProductLines = new Set(credentials.map((item) => item.productLineId));
-  const routes = await db
-    .select({
-      clientModel: modelRoutes.clientModel,
-      productLineId: modelRoutes.productLineId,
-      providerCode: providers.code,
-      routeWeight: modelRoutes.weight,
-    })
-    .from(modelRoutes)
-    .innerJoin(productLines, eq(modelRoutes.productLineId, productLines.id))
-    .innerJoin(providers, eq(productLines.providerId, providers.id))
-    .where(
-      and(
-        eq(modelRoutes.enabled, true),
-        eq(productLines.status, "active"),
-        eq(providers.status, "active"),
-        eligibleProductLines.size > 0
-          ? inArray(modelRoutes.productLineId, [...eligibleProductLines])
-          : eq(modelRoutes.productLineId, productLineId),
-      ),
-    );
-
-  const byId = new Map<string, string>();
-  const boundExplicitModels = new Set(routes.map((route) => route.clientModel));
-  const allowModel = (model: string) =>
-    access.providerCode == null || isProviderClientModelAllowed(access.providerCode, model);
-  for (const credential of credentials) {
-    for (const model of discoveredModels(credential.meta)) {
-      // Prefer the explicit model-list entry for a duplicate client model.
-      if (boundExplicitModels.has(model)) continue;
-      if (!allowModel(model)) continue;
-      if (!byId.has(model)) byId.set(model, credential.providerCode);
-    }
-  }
-  for (const route of routes) {
-    const callable = eligibleProductLines.has(route.productLineId) &&
-      route.routeWeight > 0 &&
-      allowModel(route.clientModel);
-    if (callable) {
-      byId.set(route.clientModel, route.providerCode);
-    }
-  }
-
-  return {
-    models: [...byId.entries()]
-      .map(([id, ownedBy]) => ({ id, ownedBy }))
-      .sort((a, b) => a.id.localeCompare(b.id)),
-    unavailableReason: null,
   };
 }

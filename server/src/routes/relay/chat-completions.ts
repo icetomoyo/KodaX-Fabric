@@ -19,8 +19,8 @@ import {
 } from "../../lib/relay/quota.js";
 import { RELAY_PATHS } from "../../lib/relay/protocol.js";
 import type { RelayProtocol } from "../../lib/relay/protocol.js";
+import { listEmployeeRelayModels } from "../../lib/relay/employee-models.js";
 import {
-  resolveAccessibleRelayModels,
   resolveRelayBoundCandidate,
 } from "../../lib/relay/routing.js";
 import { tidalSessionKey } from "../../lib/relay/tidal-pool.js";
@@ -351,32 +351,7 @@ export async function chatCompletionRoutes(app: FastifyInstance) {
         } else {
           reply.header("x-request-id", requestId);
         }
-        const resolution = await resolveAccessibleRelayModels(
-          principal.employeeId,
-          principal.protocol,
-          principal.productLineId,
-        );
-        if (resolution.unavailableReason === "bound_channel_unavailable") {
-          if (principal.protocol === "anthropic_messages") {
-            return reply.code(503).send({
-              type: "error",
-              error: {
-                type: "api_error",
-                message: "当前 Key 绑定的上游渠道不可用",
-                code: "bound_channel_unavailable",
-              },
-              request_id: requestId,
-            });
-          }
-          return reply.code(503).send(
-            openAiError(
-              "当前 Key 绑定的上游渠道不可用",
-              "service_unavailable",
-              "bound_channel_unavailable",
-            ),
-          );
-        }
-        const models = resolution.models;
+        const models = await listEmployeeRelayModels(principal.employeeId);
         if (principal.protocol === "anthropic_messages") {
           return {
             data: models.map((model) => ({
