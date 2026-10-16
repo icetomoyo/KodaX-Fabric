@@ -410,6 +410,9 @@ test.describe("channel pool: one channel = one KEY pool", () => {
       unknownPrefix: { path: "/v1/chat/completions", model: UNKNOWN_MODEL },
       // callerKey is bound to a GLM product, so the bare name must not fall back to it.
       bareGlmModel: { path: "/v1/chat/completions", model: "glm-5.3" },
+      // Volcano delisted GLM — those names belong on the Zhipu channel.
+      huoshanGlmText: { path: "/v1/chat/completions", model: "huoshan/glm-5.3" },
+      huoshanGlmFlash: { path: "/v1/chat/completions", model: "huoshan/glm-5.3-flash" },
       legacyAiPath: { path: "/ai/chat/completions", model: CHANNEL_MODEL.glm },
     };
     for (const [name, { path, model }] of Object.entries(rejectCases)) {
@@ -480,7 +483,7 @@ test.describe("channel pool: one channel = one KEY pool", () => {
     expect.soft(huoshan.has("huoshan-a"), `huoshan hits: ${[...huoshan].join(",")}`).toBe(true);
     expect.soft(huoshan.has("huoshan-b"), `huoshan hits: ${[...huoshan].join(",")}`).toBe(true);
 
-    for (const name of ["unknownPrefix", "bareGlmModel"]) {
+    for (const name of ["unknownPrefix", "bareGlmModel", "huoshanGlmText", "huoshanGlmFlash"]) {
       expect(rejected[name], `${name} request should have run`).toBeTruthy();
       expect(rejected[name]!.httpStatus, `${name} must not be served`).not.toBe(200);
       expect(rejected[name]!.code, name).toBe("model_not_allowed");

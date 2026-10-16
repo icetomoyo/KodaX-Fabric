@@ -8,21 +8,20 @@ import { classifyHuoshanError } from "./error-codes.js";
  * Official table: https://www.volcengine.com/docs/82379/2516283
  * AFP = (input tokens × input + output tokens × output) / 10,000. Cached input
  * has no separate rate and there is no off-peak discount.
- * Hub only exposes the Agent Plan models below. glm-latest,
- * kimi-k2.8-preview, kimi-k3, image / video / audio / Harness stay omitted.
+ * Hub only exposes the Agent Plan models below. GLM names stay on the Zhipu
+ * channel (glm-5.3 / glm-5.3-flash / glm-latest). kimi-k2.8-preview, kimi-k3,
+ * image / video / audio / Harness stay omitted.
  * Text rows use the 输入不含音频 coefficient.
  */
 const TEXT_RATES: ReadonlyArray<readonly [model: string, input: string, output: string]> = [
   ["doubao-seed-2.0-mini", "0.25", "0.25"],
   ["deepseek-v4-flash", "0.5", "0.5"],
   ["doubao-seed-2.1-lite", "0.5", "0.5"],
-  ["glm-5.3-flash", "0.5", "0.5"],
   ["doubao-seed-evolving", "2.5", "2.5"],
   ["minimax-m3", "2.5", "2.5"],
   ["doubao-seed-2.1-pro", "2.5", "2.5"],
   ["deepseek-v4.1-flash", "2.5", "2.5"],
   ["kimi-k2.7-code", "4.5", "4.5"],
-  ["glm-5.3", "4.5", "4.5"],
   ["deepseek-v4-pro", "5.5", "5.5"],
 ];
 
@@ -50,7 +49,6 @@ const MODALITIES: Readonly<Record<string, readonly CatalogModelTag[]>> = {
   "doubao-seed-2.0-mini": ["图片", "视频", "音频", "文本"],
   "deepseek-v4-flash": ["文本"],
   "doubao-seed-2.1-lite": ["图片", "视频", "音频", "文本"],
-  "glm-5.3-flash": ["图片", "视频", "文本"],
   "doubao-seed-evolving": ["图片", "视频", "文本"],
   "doubao-seed-2.1-pro": ["图片", "视频", "文本"],
   "deepseek-v4.1-flash": ["图片", "视频", "文本"],

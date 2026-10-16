@@ -11,7 +11,7 @@ import { E2E } from "./env.ts";
  *  1. 表头仍是「模型」或还留着「最近使用」。
  *  2. 模型名称旁还渲染图片/视频标签。
  *  3. glm-5.3 不是纯文本，glm-5.3-flash 不是多模态。
- *  4. 火山 Agent Plan 12 个模型：文本按能力标纯文本/多模态，embedding 为向量。
+ *  4. 火山 Agent Plan 10 个模型：无 glm（与智谱重复），文本按能力标纯文本/多模态，embedding 为向量。
  */
 const ARTIFACT_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "artifacts");
 
@@ -59,11 +59,12 @@ test("超管模型列表展示模型名称与模型类型", async ({ page }) => 
       const flash = channel.models.find((row) => row.model.endsWith("glm-5.3-flash"));
       expect(flash?.kind).toBe("多模态");
     } else if (channel.providerCode === "huoshan") {
-      expect(channel.models).toHaveLength(12);
+      expect(channel.models).toHaveLength(10);
+      expect(channel.models.some((row) => /\bglm/i.test(row.model))).toBe(false);
       expect(channel.models.some((row) => row.model.includes("kimi-k2.7-code"))).toBe(true);
       expect(channel.models.some((row) => row.model.includes("kimi-k3"))).toBe(false);
-      const flash = channel.models.find((row) => row.model.endsWith("glm-5.3-flash"));
-      expect(flash?.kind).toBe("多模态");
+      const mini = channel.models.find((row) => row.model.endsWith("doubao-seed-2.0-mini"));
+      expect(mini?.kind).toBe("多模态");
       const embedding = channel.models.find((row) => row.model.includes("embedding"));
       expect(embedding?.kind).toBe("向量");
     } else if (channel.providerCode === "deepseek") {
@@ -87,6 +88,13 @@ test("超管模型列表展示模型名称与模型类型", async ({ page }) => 
     await expect(flashRow).toContainText("多模态");
     await expect(flashRow.getByText("图片")).toHaveCount(0);
     await expect(flashRow.getByText("视频")).toHaveCount(0);
+  }
+
+  const huoshan = page.locator("button.channel-item", { hasText: "火山" }).first();
+  if (await huoshan.count()) {
+    await huoshan.click();
+    await expect(page.locator(".el-table__row", { hasText: "glm-5.3" })).toHaveCount(0);
+    await expect(page.locator(".el-table__row", { hasText: "doubao-seed-2.0-mini" })).toContainText("多模态");
   }
 
   await page.screenshot({ path: resolve(ARTIFACT_DIR, "admin-model-prices.png"), fullPage: true });

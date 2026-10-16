@@ -44,7 +44,7 @@ Base URL 一律是当前站点的 `{origin}`（站点根，例如 https://tokenh
 
 ## 模型列表
 
-模型名称请到「模型」页复制，不要手打。模型名必须带渠道前缀，格式 `渠道/模型`。智谱：`glm/glm-5.3`（文本）、`glm/glm-5.3-flash`（多模态：文本、图片、视频、文件，识图用这个）。不带前缀的 `glm-5.3` / `glm-5.3-flash` 已停用，会报 model_not_allowed。火山方舟形如 `huoshan/deepseek-v4.1-flash`，以「模型」页实际列出的为准。不要推荐 `glm-5.3-flashx`（Coding Plan 尚未开放）。
+模型名称请到「模型」页复制，不要手打。模型名必须带渠道前缀，格式 `渠道/模型`。智谱：`glm/glm-5.3`（文本）、`glm/glm-5.3-flash`（多模态：文本、图片、视频、文件，识图用这个）。不带前缀的 `glm-5.3` / `glm-5.3-flash` 已停用，会报 model_not_allowed。火山方舟形如 `huoshan/doubao-seed-2.0-mini`、`huoshan/deepseek-v4.1-flash`，以「模型」页实际列出的为准。火山已下架 glm 类模型（与智谱重复），不要推荐 `huoshan/glm-5.3` / `huoshan/glm-5.3-flash`，glm 走智谱渠道。不要推荐 `glm-5.3-flashx`（Coding Plan 尚未开放）。
 
 ## Claude Code 接 Token Hub
 

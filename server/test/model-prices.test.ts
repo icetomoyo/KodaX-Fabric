@@ -148,11 +148,12 @@ test("model price channels are the three vendors, not GLM-50 packages", () => {
     ],
   );
   assert.deepEqual(grouped[0]?.models, ["glm-5.3", "glm-5.3-flash"]);
-  assert.ok(grouped[2]?.models.includes("glm-5.3"));
+  assert.equal(grouped[2]?.models.includes("glm-5.3"), false);
+  assert.equal(grouped[2]?.models.includes("glm-5.3-flash"), false);
   assert.ok(grouped[2]?.models.includes("minimax-m3"));
   assert.ok(grouped[2]?.models.includes("kimi-k2.7-code"));
   assert.ok(grouped[2]?.models.includes("doubao-embedding-vision"));
-  assert.equal(grouped[2]?.models.length, 12);
+  assert.equal(grouped[2]?.models.length, 10);
   assert.equal(grouped[2]?.models.includes("doubao-seedream-5-0-pro"), false);
   assert.equal(grouped[2]?.models.includes("kimi-k3"), false);
   assert.equal(grouped[2]?.models.includes("glm-latest"), false);
@@ -170,7 +171,8 @@ test("Huoshan catalog is the hand-entered Agent Plan list, not Key discovery", (
     },
   ]);
   assert.equal(grouped.length, 1);
-  assert.ok(grouped[0]?.models.includes("glm-5.3"));
+  assert.equal(grouped[0]?.models.includes("glm-5.3"), false);
+  assert.equal(grouped[0]?.models.includes("glm-5.3-flash"), false);
   assert.ok(grouped[0]?.models.includes("minimax-m3"));
   assert.ok(grouped[0]?.models.includes("kimi-k2.7-code"));
   assert.ok(grouped[0]?.models.includes("doubao-embedding-vision"));
@@ -217,6 +219,10 @@ test("Zhipu relay whitelist accepts glm-5.3 and glm-5.3-flash", () => {
   assert.equal(isProviderClientModelAllowed("deepseek", "DeepSeek-Flash"), true);
   assert.equal(isProviderClientModelAllowed("deepseek", "deepseek-v4-flash"), false);
   assert.equal(isProviderClientModelAllowed("deepseek", "deepseek-chat"), false);
+  assert.equal(isProviderClientModelAllowed("huoshan", "huoshan/doubao-seed-2.0-mini"), true);
+  assert.equal(isProviderClientModelAllowed("huoshan", "huoshan/glm-5.3"), false);
+  assert.equal(isProviderClientModelAllowed("huoshan", "huoshan/glm-5.3-flash"), false);
+  assert.equal(isProviderClientModelAllowed("huoshan", "glm-5.3"), false);
 });
 
 test("catalog rows attach built-in GLM credit rates and leave custom models unmetered", () => {
@@ -236,7 +242,7 @@ test("catalog rows attach built-in GLM credit rates and leave custom models unme
     completionCreditsPer10k: "8",
   });
   assert.equal(toCatalogModelEntry("glm-5.3-flashx").kind, "多模态");
-  assert.equal(toCatalogModelEntry("huoshan/glm-5.3-flash", "huoshan").kind, "多模态");
+  assert.equal(toCatalogModelEntry("huoshan/doubao-seed-2.0-mini", "huoshan").kind, "多模态");
   assert.equal(toCatalogModelEntry("huoshan/deepseek-v4-flash", "huoshan").kind, "纯文本");
   assert.equal(toCatalogModelEntry("huoshan/kimi-k2.7-code", "huoshan").kind, "纯文本");
   assert.equal(toCatalogModelEntry("huoshan/doubao-embedding-vision", "huoshan").kind, "向量");

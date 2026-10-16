@@ -64,11 +64,12 @@ test("员工模型列表展示模型类型与积分消耗，名称可复制", as
       expect(flash?.kind).toBe("多模态");
       expect(flash?.creditRate?.promptCreditsPer10k).toBe("2.3");
     } else if (channel.providerCode === "huoshan") {
-      expect(channel.models).toHaveLength(12);
+      expect(channel.models).toHaveLength(10);
+      expect(channel.models.some((row) => /\bglm/i.test(row.model))).toBe(false);
       expect(channel.models.some((row) => row.model.includes("kimi-k2.7-code"))).toBe(true);
       expect(channel.models.some((row) => row.model.includes("kimi-k3"))).toBe(false);
-      const flash = channel.models.find((row) => row.model.endsWith("glm-5.3-flash"));
-      expect(flash?.kind).toBe("多模态");
+      const mini = channel.models.find((row) => row.model.endsWith("doubao-seed-2.0-mini"));
+      expect(mini?.kind).toBe("多模态");
       const text = channel.models.find((row) => row.model.endsWith("deepseek-v4-flash"));
       expect(text?.kind).toBe("纯文本");
       const embedding = channel.models.find((row) => row.model.includes("embedding"));
@@ -117,6 +118,7 @@ test("员工模型列表展示模型类型与积分消耗，名称可复制", as
   const huoshan = page.locator("button.channel-item", { hasText: "火山" }).first();
   if (await huoshan.count()) {
     await huoshan.click();
+    await expect(page.locator(".el-table__row", { hasText: "glm-5.3" })).toHaveCount(0);
     await page.locator(".kind-filter").click();
     await page.getByRole("option", { name: "向量" }).click();
     const embeddingRow = page.locator(".el-table__row", { hasText: "embedding" });
